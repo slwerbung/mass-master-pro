@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { createMeasurementGroup } from "@/lib/measurement";
 
 type Tool = "select" | "draw" | "text" | "measure";
 
@@ -100,42 +101,21 @@ const PhotoEditor = () => {
     } else {
       const measurement = prompt("Maß eingeben (in mm):");
       if (measurement) {
-        const line = new Line(
-          [measureStart.x, measureStart.y, pointer.x, pointer.y],
-          {
-            stroke: "#2563eb",
-            strokeWidth: 3,
-            selectable: true,
-            strokeLineCap: "round",
-          }
+        const group = createMeasurementGroup(
+          measureStart.x,
+          measureStart.y,
+          pointer.x,
+          pointer.y,
+          `${measurement} mm`,
+          "#ef4444"
         );
 
-        const midX = (measureStart.x + pointer.x) / 2;
-        const midY = (measureStart.y + pointer.y) / 2;
-
-        const text = new IText(`${measurement} mm`, {
-          left: midX,
-          top: midY - 20,
-          fill: "#2563eb",
-          fontSize: 18,
-          fontFamily: "Arial",
-          fontWeight: "bold",
-          backgroundColor: "rgba(255, 255, 255, 0.9)",
-          padding: 4,
-          selectable: true,
-          editable: false,
-        });
-
-        fabricCanvas.add(line);
-        fabricCanvas.add(text);
-        
-        // Ensure rendering is complete before allowing export
+        fabricCanvas.add(group);
+        fabricCanvas.setActiveObject(group);
         fabricCanvas.renderAll();
-        
-        // Small delay to ensure everything is rendered
         setTimeout(() => {
           fabricCanvas.renderAll();
-        }, 100);
+        }, 50);
       }
       setMeasureStart(null);
       setActiveTool("select");
