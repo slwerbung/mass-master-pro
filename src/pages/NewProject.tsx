@@ -19,9 +19,11 @@ const NewProject = () => {
       return;
     }
 
+    const fullProjectNumber = `WER-${projectNumber.trim()}`;
+
     const newProject: Project = {
       id: crypto.randomUUID(),
-      projectNumber: projectNumber.trim(),
+      projectNumber: fullProjectNumber,
       locations: [],
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -54,18 +56,23 @@ const NewProject = () => {
           <CardContent className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="projectNumber">Projektnummer</Label>
-              <Input
-                id="projectNumber"
-                type="text"
-                placeholder="z.B. 2024-001"
-                value={projectNumber}
-                onChange={(e) => setProjectNumber(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleCreate();
-                }}
-                autoFocus
-                className="text-lg"
-              />
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-semibold text-muted-foreground px-3 py-2 bg-muted rounded-md">
+                  WER-
+                </span>
+                <Input
+                  id="projectNumber"
+                  type="text"
+                  placeholder="2024-001"
+                  value={projectNumber}
+                  onChange={(e) => setProjectNumber(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleCreate();
+                  }}
+                  autoFocus
+                  className="text-lg flex-1"
+                />
+              </div>
             </div>
 
             <Button

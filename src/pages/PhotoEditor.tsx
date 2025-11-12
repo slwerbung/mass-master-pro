@@ -104,8 +104,9 @@ const PhotoEditor = () => {
           [measureStart.x, measureStart.y, pointer.x, pointer.y],
           {
             stroke: "#2563eb",
-            strokeWidth: 2,
+            strokeWidth: 3,
             selectable: true,
+            strokeLineCap: "round",
           }
         );
 
@@ -114,17 +115,27 @@ const PhotoEditor = () => {
 
         const text = new IText(`${measurement} mm`, {
           left: midX,
-          top: midY - 15,
+          top: midY - 20,
           fill: "#2563eb",
-          fontSize: 16,
+          fontSize: 18,
           fontFamily: "Arial",
-          backgroundColor: "white",
+          fontWeight: "bold",
+          backgroundColor: "rgba(255, 255, 255, 0.9)",
+          padding: 4,
           selectable: true,
+          editable: false,
         });
 
         fabricCanvas.add(line);
         fabricCanvas.add(text);
+        
+        // Ensure rendering is complete before allowing export
         fabricCanvas.renderAll();
+        
+        // Small delay to ensure everything is rendered
+        setTimeout(() => {
+          fabricCanvas.renderAll();
+        }, 100);
       }
       setMeasureStart(null);
       setActiveTool("select");
@@ -143,15 +154,21 @@ const PhotoEditor = () => {
   const handleNext = () => {
     if (!fabricCanvas) return;
 
-    const dataUrl = fabricCanvas.toDataURL({
-      format: "png",
-      quality: 1,
-      multiplier: 1,
-    });
+    // Ensure all objects are rendered before export
+    fabricCanvas.renderAll();
+    
+    // Wait a moment to ensure rendering is complete
+    setTimeout(() => {
+      const dataUrl = fabricCanvas.toDataURL({
+        format: "png",
+        quality: 1,
+        multiplier: 2,
+      });
 
-    navigate(`/projects/${projectId}/location-details`, {
-      state: { imageData: dataUrl, originalImageData: imageData },
-    });
+      navigate(`/projects/${projectId}/location-details`, {
+        state: { imageData: dataUrl, originalImageData: imageData },
+      });
+    }, 200);
   };
 
   if (!imageData) return null;
