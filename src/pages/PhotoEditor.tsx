@@ -94,7 +94,9 @@ const PhotoEditor = () => {
   const handleCanvasClick = (e: any) => {
     if (activeTool !== "measure" || !fabricCanvas) return;
 
-    const pointer = fabricCanvas.getPointer(e);
+    const p = (e && (e.absolutePointer || e.pointer)) ?? (e?.e ? fabricCanvas.getPointer(e.e) : null);
+    if (!p) return;
+    const pointer = { x: p.x, y: p.y };
 
     if (!measureStart) {
       setMeasureStart({ x: pointer.x, y: pointer.y });
@@ -111,6 +113,7 @@ const PhotoEditor = () => {
         );
 
         fabricCanvas.add(group);
+        // added last, so it's already on top
         fabricCanvas.setActiveObject(group);
         fabricCanvas.renderAll();
         setTimeout(() => {
