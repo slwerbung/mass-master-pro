@@ -30,9 +30,10 @@ const PhotoEditor = () => {
 
     if (!canvasRef.current) return;
 
+    const isMobile = window.innerWidth < 768;
     const canvas = new FabricCanvas(canvasRef.current, {
-      width: window.innerWidth,
-      height: window.innerHeight - 200,
+      width: window.innerWidth - (isMobile ? 0 : 40),
+      height: window.innerHeight - (isMobile ? 160 : 200),
       backgroundColor: "#ffffff",
     });
 
@@ -158,29 +159,39 @@ const PhotoEditor = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <div className="bg-card border-b p-4">
-        <div className="container max-w-6xl mx-auto flex items-center justify-between">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate(`/projects/${projectId}`)}
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Abbrechen
-          </Button>
+      <div className="bg-card border-b p-2 md:p-4">
+        <div className="container max-w-6xl mx-auto">
+          <div className="flex items-center justify-between gap-2 mb-2 md:mb-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate(`/projects/${projectId}`)}
+              className="shrink-0"
+            >
+              <ArrowLeft className="h-4 w-4 md:mr-2" />
+              <span className="hidden md:inline">Abbrechen</span>
+            </Button>
 
-          <div className="flex gap-2">
+            <Button onClick={handleNext} size="sm" className="shrink-0">
+              <Check className="h-4 w-4 md:mr-2" />
+              <span className="hidden sm:inline">Weiter</span>
+            </Button>
+          </div>
+
+          <div className="flex gap-1 md:gap-2 justify-center">
             <Button
               variant={activeTool === "select" ? "default" : "outline"}
               size="sm"
               onClick={() => setActiveTool("select")}
+              className="flex-1 md:flex-none"
             >
-              Auswählen
+              <span className="text-xs md:text-sm">Wählen</span>
             </Button>
             <Button
               variant={activeTool === "draw" ? "default" : "outline"}
               size="sm"
               onClick={() => setActiveTool("draw")}
+              className="flex-1 md:flex-none"
             >
               <Pencil className="h-4 w-4" />
             </Button>
@@ -188,6 +199,7 @@ const PhotoEditor = () => {
               variant={activeTool === "text" ? "default" : "outline"}
               size="sm"
               onClick={() => setActiveTool("text")}
+              className="flex-1 md:flex-none"
             >
               <Type className="h-4 w-4" />
             </Button>
@@ -195,24 +207,20 @@ const PhotoEditor = () => {
               variant={activeTool === "measure" ? "default" : "outline"}
               size="sm"
               onClick={() => setActiveTool("measure")}
+              className="flex-1 md:flex-none"
             >
               <Ruler className="h-4 w-4" />
             </Button>
           </div>
-
-          <Button onClick={handleNext} size="sm">
-            <Check className="h-4 w-4 mr-2" />
-            Weiter
-          </Button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden">
-        <canvas ref={canvasRef} />
+      <div className="flex-1 overflow-hidden flex items-center justify-center p-2 md:p-4">
+        <canvas ref={canvasRef} className="max-w-full max-h-full" />
       </div>
 
       {measureStart && (
-        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-primary text-primary-foreground px-4 py-2 rounded-lg shadow-lg">
+        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-primary text-primary-foreground px-3 py-2 md:px-4 md:py-2 rounded-lg shadow-lg text-xs md:text-sm max-w-[90vw] text-center">
           Zweiten Punkt für Bemaßung wählen
         </div>
       )}

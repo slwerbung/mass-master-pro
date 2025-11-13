@@ -23,16 +23,16 @@ const Projects = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="container max-w-4xl mx-auto p-4 space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">Aufmaß App</h1>
-            <p className="text-muted-foreground mt-1">Projekte verwalten</p>
+            <h1 className="text-2xl md:text-3xl font-bold text-foreground">Aufmaß App</h1>
+            <p className="text-muted-foreground mt-1 text-sm md:text-base">Projekte verwalten</p>
           </div>
           <Button
             size="lg"
             onClick={() => navigate("/projects/new")}
-            className="bg-primary hover:bg-primary-hover"
+            className="bg-primary hover:bg-primary-hover w-full sm:w-auto"
           >
             <Plus className="mr-2 h-5 w-5" />
             Neues Projekt

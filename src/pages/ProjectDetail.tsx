@@ -61,14 +61,16 @@ const ProjectDetail = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      <div className="container max-w-4xl mx-auto p-4 space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-6">
+        <div className="flex items-center justify-between gap-2">
           <Button
             variant="ghost"
             onClick={() => navigate("/")}
+            size="sm"
+            className="md:size-default"
           >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Zurück
+            <ArrowLeft className="mr-1 md:mr-2 h-4 w-4" />
+            <span className="hidden sm:inline">Zurück</span>
           </Button>
           
           <AlertDialog>
@@ -95,8 +97,8 @@ const ProjectDetail = () => {
         </div>
 
         <div>
-          <h1 className="text-3xl font-bold">Projekt {project.projectNumber}</h1>
-          <p className="text-muted-foreground mt-1">
+          <h1 className="text-2xl md:text-3xl font-bold">Projekt {project.projectNumber}</h1>
+          <p className="text-muted-foreground mt-1 text-sm md:text-base">
             {project.locations.length} {project.locations.length === 1 ? "Standort" : "Standorte"}
           </p>
         </div>
@@ -123,14 +125,14 @@ const ProjectDetail = () => {
                   />
                 </div>
                 <CardContent className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div className="space-y-1">
-                      <h3 className="font-semibold text-lg">Standort {location.locationNumber}</h3>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1 flex-1 min-w-0">
+                      <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
                       {location.locationName && (
-                        <p className="text-sm text-foreground">{location.locationName}</p>
+                        <p className="text-sm text-foreground truncate">{location.locationName}</p>
                       )}
                       {location.comment && (
-                        <p className="text-sm text-muted-foreground">{location.comment}</p>
+                        <p className="text-sm text-muted-foreground line-clamp-2">{location.comment}</p>
                       )}
                     </div>
                     <AlertDialog>
@@ -166,24 +168,25 @@ const ProjectDetail = () => {
       </div>
 
       {/* Fixed Bottom Actions */}
-      <div className="fixed bottom-0 left-0 right-0 bg-card border-t shadow-lg p-4">
-        <div className="container max-w-4xl mx-auto flex gap-3">
+      <div className="fixed bottom-0 left-0 right-0 bg-card border-t shadow-lg p-3 md:p-4">
+        <div className="container max-w-4xl mx-auto flex gap-2 md:gap-3">
           <Button
             size="lg"
-            className="flex-1"
+            className="flex-1 h-12 md:h-11"
             onClick={() => navigate(`/projects/${projectId}/camera`)}
           >
-            <Camera className="mr-2 h-5 w-5" />
-            Standort aufnehmen
+            <Camera className="mr-1 md:mr-2 h-5 w-5" />
+            <span className="text-sm md:text-base">Aufnehmen</span>
           </Button>
           {project.locations.length > 0 && (
             <Button
               size="lg"
               variant="outline"
               onClick={() => navigate(`/projects/${projectId}/export`)}
+              className="h-12 md:h-11 px-3 md:px-4"
             >
-              <Download className="mr-2 h-5 w-5" />
-              Export
+              <Download className="mr-1 md:mr-2 h-5 w-5" />
+              <span className="hidden sm:inline text-sm md:text-base">Export</span>
             </Button>
           )}
         </div>

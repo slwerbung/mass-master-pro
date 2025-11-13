@@ -58,20 +58,22 @@ const LocationDetails = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="container max-w-2xl mx-auto p-4 space-y-6">
+      <div className="container max-w-2xl mx-auto p-4 md:p-6 space-y-6">
         <Button
           variant="ghost"
           onClick={() => navigate(-1)}
+          size="sm"
+          className="md:size-default"
         >
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Zurück
+          <ArrowLeft className="mr-1 md:mr-2 h-4 w-4" />
+          <span className="text-sm md:text-base">Zurück</span>
         </Button>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Standort-Details</CardTitle>
+          <CardHeader className="p-4 md:p-6">
+            <CardTitle className="text-xl md:text-2xl">Standort-Details</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-4 md:space-y-6 p-4 md:p-6">
             <div className="aspect-video bg-muted rounded-lg overflow-hidden">
               <img
                 src={imageData}

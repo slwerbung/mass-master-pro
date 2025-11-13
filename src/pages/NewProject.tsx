@@ -36,24 +36,25 @@ const NewProject = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="container max-w-2xl mx-auto p-4 space-y-6">
+      <div className="container max-w-2xl mx-auto p-4 md:p-6 space-y-6">
         <Button
           variant="ghost"
           onClick={() => navigate("/")}
           className="mb-4"
+          size="sm"
         >
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Zurück
+          <ArrowLeft className="mr-1 md:mr-2 h-4 w-4" />
+          <span className="text-sm md:text-base">Zurück</span>
         </Button>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Neues Projekt erstellen</CardTitle>
-            <CardDescription>
+          <CardHeader className="p-4 md:p-6">
+            <CardTitle className="text-xl md:text-2xl">Neues Projekt erstellen</CardTitle>
+            <CardDescription className="text-sm md:text-base">
               Gib eine Projektnummer ein, um ein neues Aufmaß-Projekt zu starten
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-4 md:space-y-6 p-4 md:p-6">
             <div className="space-y-2">
               <Label htmlFor="projectNumber">Projektnummer</Label>
               <div className="flex items-center gap-2">
