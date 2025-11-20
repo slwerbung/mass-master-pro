@@ -34,7 +34,14 @@ export const storage = {
       projects.push(project);
     }
     
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "QuotaExceededError") {
+        throw new Error("QUOTA_EXCEEDED");
+      }
+      throw error;
+    }
   },
 
   deleteProject(id: string): void {
