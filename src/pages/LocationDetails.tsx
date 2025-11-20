@@ -9,6 +9,7 @@ import { ArrowLeft, Check } from "lucide-react";
 import { storage } from "@/lib/storage";
 import { Location } from "@/types/project";
 import { toast } from "sonner";
+import { compressImage } from "@/lib/imageCompression";
 
 const LocationDetails = () => {
   const { projectId } = useParams();
@@ -18,38 +19,69 @@ const LocationDetails = () => {
 
   const [locationName, setLocationName] = useState("");
   const [comment, setComment] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!projectId || !imageData) {
       toast.error("Fehler beim Speichern");
       return;
     }
 
-    const project = storage.getProject(projectId);
-    if (!project) {
-      toast.error("Projekt nicht gefunden");
-      return;
+    setIsSaving(true);
+
+    try {
+      const project = storage.getProject(projectId);
+      if (!project) {
+        toast.error("Projekt nicht gefunden");
+        setIsSaving(false);
+        return;
+      }
+
+      // Compress images before saving
+      toast.loading("Bild wird komprimiert...");
+      const compressedImageData = await compressImage(imageData, 1920, 0.75);
+      const compressedOriginalImageData = originalImageData 
+        ? await compressImage(originalImageData, 1920, 0.75)
+        : compressedImageData;
+
+      const locationNumber = project.locations.length + 1;
+      const paddedNumber = locationNumber.toString().padStart(3, "0");
+      const fullLocationNumber = `${project.projectNumber}-${100 + locationNumber - 1}`;
+
+      const newLocation: Location = {
+        id: crypto.randomUUID(),
+        locationNumber: fullLocationNumber,
+        locationName: locationName.trim() || undefined,
+        comment: comment.trim() || undefined,
+        imageData: compressedImageData,
+        originalImageData: compressedOriginalImageData,
+        createdAt: new Date(),
+      };
+
+      project.locations.push(newLocation);
+      
+      try {
+        storage.saveProject(project);
+        toast.dismiss();
+        toast.success("Standort gespeichert");
+        navigate(`/projects/${projectId}`);
+      } catch (error) {
+        toast.dismiss();
+        if (error instanceof Error && error.message === "QUOTA_EXCEEDED") {
+          toast.error(
+            "Speicher voll! Bitte löschen Sie alte Projekte oder exportieren Sie diese und starten Sie ein neues Projekt.",
+            { duration: 6000 }
+          );
+        } else {
+          toast.error("Fehler beim Speichern");
+        }
+      }
+    } catch (error) {
+      toast.dismiss();
+      toast.error("Fehler beim Komprimieren des Bildes");
+    } finally {
+      setIsSaving(false);
     }
-
-    const locationNumber = project.locations.length + 1;
-    const paddedNumber = locationNumber.toString().padStart(3, "0");
-    const fullLocationNumber = `${project.projectNumber}-${100 + locationNumber - 1}`;
-
-    const newLocation: Location = {
-      id: crypto.randomUUID(),
-      locationNumber: fullLocationNumber,
-      locationName: locationName.trim() || undefined,
-      comment: comment.trim() || undefined,
-      imageData,
-      originalImageData: originalImageData || imageData,
-      createdAt: new Date(),
-    };
-
-    project.locations.push(newLocation);
-    storage.saveProject(project);
-
-    toast.success("Standort gespeichert");
-    navigate(`/projects/${projectId}`);
   };
 
   if (!imageData) {
@@ -109,9 +141,10 @@ const LocationDetails = () => {
               size="lg"
               className="w-full"
               onClick={handleSave}
+              disabled={isSaving}
             >
               <Check className="mr-2 h-5 w-5" />
-              Standort speichern
+              {isSaving ? "Speichert..." : "Standort speichern"}
             </Button>
           </CardContent>
         </Card>
