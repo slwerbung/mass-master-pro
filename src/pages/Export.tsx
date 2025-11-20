@@ -30,12 +30,22 @@ const Export = () => {
 
     try {
       for (const location of project.locations) {
-        const link = document.createElement("a");
-        link.href = location.imageData;
-        link.download = `${project.projectNumber}_${location.locationNumber}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        // Export annotated image
+        const linkAnnotated = document.createElement("a");
+        linkAnnotated.href = location.imageData;
+        linkAnnotated.download = `${project.projectNumber}_${location.locationNumber}_bemaßt.png`;
+        document.body.appendChild(linkAnnotated);
+        linkAnnotated.click();
+        document.body.removeChild(linkAnnotated);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Export original image
+        const linkOriginal = document.createElement("a");
+        linkOriginal.href = location.originalImageData;
+        linkOriginal.download = `${project.projectNumber}_${location.locationNumber}_original.png`;
+        document.body.appendChild(linkOriginal);
+        linkOriginal.click();
+        document.body.removeChild(linkOriginal);
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       toast.success("Bilder werden heruntergeladen");

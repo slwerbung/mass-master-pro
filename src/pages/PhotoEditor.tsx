@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage } from "fabric";
-import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check } from "lucide-react";
+import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,8 @@ const PhotoEditor = () => {
   const [fabricCanvas, setFabricCanvas] = useState<FabricCanvas | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>("select");
   const [measureStart, setMeasureStart] = useState<{ x: number; y: number } | null>(null);
+  const [canvasHistory, setCanvasHistory] = useState<string[]>([]);
+  const [historyStep, setHistoryStep] = useState(-1);
   const imageData = location.state?.imageData;
 
   useEffect(() => {
@@ -64,12 +66,70 @@ const PhotoEditor = () => {
     brush.width = 3;
     canvas.freeDrawingBrush = brush;
 
+    // Save initial state
+    canvas.on("object:added", saveHistory);
+    canvas.on("object:modified", saveHistory);
+    canvas.on("object:removed", saveHistory);
+
     setFabricCanvas(canvas);
 
     return () => {
+      canvas.off("object:added", saveHistory);
+      canvas.off("object:modified", saveHistory);
+      canvas.off("object:removed", saveHistory);
       canvas.dispose();
     };
   }, [imageData, projectId, navigate]);
+
+  const saveHistory = () => {
+    if (!fabricCanvas) return;
+    
+    const json = JSON.stringify(fabricCanvas.toJSON());
+    const newHistory = canvasHistory.slice(0, historyStep + 1);
+    newHistory.push(json);
+    setCanvasHistory(newHistory);
+    setHistoryStep(newHistory.length - 1);
+  };
+
+  const handleUndo = () => {
+    if (!fabricCanvas || historyStep <= 0) return;
+    
+    const prevStep = historyStep - 1;
+    setHistoryStep(prevStep);
+    
+    fabricCanvas.loadFromJSON(JSON.parse(canvasHistory[prevStep]), () => {
+      fabricCanvas.renderAll();
+    });
+  };
+
+  const handleRedo = () => {
+    if (!fabricCanvas || historyStep >= canvasHistory.length - 1) return;
+    
+    const nextStep = historyStep + 1;
+    setHistoryStep(nextStep);
+    
+    fabricCanvas.loadFromJSON(JSON.parse(canvasHistory[nextStep]), () => {
+      fabricCanvas.renderAll();
+    });
+  };
+
+  const handleDelete = () => {
+    if (!fabricCanvas) return;
+    
+    const activeObjects = fabricCanvas.getActiveObjects();
+    if (activeObjects.length === 0) {
+      toast.error("Kein Objekt ausgewählt");
+      return;
+    }
+    
+    activeObjects.forEach((obj) => {
+      fabricCanvas.remove(obj);
+    });
+    
+    fabricCanvas.discardActiveObject();
+    fabricCanvas.renderAll();
+    toast.success("Objekt gelöscht");
+  };
 
   useEffect(() => {
     if (!fabricCanvas) return;
@@ -178,7 +238,7 @@ const PhotoEditor = () => {
             </Button>
           </div>
 
-          <div className="flex gap-1 md:gap-2 justify-center">
+          <div className="flex gap-1 md:gap-2 justify-center flex-wrap">
             <Button
               variant={activeTool === "select" ? "default" : "outline"}
               size="sm"
@@ -211,6 +271,37 @@ const PhotoEditor = () => {
             >
               <Ruler className="h-4 w-4" />
             </Button>
+            <div className="w-full md:w-auto flex gap-1 md:gap-2 mt-1 md:mt-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleUndo}
+                disabled={historyStep <= 0}
+                className="flex-1 md:flex-none"
+                title="Rückgängig"
+              >
+                <Undo className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRedo}
+                disabled={historyStep >= canvasHistory.length - 1}
+                className="flex-1 md:flex-none"
+                title="Wiederholen"
+              >
+                <Redo className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDelete}
+                className="flex-1 md:flex-none"
+                title="Löschen"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </div>
       </div>
