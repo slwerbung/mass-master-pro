@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, Camera, Download, MapPin, Trash2 } from "lucide-react";
-import { storage } from "@/lib/storage";
+import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
 import {
@@ -21,42 +21,72 @@ import {
 const ProjectDetail = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (projectId) {
-      const loadedProject = storage.getProject(projectId);
-      if (loadedProject) {
-        setProject(loadedProject);
-      } else {
-        toast.error("Projekt nicht gefunden");
-        navigate("/");
+    const loadProject = async () => {
+      if (projectId) {
+        try {
+          const loadedProject = await indexedDBStorage.getProject(projectId);
+          if (loadedProject) {
+            setProject(loadedProject);
+          } else {
+            toast.error("Projekt nicht gefunden");
+            navigate("/");
+          }
+        } catch (error) {
+          console.error("Error loading project:", error);
+          toast.error("Fehler beim Laden des Projekts");
+          navigate("/");
+        } finally {
+          setIsLoading(false);
+        }
       }
-    }
+    };
+    loadProject();
   }, [projectId, navigate]);
 
-  const handleDeleteProject = () => {
+  const handleDeleteProject = async () => {
     if (projectId) {
-      storage.deleteProject(projectId);
-      toast.success("Projekt gelöscht");
-      navigate("/");
+      try {
+        await indexedDBStorage.deleteProject(projectId);
+        toast.success("Projekt gelöscht");
+        navigate("/");
+      } catch (error) {
+        console.error("Error deleting project:", error);
+        toast.error("Fehler beim Löschen");
+      }
     }
   };
 
-  const handleDeleteLocation = (locationId: string) => {
+  const handleDeleteLocation = async (locationId: string) => {
     if (project) {
-      const updatedProject = {
-        ...project,
-        locations: project.locations.filter((l) => l.id !== locationId),
-      };
-      storage.saveProject(updatedProject);
-      setProject(updatedProject);
-      toast.success("Standort gelöscht");
+      try {
+        const updatedProject = {
+          ...project,
+          locations: project.locations.filter((l) => l.id !== locationId),
+        };
+        await indexedDBStorage.saveProject(updatedProject);
+        setProject(updatedProject);
+        toast.success("Standort gelöscht");
+      } catch (error) {
+        console.error("Error deleting location:", error);
+        toast.error("Fehler beim Löschen");
+      }
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-muted-foreground">Laden...</div>
+      </div>
+    );
+  }
 
   if (!project) {
-    return <div>Laden...</div>;
+    return null;
   }
 
   return (

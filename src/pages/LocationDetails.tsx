@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Check } from "lucide-react";
-import { storage } from "@/lib/storage";
+import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Location } from "@/types/project";
 import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
@@ -30,22 +30,21 @@ const LocationDetails = () => {
     setIsSaving(true);
 
     try {
-      const project = storage.getProject(projectId);
+      const project = await indexedDBStorage.getProject(projectId);
       if (!project) {
         toast.error("Projekt nicht gefunden");
         setIsSaving(false);
         return;
       }
 
-      // Compress images before saving
+      // Compress images before saving (smaller for better storage)
       toast.loading("Bild wird komprimiert...");
-      const compressedImageData = await compressImage(imageData, 1920, 0.75);
+      const compressedImageData = await compressImage(imageData, 1280, 0.65);
       const compressedOriginalImageData = originalImageData 
-        ? await compressImage(originalImageData, 1920, 0.75)
+        ? await compressImage(originalImageData, 1280, 0.65)
         : compressedImageData;
 
       const locationNumber = project.locations.length + 1;
-      const paddedNumber = locationNumber.toString().padStart(3, "0");
       const fullLocationNumber = `${project.projectNumber}-${100 + locationNumber - 1}`;
 
       const newLocation: Location = {
@@ -61,23 +60,18 @@ const LocationDetails = () => {
       project.locations.push(newLocation);
       
       try {
-        storage.saveProject(project);
+        await indexedDBStorage.saveProject(project);
         toast.dismiss();
         toast.success("Standort gespeichert");
         navigate(`/projects/${projectId}`);
       } catch (error) {
         toast.dismiss();
-        if (error instanceof Error && error.message === "QUOTA_EXCEEDED") {
-          toast.error(
-            "Speicher voll! Bitte löschen Sie alte Projekte oder exportieren Sie diese und starten Sie ein neues Projekt.",
-            { duration: 6000 }
-          );
-        } else {
-          toast.error("Fehler beim Speichern");
-        }
+        console.error("Error saving location:", error);
+        toast.error("Fehler beim Speichern");
       }
     } catch (error) {
       toast.dismiss();
+      console.error("Error compressing image:", error);
       toast.error("Fehler beim Komprimieren des Bildes");
     } finally {
       setIsSaving(false);

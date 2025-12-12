@@ -3,23 +3,47 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, FolderOpen, Calendar } from "lucide-react";
-import { storage } from "@/lib/storage";
+import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
+import { StorageIndicator } from "@/components/StorageIndicator";
+import { toast } from "sonner";
 
 const Projects = () => {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
     loadProjects();
   }, []);
 
-  const loadProjects = () => {
-    const loadedProjects = storage.getProjects();
-    setProjects(loadedProjects.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()));
+  const loadProjects = async () => {
+    try {
+      // First, try to migrate from localStorage
+      const migrated = await indexedDBStorage.migrateFromLocalStorage();
+      if (migrated) {
+        toast.success("Daten wurden in neuen Speicher migriert - mehr Platz verfügbar!");
+      }
+      
+      const loadedProjects = await indexedDBStorage.getProjects();
+      setProjects(loadedProjects.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()));
+    } catch (error) {
+      console.error("Error loading projects:", error);
+      toast.error("Fehler beim Laden der Projekte");
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-muted-foreground">Laden...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -38,6 +62,8 @@ const Projects = () => {
             Neues Projekt
           </Button>
         </div>
+
+        <StorageIndicator />
 
         {projects.length === 0 ? (
           <Card className="border-2 border-dashed">
