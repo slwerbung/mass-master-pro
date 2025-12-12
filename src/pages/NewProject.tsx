@@ -5,33 +5,43 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft } from "lucide-react";
-import { storage } from "@/lib/storage";
+import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
 
 const NewProject = () => {
   const [projectNumber, setProjectNumber] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
   const navigate = useNavigate();
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!projectNumber.trim()) {
       toast.error("Bitte eine Projektnummer eingeben");
       return;
     }
 
-    const fullProjectNumber = `WER-${projectNumber.trim()}`;
+    setIsCreating(true);
 
-    const newProject: Project = {
-      id: crypto.randomUUID(),
-      projectNumber: fullProjectNumber,
-      locations: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    try {
+      const fullProjectNumber = `WER-${projectNumber.trim()}`;
 
-    storage.saveProject(newProject);
-    toast.success("Projekt erstellt");
-    navigate(`/projects/${newProject.id}`);
+      const newProject: Project = {
+        id: crypto.randomUUID(),
+        projectNumber: fullProjectNumber,
+        locations: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      await indexedDBStorage.saveProject(newProject);
+      toast.success("Projekt erstellt");
+      navigate(`/projects/${newProject.id}`);
+    } catch (error) {
+      console.error("Error creating project:", error);
+      toast.error("Fehler beim Erstellen des Projekts");
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
@@ -72,6 +82,7 @@ const NewProject = () => {
                   }}
                   autoFocus
                   className="text-lg flex-1"
+                  disabled={isCreating}
                 />
               </div>
             </div>
@@ -80,8 +91,9 @@ const NewProject = () => {
               size="lg"
               className="w-full"
               onClick={handleCreate}
+              disabled={isCreating}
             >
-              Projekt erstellen
+              {isCreating ? "Erstellt..." : "Projekt erstellen"}
             </Button>
           </CardContent>
         </Card>

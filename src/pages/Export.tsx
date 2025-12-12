@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Download, FileImage, FileText } from "lucide-react";
-import { storage } from "@/lib/storage";
+import { ArrowLeft, FileImage, FileText } from "lucide-react";
+import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
@@ -11,18 +11,30 @@ import jsPDF from "jspdf";
 const Export = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (projectId) {
-      const loadedProject = storage.getProject(projectId);
-      if (loadedProject) {
-        setProject(loadedProject);
-      } else {
-        toast.error("Projekt nicht gefunden");
-        navigate("/");
+    const loadProject = async () => {
+      if (projectId) {
+        try {
+          const loadedProject = await indexedDBStorage.getProject(projectId);
+          if (loadedProject) {
+            setProject(loadedProject);
+          } else {
+            toast.error("Projekt nicht gefunden");
+            navigate("/");
+          }
+        } catch (error) {
+          console.error("Error loading project:", error);
+          toast.error("Fehler beim Laden des Projekts");
+          navigate("/");
+        } finally {
+          setIsLoading(false);
+        }
       }
-    }
+    };
+    loadProject();
   }, [projectId, navigate]);
 
   const exportAsImages = async () => {
@@ -124,8 +136,16 @@ const Export = () => {
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-muted-foreground">Laden...</div>
+      </div>
+    );
+  }
+
   if (!project) {
-    return <div>Laden...</div>;
+    return null;
   }
 
   return (
