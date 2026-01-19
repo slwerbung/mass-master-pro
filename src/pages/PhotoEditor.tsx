@@ -160,7 +160,8 @@ const PhotoEditor = () => {
   const handleCanvasClick = (e: any) => {
     if (activeTool !== "measure" || !fabricCanvas) return;
 
-    const p = (e && (e.absolutePointer || e.pointer)) ?? (e?.e ? fabricCanvas.getPointer(e.e) : null);
+    // Fabric v7: use scenePoint or viewportPoint instead of getPointer
+    const p = e?.scenePoint || e?.absolutePointer || e?.pointer;
     if (!p) return;
     const pointer = { x: p.x, y: p.y };
 
