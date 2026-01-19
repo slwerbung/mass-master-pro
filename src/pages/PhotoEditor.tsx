@@ -224,7 +224,7 @@ const PhotoEditor = () => {
   if (!imageData) return null;
 
   return (
-    <div className="h-[100dvh] bg-background flex flex-col overflow-hidden">
+    <div className="app-screen bg-background flex flex-col overflow-hidden">
       <div className="shrink-0 bg-card border-b p-2">
         <div className="flex items-center justify-between gap-2">
           <Button

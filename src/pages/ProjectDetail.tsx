@@ -198,7 +198,7 @@ const ProjectDetail = () => {
       </div>
 
       {/* Fixed Bottom Actions */}
-      <div className="fixed bottom-0 left-0 right-0 bg-card border-t shadow-lg p-3 md:p-4">
+      <div className="fixed bottom-0 left-0 right-0 bg-card border-t shadow-lg p-3 md:p-4 safe-area-bottom">
         <div className="container max-w-4xl mx-auto flex gap-2 md:gap-3">
           <Button
             size="lg"
