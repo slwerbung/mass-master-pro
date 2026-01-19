@@ -32,10 +32,15 @@ const PhotoEditor = () => {
 
     if (!canvasRef.current) return;
 
-    const isMobile = window.innerWidth < 768;
+    // Calculate available space for canvas
+    const headerHeight = window.innerWidth < 768 ? 100 : 80;
+    const padding = window.innerWidth < 768 ? 8 : 32;
+    const availableHeight = window.innerHeight - headerHeight - padding;
+    const availableWidth = window.innerWidth - padding;
+
     const canvas = new FabricCanvas(canvasRef.current, {
-      width: window.innerWidth - (isMobile ? 0 : 40),
-      height: window.innerHeight - (isMobile ? 160 : 200),
+      width: availableWidth,
+      height: availableHeight,
       backgroundColor: "#ffffff",
     });
 
@@ -218,40 +223,32 @@ const PhotoEditor = () => {
   if (!imageData) return null;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <div className="bg-card border-b p-2 md:p-4">
-        <div className="container max-w-6xl mx-auto">
-          <div className="flex items-center justify-between gap-2 mb-2 md:mb-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate(`/projects/${projectId}`)}
-              className="shrink-0"
-            >
-              <ArrowLeft className="h-4 w-4 md:mr-2" />
-              <span className="hidden md:inline">Abbrechen</span>
-            </Button>
+    <div className="h-[100dvh] bg-background flex flex-col overflow-hidden">
+      <div className="shrink-0 bg-card border-b p-2">
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate(`/projects/${projectId}`)}
+            className="shrink-0"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
 
-            <Button onClick={handleNext} size="sm" className="shrink-0">
-              <Check className="h-4 w-4 md:mr-2" />
-              <span className="hidden sm:inline">Weiter</span>
-            </Button>
-          </div>
-
-          <div className="flex gap-1 md:gap-2 justify-center flex-wrap">
+          <div className="flex gap-1 justify-center flex-1">
             <Button
               variant={activeTool === "select" ? "default" : "outline"}
               size="sm"
               onClick={() => setActiveTool("select")}
-              className="flex-1 md:flex-none"
+              className="px-2"
             >
-              <span className="text-xs md:text-sm">Wählen</span>
+              <span className="text-xs">Sel</span>
             </Button>
             <Button
               variant={activeTool === "draw" ? "default" : "outline"}
               size="sm"
               onClick={() => setActiveTool("draw")}
-              className="flex-1 md:flex-none"
+              className="px-2"
             >
               <Pencil className="h-4 w-4" />
             </Button>
@@ -259,7 +256,7 @@ const PhotoEditor = () => {
               variant={activeTool === "text" ? "default" : "outline"}
               size="sm"
               onClick={() => setActiveTool("text")}
-              className="flex-1 md:flex-none"
+              className="px-2"
             >
               <Type className="h-4 w-4" />
             </Button>
@@ -267,52 +264,51 @@ const PhotoEditor = () => {
               variant={activeTool === "measure" ? "default" : "outline"}
               size="sm"
               onClick={() => setActiveTool("measure")}
-              className="flex-1 md:flex-none"
+              className="px-2"
             >
               <Ruler className="h-4 w-4" />
             </Button>
-            <div className="w-full md:w-auto flex gap-1 md:gap-2 mt-1 md:mt-0">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleUndo}
-                disabled={historyStep <= 0}
-                className="flex-1 md:flex-none"
-                title="Rückgängig"
-              >
-                <Undo className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleRedo}
-                disabled={historyStep >= canvasHistory.length - 1}
-                className="flex-1 md:flex-none"
-                title="Wiederholen"
-              >
-                <Redo className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleDelete}
-                className="flex-1 md:flex-none"
-                title="Löschen"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleUndo}
+              disabled={historyStep <= 0}
+              className="px-2"
+            >
+              <Undo className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRedo}
+              disabled={historyStep >= canvasHistory.length - 1}
+              className="px-2"
+            >
+              <Redo className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDelete}
+              className="px-2"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
           </div>
+
+          <Button onClick={handleNext} size="sm" className="shrink-0">
+            <Check className="h-4 w-4" />
+          </Button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden flex items-center justify-center p-2 md:p-4">
+      <div className="flex-1 min-h-0 overflow-hidden flex items-center justify-center p-1">
         <canvas ref={canvasRef} className="max-w-full max-h-full" />
       </div>
 
       {measureStart && (
-        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-primary text-primary-foreground px-3 py-2 md:px-4 md:py-2 rounded-lg shadow-lg text-xs md:text-sm max-w-[90vw] text-center">
-          Zweiten Punkt für Bemaßung wählen
+        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-primary text-primary-foreground px-3 py-2 rounded-lg shadow-lg text-xs text-center z-50">
+          Zweiten Punkt wählen
         </div>
       )}
     </div>

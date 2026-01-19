@@ -69,8 +69,8 @@ const Camera = () => {
   };
 
   return (
-    <div className="min-h-screen bg-black flex flex-col">
-      <div className="flex-1 relative flex items-center justify-center">
+    <div className="h-[100dvh] bg-black flex flex-col overflow-hidden">
+      <div className="flex-1 relative flex items-center justify-center min-h-0">
         {!capturedImage ? (
           <video
             ref={videoRef}
@@ -88,7 +88,7 @@ const Camera = () => {
         <canvas ref={canvasRef} className="hidden" />
       </div>
 
-      <div className="bg-black/80 p-6 flex items-center justify-center gap-4">
+      <div className="shrink-0 bg-black/80 p-4 flex items-center justify-center gap-4 safe-area-bottom">
         <Button
           size="lg"
           variant="ghost"
@@ -102,9 +102,9 @@ const Camera = () => {
           <Button
             size="lg"
             onClick={capturePhoto}
-            className="h-20 w-20 rounded-full bg-white hover:bg-white/90"
+            className="h-16 w-16 rounded-full bg-white hover:bg-white/90"
           >
-            <CameraIcon className="h-8 w-8 text-black" />
+            <CameraIcon className="h-6 w-6 text-black" />
           </Button>
         ) : (
           <>
@@ -114,16 +114,16 @@ const Camera = () => {
               onClick={retakePhoto}
               className="text-white hover:bg-white/10"
             >
-              <X className="h-6 w-6 mr-2" />
-              Wiederholen
+              <X className="h-5 w-5 mr-1" />
+              <span className="text-sm">Neu</span>
             </Button>
             <Button
               size="lg"
               onClick={confirmPhoto}
               className="bg-primary hover:bg-primary-hover"
             >
-              <Check className="h-6 w-6 mr-2" />
-              Verwenden
+              <Check className="h-5 w-5 mr-1" />
+              <span className="text-sm">OK</span>
             </Button>
           </>
         )}
