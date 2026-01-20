@@ -2,16 +2,26 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, FileImage, FileText } from "lucide-react";
+import { ArrowLeft, FileImage, FileText, Download, Archive, Loader2 } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
+import JSZip from "jszip";
+import { 
+  downloadImage, 
+  downloadBlob, 
+  dataURItoBlob, 
+  isIOSDevice 
+} from "@/lib/exportUtils";
 
 const Export = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [downloadingPDF, setDownloadingPDF] = useState(false);
+  const [downloadingZip, setDownloadingZip] = useState(false);
+  const [downloadingImages, setDownloadingImages] = useState<Record<string, boolean>>({});
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -37,39 +47,80 @@ const Export = () => {
     loadProject();
   }, [projectId, navigate]);
 
-  const exportAsImages = async () => {
+  const handleDownloadImage = async (
+    locationId: string,
+    imageData: string, 
+    filename: string,
+    type: 'annotated' | 'original'
+  ) => {
+    const key = `${locationId}-${type}`;
+    setDownloadingImages(prev => ({ ...prev, [key]: true }));
+    
+    try {
+      const success = await downloadImage(imageData, filename);
+      if (success) {
+        if (isIOSDevice()) {
+          toast.success("Bild wird geladen - ggf. lange drücken zum Speichern");
+        } else {
+          toast.success("Bild heruntergeladen");
+        }
+      } else {
+        toast.error("Download fehlgeschlagen");
+      }
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Fehler beim Download");
+    } finally {
+      setDownloadingImages(prev => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const exportAsZip = async () => {
     if (!project) return;
 
+    setDownloadingZip(true);
     try {
+      const zip = new JSZip();
+      
       for (const location of project.locations) {
-        // Export annotated image
-        const linkAnnotated = document.createElement("a");
-        linkAnnotated.href = location.imageData;
-        linkAnnotated.download = `${project.projectNumber}_${location.locationNumber}_bemaßt.png`;
-        document.body.appendChild(linkAnnotated);
-        linkAnnotated.click();
-        document.body.removeChild(linkAnnotated);
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // Add annotated image
+        const annotatedBlob = dataURItoBlob(location.imageData);
+        zip.file(
+          `${project.projectNumber}_${location.locationNumber}_bemasst.png`,
+          annotatedBlob
+        );
 
-        // Export original image
-        const linkOriginal = document.createElement("a");
-        linkOriginal.href = location.originalImageData;
-        linkOriginal.download = `${project.projectNumber}_${location.locationNumber}_original.png`;
-        document.body.appendChild(linkOriginal);
-        linkOriginal.click();
-        document.body.removeChild(linkOriginal);
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // Add original image
+        const originalBlob = dataURItoBlob(location.originalImageData);
+        zip.file(
+          `${project.projectNumber}_${location.locationNumber}_original.png`,
+          originalBlob
+        );
       }
-      toast.success("Bilder werden heruntergeladen");
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const success = await downloadBlob(
+        zipBlob, 
+        `Aufmass_${project.projectNumber}.zip`
+      );
+      
+      if (success) {
+        toast.success("ZIP-Datei wird heruntergeladen");
+      } else {
+        toast.error("ZIP-Download fehlgeschlagen");
+      }
     } catch (error) {
-      console.error("Export error:", error);
-      toast.error("Fehler beim Export");
+      console.error("ZIP export error:", error);
+      toast.error("Fehler beim ZIP-Export");
+    } finally {
+      setDownloadingZip(false);
     }
   };
 
   const exportAsPDF = async () => {
     if (!project) return;
 
+    setDownloadingPDF(true);
     try {
       const pdf = new jsPDF({
         orientation: "portrait",
@@ -126,13 +177,26 @@ const Export = () => {
           20,
           280
         );
+        pdf.setTextColor(0, 0, 0);
       }
 
-      pdf.save(`Aufmass_${project.projectNumber}.pdf`);
-      toast.success("PDF wird heruntergeladen");
+      // Generate as blob for reliable download
+      const pdfBlob = pdf.output("blob");
+      const success = await downloadBlob(
+        pdfBlob, 
+        `Aufmass_${project.projectNumber}.pdf`
+      );
+      
+      if (success) {
+        toast.success("PDF wird heruntergeladen");
+      } else {
+        toast.error("PDF-Download fehlgeschlagen");
+      }
     } catch (error) {
       console.error("PDF export error:", error);
       toast.error("Fehler beim PDF-Export");
+    } finally {
+      setDownloadingPDF(false);
     }
   };
 
@@ -166,35 +230,137 @@ const Export = () => {
           </p>
         </div>
 
-        <div className="grid gap-4">
-          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={exportAsImages}>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-3">
-                <FileImage className="h-6 w-6 text-primary" />
-                Einzelne Bilder
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground">
-                Alle Standorte als einzelne PNG-Dateien herunterladen
-              </p>
-            </CardContent>
-          </Card>
+        {/* PDF Export */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-3">
+              <FileText className="h-5 w-5 text-primary" />
+              PDF-Dokument
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground mb-3">
+              Alle Standorte in einem zusammengefassten PDF-Dokument
+            </p>
+            <Button 
+              onClick={exportAsPDF} 
+              disabled={downloadingPDF}
+              className="w-full"
+            >
+              {downloadingPDF ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-2" />
+              )}
+              PDF herunterladen
+            </Button>
+          </CardContent>
+        </Card>
 
-          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={exportAsPDF}>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-3">
-                <FileText className="h-6 w-6 text-primary" />
-                PDF-Dokument
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground">
-                Alle Standorte in einem zusammengefassten PDF-Dokument
+        {/* ZIP Export */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-3">
+              <Archive className="h-5 w-5 text-primary" />
+              Alle Bilder als ZIP
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground mb-3">
+              Alle Standorte (bemaßt + original) in einer ZIP-Datei
+            </p>
+            <Button 
+              onClick={exportAsZip} 
+              disabled={downloadingZip}
+              variant="secondary"
+              className="w-full"
+            >
+              {downloadingZip ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-2" />
+              )}
+              ZIP herunterladen
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Individual Images */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-3">
+              <FileImage className="h-5 w-5 text-primary" />
+              Einzelne Bilder
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Standorte einzeln herunterladen
+            </p>
+            
+            {project.locations.map((location) => (
+              <div 
+                key={location.id} 
+                className="border rounded-lg p-3 space-y-2"
+              >
+                <div className="font-medium text-sm">
+                  Standort {location.locationNumber}
+                  {location.locationName && (
+                    <span className="text-muted-foreground font-normal ml-2">
+                      {location.locationName}
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    disabled={downloadingImages[`${location.id}-annotated`]}
+                    onClick={() => handleDownloadImage(
+                      location.id,
+                      location.imageData,
+                      `${project.projectNumber}_${location.locationNumber}_bemasst.png`,
+                      'annotated'
+                    )}
+                  >
+                    {downloadingImages[`${location.id}-annotated`] ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <FileImage className="h-3 w-3 mr-1" />
+                    )}
+                    Bemaßt
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    disabled={downloadingImages[`${location.id}-original`]}
+                    onClick={() => handleDownloadImage(
+                      location.id,
+                      location.originalImageData,
+                      `${project.projectNumber}_${location.locationNumber}_original.png`,
+                      'original'
+                    )}
+                  >
+                    {downloadingImages[`${location.id}-original`] ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <FileImage className="h-3 w-3 mr-1" />
+                    )}
+                    Original
+                  </Button>
+                </div>
+              </div>
+            ))}
+
+            {isIOSDevice() && (
+              <p className="text-xs text-muted-foreground text-center pt-2 border-t">
+                💡 Tipp: Auf iPad/iPhone ggf. lange auf das Bild drücken → "In Fotos speichern"
               </p>
-            </CardContent>
-          </Card>
-        </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
