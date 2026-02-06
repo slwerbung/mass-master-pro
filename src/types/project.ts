@@ -6,6 +6,14 @@ export interface Measurement {
   value: string; // in mm
 }
 
+export interface DetailImage {
+  id: string;
+  imageData: string;      // bearbeitetes Bild
+  originalImageData: string; // Originalbild
+  caption?: string;       // optionale Beschreibung
+  createdAt: Date;
+}
+
 export interface Location {
   id: string;
   locationNumber: string; // Projektnummer + fortlaufende Nummer
@@ -13,6 +21,7 @@ export interface Location {
   comment?: string; // optional Kommentar
   imageData: string; // base64 encoded image with annotations
   originalImageData: string; // original photo
+  detailImages?: DetailImage[];
   createdAt: Date;
 }
 

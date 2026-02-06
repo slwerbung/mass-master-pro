@@ -1,5 +1,5 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
-import { Project, Location } from '@/types/project';
+import { Project, Location, DetailImage } from '@/types/project';
 
 interface AufmassDBSchema extends DBSchema {
   projects: {
@@ -34,10 +34,30 @@ interface AufmassDBSchema extends DBSchema {
     };
     indexes: { 'by-location': string };
   };
+  'detail-images': {
+    key: string;
+    value: {
+      id: string;
+      locationId: string;
+      caption?: string;
+      createdAt: string;
+    };
+    indexes: { 'by-location': string };
+  };
+  'detail-image-blobs': {
+    key: string;
+    value: {
+      id: string;
+      detailImageId: string;
+      type: 'annotated' | 'original';
+      blob: Blob;
+    };
+    indexes: { 'by-detail-image': string };
+  };
 }
 
 const DB_NAME = 'aufmass-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbInstance: IDBPDatabase<AufmassDBSchema> | null = null;
 
@@ -45,18 +65,24 @@ async function getDB(): Promise<IDBPDatabase<AufmassDBSchema>> {
   if (dbInstance) return dbInstance;
 
   dbInstance = await openDB<AufmassDBSchema>(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      // Projects store
-      const projectStore = db.createObjectStore('projects', { keyPath: 'id' });
-      projectStore.createIndex('by-updated', 'updatedAt');
+    upgrade(db, oldVersion) {
+      if (oldVersion < 1) {
+        const projectStore = db.createObjectStore('projects', { keyPath: 'id' });
+        projectStore.createIndex('by-updated', 'updatedAt');
 
-      // Locations store
-      const locationStore = db.createObjectStore('locations', { keyPath: 'id' });
-      locationStore.createIndex('by-project', 'projectId');
+        const locationStore = db.createObjectStore('locations', { keyPath: 'id' });
+        locationStore.createIndex('by-project', 'projectId');
 
-      // Images store
-      const imageStore = db.createObjectStore('images', { keyPath: 'id' });
-      imageStore.createIndex('by-location', 'locationId');
+        const imageStore = db.createObjectStore('images', { keyPath: 'id' });
+        imageStore.createIndex('by-location', 'locationId');
+      }
+      if (oldVersion < 2) {
+        const detailStore = db.createObjectStore('detail-images', { keyPath: 'id' });
+        detailStore.createIndex('by-location', 'locationId');
+
+        const detailBlobStore = db.createObjectStore('detail-image-blobs', { keyPath: 'id' });
+        detailBlobStore.createIndex('by-detail-image', 'detailImageId');
+      }
     },
   });
 
@@ -91,6 +117,10 @@ async function blobToBase64(blob: Blob): Promise<string> {
 // Helper to create image ID
 function createImageId(locationId: string, type: 'annotated' | 'original'): string {
   return `${locationId}_${type}`;
+}
+
+function createDetailBlobId(detailImageId: string, type: 'annotated' | 'original'): string {
+  return `${detailImageId}_${type}`;
 }
 
 export const indexedDBStorage = {
@@ -146,6 +176,9 @@ export const indexedDBStorage = {
       
       const imageData = annotatedImage ? await blobToBase64(annotatedImage.blob) : '';
       const originalImageData = originalImage ? await blobToBase64(originalImage.blob) : imageData;
+
+      // Load detail images
+      const detailImages = await this.getDetailImagesByLocation(record.id);
       
       locations.push({
         id: record.id,
@@ -154,6 +187,7 @@ export const indexedDBStorage = {
         comment: record.comment,
         imageData,
         originalImageData,
+        detailImages,
         createdAt: new Date(record.createdAt),
       });
     }
@@ -161,10 +195,88 @@ export const indexedDBStorage = {
     return locations;
   },
 
+  async getDetailImagesByLocation(locationId: string): Promise<DetailImage[]> {
+    const db = await getDB();
+    const records = await db.getAllFromIndex('detail-images', 'by-location', locationId);
+    
+    const detailImages: DetailImage[] = [];
+    
+    for (const record of records) {
+      const annotatedBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'annotated'));
+      const originalBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'original'));
+      
+      const imageData = annotatedBlob ? await blobToBase64(annotatedBlob.blob) : '';
+      const originalImageData = originalBlob ? await blobToBase64(originalBlob.blob) : imageData;
+      
+      detailImages.push({
+        id: record.id,
+        imageData,
+        originalImageData,
+        caption: record.caption,
+        createdAt: new Date(record.createdAt),
+      });
+    }
+    
+    return detailImages;
+  },
+
+  async saveDetailImage(locationId: string, detailImage: DetailImage): Promise<void> {
+    const db = await getDB();
+    
+    await db.put('detail-images', {
+      id: detailImage.id,
+      locationId,
+      caption: detailImage.caption,
+      createdAt: detailImage.createdAt.toISOString(),
+    });
+    
+    if (detailImage.imageData) {
+      await db.put('detail-image-blobs', {
+        id: createDetailBlobId(detailImage.id, 'annotated'),
+        detailImageId: detailImage.id,
+        type: 'annotated',
+        blob: base64ToBlob(detailImage.imageData),
+      });
+    }
+    
+    if (detailImage.originalImageData) {
+      await db.put('detail-image-blobs', {
+        id: createDetailBlobId(detailImage.id, 'original'),
+        detailImageId: detailImage.id,
+        type: 'original',
+        blob: base64ToBlob(detailImage.originalImageData),
+      });
+    }
+  },
+
+  async deleteDetailImage(detailImageId: string): Promise<void> {
+    const db = await getDB();
+    await db.delete('detail-images', detailImageId);
+    await db.delete('detail-image-blobs', createDetailBlobId(detailImageId, 'annotated'));
+    await db.delete('detail-image-blobs', createDetailBlobId(detailImageId, 'original'));
+  },
+
+  async updateLocationMetadata(projectId: string, locationId: string, data: { locationName?: string; comment?: string }): Promise<void> {
+    const db = await getDB();
+    const record = await db.get('locations', locationId);
+    if (!record) return;
+    
+    await db.put('locations', {
+      ...record,
+      locationName: data.locationName,
+      comment: data.comment,
+    });
+
+    // Update project timestamp
+    const project = await db.get('projects', projectId);
+    if (project) {
+      await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
+    }
+  },
+
   async saveProject(project: Project): Promise<void> {
     const db = await getDB();
     
-    // Save project metadata
     await db.put('projects', {
       id: project.id,
       projectNumber: project.projectNumber,
@@ -172,13 +284,10 @@ export const indexedDBStorage = {
       updatedAt: new Date().toISOString(),
     });
     
-    // Get existing locations to check what's new
     const existingLocations = await db.getAllFromIndex('locations', 'by-project', project.id);
     const existingLocationIds = new Set(existingLocations.map(l => l.id));
     
-    // Save locations and their images
     for (const location of project.locations) {
-      // Save location metadata
       await db.put('locations', {
         id: location.id,
         projectId: project.id,
@@ -188,9 +297,7 @@ export const indexedDBStorage = {
         createdAt: location.createdAt.toISOString(),
       });
       
-      // Only save images if they're new or location is new
       if (!existingLocationIds.has(location.id)) {
-        // Save annotated image
         if (location.imageData) {
           const annotatedBlob = base64ToBlob(location.imageData);
           await db.put('images', {
@@ -201,7 +308,6 @@ export const indexedDBStorage = {
           });
         }
         
-        // Save original image
         if (location.originalImageData) {
           const originalBlob = base64ToBlob(location.originalImageData);
           await db.put('images', {
@@ -214,10 +320,16 @@ export const indexedDBStorage = {
       }
     }
     
-    // Remove deleted locations
     const currentLocationIds = new Set(project.locations.map(l => l.id));
     for (const existingLocation of existingLocations) {
       if (!currentLocationIds.has(existingLocation.id)) {
+        // Delete detail images for this location
+        const detailImages = await db.getAllFromIndex('detail-images', 'by-location', existingLocation.id);
+        for (const di of detailImages) {
+          await db.delete('detail-image-blobs', createDetailBlobId(di.id, 'annotated'));
+          await db.delete('detail-image-blobs', createDetailBlobId(di.id, 'original'));
+          await db.delete('detail-images', di.id);
+        }
         await db.delete('locations', existingLocation.id);
         await db.delete('images', createImageId(existingLocation.id, 'annotated'));
         await db.delete('images', createImageId(existingLocation.id, 'original'));
@@ -228,15 +340,20 @@ export const indexedDBStorage = {
   async deleteProject(id: string): Promise<void> {
     const db = await getDB();
     
-    // Delete all locations and their images
     const locations = await db.getAllFromIndex('locations', 'by-project', id);
     for (const location of locations) {
+      // Delete detail images
+      const detailImages = await db.getAllFromIndex('detail-images', 'by-location', location.id);
+      for (const di of detailImages) {
+        await db.delete('detail-image-blobs', createDetailBlobId(di.id, 'annotated'));
+        await db.delete('detail-image-blobs', createDetailBlobId(di.id, 'original'));
+        await db.delete('detail-images', di.id);
+      }
       await db.delete('images', createImageId(location.id, 'annotated'));
       await db.delete('images', createImageId(location.id, 'original'));
       await db.delete('locations', location.id);
     }
     
-    // Delete project
     await db.delete('projects', id);
   },
 
@@ -255,7 +372,6 @@ export const indexedDBStorage = {
     const STORAGE_KEY = 'aufmass_projects';
     const MIGRATED_KEY = 'aufmass_migrated_to_indexeddb';
     
-    // Check if already migrated
     if (localStorage.getItem(MIGRATED_KEY)) {
       return false;
     }
@@ -289,7 +405,6 @@ export const indexedDBStorage = {
         await this.saveProject(project);
       }
       
-      // Clear localStorage to free up space
       localStorage.removeItem(STORAGE_KEY);
       localStorage.setItem(MIGRATED_KEY, 'true');
       

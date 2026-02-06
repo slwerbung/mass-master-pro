@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage } from "fabric";
 import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2 } from "lucide-react";
@@ -15,6 +15,7 @@ const PhotoEditor = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [fabricCanvas, setFabricCanvas] = useState<FabricCanvas | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>("select");
@@ -204,10 +205,8 @@ const PhotoEditor = () => {
   const handleNext = () => {
     if (!fabricCanvas) return;
 
-    // Ensure all objects are rendered before export
     fabricCanvas.renderAll();
     
-    // Wait a moment to ensure rendering is complete
     setTimeout(() => {
       const dataUrl = fabricCanvas.toDataURL({
         format: "png",
@@ -215,7 +214,11 @@ const PhotoEditor = () => {
         multiplier: 2,
       });
 
-      navigate(`/projects/${projectId}/location-details`, {
+      const detailParam = searchParams.get("detail");
+      const locationIdParam = searchParams.get("locationId");
+      const detailQuery = detailParam === "true" && locationIdParam ? `?detail=true&locationId=${locationIdParam}` : "";
+
+      navigate(`/projects/${projectId}/location-details${detailQuery}`, {
         state: { imageData: dataUrl, originalImageData: imageData },
       });
     }, 200);
