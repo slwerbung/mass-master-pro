@@ -243,7 +243,7 @@ const PhotoEditor = () => {
               onClick={() => setActiveTool("select")}
               className="px-2"
             >
-              <span className="text-xs">Sel</span>
+              <span className="text-xs">Ausw.</span>
             </Button>
             <Button
               variant={activeTool === "draw" ? "default" : "outline"}
