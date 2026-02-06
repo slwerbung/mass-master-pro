@@ -1,148 +1,113 @@
 
 
-## Plan: PDF-Export mit Optionen (Eine Seite pro Standort)
+## Plan: 4 Verbesserungen
 
-### Übersicht
-Der PDF-Export wird überarbeitet mit konfigurierbaren Optionen. **Jeder Standort wird komplett auf einer Seite dargestellt** - die Bildgrößen werden dynamisch angepasst, damit alles passt.
+### 1. PDF-Export: Unverzerrte Bilder + Optionen sichtbar
+
+**Problem**: Die `addImage`-Funktion in jsPDF bekommt Pixel-Dimensionen und rechnet korrekt, aber die Export-Optionen (Collapsible) sind moeglicherweise nicht sichtbar oder die Bildverhaeltnisse stimmen nicht.
+
+**Loesung** in `src/pages/Export.tsx`:
+- Sicherstellen, dass `getImageDimensions` korrekt aufgeloest wird (Fallback bei Fehler)
+- Bei `pdf.addImage` explizit das Seitenverhaeltnis des Originalbildes beibehalten
+- Die `PDFExportOptionsUI`-Komponente prominenter darstellen (standardmaessig aufgeklappt oder mit klarem Hinweis)
+- Testen, dass bei 2 Bildern die Hoehe korrekt aufgeteilt wird
+
+**Technische Aenderung**: In `exportAsPDF` die Ratio-Berechnung pruefen und sicherstellen, dass `contentWidth` (170mm) und `maxHeightPerImage` korrekt als Grenzen verwendet werden. Das Bild wird zentriert und proportional skaliert.
 
 ---
 
-### Schritt 1: PDF-Optionen State hinzufügen
+### 2. Bemassungstext parallel zur Linie
 
-**Datei: `src/pages/Export.tsx`**
+**Datei**: `src/lib/measurement.ts`
 
-Neuer State für Export-Optionen:
+**Aktuell**: Der Text wird senkrecht zur Linie versetzt positioniert, aber nicht gedreht. Er steht immer horizontal.
+
+**Neu**: Der Text wird um den Winkel der Linie gedreht und leicht unterhalb der Linie positioniert.
+
+```text
+Aktuell:           Neu:
+                        120 mm
+   120 mm          ─────────────────
+─────────────────
+```
+
+**Technische Aenderung**:
+- Winkel berechnen: `angle = Math.atan2(dy, dx) * (180 / Math.PI)`
+- `text.angle = angle` setzen (Fabric.js Rotation)
+- Text unterhalb der Linie positionieren statt oberhalb (negativer Perpendikular-Offset)
+- Falls Linie von rechts nach links verlaeuft (angle > 90 oder < -90): Text um 180 Grad drehen, damit er nicht auf dem Kopf steht
+
+---
+
+### 3. Standorte nachtraeglich bearbeiten
+
+**Neue Route**: `/projects/:projectId/locations/:locationId/edit`
+
+**Aenderungen**:
+
+| Datei | Aenderung |
+|-------|-----------|
+| `src/App.tsx` | Neue Route hinzufuegen |
+| `src/pages/ProjectDetail.tsx` | "Bearbeiten"-Button pro Standort (Stift-Icon neben Loeschen) |
+| `src/pages/LocationDetails.tsx` | Erweitern fuer Edit-Modus: bestehende Daten laden, Standortname/Kommentar aendern, speichern |
+| `src/lib/indexedDBStorage.ts` | `updateLocation`-Methode hinzufuegen (Metadaten aktualisieren ohne Bilder neu zu speichern) |
+
+**Ablauf**:
+1. Nutzer klickt "Bearbeiten" auf einem Standort
+2. LocationDetails oeffnet sich mit vorausgefuellten Feldern (Name, Kommentar)
+3. Bild wird als Vorschau angezeigt (nicht editierbar - dafuer gibt es Feature 4)
+4. Nutzer aendert Felder und speichert
+
+---
+
+### 4. Detailbilder zu Standorten hinzufuegen
+
+**Datenmodell-Erweiterung** in `src/types/project.ts`:
+
 ```typescript
-interface PDFExportOptions {
-  includeProjectHeader: boolean;      // Projektnummer
-  includeLocationNumber: boolean;     // Standortnummer
-  includeLocationName: boolean;       // Standortname
-  includeAnnotatedImage: boolean;     // Bemaßtes Bild
-  includeOriginalImage: boolean;      // Originalbild
-  includeComment: boolean;            // Kommentar
-  includeCreatedDate: boolean;        // Erstellungsdatum
+export interface DetailImage {
+  id: string;
+  imageData: string;      // bearbeitetes Bild
+  originalImageData: string; // Originalbild
+  caption?: string;       // optionale Beschreibung
+  createdAt: Date;
+}
+
+export interface Location {
+  // ... bestehende Felder ...
+  detailImages?: DetailImage[];  // neue Eigenschaft
 }
 ```
 
----
+**IndexedDB-Schema**: Da das Schema Version 1 ist, muss ein Upgrade auf Version 2 erfolgen:
+- Neuer Object Store `detail-images` mit Index `by-location`
+- Gleiche Blob-Speicherung wie bei Hauptbildern
 
-### Schritt 2: Optionen-UI erstellen
+**Aenderungen**:
 
-Aufklappbare Optionen-Sektion mit Checkboxen:
+| Datei | Aenderung |
+|-------|-----------|
+| `src/types/project.ts` | `DetailImage` Interface + `detailImages` Feld |
+| `src/lib/indexedDBStorage.ts` | DB Version 2, neuer Store, Lade-/Speicher-Logik fuer Detailbilder |
+| `src/pages/ProjectDetail.tsx` | Anzeige der Detailbilder unter jedem Standort + "Detailbild hinzufuegen"-Button |
+| `src/App.tsx` | Route fuer Detailbild-Kamera und -Editor |
+| `src/pages/PhotoEditor.tsx` | Unterstuetzung fuer "Detailbild-Modus" (speichert als Detailbild statt Hauptbild) |
+| `src/pages/Export.tsx` | Detailbilder optional im PDF und ZIP mit exportieren |
 
-```
-┌──────────────────────────────────────────┐
-│ 📄 PDF-Dokument                          │
-├──────────────────────────────────────────┤
-│ ⚙️ Export-Optionen anpassen              │
-│                                          │
-│ Allgemein:                               │
-│ ☑ Projektnummer                          │
-│ ☑ Standortnummer                         │
-│ ☑ Standortname                           │
-│ ☑ Erstellungsdatum                       │
-│                                          │
-│ Bilder:                                  │
-│ ☑ Bemaßtes Bild                          │
-│ ☐ Originalbild (unbearbeitet)            │
-│                                          │
-│ Inhalt:                                  │
-│ ☑ Kommentar                              │
-│                                          │
-│ [PDF herunterladen]                      │
-└──────────────────────────────────────────┘
-```
+**Ablauf**:
+1. Nutzer oeffnet Standort-Ansicht
+2. Klickt "Detailbild hinzufuegen"
+3. Kamera oeffnet sich -> Foto aufnehmen
+4. PhotoEditor oeffnet sich -> Bearbeiten
+5. Bild wird als Detailbild zum Standort gespeichert
+6. Detailbilder koennen nachtraeglich bearbeitet werden (gleicher Editor)
 
 ---
 
-### Schritt 3: Seitenlayout mit dynamischer Skalierung
+### Reihenfolge der Implementierung
 
-**Eine A4-Seite = 210 x 297 mm**
-
-Verfügbarer Platz (mit Rändern):
-- Breite: 170 mm (20mm Rand links/rechts)
-- Höhe: 257 mm (20mm Rand oben/unten)
-
-**Layout-Berechnung:**
-
-```
-Verfügbare Höhe: 257 mm
-- Header (Projekt/Standort): ~25 mm
-- Kommentar: ~15 mm
-- Datum: ~10 mm
-- Abstände: ~15 mm
-───────────────────────────────
-= Verfügbar für Bilder: ~192 mm
-
-Bei 1 Bild:  maxHeight = 180 mm
-Bei 2 Bildern: maxHeight = 90 mm pro Bild (mit 10mm Abstand)
-```
-
-**Proportionale Skalierung (keine Verzerrung):**
-```typescript
-const getImageDimensions = async (dataURI: string) => {
-  return new Promise<{width: number, height: number}>((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.width, height: img.height });
-    img.src = dataURI;
-  });
-};
-
-// Bild proportional skalieren
-const maxWidth = 170;
-const maxHeight = bothImages ? 90 : 180;
-const ratio = Math.min(maxWidth / imgWidth, maxHeight / imgHeight);
-const scaledWidth = imgWidth * ratio;
-const scaledHeight = imgHeight * ratio;
-```
-
----
-
-### Schritt 4: Seiten-Layout pro Standort
-
-```
-┌─────────────────────────────────────┐ ← Seite 1
-│ Projekt 2025-001                    │
-│ Standort 001 - Küche                │
-├─────────────────────────────────────┤
-│ ┌─────────────────────────────────┐ │
-│ │     Bemaßtes Bild               │ │
-│ │     (max 90mm hoch bei 2 Bildern)│ │
-│ └─────────────────────────────────┘ │
-│ ┌─────────────────────────────────┐ │
-│ │     Originalbild                │ │
-│ │     (max 90mm hoch)             │ │
-│ └─────────────────────────────────┘ │
-├─────────────────────────────────────┤
-│ Kommentar: Fenster muss getauscht...│
-│ Erstellt am 15.01.2025              │
-└─────────────────────────────────────┘
-
-┌─────────────────────────────────────┐ ← Seite 2
-│ Projekt 2025-001                    │
-│ Standort 002 - Bad                  │
-│ ...                                 │
-```
-
----
-
-### Schritt 5: Lokalisierung korrigieren
-
-**Datei: `src/pages/PhotoEditor.tsx`**
-- `"Sel"` → `"Ausw."` (Auswahl-Werkzeug)
-
----
-
-### Zusammenfassung der Änderungen
-
-| Datei | Änderung |
-|-------|----------|
-| `src/pages/Export.tsx` | PDF-Optionen UI, überarbeitete `exportAsPDF` mit dynamischer Bildskalierung |
-| `src/pages/PhotoEditor.tsx` | Lokalisierung: "Sel" → "Ausw." |
-
-### Technische Garantien
-- **Kein Seitenumbruch** innerhalb eines Standorts
-- **Keine Verzerrung** durch proportionale Skalierung
-- **Dynamische Höhe** je nach Anzahl der Bilder (1 oder 2)
-- **Bilder zentriert** auf der Seite
+1. **Bemassungstext** (schnelle Aenderung, eine Datei)
+2. **PDF-Export Bilder-Fix** (Export.tsx)
+3. **Standorte bearbeiten** (mehrere Dateien, aber einfache Logik)
+4. **Detailbilder** (groesste Aenderung: Schema-Upgrade, neue Routes, UI)
 
