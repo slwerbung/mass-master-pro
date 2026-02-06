@@ -40,14 +40,23 @@ export function createMeasurementGroup(
     selectable: false,
   });
 
-  // centered label positioned above the line (perpendicular direction)
+  // centered label positioned below the line, rotated parallel to it
   const midX = (x1 + x2) / 2;
   const midY = (y1 + y2) / 2;
+
+  // Calculate angle in degrees
+  let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+  // Flip text if it would be upside-down (line goes right-to-left)
+  if (angle > 90) angle -= 180;
+  if (angle < -90) angle += 180;
+
+  // Position below the line (negative perpendicular = below)
   const text = new IText(label, {
-    left: midX + px * textOffset,
-    top: midY + py * textOffset,
+    left: midX - px * textOffset,
+    top: midY - py * textOffset,
     originX: "center",
-    originY: "bottom",
+    originY: "top",
+    angle: angle,
     fill: color,
     fontSize: 22,
     fontFamily: "Arial",

@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Camera as CameraIcon, X, Check } from "lucide-react";
 import { toast } from "sonner";
@@ -7,6 +7,9 @@ import { toast } from "sonner";
 const Camera = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isDetail = searchParams.get("detail") === "true";
+  const detailLocationId = searchParams.get("locationId");
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -64,7 +67,8 @@ const Camera = () => {
 
   const confirmPhoto = () => {
     if (capturedImage) {
-      navigate(`/projects/${projectId}/editor`, { state: { imageData: capturedImage } });
+      const detailQuery = isDetail && detailLocationId ? `?detail=true&locationId=${detailLocationId}` : "";
+      navigate(`/projects/${projectId}/editor${detailQuery}`, { state: { imageData: capturedImage } });
     }
   };
 

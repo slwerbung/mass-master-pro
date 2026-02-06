@@ -31,7 +31,7 @@ interface Props {
 }
 
 const PDFExportOptionsUI = ({ options, onChange }: Props) => {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
 
   const toggle = (key: keyof PDFExportOptions) => {
     onChange({ ...options, [key]: !options[key] });

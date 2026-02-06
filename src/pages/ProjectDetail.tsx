@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Camera, Download, MapPin, Trash2 } from "lucide-react";
+import { ArrowLeft, Camera, Download, MapPin, Trash2, Pencil, ImagePlus } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import LocationCard from "@/components/LocationCard";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
@@ -74,6 +75,21 @@ const ProjectDetail = () => {
         console.error("Error deleting location:", error);
         toast.error("Fehler beim Löschen");
       }
+    }
+  };
+
+  const handleDeleteDetailImage = async (locationId: string, detailImageId: string) => {
+    try {
+      await indexedDBStorage.deleteDetailImage(detailImageId);
+      // Reload project
+      if (projectId) {
+        const reloaded = await indexedDBStorage.getProject(projectId);
+        if (reloaded) setProject(reloaded);
+      }
+      toast.success("Detailbild gelöscht");
+    } catch (error) {
+      console.error("Error deleting detail image:", error);
+      toast.error("Fehler beim Löschen");
     }
   };
 
@@ -146,52 +162,13 @@ const ProjectDetail = () => {
         ) : (
           <div className="grid gap-4">
             {project.locations.map((location) => (
-              <Card key={location.id} className="overflow-hidden">
-                <div className="aspect-video bg-muted relative">
-                  <img
-                    src={location.imageData}
-                    alt={`Standort ${location.locationNumber}`}
-                    className="w-full h-full object-contain"
-                  />
-                </div>
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="space-y-1 flex-1 min-w-0">
-                      <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
-                      {location.locationName && (
-                        <p className="text-sm text-foreground truncate">{location.locationName}</p>
-                      )}
-                      {location.comment && (
-                        <p className="text-sm text-muted-foreground line-clamp-2">{location.comment}</p>
-                      )}
-                    </div>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="sm">
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Standort löschen?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Diese Aktion kann nicht rückgängig gemacht werden.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => handleDeleteLocation(location.id)}
-                            className="bg-destructive"
-                          >
-                            Löschen
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-                </CardContent>
-              </Card>
+              <LocationCard
+                key={location.id}
+                location={location}
+                projectId={projectId!}
+                onDelete={handleDeleteLocation}
+                onDeleteDetailImage={handleDeleteDetailImage}
+              />
             ))}
           </div>
         )}

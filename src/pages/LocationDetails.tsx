@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,73 +12,119 @@ import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
 
 const LocationDetails = () => {
-  const { projectId } = useParams();
+  const { projectId, locationId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { imageData, originalImageData } = location.state || {};
+  const [searchParams] = useSearchParams();
+  const isEditMode = !!locationId;
+  const isDetailImage = searchParams.get("detail") === "true";
+
+  // For new locations: image comes from state
+  // For edit: we load existing data
+  const { imageData: stateImageData, originalImageData: stateOriginalImageData } = location.state || {};
 
   const [locationName, setLocationName] = useState("");
   const [comment, setComment] = useState("");
+  const [caption, setCaption] = useState("");
+  const [previewImage, setPreviewImage] = useState<string | null>(stateImageData || null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(!isEditMode);
+
+  // Load existing location data in edit mode
+  useEffect(() => {
+    if (isEditMode && projectId && locationId) {
+      const loadLocation = async () => {
+        const project = await indexedDBStorage.getProject(projectId);
+        if (!project) { navigate("/"); return; }
+        const loc = project.locations.find(l => l.id === locationId);
+        if (!loc) { navigate(`/projects/${projectId}`); return; }
+        setLocationName(loc.locationName || "");
+        setComment(loc.comment || "");
+        setPreviewImage(loc.imageData);
+        setIsLoaded(true);
+      };
+      loadLocation();
+    }
+  }, [isEditMode, projectId, locationId, navigate]);
 
   const handleSave = async () => {
-    if (!projectId || !imageData) {
-      toast.error("Fehler beim Speichern");
-      return;
-    }
+    if (!projectId) { toast.error("Fehler beim Speichern"); return; }
 
     setIsSaving(true);
 
     try {
-      const project = await indexedDBStorage.getProject(projectId);
-      if (!project) {
-        toast.error("Projekt nicht gefunden");
-        setIsSaving(false);
-        return;
-      }
+      if (isEditMode && locationId) {
+        // Update metadata only
+        await indexedDBStorage.updateLocationMetadata(projectId, locationId, {
+          locationName: locationName.trim() || undefined,
+          comment: comment.trim() || undefined,
+        });
+        toast.success("Standort aktualisiert");
+        navigate(`/projects/${projectId}`);
+      } else if (isDetailImage && stateImageData) {
+        // Save as detail image
+        toast.loading("Bild wird komprimiert...");
+        const compressedImageData = await compressImage(stateImageData, 1280, 0.65);
+        const compressedOriginalImageData = stateOriginalImageData
+          ? await compressImage(stateOriginalImageData, 1280, 0.65)
+          : compressedImageData;
 
-      // Compress images before saving (smaller for better storage)
-      toast.loading("Bild wird komprimiert...");
-      const compressedImageData = await compressImage(imageData, 1280, 0.65);
-      const compressedOriginalImageData = originalImageData 
-        ? await compressImage(originalImageData, 1280, 0.65)
-        : compressedImageData;
+        // locationId from search params for detail images
+        const targetLocationId = searchParams.get("locationId");
+        if (!targetLocationId) { toast.error("Standort nicht gefunden"); return; }
 
-      const locationNumber = project.locations.length + 1;
-      const fullLocationNumber = `${project.projectNumber}-${100 + locationNumber - 1}`;
+        const detailImage = {
+          id: crypto.randomUUID(),
+          imageData: compressedImageData,
+          originalImageData: compressedOriginalImageData,
+          caption: caption.trim() || undefined,
+          createdAt: new Date(),
+        };
 
-      const newLocation: Location = {
-        id: crypto.randomUUID(),
-        locationNumber: fullLocationNumber,
-        locationName: locationName.trim() || undefined,
-        comment: comment.trim() || undefined,
-        imageData: compressedImageData,
-        originalImageData: compressedOriginalImageData,
-        createdAt: new Date(),
-      };
+        await indexedDBStorage.saveDetailImage(targetLocationId, detailImage);
+        toast.dismiss();
+        toast.success("Detailbild gespeichert");
+        navigate(`/projects/${projectId}`);
+      } else if (stateImageData) {
+        // New location
+        const project = await indexedDBStorage.getProject(projectId);
+        if (!project) { toast.error("Projekt nicht gefunden"); setIsSaving(false); return; }
 
-      project.locations.push(newLocation);
-      
-      try {
+        toast.loading("Bild wird komprimiert...");
+        const compressedImageData = await compressImage(stateImageData, 1280, 0.65);
+        const compressedOriginalImageData = stateOriginalImageData
+          ? await compressImage(stateOriginalImageData, 1280, 0.65)
+          : compressedImageData;
+
+        const locationNumber = project.locations.length + 1;
+        const fullLocationNumber = `${project.projectNumber}-${100 + locationNumber - 1}`;
+
+        const newLocation: Location = {
+          id: crypto.randomUUID(),
+          locationNumber: fullLocationNumber,
+          locationName: locationName.trim() || undefined,
+          comment: comment.trim() || undefined,
+          imageData: compressedImageData,
+          originalImageData: compressedOriginalImageData,
+          createdAt: new Date(),
+        };
+
+        project.locations.push(newLocation);
         await indexedDBStorage.saveProject(project);
         toast.dismiss();
         toast.success("Standort gespeichert");
         navigate(`/projects/${projectId}`);
-      } catch (error) {
-        toast.dismiss();
-        console.error("Error saving location:", error);
-        toast.error("Fehler beim Speichern");
       }
     } catch (error) {
       toast.dismiss();
-      console.error("Error compressing image:", error);
-      toast.error("Fehler beim Komprimieren des Bildes");
+      console.error("Error saving:", error);
+      toast.error("Fehler beim Speichern");
     } finally {
       setIsSaving(false);
     }
   };
 
-  if (!imageData) {
+  if (!isLoaded || (!isEditMode && !stateImageData)) {
     return null;
   }
 
@@ -97,38 +143,56 @@ const LocationDetails = () => {
 
         <Card>
           <CardHeader className="p-4 md:p-6">
-            <CardTitle className="text-xl md:text-2xl">Standort-Details</CardTitle>
+            <CardTitle className="text-xl md:text-2xl">
+              {isEditMode ? "Standort bearbeiten" : isDetailImage ? "Detailbild-Details" : "Standort-Details"}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 md:space-y-6 p-4 md:p-6">
-            <div className="aspect-video bg-muted rounded-lg overflow-hidden">
-              <img
-                src={imageData}
-                alt="Bearbeitetes Bild"
-                className="w-full h-full object-contain"
-              />
-            </div>
+            {previewImage && (
+              <div className="aspect-video bg-muted rounded-lg overflow-hidden">
+                <img
+                  src={previewImage}
+                  alt="Bild"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            )}
 
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="locationName">Standortbezeichnung (optional)</Label>
-                <Input
-                  id="locationName"
-                  placeholder="z.B. Wohnzimmer, Erdgeschoss"
-                  value={locationName}
-                  onChange={(e) => setLocationName(e.target.value)}
-                />
-              </div>
+              {isDetailImage ? (
+                <div className="space-y-2">
+                  <Label htmlFor="caption">Beschreibung (optional)</Label>
+                  <Input
+                    id="caption"
+                    placeholder="z.B. Detail Fensterrahmen"
+                    value={caption}
+                    onChange={(e) => setCaption(e.target.value)}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="locationName">Standortbezeichnung (optional)</Label>
+                    <Input
+                      id="locationName"
+                      placeholder="z.B. Wohnzimmer, Erdgeschoss"
+                      value={locationName}
+                      onChange={(e) => setLocationName(e.target.value)}
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="comment">Kommentar (optional)</Label>
-                <Textarea
-                  id="comment"
-                  placeholder="Zusätzliche Informationen..."
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  rows={4}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="comment">Kommentar (optional)</Label>
+                    <Textarea
+                      id="comment"
+                      placeholder="Zusätzliche Informationen..."
+                      value={comment}
+                      onChange={(e) => setComment(e.target.value)}
+                      rows={4}
+                    />
+                  </div>
+                </>
+              )}
             </div>
 
             <Button
@@ -138,7 +202,7 @@ const LocationDetails = () => {
               disabled={isSaving}
             >
               <Check className="mr-2 h-5 w-5" />
-              {isSaving ? "Speichert..." : "Standort speichern"}
+              {isSaving ? "Speichert..." : isEditMode ? "Änderungen speichern" : "Speichern"}
             </Button>
           </CardContent>
         </Card>
