@@ -14,6 +14,16 @@ import {
   dataURItoBlob, 
   isIOSDevice 
 } from "@/lib/exportUtils";
+import PDFExportOptionsUI, { PDFExportOptions, defaultPDFOptions } from "@/components/PDFExportOptions";
+
+const getImageDimensions = (dataURI: string): Promise<{ width: number; height: number }> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.width, height: img.height });
+    img.onerror = () => resolve({ width: 800, height: 600 });
+    img.src = dataURI;
+  });
+};
 
 const Export = () => {
   const { projectId } = useParams();
@@ -22,6 +32,7 @@ const Export = () => {
   const [downloadingPDF, setDownloadingPDF] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadingImages, setDownloadingImages] = useState<Record<string, boolean>>({});
+  const [pdfOptions, setPdfOptions] = useState<PDFExportOptions>(defaultPDFOptions);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -83,14 +94,12 @@ const Export = () => {
       const zip = new JSZip();
       
       for (const location of project.locations) {
-        // Add annotated image
         const annotatedBlob = dataURItoBlob(location.imageData);
         zip.file(
           `${project.projectNumber}_${location.locationNumber}_bemasst.png`,
           annotatedBlob
         );
 
-        // Add original image
         const originalBlob = dataURItoBlob(location.originalImageData);
         zip.file(
           `${project.projectNumber}_${location.locationNumber}_original.png`,
@@ -128,6 +137,12 @@ const Export = () => {
         format: "a4",
       });
 
+      const pageWidth = 210;
+      const margin = 20;
+      const contentWidth = pageWidth - 2 * margin;
+      const pageHeight = 297;
+      const maxContentHeight = pageHeight - 2 * margin; // 257mm
+
       let isFirstPage = true;
 
       for (const location of project.locations) {
@@ -136,51 +151,101 @@ const Export = () => {
         }
         isFirstPage = false;
 
+        let y = margin;
+
         // Header
-        pdf.setFontSize(16);
-        pdf.setFont("helvetica", "bold");
-        pdf.text(`Projekt ${project.projectNumber}`, 20, 20);
-
-        pdf.setFontSize(12);
-        pdf.setFont("helvetica", "normal");
-        pdf.text(`Standort ${location.locationNumber}`, 20, 28);
-
-        if (location.locationName) {
-          pdf.text(location.locationName, 20, 35);
+        if (pdfOptions.includeProjectHeader) {
+          pdf.setFontSize(16);
+          pdf.setFont("helvetica", "bold");
+          pdf.text(`Projekt ${project.projectNumber}`, margin, y + 5);
+          y += 10;
         }
 
-        // Image
-        const imgY = location.locationName ? 42 : 35;
-        const imgWidth = 170;
-        const imgHeight = 120;
+        if (pdfOptions.includeLocationNumber) {
+          pdf.setFontSize(12);
+          pdf.setFont("helvetica", "normal");
+          pdf.text(`Standort ${location.locationNumber}`, margin, y + 5);
+          y += 7;
+        }
 
-        try {
-          pdf.addImage(location.imageData, "PNG", 20, imgY, imgWidth, imgHeight);
-        } catch (e) {
-          console.error("Error adding image:", e);
+        if (pdfOptions.includeLocationName && location.locationName) {
+          pdf.setFontSize(11);
+          pdf.setFont("helvetica", "normal");
+          pdf.text(location.locationName, margin, y + 5);
+          y += 7;
+        }
+
+        // Calculate space used by non-image elements
+        let bottomContentHeight = 0;
+        if (pdfOptions.includeComment && location.comment) {
+          bottomContentHeight += 15; // estimate for comment
+        }
+        if (pdfOptions.includeCreatedDate) {
+          bottomContentHeight += 10;
+        }
+
+        const headerHeight = y - margin;
+        const spacing = 8;
+        const availableForImages = maxContentHeight - headerHeight - bottomContentHeight - spacing;
+
+        // Determine which images to include
+        const showAnnotated = pdfOptions.includeAnnotatedImage;
+        const showOriginal = pdfOptions.includeOriginalImage;
+        const imageCount = (showAnnotated ? 1 : 0) + (showOriginal ? 1 : 0);
+
+        if (imageCount > 0) {
+          const maxHeightPerImage = imageCount === 2
+            ? (availableForImages - 5) / 2 // 5mm gap between images
+            : availableForImages;
+
+          y += 3;
+
+          const addImageProportional = async (dataURI: string) => {
+            const dims = await getImageDimensions(dataURI);
+            const ratio = Math.min(contentWidth / dims.width, maxHeightPerImage / dims.height);
+            const w = dims.width * ratio;
+            const h = dims.height * ratio;
+            const x = margin + (contentWidth - w) / 2; // center
+            try {
+              pdf.addImage(dataURI, "PNG", x, y, w, h);
+            } catch (e) {
+              console.error("Error adding image:", e);
+            }
+            y += h + 5;
+          };
+
+          if (showAnnotated) {
+            await addImageProportional(location.imageData);
+          }
+          if (showOriginal) {
+            await addImageProportional(location.originalImageData);
+          }
         }
 
         // Comment
-        if (location.comment) {
-          const commentY = imgY + imgHeight + 8;
+        if (pdfOptions.includeComment && location.comment) {
           pdf.setFontSize(10);
-          pdf.text("Kommentar:", 20, commentY);
-          const splitComment = pdf.splitTextToSize(location.comment, 170);
-          pdf.text(splitComment, 20, commentY + 5);
+          pdf.setFont("helvetica", "normal");
+          pdf.setTextColor(0, 0, 0);
+          pdf.text("Kommentar:", margin, y);
+          const splitComment = pdf.splitTextToSize(location.comment, contentWidth);
+          pdf.text(splitComment, margin, y + 5);
+          y += 5 + splitComment.length * 4;
         }
 
-        // Footer
-        pdf.setFontSize(8);
-        pdf.setTextColor(128, 128, 128);
-        pdf.text(
-          `Erstellt am ${new Date(location.createdAt).toLocaleDateString("de-DE")}`,
-          20,
-          280
-        );
-        pdf.setTextColor(0, 0, 0);
+        // Date
+        if (pdfOptions.includeCreatedDate) {
+          pdf.setFontSize(8);
+          pdf.setTextColor(128, 128, 128);
+          pdf.text(
+            `Erstellt am ${new Date(location.createdAt).toLocaleDateString("de-DE")}`,
+            margin,
+            pageHeight - margin
+          );
+          pdf.setTextColor(0, 0, 0);
+        }
       }
 
-      // Generate as blob for reliable download
       const pdfBlob = pdf.output("blob");
       const success = await downloadBlob(
         pdfBlob, 
@@ -242,6 +307,7 @@ const Export = () => {
             <p className="text-sm text-muted-foreground mb-3">
               Alle Standorte in einem zusammengefassten PDF-Dokument
             </p>
+            <PDFExportOptionsUI options={pdfOptions} onChange={setPdfOptions} />
             <Button 
               onClick={exportAsPDF} 
               disabled={downloadingPDF}
