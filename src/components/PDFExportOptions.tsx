@@ -11,6 +11,7 @@ export interface PDFExportOptions {
   includeLocationName: boolean;
   includeAnnotatedImage: boolean;
   includeOriginalImage: boolean;
+  includeDetailImages: boolean;
   includeComment: boolean;
   includeCreatedDate: boolean;
 }
@@ -21,6 +22,7 @@ export const defaultPDFOptions: PDFExportOptions = {
   includeLocationName: true,
   includeAnnotatedImage: true,
   includeOriginalImage: false,
+  includeDetailImages: false,
   includeComment: true,
   includeCreatedDate: true,
 };
@@ -44,6 +46,7 @@ const PDFExportOptionsUI = ({ options, onChange }: Props) => {
     { key: "includeCreatedDate", label: "Erstellungsdatum", group: "Allgemein" },
     { key: "includeAnnotatedImage", label: "Bemaßtes Bild", group: "Bilder" },
     { key: "includeOriginalImage", label: "Originalbild (unbearbeitet)", group: "Bilder" },
+    { key: "includeDetailImages", label: "Detailbilder", group: "Bilder" },
     { key: "includeComment", label: "Kommentar", group: "Inhalt" },
   ];
 
