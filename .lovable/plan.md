@@ -1,113 +1,88 @@
 
 
-## Plan: 4 Verbesserungen
+## Plan: 3 Verbesserungen
 
-### 1. PDF-Export: Unverzerrte Bilder + Optionen sichtbar
+### 1. Bemassungstext parallel und unterhalb der Linie
 
-**Problem**: Die `addImage`-Funktion in jsPDF bekommt Pixel-Dimensionen und rechnet korrekt, aber die Export-Optionen (Collapsible) sind moeglicherweise nicht sichtbar oder die Bildverhaeltnisse stimmen nicht.
+**Datei: `src/lib/measurement.ts`**
 
-**Loesung** in `src/pages/Export.tsx`:
-- Sicherstellen, dass `getImageDimensions` korrekt aufgeloest wird (Fallback bei Fehler)
-- Bei `pdf.addImage` explizit das Seitenverhaeltnis des Originalbildes beibehalten
-- Die `PDFExportOptionsUI`-Komponente prominenter darstellen (standardmaessig aufgeklappt oder mit klarem Hinweis)
-- Testen, dass bei 2 Bildern die Hoehe korrekt aufgeteilt wird
+Der aktuelle Code berechnet den Winkel korrekt und setzt `angle` auf dem Text. Allerdings ist die Positionierung mit `- px * textOffset` moeglicherweise nicht konsistent "unterhalb". Das Problem: Der Perpendikular-Vektor `(px, py) = (-dy/len, dx/len)` zeigt je nach Linienrichtung mal nach oben, mal nach unten.
 
-**Technische Aenderung**: In `exportAsPDF` die Ratio-Berechnung pruefen und sicherstellen, dass `contentWidth` (170mm) und `maxHeightPerImage` korrekt als Grenzen verwendet werden. Das Bild wird zentriert und proportional skaliert.
-
----
-
-### 2. Bemassungstext parallel zur Linie
-
-**Datei**: `src/lib/measurement.ts`
-
-**Aktuell**: Der Text wird senkrecht zur Linie versetzt positioniert, aber nicht gedreht. Er steht immer horizontal.
-
-**Neu**: Der Text wird um den Winkel der Linie gedreht und leicht unterhalb der Linie positioniert.
-
-```text
-Aktuell:           Neu:
-                        120 mm
-   120 mm          ─────────────────
-─────────────────
-```
-
-**Technische Aenderung**:
-- Winkel berechnen: `angle = Math.atan2(dy, dx) * (180 / Math.PI)`
-- `text.angle = angle` setzen (Fabric.js Rotation)
-- Text unterhalb der Linie positionieren statt oberhalb (negativer Perpendikular-Offset)
-- Falls Linie von rechts nach links verlaeuft (angle > 90 oder < -90): Text um 180 Grad drehen, damit er nicht auf dem Kopf steht
+**Loesung**: Nach dem Flip des Winkels (wenn >90 oder <-90) muss auch der Offset-Vektor angepasst werden, damit der Text immer auf der gleichen Seite (unterhalb) landet. Konkret:
+- Wenn der Winkel geflippt wird, den Offset-Vektor umkehren
+- `originY: "top"` beibehalten, damit der Text vom Ankerpunkt nach unten waechst
+- `textOffset` leicht erhoehen fuer bessere Lesbarkeit
 
 ---
 
-### 3. Standorte nachtraeglich bearbeiten
+### 2. Alle Bilder nachtraeglich bearbeiten
 
-**Neue Route**: `/projects/:projectId/locations/:locationId/edit`
+Aktuell fuehrt der "Bearbeiten"-Button (Stift) nur zur Metadaten-Bearbeitung (Name/Kommentar). Bilder koennen nicht nochmal im PhotoEditor geoeffnet werden.
 
 **Aenderungen**:
 
 | Datei | Aenderung |
 |-------|-----------|
-| `src/App.tsx` | Neue Route hinzufuegen |
-| `src/pages/ProjectDetail.tsx` | "Bearbeiten"-Button pro Standort (Stift-Icon neben Loeschen) |
-| `src/pages/LocationDetails.tsx` | Erweitern fuer Edit-Modus: bestehende Daten laden, Standortname/Kommentar aendern, speichern |
-| `src/lib/indexedDBStorage.ts` | `updateLocation`-Methode hinzufuegen (Metadaten aktualisieren ohne Bilder neu zu speichern) |
+| `src/components/LocationCard.tsx` | Klick auf das Hauptbild oeffnet den Editor mit dem gespeicherten Bild. Klick auf Detailbilder ebenfalls. |
+| `src/pages/PhotoEditor.tsx` | Neuen Modus "re-edit" unterstuetzen: Bild aus IndexedDB laden statt aus `location.state`, nach Speichern das bestehende Bild in IndexedDB aktualisieren statt neuen Standort zu erstellen. |
+| `src/lib/indexedDBStorage.ts` | `updateLocationImage(projectId, locationId, imageData)` Methode hinzufuegen. `updateDetailImage(detailId, imageData)` Methode hinzufuegen. |
+| `src/App.tsx` | Neue Routen: `/projects/:projectId/locations/:locationId/edit-image` und `/projects/:projectId/locations/:locationId/details/:detailId/edit-image` |
 
-**Ablauf**:
-1. Nutzer klickt "Bearbeiten" auf einem Standort
-2. LocationDetails oeffnet sich mit vorausgefuellten Feldern (Name, Kommentar)
-3. Bild wird als Vorschau angezeigt (nicht editierbar - dafuer gibt es Feature 4)
-4. Nutzer aendert Felder und speichert
+**Ablauf Hauptbild bearbeiten**:
+1. Nutzer klickt auf Bild-Icon/Button am Standort
+2. PhotoEditor oeffnet sich mit dem gespeicherten bemassten Bild
+3. Nutzer bearbeitet und klickt Haekchen
+4. Bild wird direkt in IndexedDB aktualisiert (kein neuer Standort)
+5. Zurueck zur Projektansicht
+
+**Ablauf Detailbild bearbeiten**:
+1. Nutzer klickt auf ein Detailbild
+2. PhotoEditor oeffnet sich mit dem Detailbild
+3. Nach Bearbeitung wird das Detailbild aktualisiert
 
 ---
 
-### 4. Detailbilder zu Standorten hinzufuegen
+### 3. Detailbilder optional im PDF exportieren
 
-**Datenmodell-Erweiterung** in `src/types/project.ts`:
+**Datei: `src/components/PDFExportOptions.tsx`**
 
+Neue Option hinzufuegen:
 ```typescript
-export interface DetailImage {
-  id: string;
-  imageData: string;      // bearbeitetes Bild
-  originalImageData: string; // Originalbild
-  caption?: string;       // optionale Beschreibung
-  createdAt: Date;
-}
-
-export interface Location {
-  // ... bestehende Felder ...
-  detailImages?: DetailImage[];  // neue Eigenschaft
+interface PDFExportOptions {
+  // ... bestehende Optionen ...
+  includeDetailImages: boolean;  // NEU
 }
 ```
 
-**IndexedDB-Schema**: Da das Schema Version 1 ist, muss ein Upgrade auf Version 2 erfolgen:
-- Neuer Object Store `detail-images` mit Index `by-location`
-- Gleiche Blob-Speicherung wie bei Hauptbildern
+Neue Checkbox im "Bilder"-Bereich: "Detailbilder"
 
-**Aenderungen**:
+**Datei: `src/pages/Export.tsx`**
 
-| Datei | Aenderung |
-|-------|-----------|
-| `src/types/project.ts` | `DetailImage` Interface + `detailImages` Feld |
-| `src/lib/indexedDBStorage.ts` | DB Version 2, neuer Store, Lade-/Speicher-Logik fuer Detailbilder |
-| `src/pages/ProjectDetail.tsx` | Anzeige der Detailbilder unter jedem Standort + "Detailbild hinzufuegen"-Button |
-| `src/App.tsx` | Route fuer Detailbild-Kamera und -Editor |
-| `src/pages/PhotoEditor.tsx` | Unterstuetzung fuer "Detailbild-Modus" (speichert als Detailbild statt Hauptbild) |
-| `src/pages/Export.tsx` | Detailbilder optional im PDF und ZIP mit exportieren |
+In `exportAsPDF`:
+- Nach dem Hauptbild/Originalbild die Detailbilder eines Standorts rendern
+- Jedes Detailbild bekommt eigenen Platz, proportional skaliert
+- Bei vielen Detailbildern: Auf Folgeseiten umbrechen (nur Detailbilder duerfen ueber Seitengrenzen gehen, Hauptinhalt bleibt auf einer Seite)
+- Caption des Detailbilds als kleine Beschriftung unter dem Bild
 
-**Ablauf**:
-1. Nutzer oeffnet Standort-Ansicht
-2. Klickt "Detailbild hinzufuegen"
-3. Kamera oeffnet sich -> Foto aufnehmen
-4. PhotoEditor oeffnet sich -> Bearbeiten
-5. Bild wird als Detailbild zum Standort gespeichert
-6. Detailbilder koennen nachtraeglich bearbeitet werden (gleicher Editor)
+Layout wenn Detailbilder aktiviert:
+```
+Seite 1: Header + Hauptbild(er) + Kommentar + Datum
+Seite 2 (falls noetig): Detailbilder des Standorts
+```
+
+Die verfuegbare Hoehe fuer Hauptbilder wird dynamisch berechnet - wenn keine Detailbilder vorhanden sind, aendert sich nichts am bestehenden Layout.
 
 ---
 
-### Reihenfolge der Implementierung
+### Zusammenfassung
 
-1. **Bemassungstext** (schnelle Aenderung, eine Datei)
-2. **PDF-Export Bilder-Fix** (Export.tsx)
-3. **Standorte bearbeiten** (mehrere Dateien, aber einfache Logik)
-4. **Detailbilder** (groesste Aenderung: Schema-Upgrade, neue Routes, UI)
+| Datei | Aenderung |
+|-------|-----------|
+| `src/lib/measurement.ts` | Text-Offset korrigieren fuer konsistentes "unterhalb" |
+| `src/components/LocationCard.tsx` | Bild-Bearbeiten-Buttons hinzufuegen |
+| `src/pages/PhotoEditor.tsx` | Re-Edit-Modus (Bild aus DB laden, zurueck speichern) |
+| `src/lib/indexedDBStorage.ts` | `updateLocationImage` + `updateDetailImage` Methoden |
+| `src/App.tsx` | Neue Routen fuer Bild-Bearbeitung |
+| `src/components/PDFExportOptions.tsx` | Option "Detailbilder" hinzufuegen |
+| `src/pages/Export.tsx` | Detailbilder im PDF rendern |
 
