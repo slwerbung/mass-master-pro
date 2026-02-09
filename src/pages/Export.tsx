@@ -233,7 +233,46 @@ const Export = () => {
           y += 5 + splitComment.length * 4;
         }
 
-        // Date
+        // Detail images on follow-up pages
+        if (pdfOptions.includeDetailImages && location.detailImages && location.detailImages.length > 0) {
+          pdf.addPage();
+          let dy = margin;
+
+          pdf.setFontSize(11);
+          pdf.setFont("helvetica", "bold");
+          pdf.text(`Detailbilder – Standort ${location.locationNumber}`, margin, dy + 5);
+          dy += 12;
+
+          for (const detail of location.detailImages) {
+            const dims = await getImageDimensions(detail.imageData);
+            const maxH = 80; // max height per detail image in mm
+            const ratio = Math.min(contentWidth / dims.width, maxH / dims.height);
+            const w = dims.width * ratio;
+            const h = dims.height * ratio;
+
+            // Check if we need a new page
+            if (dy + h + 10 > pageHeight - margin) {
+              pdf.addPage();
+              dy = margin;
+            }
+
+            const x = margin + (contentWidth - w) / 2;
+            try {
+              pdf.addImage(detail.imageData, "PNG", x, dy, w, h);
+            } catch (e) {
+              console.error("Error adding detail image:", e);
+            }
+            dy += h + 2;
+
+            if (detail.caption) {
+              pdf.setFontSize(8);
+              pdf.setFont("helvetica", "italic");
+              pdf.text(detail.caption, margin, dy + 3);
+              dy += 7;
+            }
+            dy += 3;
+          }
+        }
         if (pdfOptions.includeCreatedDate) {
           pdf.setFontSize(8);
           pdf.setTextColor(128, 128, 128);

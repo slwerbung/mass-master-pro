@@ -249,6 +249,30 @@ export const indexedDBStorage = {
     }
   },
 
+  async updateLocationImage(projectId: string, locationId: string, imageData: string): Promise<void> {
+    const db = await getDB();
+    await db.put('images', {
+      id: createImageId(locationId, 'annotated'),
+      locationId,
+      type: 'annotated',
+      blob: base64ToBlob(imageData),
+    });
+    const project = await db.get('projects', projectId);
+    if (project) {
+      await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
+    }
+  },
+
+  async updateDetailImage(detailImageId: string, imageData: string): Promise<void> {
+    const db = await getDB();
+    await db.put('detail-image-blobs', {
+      id: createDetailBlobId(detailImageId, 'annotated'),
+      detailImageId,
+      type: 'annotated',
+      blob: base64ToBlob(imageData),
+    });
+  },
+
   async deleteDetailImage(detailImageId: string): Promise<void> {
     const db = await getDB();
     await db.delete('detail-images', detailImageId);

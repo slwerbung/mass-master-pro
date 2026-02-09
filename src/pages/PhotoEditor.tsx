@@ -4,15 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage } from "fabric";
 import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { createMeasurementGroup } from "@/lib/measurement";
+import { indexedDBStorage } from "@/lib/indexedDBStorage";
 
 type Tool = "select" | "draw" | "text" | "measure";
 
 const PhotoEditor = () => {
-  const { projectId } = useParams();
+  const { projectId, locationId, detailId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -22,18 +20,54 @@ const PhotoEditor = () => {
   const [measureStart, setMeasureStart] = useState<{ x: number; y: number } | null>(null);
   const [canvasHistory, setCanvasHistory] = useState<string[]>([]);
   const [historyStep, setHistoryStep] = useState(-1);
-  const imageData = location.state?.imageData;
+  const [imageDataState, setImageDataState] = useState<string | null>(location.state?.imageData || null);
+  const [loading, setLoading] = useState(false);
+
+  // Determine mode: re-edit (has locationId in path) vs new
+  const isReEdit = !!locationId;
+  const isDetailReEdit = !!detailId;
+
+  // Load image from IndexedDB for re-edit mode
+  useEffect(() => {
+    if (!isReEdit || imageDataState) return;
+
+    const loadImage = async () => {
+      setLoading(true);
+      try {
+        if (isDetailReEdit && locationId) {
+          const details = await indexedDBStorage.getDetailImagesByLocation(locationId);
+          const detail = details.find(d => d.id === detailId);
+          if (detail) {
+            setImageDataState(detail.imageData);
+          } else {
+            toast.error("Detailbild nicht gefunden");
+            navigate(`/projects/${projectId}`);
+          }
+        } else if (locationId && projectId) {
+          const project = await indexedDBStorage.getProject(projectId);
+          const loc = project?.locations.find(l => l.id === locationId);
+          if (loc) {
+            setImageDataState(loc.imageData);
+          } else {
+            toast.error("Standort nicht gefunden");
+            navigate(`/projects/${projectId}`);
+          }
+        }
+      } catch (e) {
+        console.error("Error loading image:", e);
+        toast.error("Fehler beim Laden");
+        navigate(`/projects/${projectId}`);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadImage();
+  }, [isReEdit, isDetailReEdit, locationId, detailId, projectId, navigate, imageDataState]);
 
   useEffect(() => {
-    if (!imageData) {
-      toast.error("Kein Bild gefunden");
-      navigate(`/projects/${projectId}`);
-      return;
-    }
-
+    if (!imageDataState) return;
     if (!canvasRef.current) return;
 
-    // Calculate available space for canvas
     const headerHeight = window.innerWidth < 768 ? 100 : 80;
     const padding = window.innerWidth < 768 ? 8 : 32;
     const availableHeight = window.innerHeight - headerHeight - padding;
@@ -45,14 +79,12 @@ const PhotoEditor = () => {
       backgroundColor: "#ffffff",
     });
 
-    // Load the captured image
     const img = new Image();
     img.onload = () => {
       const scale = Math.min(
         canvas.width! / img.width,
         canvas.height! / img.height
       );
-      
       const fabricImage = new FabricImage(img, {
         scaleX: scale,
         scaleY: scale,
@@ -61,48 +93,44 @@ const PhotoEditor = () => {
         left: canvas.width! / 2,
         top: canvas.height! / 2,
       });
-      
       canvas.backgroundImage = fabricImage;
       canvas.renderAll();
     };
-    img.src = imageData;
+    img.src = imageDataState;
 
     const brush = new PencilBrush(canvas);
     brush.color = "#ef4444";
     brush.width = 3;
     canvas.freeDrawingBrush = brush;
 
-    // Save initial state
-    canvas.on("object:added", saveHistory);
-    canvas.on("object:modified", saveHistory);
-    canvas.on("object:removed", saveHistory);
+    const saveHist = () => {
+      const json = JSON.stringify(canvas.toJSON());
+      setCanvasHistory(prev => {
+        const newHistory = prev.slice(0, historyStep + 1);
+        newHistory.push(json);
+        return newHistory;
+      });
+      setHistoryStep(prev => prev + 1);
+    };
+
+    canvas.on("object:added", saveHist);
+    canvas.on("object:modified", saveHist);
+    canvas.on("object:removed", saveHist);
 
     setFabricCanvas(canvas);
 
     return () => {
-      canvas.off("object:added", saveHistory);
-      canvas.off("object:modified", saveHistory);
-      canvas.off("object:removed", saveHistory);
+      canvas.off("object:added", saveHist);
+      canvas.off("object:modified", saveHist);
+      canvas.off("object:removed", saveHist);
       canvas.dispose();
     };
-  }, [imageData, projectId, navigate]);
-
-  const saveHistory = () => {
-    if (!fabricCanvas) return;
-    
-    const json = JSON.stringify(fabricCanvas.toJSON());
-    const newHistory = canvasHistory.slice(0, historyStep + 1);
-    newHistory.push(json);
-    setCanvasHistory(newHistory);
-    setHistoryStep(newHistory.length - 1);
-  };
+  }, [imageDataState]);
 
   const handleUndo = () => {
     if (!fabricCanvas || historyStep <= 0) return;
-    
     const prevStep = historyStep - 1;
     setHistoryStep(prevStep);
-    
     fabricCanvas.loadFromJSON(JSON.parse(canvasHistory[prevStep]), () => {
       fabricCanvas.renderAll();
     });
@@ -110,10 +138,8 @@ const PhotoEditor = () => {
 
   const handleRedo = () => {
     if (!fabricCanvas || historyStep >= canvasHistory.length - 1) return;
-    
     const nextStep = historyStep + 1;
     setHistoryStep(nextStep);
-    
     fabricCanvas.loadFromJSON(JSON.parse(canvasHistory[nextStep]), () => {
       fabricCanvas.renderAll();
     });
@@ -121,17 +147,12 @@ const PhotoEditor = () => {
 
   const handleDelete = () => {
     if (!fabricCanvas) return;
-    
     const activeObjects = fabricCanvas.getActiveObjects();
     if (activeObjects.length === 0) {
       toast.error("Kein Objekt ausgewählt");
       return;
     }
-    
-    activeObjects.forEach((obj) => {
-      fabricCanvas.remove(obj);
-    });
-    
+    activeObjects.forEach((obj) => fabricCanvas.remove(obj));
     fabricCanvas.discardActiveObject();
     fabricCanvas.renderAll();
     toast.success("Objekt gelöscht");
@@ -139,17 +160,12 @@ const PhotoEditor = () => {
 
   useEffect(() => {
     if (!fabricCanvas) return;
-
     fabricCanvas.isDrawingMode = activeTool === "draw";
     fabricCanvas.selection = activeTool === "select";
 
     if (activeTool === "text") {
       const text = new IText("Text eingeben", {
-        left: 100,
-        top: 100,
-        fill: "#ef4444",
-        fontSize: 24,
-        fontFamily: "Arial",
+        left: 100, top: 100, fill: "#ef4444", fontSize: 24, fontFamily: "Arial",
       });
       fabricCanvas.add(text);
       fabricCanvas.setActiveObject(text);
@@ -160,8 +176,6 @@ const PhotoEditor = () => {
 
   const handleCanvasClick = (e: any) => {
     if (activeTool !== "measure" || !fabricCanvas) return;
-
-    // Fabric v7: use scenePoint or viewportPoint instead of getPointer
     const p = e?.scenePoint || e?.absolutePointer || e?.pointer;
     if (!p) return;
     const pointer = { x: p.x, y: p.y };
@@ -172,21 +186,13 @@ const PhotoEditor = () => {
       const measurement = prompt("Maß eingeben (in mm):");
       if (measurement) {
         const group = createMeasurementGroup(
-          measureStart.x,
-          measureStart.y,
-          pointer.x,
-          pointer.y,
-          `${measurement} mm`,
-          "#ef4444"
+          measureStart.x, measureStart.y, pointer.x, pointer.y,
+          `${measurement} mm`, "#ef4444"
         );
-
         fabricCanvas.add(group);
-        // added last, so it's already on top
         fabricCanvas.setActiveObject(group);
         fabricCanvas.renderAll();
-        setTimeout(() => {
-          fabricCanvas.renderAll();
-        }, 50);
+        setTimeout(() => fabricCanvas.renderAll(), 50);
       }
       setMeasureStart(null);
       setActiveTool("select");
@@ -196,35 +202,59 @@ const PhotoEditor = () => {
   useEffect(() => {
     if (fabricCanvas) {
       fabricCanvas.on("mouse:down", handleCanvasClick);
-      return () => {
-        fabricCanvas.off("mouse:down", handleCanvasClick);
-      };
+      return () => { fabricCanvas.off("mouse:down", handleCanvasClick); };
     }
   }, [fabricCanvas, activeTool, measureStart]);
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (!fabricCanvas) return;
-
     fabricCanvas.renderAll();
-    
-    setTimeout(() => {
-      const dataUrl = fabricCanvas.toDataURL({
-        format: "png",
-        quality: 1,
-        multiplier: 2,
-      });
 
-      const detailParam = searchParams.get("detail");
-      const locationIdParam = searchParams.get("locationId");
-      const detailQuery = detailParam === "true" && locationIdParam ? `?detail=true&locationId=${locationIdParam}` : "";
+    setTimeout(async () => {
+      const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 2 });
 
-      navigate(`/projects/${projectId}/location-details${detailQuery}`, {
-        state: { imageData: dataUrl, originalImageData: imageData },
-      });
+      if (isReEdit && projectId) {
+        // Re-edit mode: save directly back to IndexedDB
+        try {
+          if (isDetailReEdit && detailId) {
+            await indexedDBStorage.updateDetailImage(detailId, dataUrl);
+            toast.success("Detailbild aktualisiert");
+          } else if (locationId) {
+            await indexedDBStorage.updateLocationImage(projectId, locationId, dataUrl);
+            toast.success("Bild aktualisiert");
+          }
+          navigate(`/projects/${projectId}`);
+        } catch (e) {
+          console.error("Error saving:", e);
+          toast.error("Fehler beim Speichern");
+        }
+      } else {
+        // New image mode: go to location details
+        const detailParam = searchParams.get("detail");
+        const locationIdParam = searchParams.get("locationId");
+        const detailQuery = detailParam === "true" && locationIdParam ? `?detail=true&locationId=${locationIdParam}` : "";
+        navigate(`/projects/${projectId}/location-details${detailQuery}`, {
+          state: { imageData: dataUrl, originalImageData: imageDataState },
+        });
+      }
     }, 200);
   };
 
-  if (!imageData) return null;
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-muted-foreground">Bild wird geladen...</div>
+      </div>
+    );
+  }
+
+  if (!imageDataState) {
+    if (!isReEdit) {
+      toast.error("Kein Bild gefunden");
+      navigate(`/projects/${projectId}`);
+    }
+    return null;
+  }
 
   return (
     <div className="app-screen bg-background flex flex-col overflow-hidden">
@@ -240,62 +270,25 @@ const PhotoEditor = () => {
           </Button>
 
           <div className="flex gap-1 justify-center flex-1">
-            <Button
-              variant={activeTool === "select" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setActiveTool("select")}
-              className="px-2"
-            >
+            <Button variant={activeTool === "select" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("select")} className="px-2">
               <span className="text-xs">Ausw.</span>
             </Button>
-            <Button
-              variant={activeTool === "draw" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setActiveTool("draw")}
-              className="px-2"
-            >
+            <Button variant={activeTool === "draw" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("draw")} className="px-2">
               <Pencil className="h-4 w-4" />
             </Button>
-            <Button
-              variant={activeTool === "text" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setActiveTool("text")}
-              className="px-2"
-            >
+            <Button variant={activeTool === "text" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("text")} className="px-2">
               <Type className="h-4 w-4" />
             </Button>
-            <Button
-              variant={activeTool === "measure" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setActiveTool("measure")}
-              className="px-2"
-            >
+            <Button variant={activeTool === "measure" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("measure")} className="px-2">
               <Ruler className="h-4 w-4" />
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleUndo}
-              disabled={historyStep <= 0}
-              className="px-2"
-            >
+            <Button variant="outline" size="sm" onClick={handleUndo} disabled={historyStep <= 0} className="px-2">
               <Undo className="h-4 w-4" />
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRedo}
-              disabled={historyStep >= canvasHistory.length - 1}
-              className="px-2"
-            >
+            <Button variant="outline" size="sm" onClick={handleRedo} disabled={historyStep >= canvasHistory.length - 1} className="px-2">
               <Redo className="h-4 w-4" />
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleDelete}
-              className="px-2"
-            >
+            <Button variant="outline" size="sm" onClick={handleDelete} className="px-2">
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>

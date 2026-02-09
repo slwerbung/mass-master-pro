@@ -46,14 +46,21 @@ export function createMeasurementGroup(
 
   // Calculate angle in degrees
   let angle = Math.atan2(dy, dx) * (180 / Math.PI);
-  // Flip text if it would be upside-down (line goes right-to-left)
-  if (angle > 90) angle -= 180;
-  if (angle < -90) angle += 180;
+  
+  // Determine if we need to flip to keep text readable
+  let flipped = false;
+  if (angle > 90) { angle -= 180; flipped = true; }
+  if (angle < -90) { angle += 180; flipped = true; }
 
-  // Position below the line (negative perpendicular = below)
+  // Perpendicular direction: always push text to the "below" side
+  // When flipped, the perpendicular must be inverted to stay on the same visual side
+  const sign = flipped ? -1 : 1;
+  const offsetX = sign * px * textOffset;
+  const offsetY = sign * py * textOffset;
+
   const text = new IText(label, {
-    left: midX - px * textOffset,
-    top: midY - py * textOffset,
+    left: midX + offsetX,
+    top: midY + offsetY,
     originX: "center",
     originY: "top",
     angle: angle,

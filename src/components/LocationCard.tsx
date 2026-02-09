@@ -27,12 +27,18 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
 
   return (
     <Card className="overflow-hidden">
-      <div className="aspect-video bg-muted relative">
+      <div
+        className="aspect-video bg-muted relative cursor-pointer group"
+        onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}
+      >
         <img
           src={location.imageData}
           alt={`Standort ${location.locationNumber}`}
           className="w-full h-full object-contain"
         />
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+          <Pencil className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+        </div>
       </div>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
@@ -90,7 +96,8 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
                   <img
                     src={detail.imageData}
                     alt={detail.caption || "Detailbild"}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover cursor-pointer"
+                    onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`)}
                   />
                   {detail.caption && (
                     <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate">
