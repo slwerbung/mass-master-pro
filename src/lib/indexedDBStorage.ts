@@ -273,6 +273,16 @@ export const indexedDBStorage = {
     });
   },
 
+  async updateDetailImageMetadata(detailImageId: string, data: { caption?: string }): Promise<void> {
+    const db = await getDB();
+    const record = await db.get('detail-images', detailImageId);
+    if (!record) return;
+    await db.put('detail-images', {
+      ...record,
+      caption: data.caption,
+    });
+  },
+
   async deleteDetailImage(detailImageId: string): Promise<void> {
     const db = await getDB();
     await db.delete('detail-images', detailImageId);

@@ -6,6 +6,7 @@ import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2 } from "lucid
 import { toast } from "sonner";
 import { createMeasurementGroup } from "@/lib/measurement";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
+import MeasurementInputDialog from "@/components/MeasurementInputDialog";
 
 type Tool = "select" | "draw" | "text" | "measure";
 
@@ -18,19 +19,19 @@ const PhotoEditor = () => {
   const [fabricCanvas, setFabricCanvas] = useState<FabricCanvas | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>("select");
   const [measureStart, setMeasureStart] = useState<{ x: number; y: number } | null>(null);
+  const [measureEnd, setMeasureEnd] = useState<{ x: number; y: number } | null>(null);
+  const [showMeasureDialog, setShowMeasureDialog] = useState(false);
   const [canvasHistory, setCanvasHistory] = useState<string[]>([]);
   const [historyStep, setHistoryStep] = useState(-1);
   const [imageDataState, setImageDataState] = useState<string | null>(location.state?.imageData || null);
   const [loading, setLoading] = useState(false);
 
-  // Determine mode: re-edit (has locationId in path) vs new
   const isReEdit = !!locationId;
   const isDetailReEdit = !!detailId;
 
   // Load image from IndexedDB for re-edit mode
   useEffect(() => {
     if (!isReEdit || imageDataState) return;
-
     const loadImage = async () => {
       setLoading(true);
       try {
@@ -65,8 +66,7 @@ const PhotoEditor = () => {
   }, [isReEdit, isDetailReEdit, locationId, detailId, projectId, navigate, imageDataState]);
 
   useEffect(() => {
-    if (!imageDataState) return;
-    if (!canvasRef.current) return;
+    if (!imageDataState || !canvasRef.current) return;
 
     const headerHeight = window.innerWidth < 768 ? 100 : 80;
     const padding = window.innerWidth < 768 ? 8 : 32;
@@ -81,17 +81,11 @@ const PhotoEditor = () => {
 
     const img = new Image();
     img.onload = () => {
-      const scale = Math.min(
-        canvas.width! / img.width,
-        canvas.height! / img.height
-      );
+      const scale = Math.min(canvas.width! / img.width, canvas.height! / img.height);
       const fabricImage = new FabricImage(img, {
-        scaleX: scale,
-        scaleY: scale,
-        originX: "center",
-        originY: "center",
-        left: canvas.width! / 2,
-        top: canvas.height! / 2,
+        scaleX: scale, scaleY: scale,
+        originX: "center", originY: "center",
+        left: canvas.width! / 2, top: canvas.height! / 2,
       });
       canvas.backgroundImage = fabricImage;
       canvas.renderAll();
@@ -116,7 +110,6 @@ const PhotoEditor = () => {
     canvas.on("object:added", saveHist);
     canvas.on("object:modified", saveHist);
     canvas.on("object:removed", saveHist);
-
     setFabricCanvas(canvas);
 
     return () => {
@@ -183,20 +176,33 @@ const PhotoEditor = () => {
     if (!measureStart) {
       setMeasureStart({ x: pointer.x, y: pointer.y });
     } else {
-      const measurement = prompt("Maß eingeben (in mm):");
-      if (measurement) {
-        const group = createMeasurementGroup(
-          measureStart.x, measureStart.y, pointer.x, pointer.y,
-          `${measurement} mm`, "#ef4444"
-        );
-        fabricCanvas.add(group);
-        fabricCanvas.setActiveObject(group);
-        fabricCanvas.renderAll();
-        setTimeout(() => fabricCanvas.renderAll(), 50);
-      }
-      setMeasureStart(null);
-      setActiveTool("select");
+      setMeasureEnd({ x: pointer.x, y: pointer.y });
+      setShowMeasureDialog(true);
     }
+  };
+
+  const handleMeasureConfirm = (value: string) => {
+    if (!fabricCanvas || !measureStart || !measureEnd) return;
+    const group = createMeasurementGroup(
+      measureStart.x, measureStart.y, measureEnd.x, measureEnd.y,
+      `${value} mm`, "#ef4444"
+    );
+    fabricCanvas.add(group);
+    fabricCanvas.setActiveObject(group);
+    fabricCanvas.renderAll();
+    setTimeout(() => fabricCanvas.renderAll(), 50);
+
+    setShowMeasureDialog(false);
+    setMeasureStart(null);
+    setMeasureEnd(null);
+    setActiveTool("select");
+  };
+
+  const handleMeasureCancel = () => {
+    setShowMeasureDialog(false);
+    setMeasureStart(null);
+    setMeasureEnd(null);
+    setActiveTool("select");
   };
 
   useEffect(() => {
@@ -214,7 +220,6 @@ const PhotoEditor = () => {
       const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 2 });
 
       if (isReEdit && projectId) {
-        // Re-edit mode: save directly back to IndexedDB
         try {
           if (isDetailReEdit && detailId) {
             await indexedDBStorage.updateDetailImage(detailId, dataUrl);
@@ -229,7 +234,6 @@ const PhotoEditor = () => {
           toast.error("Fehler beim Speichern");
         }
       } else {
-        // New image mode: go to location details
         const detailParam = searchParams.get("detail");
         const locationIdParam = searchParams.get("locationId");
         const detailQuery = detailParam === "true" && locationIdParam ? `?detail=true&locationId=${locationIdParam}` : "";
@@ -260,12 +264,7 @@ const PhotoEditor = () => {
     <div className="app-screen bg-background flex flex-col overflow-hidden">
       <div className="shrink-0 bg-card border-b p-2">
         <div className="flex items-center justify-between gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate(`/projects/${projectId}`)}
-            className="shrink-0"
-          >
+          <Button variant="ghost" size="sm" onClick={() => navigate(`/projects/${projectId}`)} className="shrink-0">
             <ArrowLeft className="h-4 w-4" />
           </Button>
 
@@ -303,11 +302,17 @@ const PhotoEditor = () => {
         <canvas ref={canvasRef} className="max-w-full max-h-full" />
       </div>
 
-      {measureStart && (
+      {measureStart && !showMeasureDialog && (
         <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-primary text-primary-foreground px-3 py-2 rounded-lg shadow-lg text-xs text-center z-50">
           Zweiten Punkt wählen
         </div>
       )}
+
+      <MeasurementInputDialog
+        open={showMeasureDialog}
+        onConfirm={handleMeasureConfirm}
+        onCancel={handleMeasureCancel}
+      />
     </div>
   );
 };
