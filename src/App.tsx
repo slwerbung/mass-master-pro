@@ -28,6 +28,7 @@ const App = () => (
           <Route path="/projects/:projectId/editor" element={<PhotoEditor />} />
           <Route path="/projects/:projectId/location-details" element={<LocationDetails />} />
           <Route path="/projects/:projectId/locations/:locationId/edit" element={<LocationDetails />} />
+          <Route path="/projects/:projectId/locations/:locationId/details/:detailId/edit" element={<LocationDetails />} />
           <Route path="/projects/:projectId/locations/:locationId/edit-image" element={<PhotoEditor />} />
           <Route path="/projects/:projectId/locations/:locationId/details/:detailId/edit-image" element={<PhotoEditor />} />
           <Route path="/projects/:projectId/export" element={<Export />} />

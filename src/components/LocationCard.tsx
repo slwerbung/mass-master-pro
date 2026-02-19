@@ -104,6 +104,14 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
                       {detail.caption}
                     </div>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="absolute top-0 left-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-muted/80 hover:bg-muted text-foreground rounded-none rounded-br"
+                    onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit`); }}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
                       <Button

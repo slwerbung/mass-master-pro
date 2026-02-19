@@ -12,15 +12,14 @@ import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
 
 const LocationDetails = () => {
-  const { projectId, locationId } = useParams();
+  const { projectId, locationId, detailId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const isEditMode = !!locationId;
+  const isEditMode = !!locationId && !detailId;
+  const isDetailEditMode = !!detailId;
   const isDetailImage = searchParams.get("detail") === "true";
 
-  // For new locations: image comes from state
-  // For edit: we load existing data
   const { imageData: stateImageData, originalImageData: stateOriginalImageData } = location.state || {};
 
   const [locationName, setLocationName] = useState("");
@@ -28,7 +27,7 @@ const LocationDetails = () => {
   const [caption, setCaption] = useState("");
   const [previewImage, setPreviewImage] = useState<string | null>(stateImageData || null);
   const [isSaving, setIsSaving] = useState(false);
-  const [isLoaded, setIsLoaded] = useState(!isEditMode);
+  const [isLoaded, setIsLoaded] = useState(!isEditMode && !isDetailEditMode);
 
   // Load existing location data in edit mode
   useEffect(() => {
@@ -47,14 +46,34 @@ const LocationDetails = () => {
     }
   }, [isEditMode, projectId, locationId, navigate]);
 
+  // Load existing detail image data in detail edit mode
+  useEffect(() => {
+    if (isDetailEditMode && locationId && detailId) {
+      const loadDetail = async () => {
+        const details = await indexedDBStorage.getDetailImagesByLocation(locationId);
+        const detail = details.find(d => d.id === detailId);
+        if (!detail) { navigate(`/projects/${projectId}`); return; }
+        setCaption(detail.caption || "");
+        setPreviewImage(detail.imageData);
+        setIsLoaded(true);
+      };
+      loadDetail();
+    }
+  }, [isDetailEditMode, locationId, detailId, projectId, navigate]);
+
   const handleSave = async () => {
     if (!projectId) { toast.error("Fehler beim Speichern"); return; }
 
     setIsSaving(true);
 
     try {
-      if (isEditMode && locationId) {
-        // Update metadata only
+      if (isDetailEditMode && detailId) {
+        await indexedDBStorage.updateDetailImageMetadata(detailId, {
+          caption: caption.trim() || undefined,
+        });
+        toast.success("Detailbild aktualisiert");
+        navigate(`/projects/${projectId}`);
+      } else if (isEditMode && locationId) {
         await indexedDBStorage.updateLocationMetadata(projectId, locationId, {
           locationName: locationName.trim() || undefined,
           comment: comment.trim() || undefined,
@@ -62,14 +81,12 @@ const LocationDetails = () => {
         toast.success("Standort aktualisiert");
         navigate(`/projects/${projectId}`);
       } else if (isDetailImage && stateImageData) {
-        // Save as detail image
         toast.loading("Bild wird komprimiert...");
         const compressedImageData = await compressImage(stateImageData, 1280, 0.65);
         const compressedOriginalImageData = stateOriginalImageData
           ? await compressImage(stateOriginalImageData, 1280, 0.65)
           : compressedImageData;
 
-        // locationId from search params for detail images
         const targetLocationId = searchParams.get("locationId");
         if (!targetLocationId) { toast.error("Standort nicht gefunden"); return; }
 
@@ -86,7 +103,6 @@ const LocationDetails = () => {
         toast.success("Detailbild gespeichert");
         navigate(`/projects/${projectId}`);
       } else if (stateImageData) {
-        // New location
         const project = await indexedDBStorage.getProject(projectId);
         if (!project) { toast.error("Projekt nicht gefunden"); setIsSaving(false); return; }
 
@@ -124,42 +140,39 @@ const LocationDetails = () => {
     }
   };
 
-  if (!isLoaded || (!isEditMode && !stateImageData)) {
+  if (!isLoaded || (!isEditMode && !isDetailEditMode && !stateImageData)) {
     return null;
   }
+
+  const title = isDetailEditMode
+    ? "Detailbild bearbeiten"
+    : isEditMode
+      ? "Standort bearbeiten"
+      : isDetailImage
+        ? "Detailbild-Details"
+        : "Standort-Details";
 
   return (
     <div className="min-h-screen bg-background">
       <div className="container max-w-2xl mx-auto p-4 md:p-6 space-y-6">
-        <Button
-          variant="ghost"
-          onClick={() => navigate(-1)}
-          size="sm"
-          className="md:size-default"
-        >
+        <Button variant="ghost" onClick={() => navigate(-1)} size="sm" className="md:size-default">
           <ArrowLeft className="mr-1 md:mr-2 h-4 w-4" />
           <span className="text-sm md:text-base">Zurück</span>
         </Button>
 
         <Card>
           <CardHeader className="p-4 md:p-6">
-            <CardTitle className="text-xl md:text-2xl">
-              {isEditMode ? "Standort bearbeiten" : isDetailImage ? "Detailbild-Details" : "Standort-Details"}
-            </CardTitle>
+            <CardTitle className="text-xl md:text-2xl">{title}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 md:space-y-6 p-4 md:p-6">
             {previewImage && (
               <div className="aspect-video bg-muted rounded-lg overflow-hidden">
-                <img
-                  src={previewImage}
-                  alt="Bild"
-                  className="w-full h-full object-contain"
-                />
+                <img src={previewImage} alt="Bild" className="w-full h-full object-contain" />
               </div>
             )}
 
             <div className="space-y-4">
-              {isDetailImage ? (
+              {isDetailImage || isDetailEditMode ? (
                 <div className="space-y-2">
                   <Label htmlFor="caption">Beschreibung (optional)</Label>
                   <Input
@@ -180,7 +193,6 @@ const LocationDetails = () => {
                       onChange={(e) => setLocationName(e.target.value)}
                     />
                   </div>
-
                   <div className="space-y-2">
                     <Label htmlFor="comment">Kommentar (optional)</Label>
                     <Textarea
@@ -195,14 +207,9 @@ const LocationDetails = () => {
               )}
             </div>
 
-            <Button
-              size="lg"
-              className="w-full"
-              onClick={handleSave}
-              disabled={isSaving}
-            >
+            <Button size="lg" className="w-full" onClick={handleSave} disabled={isSaving}>
               <Check className="mr-2 h-5 w-5" />
-              {isSaving ? "Speichert..." : isEditMode ? "Änderungen speichern" : "Speichern"}
+              {isSaving ? "Speichert..." : isEditMode || isDetailEditMode ? "Änderungen speichern" : "Speichern"}
             </Button>
           </CardContent>
         </Card>

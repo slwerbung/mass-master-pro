@@ -9,8 +9,7 @@ export function createMeasurementGroup(
   color: string = "#ef4444",
 ) {
   const strokeWidth = 3;
-  const capLength = 14; // length of end caps in px
-  const textOffset = 20; // distance of label from the line along the perpendicular
+  const capLength = 14;
 
   // main measurement line
   const line = new Line([x1, y1, x2, y2], {
@@ -40,20 +39,22 @@ export function createMeasurementGroup(
     selectable: false,
   });
 
-  // centered label positioned below the line, rotated parallel to it
   const midX = (x1 + x2) / 2;
   const midY = (y1 + y2) / 2;
 
   // Calculate angle in degrees
   let angle = Math.atan2(dy, dx) * (180 / Math.PI);
-  
-  // Determine if we need to flip to keep text readable
+
+  // Flip to keep text readable
   let flipped = false;
   if (angle > 90) { angle -= 180; flipped = true; }
   if (angle < -90) { angle += 180; flipped = true; }
 
-  // Perpendicular direction: always push text to the "below" side
-  // When flipped, the perpendicular must be inverted to stay on the same visual side
+  // Scale font size and offset based on line length (min 10px font for very short lines)
+  const fontSize = Math.max(10, Math.min(22, len * 0.18));
+  const textOffset = Math.max(8, Math.min(20, len * 0.12));
+
+  // Always push text to the "below" side
   const sign = flipped ? -1 : 1;
   const offsetX = sign * px * textOffset;
   const offsetY = sign * py * textOffset;
@@ -65,11 +66,11 @@ export function createMeasurementGroup(
     originY: "top",
     angle: angle,
     fill: color,
-    fontSize: 22,
+    fontSize,
     fontFamily: "Arial",
     fontWeight: "bold",
     backgroundColor: "rgba(255, 255, 255, 0.9)",
-    padding: 4,
+    padding: Math.max(2, Math.round(fontSize * 0.18)),
     selectable: false,
     editable: false,
   });
@@ -80,7 +81,6 @@ export function createMeasurementGroup(
     objectCaching: true,
   });
 
-  // tag for future identification
   // @ts-ignore
   group.data = { type: "measurement" };
 
