@@ -47,6 +47,19 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
             {location.locationName && (
               <p className="text-sm text-foreground truncate">{location.locationName}</p>
             )}
+            {(location.system || location.label || location.locationType) && (
+              <div className="flex flex-wrap gap-1">
+                {location.system && (
+                  <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.system}</span>
+                )}
+                {location.locationType && (
+                  <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.locationType}</span>
+                )}
+                {location.label && (
+                  <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.label}</span>
+                )}
+              </div>
+            )}
             {location.comment && (
               <p className="text-sm text-muted-foreground line-clamp-2">{location.comment}</p>
             )}

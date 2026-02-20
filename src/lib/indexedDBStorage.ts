@@ -20,6 +20,9 @@ interface AufmassDBSchema extends DBSchema {
       locationNumber: string;
       locationName?: string;
       comment?: string;
+      system?: string;
+      label?: string;
+      locationType?: string;
       createdAt: string;
     };
     indexes: { 'by-project': string };
@@ -185,6 +188,9 @@ export const indexedDBStorage = {
         locationNumber: record.locationNumber,
         locationName: record.locationName,
         comment: record.comment,
+        system: record.system,
+        label: record.label,
+        locationType: record.locationType,
         imageData,
         originalImageData,
         detailImages,
@@ -290,7 +296,7 @@ export const indexedDBStorage = {
     await db.delete('detail-image-blobs', createDetailBlobId(detailImageId, 'original'));
   },
 
-  async updateLocationMetadata(projectId: string, locationId: string, data: { locationName?: string; comment?: string }): Promise<void> {
+  async updateLocationMetadata(projectId: string, locationId: string, data: { locationName?: string; comment?: string; system?: string; label?: string; locationType?: string }): Promise<void> {
     const db = await getDB();
     const record = await db.get('locations', locationId);
     if (!record) return;
@@ -299,6 +305,9 @@ export const indexedDBStorage = {
       ...record,
       locationName: data.locationName,
       comment: data.comment,
+      system: data.system,
+      label: data.label,
+      locationType: data.locationType,
     });
 
     // Update project timestamp
@@ -328,6 +337,9 @@ export const indexedDBStorage = {
         locationNumber: location.locationNumber,
         locationName: location.locationName,
         comment: location.comment,
+        system: location.system,
+        label: location.label,
+        locationType: location.locationType,
         createdAt: location.createdAt.toISOString(),
       });
       
