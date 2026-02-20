@@ -22,6 +22,9 @@ export interface Location {
   imageData: string; // base64 encoded image with annotations
   originalImageData: string; // original photo
   detailImages?: DetailImage[];
+  system?: string;        // z.B. "Türschilder"
+  label?: string;         // Beschriftung
+  locationType?: string;  // Art, z.B. "Raum", "Flur", "Eingang"
   createdAt: Date;
 }
 

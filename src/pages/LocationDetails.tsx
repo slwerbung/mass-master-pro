@@ -24,6 +24,9 @@ const LocationDetails = () => {
 
   const [locationName, setLocationName] = useState("");
   const [comment, setComment] = useState("");
+  const [system, setSystem] = useState("");
+  const [label, setLabel] = useState("");
+  const [locationType, setLocationType] = useState("");
   const [caption, setCaption] = useState("");
   const [previewImage, setPreviewImage] = useState<string | null>(stateImageData || null);
   const [isSaving, setIsSaving] = useState(false);
@@ -39,6 +42,9 @@ const LocationDetails = () => {
         if (!loc) { navigate(`/projects/${projectId}`); return; }
         setLocationName(loc.locationName || "");
         setComment(loc.comment || "");
+        setSystem(loc.system || "");
+        setLabel(loc.label || "");
+        setLocationType(loc.locationType || "");
         setPreviewImage(loc.imageData);
         setIsLoaded(true);
       };
@@ -77,6 +83,9 @@ const LocationDetails = () => {
         await indexedDBStorage.updateLocationMetadata(projectId, locationId, {
           locationName: locationName.trim() || undefined,
           comment: comment.trim() || undefined,
+          system: system.trim() || undefined,
+          label: label.trim() || undefined,
+          locationType: locationType.trim() || undefined,
         });
         toast.success("Standort aktualisiert");
         navigate(`/projects/${projectId}`);
@@ -120,6 +129,9 @@ const LocationDetails = () => {
           locationNumber: fullLocationNumber,
           locationName: locationName.trim() || undefined,
           comment: comment.trim() || undefined,
+          system: system.trim() || undefined,
+          label: label.trim() || undefined,
+          locationType: locationType.trim() || undefined,
           imageData: compressedImageData,
           originalImageData: compressedOriginalImageData,
           createdAt: new Date(),
@@ -194,13 +206,40 @@ const LocationDetails = () => {
                     />
                   </div>
                   <div className="space-y-2">
+                    <Label htmlFor="system">System (optional)</Label>
+                    <Input
+                      id="system"
+                      placeholder="z.B. Türschilder, Wegweiser"
+                      value={system}
+                      onChange={(e) => setSystem(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="label">Beschriftung (optional)</Label>
+                    <Input
+                      id="label"
+                      placeholder="z.B. Raum 101"
+                      value={label}
+                      onChange={(e) => setLabel(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="locationType">Art (optional)</Label>
+                    <Input
+                      id="locationType"
+                      placeholder="z.B. Raum, Flur, Eingang"
+                      value={locationType}
+                      onChange={(e) => setLocationType(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
                     <Label htmlFor="comment">Kommentar (optional)</Label>
                     <Textarea
                       id="comment"
                       placeholder="Zusätzliche Informationen..."
                       value={comment}
                       onChange={(e) => setComment(e.target.value)}
-                      rows={4}
+                      rows={3}
                     />
                   </div>
                 </>
