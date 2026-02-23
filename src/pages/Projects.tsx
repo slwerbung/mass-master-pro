@@ -2,13 +2,14 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, FolderOpen, Calendar } from "lucide-react";
+import { Plus, FolderOpen, Calendar, LogOut } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { StorageIndicator } from "@/components/StorageIndicator";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 const Projects = () => {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -53,14 +54,26 @@ const Projects = () => {
             <h1 className="text-2xl md:text-3xl font-bold text-foreground">Aufmaß App</h1>
             <p className="text-muted-foreground mt-1 text-sm md:text-base">Projekte verwalten</p>
           </div>
-          <Button
-            size="lg"
-            onClick={() => navigate("/projects/new")}
-            className="bg-primary hover:bg-primary-hover w-full sm:w-auto"
-          >
-            <Plus className="mr-2 h-5 w-5" />
-            Neues Projekt
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              size="lg"
+              onClick={() => navigate("/projects/new")}
+              className="bg-primary hover:bg-primary-hover flex-1 sm:flex-none"
+            >
+              <Plus className="mr-2 h-5 w-5" />
+              Neues Projekt
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={async () => {
+                await supabase.auth.signOut();
+                navigate("/auth");
+              }}
+            >
+              <LogOut className="h-5 w-5" />
+            </Button>
+          </div>
         </div>
 
         <StorageIndicator />

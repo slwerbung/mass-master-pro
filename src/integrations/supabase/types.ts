@@ -14,13 +14,188 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      detail_images: {
+        Row: {
+          annotated_path: string
+          caption: string | null
+          created_at: string
+          id: string
+          location_id: string
+          original_path: string
+        }
+        Insert: {
+          annotated_path: string
+          caption?: string | null
+          created_at?: string
+          id?: string
+          location_id: string
+          original_path: string
+        }
+        Update: {
+          annotated_path?: string
+          caption?: string | null
+          created_at?: string
+          id?: string
+          location_id?: string
+          original_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "detail_images_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      location_images: {
+        Row: {
+          created_at: string
+          id: string
+          image_type: string
+          location_id: string
+          storage_path: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          image_type: string
+          location_id: string
+          storage_path: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          image_type?: string
+          location_id?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_images_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      location_pdfs: {
+        Row: {
+          file_name: string
+          id: string
+          location_id: string
+          storage_path: string
+          uploaded_at: string
+        }
+        Insert: {
+          file_name: string
+          id?: string
+          location_id: string
+          storage_path: string
+          uploaded_at?: string
+        }
+        Update: {
+          file_name?: string
+          id?: string
+          location_id?: string
+          storage_path?: string
+          uploaded_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_pdfs_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      locations: {
+        Row: {
+          comment: string | null
+          created_at: string
+          guest_info: string | null
+          id: string
+          label: string | null
+          location_name: string | null
+          location_number: string
+          location_type: string | null
+          project_id: string
+          system: string | null
+        }
+        Insert: {
+          comment?: string | null
+          created_at?: string
+          guest_info?: string | null
+          id?: string
+          label?: string | null
+          location_name?: string | null
+          location_number: string
+          location_type?: string | null
+          project_id: string
+          system?: string | null
+        }
+        Update: {
+          comment?: string | null
+          created_at?: string
+          guest_info?: string | null
+          id?: string
+          label?: string | null
+          location_name?: string | null
+          location_number?: string
+          location_type?: string | null
+          project_id?: string
+          system?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "locations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      projects: {
+        Row: {
+          created_at: string
+          guest_password: string | null
+          id: string
+          project_number: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          guest_password?: string | null
+          id?: string
+          project_number: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          guest_password?: string | null
+          id?: string
+          project_number?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      owns_project: {
+        Args: { _project_id: string; _user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
