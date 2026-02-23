@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Camera, Download, MapPin, Trash2, Pencil, ImagePlus } from "lucide-react";
+import { ArrowLeft, Camera, Download, MapPin, Trash2, Pencil, ImagePlus, Share2 } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
@@ -142,11 +142,25 @@ const ProjectDetail = () => {
           </AlertDialog>
         </div>
 
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold">Projekt {project.projectNumber}</h1>
-          <p className="text-muted-foreground mt-1 text-sm md:text-base">
-            {project.locations.length} {project.locations.length === 1 ? "Standort" : "Standorte"}
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold">Projekt {project.projectNumber}</h1>
+            <p className="text-muted-foreground mt-1 text-sm md:text-base">
+              {project.locations.length} {project.locations.length === 1 ? "Standort" : "Standorte"}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const guestUrl = `${window.location.origin}/guest/${projectId}`;
+              navigator.clipboard.writeText(guestUrl);
+              toast.success("Gast-Link kopiert!");
+            }}
+          >
+            <Share2 className="h-4 w-4 mr-1" />
+            <span className="hidden sm:inline">Gast-Link</span>
+          </Button>
         </div>
 
         {project.locations.length === 0 ? (
