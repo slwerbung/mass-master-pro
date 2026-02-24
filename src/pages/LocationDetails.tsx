@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,8 @@ const LocationDetails = () => {
   const isEditMode = !!locationId && !detailId;
   const isDetailEditMode = !!detailId;
   const isDetailImage = searchParams.get("detail") === "true";
+  const floorPlanId = searchParams.get("floorPlan");
+  const presetLocationId = searchParams.get("locationId");
 
   const { imageData: stateImageData, originalImageData: stateOriginalImageData } = location.state || {};
 
@@ -125,7 +127,7 @@ const LocationDetails = () => {
         const fullLocationNumber = `${project.projectNumber}-${100 + locationNumber - 1}`;
 
         const newLocation: Location = {
-          id: crypto.randomUUID(),
+          id: presetLocationId || crypto.randomUUID(),
           locationNumber: fullLocationNumber,
           locationName: locationName.trim() || undefined,
           comment: comment.trim() || undefined,
@@ -141,7 +143,11 @@ const LocationDetails = () => {
         await indexedDBStorage.saveProject(project);
         toast.dismiss();
         toast.success("Standort gespeichert");
-        navigate(`/projects/${projectId}`);
+        if (floorPlanId) {
+          navigate(`/projects/${projectId}/floor-plans`);
+        } else {
+          navigate(`/projects/${projectId}`);
+        }
       }
     } catch (error) {
       toast.dismiss();

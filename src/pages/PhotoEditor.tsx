@@ -236,8 +236,14 @@ const PhotoEditor = () => {
       } else {
         const detailParam = searchParams.get("detail");
         const locationIdParam = searchParams.get("locationId");
-        const detailQuery = detailParam === "true" && locationIdParam ? `?detail=true&locationId=${locationIdParam}` : "";
-        navigate(`/projects/${projectId}/location-details${detailQuery}`, {
+        const floorPlanParam = searchParams.get("floorPlan");
+        let query = "";
+        if (detailParam === "true" && locationIdParam) {
+          query = `?detail=true&locationId=${locationIdParam}`;
+        } else if (floorPlanParam && locationIdParam) {
+          query = `?floorPlan=${floorPlanParam}&locationId=${locationIdParam}`;
+        }
+        navigate(`/projects/${projectId}/location-details${query}`, {
           state: { imageData: dataUrl, originalImageData: imageDataState },
         });
       }

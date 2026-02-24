@@ -145,6 +145,53 @@ const Export = () => {
 
       let isFirstPage = true;
 
+      // Floor plan pages for "Aufmaß mit Plan" projects
+      if (project.projectType === 'aufmass_mit_plan' && project.floorPlans && project.floorPlans.length > 0) {
+        for (const floorPlan of project.floorPlans) {
+          if (!isFirstPage) pdf.addPage();
+          isFirstPage = false;
+
+          let y = margin;
+          pdf.setFontSize(14);
+          pdf.setFont("helvetica", "bold");
+          pdf.text(`Grundriss: ${floorPlan.name}`, margin, y + 5);
+          y += 12;
+
+          // Render floor plan image with markers
+          const fpDims = await getImageDimensions(floorPlan.imageData);
+          const fpMaxH = pageHeight - y - margin - 10;
+          const fpRatio = Math.min(contentWidth / fpDims.width, fpMaxH / fpDims.height);
+          const fpW = fpDims.width * fpRatio;
+          const fpH = fpDims.height * fpRatio;
+          const fpX = margin + (contentWidth - fpW) / 2;
+
+          try {
+            pdf.addImage(floorPlan.imageData, "PNG", fpX, y, fpW, fpH);
+          } catch (e) {
+            console.error("Error adding floor plan image:", e);
+          }
+
+          // Draw markers on the floor plan
+          for (const marker of floorPlan.markers) {
+            const loc = project.locations.find(l => l.id === marker.locationId);
+            if (!loc) continue;
+            const mx = fpX + marker.x * fpW;
+            const my = y + marker.y * fpH;
+            const parts = loc.locationNumber.split("-");
+            const shortNum = parts[parts.length - 1] || loc.locationNumber;
+
+            // Draw marker circle
+            pdf.setFillColor(59, 130, 246); // primary blue
+            pdf.circle(mx, my, 2.5, 'F');
+            pdf.setFontSize(6);
+            pdf.setFont("helvetica", "bold");
+            pdf.setTextColor(255, 255, 255);
+            pdf.text(shortNum, mx, my + 0.8, { align: "center" });
+            pdf.setTextColor(0, 0, 0);
+          }
+        }
+      }
+
       for (const location of project.locations) {
         if (!isFirstPage) {
           pdf.addPage();
