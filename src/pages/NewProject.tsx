@@ -4,13 +4,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ArrowLeft, Ruler, Map } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
 
 const NewProject = () => {
   const [projectNumber, setProjectNumber] = useState("");
+  const [projectType, setProjectType] = useState<'aufmass' | 'aufmass_mit_plan'>('aufmass');
   const [isCreating, setIsCreating] = useState(false);
   const navigate = useNavigate();
 
@@ -28,6 +30,7 @@ const NewProject = () => {
       const newProject: Project = {
         id: crypto.randomUUID(),
         projectNumber: fullProjectNumber,
+        projectType,
         locations: [],
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -35,7 +38,12 @@ const NewProject = () => {
 
       await indexedDBStorage.saveProject(newProject);
       toast.success("Projekt erstellt");
-      navigate(`/projects/${newProject.id}`);
+      
+      if (projectType === 'aufmass_mit_plan') {
+        navigate(`/projects/${newProject.id}/floor-plans/upload`);
+      } else {
+        navigate(`/projects/${newProject.id}`);
+      }
     } catch (error) {
       console.error("Error creating project:", error);
       toast.error("Fehler beim Erstellen des Projekts");
@@ -61,7 +69,7 @@ const NewProject = () => {
           <CardHeader className="p-4 md:p-6">
             <CardTitle className="text-xl md:text-2xl">Neues Projekt erstellen</CardTitle>
             <CardDescription className="text-sm md:text-base">
-              Gib eine Projektnummer ein, um ein neues Aufmaß-Projekt zu starten
+              Gib eine Projektnummer ein und wähle den Projekttyp
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 md:space-y-6 p-4 md:p-6">
@@ -85,6 +93,50 @@ const NewProject = () => {
                   disabled={isCreating}
                 />
               </div>
+            </div>
+
+            <div className="space-y-3">
+              <Label>Projekttyp</Label>
+              <RadioGroup
+                value={projectType}
+                onValueChange={(v) => setProjectType(v as 'aufmass' | 'aufmass_mit_plan')}
+                className="grid gap-3"
+              >
+                <label
+                  htmlFor="type-aufmass"
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                    projectType === 'aufmass' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
+                  }`}
+                >
+                  <RadioGroupItem value="aufmass" id="type-aufmass" className="mt-0.5" />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 font-medium">
+                      <Ruler className="h-4 w-4" />
+                      Aufmaß
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Standorte mit Fotos und Bemaßungen erfassen
+                    </p>
+                  </div>
+                </label>
+                <label
+                  htmlFor="type-plan"
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                    projectType === 'aufmass_mit_plan' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
+                  }`}
+                >
+                  <RadioGroupItem value="aufmass_mit_plan" id="type-plan" className="mt-0.5" />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 font-medium">
+                      <Map className="h-4 w-4" />
+                      Aufmaß mit Plan
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Grundriss-PDF hochladen und Standorte auf dem Plan markieren
+                    </p>
+                  </div>
+                </label>
+              </RadioGroup>
             </div>
 
             <Button

@@ -1,5 +1,5 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
-import { Project, Location, DetailImage } from '@/types/project';
+import { Project, Location, DetailImage, FloorPlan } from '@/types/project';
 
 interface AufmassDBSchema extends DBSchema {
   projects: {
@@ -7,6 +7,7 @@ interface AufmassDBSchema extends DBSchema {
     value: {
       id: string;
       projectNumber: string;
+      projectType?: 'aufmass' | 'aufmass_mit_plan';
       createdAt: string;
       updatedAt: string;
     };
@@ -57,10 +58,31 @@ interface AufmassDBSchema extends DBSchema {
     };
     indexes: { 'by-detail-image': string };
   };
+  'floor-plans': {
+    key: string;
+    value: {
+      id: string;
+      projectId: string;
+      name: string;
+      pageIndex: number;
+      markers: string; // JSON stringified FloorPlanMarker[]
+      createdAt: string;
+    };
+    indexes: { 'by-project': string };
+  };
+  'floor-plan-images': {
+    key: string;
+    value: {
+      id: string;
+      floorPlanId: string;
+      blob: Blob;
+    };
+    indexes: { 'by-floor-plan': string };
+  };
 }
 
 const DB_NAME = 'aufmass-db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbInstance: IDBPDatabase<AufmassDBSchema> | null = null;
 
@@ -85,6 +107,13 @@ async function getDB(): Promise<IDBPDatabase<AufmassDBSchema>> {
 
         const detailBlobStore = db.createObjectStore('detail-image-blobs', { keyPath: 'id' });
         detailBlobStore.createIndex('by-detail-image', 'detailImageId');
+      }
+      if (oldVersion < 3) {
+        const floorPlanStore = db.createObjectStore('floor-plans', { keyPath: 'id' });
+        floorPlanStore.createIndex('by-project', 'projectId');
+
+        const floorPlanImageStore = db.createObjectStore('floor-plan-images', { keyPath: 'id' });
+        floorPlanImageStore.createIndex('by-floor-plan', 'floorPlanId');
       }
     },
   });
@@ -135,12 +164,15 @@ export const indexedDBStorage = {
     
     for (const record of projectRecords) {
       const locations = await this.getLocationsByProject(record.id);
+      const floorPlans = await this.getFloorPlansByProject(record.id);
       projects.push({
         id: record.id,
         projectNumber: record.projectNumber,
+        projectType: record.projectType,
         createdAt: new Date(record.createdAt),
         updatedAt: new Date(record.updatedAt),
         locations,
+        floorPlans,
       });
     }
     
@@ -154,13 +186,16 @@ export const indexedDBStorage = {
     if (!record) return null;
     
     const locations = await this.getLocationsByProject(id);
+    const floorPlans = await this.getFloorPlansByProject(id);
     
     return {
       id: record.id,
       projectNumber: record.projectNumber,
+      projectType: record.projectType,
       createdAt: new Date(record.createdAt),
       updatedAt: new Date(record.updatedAt),
       locations,
+      floorPlans,
     };
   },
 
@@ -310,7 +345,6 @@ export const indexedDBStorage = {
       locationType: data.locationType,
     });
 
-    // Update project timestamp
     const project = await db.get('projects', projectId);
     if (project) {
       await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
@@ -323,6 +357,7 @@ export const indexedDBStorage = {
     await db.put('projects', {
       id: project.id,
       projectNumber: project.projectNumber,
+      projectType: project.projectType,
       createdAt: project.createdAt.toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -369,7 +404,6 @@ export const indexedDBStorage = {
     const currentLocationIds = new Set(project.locations.map(l => l.id));
     for (const existingLocation of existingLocations) {
       if (!currentLocationIds.has(existingLocation.id)) {
-        // Delete detail images for this location
         const detailImages = await db.getAllFromIndex('detail-images', 'by-location', existingLocation.id);
         for (const di of detailImages) {
           await db.delete('detail-image-blobs', createDetailBlobId(di.id, 'annotated'));
@@ -383,12 +417,90 @@ export const indexedDBStorage = {
     }
   },
 
+  // Floor Plan methods
+  async getFloorPlansByProject(projectId: string): Promise<FloorPlan[]> {
+    const db = await getDB();
+    const records = await db.getAllFromIndex('floor-plans', 'by-project', projectId);
+    
+    const floorPlans: FloorPlan[] = [];
+    
+    for (const record of records) {
+      const imageRecord = await db.get('floor-plan-images', record.id);
+      const imageData = imageRecord ? await blobToBase64(imageRecord.blob) : '';
+      
+      floorPlans.push({
+        id: record.id,
+        name: record.name,
+        imageData,
+        markers: JSON.parse(record.markers),
+        pageIndex: record.pageIndex,
+        createdAt: new Date(record.createdAt),
+      });
+    }
+    
+    return floorPlans.sort((a, b) => a.pageIndex - b.pageIndex);
+  },
+
+  async saveFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<void> {
+    const db = await getDB();
+    
+    await db.put('floor-plans', {
+      id: floorPlan.id,
+      projectId,
+      name: floorPlan.name,
+      pageIndex: floorPlan.pageIndex,
+      markers: JSON.stringify(floorPlan.markers),
+      createdAt: floorPlan.createdAt.toISOString(),
+    });
+    
+    if (floorPlan.imageData) {
+      await db.put('floor-plan-images', {
+        id: floorPlan.id,
+        floorPlanId: floorPlan.id,
+        blob: base64ToBlob(floorPlan.imageData),
+      });
+    }
+
+    const project = await db.get('projects', projectId);
+    if (project) {
+      await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
+    }
+  },
+
+  async updateFloorPlanMarkers(projectId: string, floorPlanId: string, markers: FloorPlan['markers']): Promise<void> {
+    const db = await getDB();
+    const record = await db.get('floor-plans', floorPlanId);
+    if (!record) return;
+    
+    await db.put('floor-plans', {
+      ...record,
+      markers: JSON.stringify(markers),
+    });
+
+    const project = await db.get('projects', projectId);
+    if (project) {
+      await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
+    }
+  },
+
+  async deleteFloorPlan(floorPlanId: string): Promise<void> {
+    const db = await getDB();
+    await db.delete('floor-plans', floorPlanId);
+    await db.delete('floor-plan-images', floorPlanId);
+  },
+
   async deleteProject(id: string): Promise<void> {
     const db = await getDB();
     
+    // Delete floor plans
+    const floorPlans = await db.getAllFromIndex('floor-plans', 'by-project', id);
+    for (const fp of floorPlans) {
+      await db.delete('floor-plan-images', fp.id);
+      await db.delete('floor-plans', fp.id);
+    }
+    
     const locations = await db.getAllFromIndex('locations', 'by-project', id);
     for (const location of locations) {
-      // Delete detail images
       const detailImages = await db.getAllFromIndex('detail-images', 'by-location', location.id);
       for (const di of detailImages) {
         await db.delete('detail-image-blobs', createDetailBlobId(di.id, 'annotated'));

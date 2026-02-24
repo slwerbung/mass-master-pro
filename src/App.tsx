@@ -15,6 +15,8 @@ import Export from "./pages/Export";
 import Auth from "./pages/Auth";
 import GuestAccess from "./pages/GuestAccess";
 import GuestProject from "./pages/GuestProject";
+import FloorPlanUpload from "./pages/FloorPlanUpload";
+import FloorPlanView from "./pages/FloorPlanView";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -61,6 +63,8 @@ const App = () => (
           <Route path="/projects/:projectId/locations/:locationId/edit-image" element={<AuthGuard><PhotoEditor /></AuthGuard>} />
           <Route path="/projects/:projectId/locations/:locationId/details/:detailId/edit-image" element={<AuthGuard><PhotoEditor /></AuthGuard>} />
           <Route path="/projects/:projectId/export" element={<AuthGuard><Export /></AuthGuard>} />
+          <Route path="/projects/:projectId/floor-plans" element={<AuthGuard><FloorPlanView /></AuthGuard>} />
+          <Route path="/projects/:projectId/floor-plans/upload" element={<AuthGuard><FloorPlanUpload /></AuthGuard>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

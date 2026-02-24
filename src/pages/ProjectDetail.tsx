@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Camera, Download, MapPin, Trash2, Pencil, ImagePlus, Share2 } from "lucide-react";
+import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
@@ -24,6 +24,7 @@ const ProjectDetail = () => {
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const loadProject = async () => {
@@ -81,7 +82,6 @@ const ProjectDetail = () => {
   const handleDeleteDetailImage = async (locationId: string, detailImageId: string) => {
     try {
       await indexedDBStorage.deleteDetailImage(detailImageId);
-      // Reload project
       if (projectId) {
         const reloaded = await indexedDBStorage.getProject(projectId);
         if (reloaded) setProject(reloaded);
@@ -93,6 +93,22 @@ const ProjectDetail = () => {
     }
   };
 
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Bitte ein Bild auswählen");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const imageData = reader.result as string;
+      navigate(`/projects/${projectId}/editor`, { state: { imageData } });
+    };
+    reader.onerror = () => toast.error("Fehler beim Laden des Bildes");
+    reader.readAsDataURL(file);
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -101,24 +117,18 @@ const ProjectDetail = () => {
     );
   }
 
-  if (!project) {
-    return null;
-  }
+  if (!project) return null;
+
+  const isPlanProject = project.projectType === 'aufmass_mit_plan';
 
   return (
     <div className="min-h-screen bg-background pb-24">
       <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-6">
         <div className="flex items-center justify-between gap-2">
-          <Button
-            variant="ghost"
-            onClick={() => navigate("/")}
-            size="sm"
-            className="md:size-default"
-          >
+          <Button variant="ghost" onClick={() => navigate("/")} size="sm">
             <ArrowLeft className="mr-1 md:mr-2 h-4 w-4" />
             <span className="hidden sm:inline">Zurück</span>
           </Button>
-          
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="destructive" size="sm">
@@ -147,6 +157,7 @@ const ProjectDetail = () => {
             <h1 className="text-2xl md:text-3xl font-bold">Projekt {project.projectNumber}</h1>
             <p className="text-muted-foreground mt-1 text-sm md:text-base">
               {project.locations.length} {project.locations.length === 1 ? "Standort" : "Standorte"}
+              {isPlanProject && ` · ${project.floorPlans?.length || 0} Grundriss(e)`}
             </p>
           </div>
           <Button
@@ -163,13 +174,36 @@ const ProjectDetail = () => {
           </Button>
         </div>
 
+        {/* Floor Plan Banner for "mit Plan" projects */}
+        {isPlanProject && (
+          <Card
+            className="border-primary/30 bg-primary/5 cursor-pointer hover:bg-primary/10 transition-colors"
+            onClick={() => navigate(`/projects/${projectId}/floor-plans`)}
+          >
+            <CardContent className="flex items-center gap-3 py-4">
+              <Map className="h-8 w-8 text-primary shrink-0" />
+              <div className="flex-1">
+                <h3 className="font-semibold">Grundrisse</h3>
+                <p className="text-sm text-muted-foreground">
+                  {project.floorPlans && project.floorPlans.length > 0
+                    ? `${project.floorPlans.length} Grundriss(e) – Tippen zum Öffnen`
+                    : "Noch keine Grundrisse – Tippen zum Hochladen"}
+                </p>
+              </div>
+              <ArrowLeft className="h-4 w-4 text-muted-foreground rotate-180" />
+            </CardContent>
+          </Card>
+        )}
+
         {project.locations.length === 0 ? (
           <Card className="border-2 border-dashed">
             <CardContent className="flex flex-col items-center justify-center py-16 text-center">
               <MapPin className="h-16 w-16 text-muted-foreground mb-4" />
               <h3 className="text-xl font-semibold mb-2">Noch keine Standorte</h3>
               <p className="text-muted-foreground mb-6 max-w-sm">
-                Nimm das erste Foto auf, um einen Standort zu erfassen
+                {isPlanProject
+                  ? "Öffne die Grundrisse, um Standorte auf dem Plan zu platzieren"
+                  : "Nimm das erste Foto auf, um einen Standort zu erfassen"}
               </p>
             </CardContent>
           </Card>
@@ -188,17 +222,48 @@ const ProjectDetail = () => {
         )}
       </div>
 
+      {/* Hidden file input for image upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleImageUpload}
+        className="hidden"
+      />
+
       {/* Fixed Bottom Actions */}
       <div className="fixed bottom-0 left-0 right-0 bg-card border-t shadow-lg p-3 md:p-4 safe-area-bottom">
         <div className="container max-w-4xl mx-auto flex gap-2 md:gap-3">
-          <Button
-            size="lg"
-            className="flex-1 h-12 md:h-11"
-            onClick={() => navigate(`/projects/${projectId}/camera`)}
-          >
-            <Camera className="mr-1 md:mr-2 h-5 w-5" />
-            <span className="text-sm md:text-base">Aufnehmen</span>
-          </Button>
+          {isPlanProject ? (
+            <Button
+              size="lg"
+              className="flex-1 h-12 md:h-11"
+              onClick={() => navigate(`/projects/${projectId}/floor-plans`)}
+            >
+              <Map className="mr-1 md:mr-2 h-5 w-5" />
+              <span className="text-sm md:text-base">Grundrisse</span>
+            </Button>
+          ) : (
+            <>
+              <Button
+                size="lg"
+                className="flex-1 h-12 md:h-11"
+                onClick={() => navigate(`/projects/${projectId}/camera`)}
+              >
+                <Camera className="mr-1 md:mr-2 h-5 w-5" />
+                <span className="text-sm md:text-base">Aufnehmen</span>
+              </Button>
+              <Button
+                size="lg"
+                variant="secondary"
+                className="h-12 md:h-11 px-3 md:px-4"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <ImagePlus className="mr-1 h-5 w-5" />
+                <span className="hidden sm:inline text-sm md:text-base">Hochladen</span>
+              </Button>
+            </>
+          )}
           {project.locations.length > 0 && (
             <Button
               size="lg"

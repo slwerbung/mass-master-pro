@@ -28,9 +28,27 @@ export interface Location {
   createdAt: Date;
 }
 
+export interface FloorPlanMarker {
+  id: string;
+  locationId: string;  // Verknüpfung zum Standort
+  x: number;           // Position auf dem Grundriss (0-1, relativ)
+  y: number;
+}
+
+export interface FloorPlan {
+  id: string;
+  name: string;        // z.B. "EG", "1. OG"
+  imageData: string;   // Gerenderte PDF-Seite als Bild
+  markers: FloorPlanMarker[];
+  pageIndex: number;   // Welche Seite der PDF
+  createdAt: Date;
+}
+
 export interface Project {
   id: string;
   projectNumber: string;
+  projectType?: 'aufmass' | 'aufmass_mit_plan';
+  floorPlans?: FloorPlan[];
   locations: Location[];
   createdAt: Date;
   updatedAt: Date;

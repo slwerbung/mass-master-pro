@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Camera as CameraIcon, X, Check } from "lucide-react";
+import { Camera as CameraIcon, X, Check, ImagePlus } from "lucide-react";
 import { toast } from "sonner";
 
 const Camera = () => {
@@ -10,10 +10,14 @@ const Camera = () => {
   const [searchParams] = useSearchParams();
   const isDetail = searchParams.get("detail") === "true";
   const detailLocationId = searchParams.get("locationId");
+  const floorPlanId = searchParams.get("floorPlan");
+  const presetLocationId = searchParams.get("locationId");
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [cameraError, setCameraError] = useState(false);
 
   useEffect(() => {
     startCamera();
@@ -33,7 +37,7 @@ const Camera = () => {
       }
     } catch (error) {
       console.error("Camera error:", error);
-      toast.error("Kamera konnte nicht gestartet werden");
+      setCameraError(true);
     }
   };
 
@@ -60,15 +64,40 @@ const Camera = () => {
     }
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Bitte ein Bild auswählen");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const imageData = reader.result as string;
+      setCapturedImage(imageData);
+      stopCamera();
+    };
+    reader.onerror = () => toast.error("Fehler beim Laden des Bildes");
+    reader.readAsDataURL(file);
+  };
+
   const retakePhoto = () => {
     setCapturedImage(null);
+    setCameraError(false);
     startCamera();
   };
 
   const confirmPhoto = () => {
     if (capturedImage) {
-      const detailQuery = isDetail && detailLocationId ? `?detail=true&locationId=${detailLocationId}` : "";
-      navigate(`/projects/${projectId}/editor${detailQuery}`, { state: { imageData: capturedImage } });
+      let query = "";
+      if (isDetail && detailLocationId) {
+        query = `?detail=true&locationId=${detailLocationId}`;
+      } else if (floorPlanId && presetLocationId) {
+        query = `?floorPlan=${floorPlanId}&locationId=${presetLocationId}`;
+      }
+      navigate(`/projects/${projectId}/editor${query}`, { state: { imageData: capturedImage } });
     }
   };
 
@@ -76,12 +105,26 @@ const Camera = () => {
     <div className="app-screen bg-foreground flex flex-col overflow-hidden">
       <div className="flex-1 relative flex items-center justify-center min-h-0">
         {!capturedImage ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            className="w-full h-full object-contain"
-          />
+          cameraError ? (
+            <div className="text-center p-6">
+              <p className="text-background/80 mb-4">Kamera nicht verfügbar</p>
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-background border-background/30 hover:bg-background/10"
+              >
+                <ImagePlus className="h-5 w-5 mr-2" />
+                Bild hochladen
+              </Button>
+            </div>
+          ) : (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              className="w-full h-full object-contain"
+            />
+          )
         ) : (
           <img
             src={capturedImage}
@@ -90,26 +133,53 @@ const Camera = () => {
           />
         )}
         <canvas ref={canvasRef} className="hidden" />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileUpload}
+          className="hidden"
+        />
       </div>
 
       <div className="shrink-0 bg-foreground/80 p-4 flex items-center justify-center gap-4 safe-area-bottom">
         <Button
           size="lg"
           variant="ghost"
-          onClick={() => navigate(`/projects/${projectId}`)}
+          onClick={() => {
+            if (floorPlanId) {
+              navigate(`/projects/${projectId}/floor-plans`);
+            } else {
+              navigate(`/projects/${projectId}`);
+            }
+          }}
           className="text-background hover:bg-background/10"
         >
           <X className="h-6 w-6" />
         </Button>
 
         {!capturedImage ? (
-          <Button
-            size="lg"
-            onClick={capturePhoto}
-            className="h-16 w-16 rounded-full bg-background hover:bg-muted"
-          >
-            <CameraIcon className="h-6 w-6 text-foreground" />
-          </Button>
+          <>
+            {!cameraError && (
+              <Button
+                size="lg"
+                onClick={capturePhoto}
+                className="h-16 w-16 rounded-full bg-background hover:bg-muted"
+              >
+                <CameraIcon className="h-6 w-6 text-foreground" />
+              </Button>
+            )}
+            {!cameraError && (
+              <Button
+                size="lg"
+                variant="ghost"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-background hover:bg-background/10"
+              >
+                <ImagePlus className="h-5 w-5" />
+              </Button>
+            )}
+          </>
         ) : (
           <>
             <Button
