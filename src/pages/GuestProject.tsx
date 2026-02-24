@@ -41,46 +41,46 @@ const GuestProject = () => {
   const [pdfs, setPdfs] = useState<PdfData[]>([]);
   const [guestInfoMap, setGuestInfoMap] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const guestName = localStorage.getItem("guest_name") || "Gast";
 
   useEffect(() => {
+    const token = localStorage.getItem("guest_token");
+    if (!token) {
+      navigate(`/guest/${projectId}`);
+      return;
+    }
+
+    const savedProjectNumber = localStorage.getItem("guest_project_number");
+    if (savedProjectNumber) setProjectNumber(savedProjectNumber);
+
     const load = async () => {
-      const { data: project } = await supabase
-        .from("projects")
-        .select("project_number")
-        .eq("id", projectId!)
-        .single();
+      try {
+        const { data, error } = await supabase.functions.invoke("guest-data", {
+          body: { projectId, token },
+        });
 
-      if (!project) { navigate("/"); return; }
-      setProjectNumber(project.project_number);
-
-      const { data: locs } = await supabase
-        .from("locations")
-        .select("*")
-        .eq("project_id", projectId!)
-        .order("created_at");
-
-      if (locs) {
-        setLocations(locs as LocationData[]);
-        const infoMap: Record<string, string> = {};
-        locs.forEach((l: any) => { infoMap[l.id] = l.guest_info || ""; });
-        setGuestInfoMap(infoMap);
-
-        const locationIds = locs.map((l: any) => l.id);
-        
-        if (locationIds.length > 0) {
-          const { data: imgs } = await supabase
-            .from("location_images")
-            .select("location_id, image_type, storage_path")
-            .in("location_id", locationIds);
-          if (imgs) setImages(imgs as ImageData[]);
-
-          const { data: pdfData } = await supabase
-            .from("location_pdfs")
-            .select("*")
-            .in("location_id", locationIds);
-          if (pdfData) setPdfs(pdfData as PdfData[]);
+        if (error || !data) {
+          toast.error("Zugriff verweigert");
+          localStorage.removeItem("guest_token");
+          navigate(`/guest/${projectId}`);
+          return;
         }
+
+        setLocations(data.locations || []);
+        setImages(data.images || []);
+        setPdfs(data.pdfs || []);
+
+        const infoMap: Record<string, string> = {};
+        (data.locations || []).forEach((l: LocationData) => {
+          infoMap[l.id] = l.guest_info || "";
+        });
+        setGuestInfoMap(infoMap);
+      } catch {
+        toast.error("Fehler beim Laden");
+        navigate(`/guest/${projectId}`);
+      } finally {
+        setLoading(false);
       }
     };
     load();
@@ -92,16 +92,31 @@ const GuestProject = () => {
   };
 
   const saveGuestInfo = async (locationId: string) => {
-    setSavingId(locationId);
-    const { error } = await supabase
-      .from("locations")
-      .update({ guest_info: guestInfoMap[locationId] || null })
-      .eq("id", locationId);
+    const token = localStorage.getItem("guest_token");
+    if (!token) {
+      toast.error("Sitzung abgelaufen");
+      navigate(`/guest/${projectId}`);
+      return;
+    }
 
-    if (error) {
+    setSavingId(locationId);
+    try {
+      const { data, error } = await supabase.functions.invoke("update-guest-info", {
+        body: {
+          projectId,
+          token,
+          locationId,
+          guestInfo: guestInfoMap[locationId] || null,
+        },
+      });
+
+      if (error || !data?.success) {
+        toast.error("Fehler beim Speichern");
+      } else {
+        toast.success("Gespeichert");
+      }
+    } catch {
       toast.error("Fehler beim Speichern");
-    } else {
-      toast.success("Gespeichert");
     }
     setSavingId(null);
   };
@@ -112,6 +127,14 @@ const GuestProject = () => {
   };
 
   const locationPdfs = (locationId: string) => pdfs.filter(p => p.location_id === locationId);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Laden...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -154,7 +177,6 @@ const GuestProject = () => {
                     </div>
                   )}
 
-                  {/* PDFs */}
                   {locationPdfs(loc.id).length > 0 && (
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Druckdaten</p>
@@ -173,7 +195,6 @@ const GuestProject = () => {
                     </div>
                   )}
 
-                  {/* Guest info field */}
                   <div className="space-y-2">
                     <Label>Informationen (von Ihnen)</Label>
                     <Textarea

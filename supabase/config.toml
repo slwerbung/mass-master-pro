@@ -1,1 +1,10 @@
 project_id = "vwzeewpizvdgvuvqjsbv"
+
+[functions.validate-guest]
+verify_jwt = false
+
+[functions.guest-data]
+verify_jwt = false
+
+[functions.update-guest-info]
+verify_jwt = false

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -14,44 +14,50 @@ const GuestAccess = () => {
   const [password, setPassword] = useState("");
   const [guestName, setGuestName] = useState(() => localStorage.getItem("guest_name") || "");
   const [needsPassword, setNeedsPassword] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [step, setStep] = useState<"password" | "name">("password");
+  const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState<"check" | "password" | "name">("check");
 
-  useEffect(() => {
-    const checkProject = async () => {
-      const { data, error } = await supabase
-        .from("projects")
-        .select("id, guest_password")
-        .eq("id", projectId!)
-        .single();
+  // Check if project needs password on first interaction
+  const checkAndValidate = async (pw?: string) => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("validate-guest", {
+        body: { projectId, password: pw || "" },
+      });
 
-      if (error || !data) {
+      if (error) {
         toast.error("Projekt nicht gefunden");
         navigate("/");
         return;
       }
 
-      const hasPassword = !!data.guest_password;
-      setNeedsPassword(hasPassword);
-      setStep(hasPassword ? "password" : "name");
+      if (data.valid) {
+        localStorage.setItem("guest_token", data.token);
+        localStorage.setItem("guest_project_number", data.projectNumber);
+        setStep("name");
+      } else if (data.needsPassword) {
+        setNeedsPassword(true);
+        setStep("password");
+        if (pw) toast.error("Falsches Passwort");
+      } else {
+        toast.error("Projekt nicht gefunden");
+        navigate("/");
+      }
+    } catch {
+      toast.error("Fehler beim Verbinden");
+    } finally {
       setLoading(false);
-    };
-    checkProject();
-  }, [projectId, navigate]);
-
-  const handlePasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const { data } = await supabase
-      .from("projects")
-      .select("guest_password")
-      .eq("id", projectId!)
-      .single();
-
-    if (data?.guest_password === password) {
-      setStep("name");
-    } else {
-      toast.error("Falsches Passwort");
     }
+  };
+
+  // On mount, try without password first
+  useState(() => {
+    checkAndValidate();
+  });
+
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    checkAndValidate(password);
   };
 
   const handleNameSubmit = (e: React.FormEvent) => {
@@ -61,7 +67,13 @@ const GuestAccess = () => {
     navigate(`/guest/${projectId}/view`);
   };
 
-  if (loading || needsPassword === null) return null;
+  if (step === "check") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <p className="text-muted-foreground">Laden...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -88,7 +100,9 @@ const GuestAccess = () => {
                   />
                 </div>
               </div>
-              <Button type="submit" className="w-full">Weiter</Button>
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? "Prüfe..." : "Weiter"}
+              </Button>
             </form>
           ) : (
             <form onSubmit={handleNameSubmit} className="space-y-4">
