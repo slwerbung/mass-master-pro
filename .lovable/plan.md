@@ -1,185 +1,121 @@
 
 
-## Plan: Bluetooth-Fix, neue Felder, Supabase-Backend mit Gastzugang
+## Plan: Zwei Projekttypen und Bilder-Upload
 
-Dieses Update umfasst 4 Bereiche: Bluetooth-Fix, neue Standort-Felder, Supabase-Datenbank-Setup und Gastzugang fuer Kunden.
-
----
-
-### 1. Bluetooth Laser: Messwert-Empfang reparieren
-
-**Problem**: Die Verbindung wird hergestellt, aber die Service-UUIDs (`00001101...`) sind fuer SPP (Serial Port Profile) gedacht, das Web Bluetooth nicht unterstuetzt. Die meisten Leica/Wuerth-Geraete bieten BLE-Services unter anderen UUIDs an.
-
-**Loesung** in `src/components/MeasurementInputDialog.tsx`:
-- `acceptAllDevices: true` beibehalten, damit der Nutzer sein Geraet findet
-- Nach der Verbindung alle verfuegbaren Services auflisten (`server.getPrimaryServices()`) und alle Characteristics durchsuchen
-- Jede Characteristic mit `notify`-Property abonnieren und auf eingehende Werte lauschen
-- Zusaetzlich: Characteristics mit `read`-Property einmalig lesen (manche Geraete senden den letzten Messwert so)
-- Robustere Wert-Erkennung: Regex fuer verschiedene Formate (z.B. `"1.234m"`, `"1234mm"`, `"D: 1.234"`)
-- Debug-Log im UI anzeigen (kleiner Text unter dem Input), damit der Nutzer sieht, welche Rohdaten ankommen
-
-```text
-┌─────────────────────────────────┐
-│ Maß eingeben                    │
-│                                 │
-│ Wert in mm: [1200          ]    │
-│                                 │
-│ [Bluetooth] Laser verbunden     │
-│ Empfangen: "D: 1.200 m"        │ <-- Debug-Anzeige
-│                                 │
-│ [Abbrechen]  [Uebernehmen]     │
-└─────────────────────────────────┘
-```
+Dieses Feature umfasst zwei Hauptbereiche: (1) optionaler Bilder-Upload als Alternative zur Kamera, und (2) ein neuer Projekttyp "Aufmaß mit Plan" mit Grundriss-PDFs und platzierbaren Standort-Fähnchen.
 
 ---
 
-### 2. Neue Standort-Felder: System, Beschriftung, Art
+### 1. Bilder-Upload als Kamera-Alternative (beide Projekttypen)
 
-**Datei: `src/types/project.ts`**
+**Änderung in `ProjectDetail.tsx`**: Neben dem "Aufnehmen"-Button wird ein zweiter Button "Bild hochladen" eingefügt. Dieser öffnet einen nativen Datei-Picker (`<input type="file" accept="image/*">`), liest das Bild als base64 und navigiert direkt zum PhotoEditor (wie nach Kamera-Aufnahme).
+
+**Änderung in `Camera.tsx`**: Zusätzlich zum Kamera-Feed wird ein Upload-Button angeboten, falls die Kamera nicht verfügbar ist oder der Nutzer bewusst ein Bild hochladen möchte.
+
+---
+
+### 2. Neuer Projekttyp "Aufmaß mit Plan"
+
+#### 2a. Datenmodell-Erweiterungen
+
+**`src/types/project.ts`** -- Neue Interfaces:
+
 ```typescript
-export interface Location {
-  // ... bestehende Felder ...
-  system?: string;        // z.B. "Tuerschilder"
-  label?: string;         // Beschriftung
-  locationType?: string;  // Art, z.B. "Raum", "Flur", "Eingang"
+export interface FloorPlanMarker {
+  id: string;
+  locationId: string;  // Verknüpfung zum Standort
+  x: number;           // Position auf dem Grundriss (0-1, relativ)
+  y: number;
+}
+
+export interface FloorPlan {
+  id: string;
+  name: string;        // z.B. "EG", "1. OG"
+  imageData: string;   // Gerenderte PDF-Seite als Bild
+  markers: FloorPlanMarker[];
+  pageIndex: number;   // Welche Seite der PDF
+  createdAt: Date;
+}
+
+export interface Project {
+  id: string;
+  projectNumber: string;
+  projectType: 'aufmass' | 'aufmass_mit_plan';  // NEU
+  floorPlans?: FloorPlan[];                       // NEU
+  locations: Location[];
+  createdAt: Date;
+  updatedAt: Date;
 }
 ```
 
-**Datei: `src/lib/indexedDBStorage.ts`**
-- Location-Schema um die 3 neuen Felder erweitern (kein DB-Version-Upgrade noetig, da die Felder optional sind und IndexedDB schema-frei ist)
-- `updateLocationMetadata` um die neuen Felder erweitern
+**IndexedDB-Schema** (`indexedDBStorage.ts`): Neuer Object Store `floor-plans` mit Index `by-project` und `floor-plan-images` für die gerenderten Bilder als Blobs.
 
-**Datei: `src/pages/LocationDetails.tsx`**
-- 3 neue Input-Felder hinzufuegen (System, Beschriftung, Art)
-- In Edit-Modus bestehende Werte laden
+#### 2b. Projekt erstellen (`NewProject.tsx`)
 
-**Datei: `src/components/LocationCard.tsx`**
-- Neue Felder in der Standort-Karte anzeigen
+Nach Eingabe der Projektnummer erscheint eine Auswahl (Radio-Buttons):
+- **Aufmaß** -- Standard-Workflow wie bisher
+- **Aufmaß mit Plan** -- Nach Erstellung wird man zum PDF-Upload weitergeleitet
 
----
+#### 2c. PDF-Upload und Rendering
 
-### 3. Supabase-Backend einrichten
+**Neue Seite `FloorPlanUpload.tsx`** (`/projects/:projectId/floor-plans/upload`):
+- Datei-Picker für eine oder mehrere PDFs
+- Jede PDF-Seite wird mit einem Canvas-basierten PDF-Renderer (mittels `pdfjs-dist`) als Bild gerendert
+- Jede Seite wird als eigener Grundriss gespeichert, mit optionalem Namen (z.B. "Erdgeschoss")
+- Nach Upload wird zur Grundriss-Ansicht navigiert
 
-**Zuerst**: Supabase-Verbindung zum Projekt herstellen (Lovable Cloud oder externes Supabase-Projekt).
+**Abhängigkeit**: `pdfjs-dist` wird als neues npm-Paket benötigt, um PDF-Seiten clientseitig zu Bildern zu rendern.
 
-**Datenbank-Schema (Migration)**:
+#### 2d. Grundriss-Ansicht mit Fähnchen
 
-```sql
--- Projekte
-CREATE TABLE public.projects (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  project_number TEXT NOT NULL,
-  guest_password TEXT,          -- optionales Passwort fuer Gastzugang
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
+**Neue Seite `FloorPlanView.tsx`** (`/projects/:projectId/floor-plans`):
+- Zeigt den aktuellen Grundriss als Bild (zoom- und panbar)
+- Tabs oder Dropdown zum Wechseln zwischen mehreren Grundrissen
+- **Tap auf Grundriss**: Platziert ein neues Fähnchen (Marker-Icon) an der geklickten Stelle und navigiert zum Standort-Erstellungs-Workflow (Kamera/Upload → Editor → LocationDetails)
+- **Nach Speichern des Standorts**: Automatische Rückkehr zur Grundriss-Ansicht
+- **Tap auf bestehendes Fähnchen**: Navigiert zum zugehörigen Standort (LocationCard-Ansicht)
+- Fähnchen zeigen die Standortnummer als Label
 
--- Standorte
-CREATE TABLE public.locations (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE NOT NULL,
-  location_number TEXT NOT NULL,
-  location_name TEXT,
-  comment TEXT,
-  system TEXT,
-  label TEXT,
-  location_type TEXT,
-  guest_info TEXT,              -- vom Gast ergaenzbare Informationen
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+#### 2e. ProjectDetail-Anpassung für "mit Plan"
 
--- Bilder (URLs zu Supabase Storage)
-CREATE TABLE public.location_images (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_id UUID REFERENCES public.locations(id) ON DELETE CASCADE NOT NULL,
-  image_type TEXT NOT NULL CHECK (image_type IN ('annotated', 'original')),
-  storage_path TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+Wenn `projectType === 'aufmass_mit_plan'`:
+- Statt der Standort-Liste als Hauptansicht wird die **Grundriss-Ansicht** angezeigt
+- Ein Button "Grundrisse verwalten" erlaubt das Hinzufügen weiterer PDFs
+- Die Standort-Liste bleibt als sekundäre Ansicht verfügbar (z.B. als Tab)
 
--- Detailbilder
-CREATE TABLE public.detail_images (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_id UUID REFERENCES public.locations(id) ON DELETE CASCADE NOT NULL,
-  caption TEXT,
-  annotated_path TEXT NOT NULL,
-  original_path TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+#### 2f. PDF-Export-Erweiterung (`Export.tsx`)
 
--- Druckdaten-PDFs pro Standort
-CREATE TABLE public.location_pdfs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_id UUID REFERENCES public.locations(id) ON DELETE CASCADE NOT NULL,
-  storage_path TEXT NOT NULL,
-  file_name TEXT NOT NULL,
-  uploaded_at TIMESTAMPTZ DEFAULT now()
-);
-
--- Storage Bucket
-INSERT INTO storage.buckets (id, name, public) VALUES ('project-files', 'project-files', true);
-```
-
-**RLS-Policies**:
-- Authentifizierte Nutzer: Volles CRUD auf alle eigenen Projekte
-- Oeffentlich (Gaeste): Nur SELECT auf Projekte + Standorte, UPDATE nur auf `guest_info` Feld
-- Storage: Oeffentlicher Lesezugriff, Schreibzugriff nur fuer authentifizierte Nutzer
-
-**Supabase-Client** in `src/integrations/supabase/client.ts` wird automatisch erstellt.
+Für "Aufmaß mit Plan"-Projekte:
+- PDF beginnt mit den Grundriss-Seiten, wobei die Fähnchen mit Standortnummern eingezeichnet sind
+- Danach folgen die einzelnen Standort-Seiten wie bisher
+- Die Grundriss-Bilder mit Markern werden per Canvas gerendert und als Bild in die PDF eingefügt
 
 ---
 
-### 4. Gastzugang
+### 3. Routing-Erweiterungen (`App.tsx`)
 
-**Neue Route**: `/guest/:projectId`
-
-**Ablauf**:
-1. Mitarbeiter teilt Link: `https://app.example.com/guest/abc-123`
-2. Optional mit Passwort: Gast muss Passwort eingeben
-3. Gast gibt seinen Namen ein (wird im Browser gespeichert)
-4. Gast sieht alle Standorte des Projekts (read-only Bilder, Bemassungen)
-5. Gast kann pro Standort ein Textfeld "Informationen" ausfuellen
-6. Gast kann hochgeladene Druckdaten-PDFs ansehen/herunterladen
-
-**Neue Dateien**:
-
-| Datei | Beschreibung |
-|-------|-----------|
-| `src/pages/GuestAccess.tsx` | Passwort-/Namenseingabe |
-| `src/pages/GuestProject.tsx` | Projekt-Ansicht fuer Gaeste (read-only Bilder, editierbare Info-Felder) |
-| `src/components/GuestLocationCard.tsx` | Standort-Karte fuer Gaeste (ohne Bearbeitungs-Buttons, mit Info-Feld und PDF-Viewer) |
-
-**PDF-Upload pro Standort** (fuer Mitarbeiter):
-- In `LocationCard.tsx` einen "Druckdatei hochladen"-Button hinzufuegen
-- Datei wird in Supabase Storage (`project-files/pdfs/`) gespeichert
-- Gaeste koennen die PDF im Browser oeffnen (Link)
+Neue Routes:
+- `/projects/:projectId/floor-plans` -- Grundriss-Ansicht
+- `/projects/:projectId/floor-plans/upload` -- PDF-Upload
 
 ---
 
-### 5. Datenmigration: IndexedDB zu Supabase
+### 4. Technische Details
 
-Da bestehende Projekte in IndexedDB liegen, wird eine einmalige Migration angeboten:
-- Beim ersten Login erscheint ein Hinweis: "X lokale Projekte gefunden. Jetzt hochladen?"
-- Bilder werden in Supabase Storage hochgeladen
-- Projekt-Metadaten in die Datenbank geschrieben
-- Nach erfolgreicher Migration werden lokale Daten geloescht
+**PDF-Rendering**: `pdfjs-dist` rendert jede Seite in ein `<canvas>`, das als PNG exportiert und in IndexedDB gespeichert wird. Dies vermeidet die Komplexität eines interaktiven PDF-Viewers.
 
----
+**Marker-Positionierung**: Positionen werden relativ (0-1) gespeichert, damit sie bei unterschiedlichen Bildschirmgrößen korrekt dargestellt werden. Die Anzeige nutzt absolute Positionierung über dem Grundriss-Bild.
 
-### Reihenfolge der Implementierung
-
-1. **Bluetooth-Fix** (eine Datei, sofortiger Effekt)
-2. **Neue Standort-Felder** (Datenmodell + UI, lokal)
-3. **Supabase einrichten** (Verbindung herstellen, Schema-Migration)
-4. **Daten-Layer umschreiben** (IndexedDB durch Supabase ersetzen)
-5. **Gastzugang** (neue Seiten, RLS-Policies)
-6. **PDF-Upload** (Storage + UI)
-7. **Migration** (einmaliger Import)
-
-### Technische Hinweise
-
-- Die App bleibt weiterhin eine React-SPA (kein Server-Rendering)
-- Bilder werden in Supabase Storage gespeichert statt als Base64 in der Datenbank
-- Der Gastzugang benoetigt keine Registrierung, nur einen Namen
-- Fuer den Gastzugang werden die RLS-Policies so gesetzt, dass `anon`-Nutzer lesen koennen und nur das `guest_info`-Feld aktualisieren duerfen
+**Betroffene Dateien** (Änderungen und Neuerstellungen):
+- `src/types/project.ts` -- Erweiterte Interfaces
+- `src/lib/indexedDBStorage.ts` -- Neuer DB-Version-Upgrade, Floor-Plan-Stores
+- `src/pages/NewProject.tsx` -- Projekttyp-Auswahl
+- `src/pages/ProjectDetail.tsx` -- Bilder-Upload-Button, "mit Plan"-Logik
+- `src/pages/Camera.tsx` -- Upload-Alternative
+- `src/pages/FloorPlanUpload.tsx` -- NEU
+- `src/pages/FloorPlanView.tsx` -- NEU
+- `src/pages/LocationDetails.tsx` -- Rücknavigation zum Grundriss
+- `src/pages/Export.tsx` -- Grundriss-Seiten in PDF
+- `src/App.tsx` -- Neue Routes
+- `package.json` -- `pdfjs-dist` Abhängigkeit
 
