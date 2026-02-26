@@ -1,10 +1,40 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
+
+async function getHmacKey(): Promise<CryptoKey> {
+  const secret = Deno.env.get("GUEST_TOKEN_SECRET")!;
+  return crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+}
+
+async function createSignedToken(projectId: string): Promise<string> {
+  const key = await getHmacKey();
+  const payload = JSON.stringify({
+    projectId,
+    ts: Date.now(),
+    jti: crypto.randomUUID(),
+  });
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(payload)
+  );
+  const sigHex = Array.from(new Uint8Array(signature))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return btoa(JSON.stringify({ p: payload, s: sigHex }));
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -41,20 +71,40 @@ Deno.serve(async (req) => {
 
     const needsPassword = !!data.guest_password;
 
-    if (needsPassword && data.guest_password !== password) {
-      return new Response(
-        JSON.stringify({ valid: false, needsPassword: true, error: "Invalid password" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (needsPassword) {
+      if (!password) {
+        return new Response(
+          JSON.stringify({ valid: false, needsPassword: true, error: "Password required" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Support both bcrypt hashed and legacy plaintext passwords
+      let passwordValid = false;
+      if (data.guest_password.startsWith("$2")) {
+        // bcrypt hash
+        passwordValid = await bcrypt.compare(password, data.guest_password);
+      } else {
+        // Legacy plaintext - compare and upgrade to bcrypt
+        passwordValid = data.guest_password === password;
+        if (passwordValid) {
+          const hashed = await bcrypt.hash(password);
+          await supabase
+            .from("projects")
+            .update({ guest_password: hashed })
+            .eq("id", projectId);
+        }
+      }
+
+      if (!passwordValid) {
+        return new Response(
+          JSON.stringify({ valid: false, needsPassword: true, error: "Invalid password" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
-    // Generate a simple token: base64 of projectId + timestamp + random
-    const tokenPayload = JSON.stringify({
-      projectId: data.id,
-      ts: Date.now(),
-      r: crypto.randomUUID(),
-    });
-    const token = btoa(tokenPayload);
+    const token = await createSignedToken(data.id);
 
     return new Response(
       JSON.stringify({

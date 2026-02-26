@@ -6,12 +6,34 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-function validateToken(token: string, projectId: string): boolean {
+async function getHmacKey(): Promise<CryptoKey> {
+  const secret = Deno.env.get("GUEST_TOKEN_SECRET")!;
+  return crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"]
+  );
+}
+
+async function validateToken(token: string, projectId: string): Promise<boolean> {
   try {
-    const payload = JSON.parse(atob(token));
-    if (payload.projectId !== projectId) return false;
-    if (Date.now() - payload.ts > 24 * 60 * 60 * 1000) return false;
-    return true;
+    const { p: payload, s: sigHex } = JSON.parse(atob(token));
+    const parsed = JSON.parse(payload);
+    if (parsed.projectId !== projectId) return false;
+    if (Date.now() - parsed.ts > 24 * 60 * 60 * 1000) return false;
+
+    const key = await getHmacKey();
+    const sigBytes = new Uint8Array(
+      sigHex.match(/.{2}/g)!.map((h: string) => parseInt(h, 16))
+    );
+    return crypto.subtle.verify(
+      "HMAC",
+      key,
+      sigBytes,
+      new TextEncoder().encode(payload)
+    );
   } catch {
     return false;
   }
@@ -25,14 +47,13 @@ Deno.serve(async (req) => {
   try {
     const { projectId, token, locationId, guestInfo } = await req.json();
 
-    if (!projectId || !token || !locationId || !validateToken(token, projectId)) {
+    if (!projectId || !token || !locationId || !(await validateToken(token, projectId))) {
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Sanitize input - limit length
     const sanitizedInfo = typeof guestInfo === "string" ? guestInfo.slice(0, 5000) : null;
 
     const supabase = createClient(
@@ -40,7 +61,6 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Verify location belongs to the project
     const { data: loc } = await supabase
       .from("locations")
       .select("id")
