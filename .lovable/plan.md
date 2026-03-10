@@ -1,121 +1,81 @@
 
 
-## Plan: Zwei Projekttypen und Bilder-Upload
+## Plan: Neues Zugangsmodell ohne E-Mail/Passwort
 
-Dieses Feature umfasst zwei Hauptbereiche: (1) optionaler Bilder-Upload als Alternative zur Kamera, und (2) ein neuer Projekttyp "Aufmaß mit Plan" mit Grundriss-PDFs und platzierbaren Standort-Fähnchen.
+### Übersicht
 
----
+Das aktuelle E-Mail-basierte Auth-System wird komplett ersetzt durch drei Rollen:
 
-### 1. Bilder-Upload als Kamera-Alternative (beide Projekttypen)
+1. **Admin** -- Zugang mit festem Passwort, verwaltet alles
+2. **Mitarbeiter** -- Zugang nur mit Name (kein Passwort), erstellt/bearbeitet Projekte
+3. **Kunden** -- Werden Projekten zugewiesen, Zugang nur mit Name, können zugewiesene Standort-Felder bearbeiten
 
-**Änderung in `ProjectDetail.tsx`**: Neben dem "Aufnehmen"-Button wird ein zweiter Button "Bild hochladen" eingefügt. Dieser öffnet einen nativen Datei-Picker (`<input type="file" accept="image/*">`), liest das Bild als base64 und navigiert direkt zum PhotoEditor (wie nach Kamera-Aufnahme).
+### Datenbank-Änderungen
 
-**Änderung in `Camera.tsx`**: Zusätzlich zum Kamera-Feed wird ein Upload-Button angeboten, falls die Kamera nicht verfügbar ist oder der Nutzer bewusst ein Bild hochladen möchte.
+Neue Tabellen (ersetzen Supabase Auth):
 
----
+```text
+employees (id, name, created_at)
+  -- Mitarbeiter, vom Admin angelegt
 
-### 2. Neuer Projekttyp "Aufmaß mit Plan"
+customers (id, name, created_at)
+  -- Kunden, vom Admin angelegt
 
-#### 2a. Datenmodell-Erweiterungen
+customer_project_assignments (id, customer_id, project_id, created_at)
+  -- Welcher Kunde welches Projekt sehen/bearbeiten darf
 
-**`src/types/project.ts`** -- Neue Interfaces:
-
-```typescript
-export interface FloorPlanMarker {
-  id: string;
-  locationId: string;  // Verknüpfung zum Standort
-  x: number;           // Position auf dem Grundriss (0-1, relativ)
-  y: number;
-}
-
-export interface FloorPlan {
-  id: string;
-  name: string;        // z.B. "EG", "1. OG"
-  imageData: string;   // Gerenderte PDF-Seite als Bild
-  markers: FloorPlanMarker[];
-  pageIndex: number;   // Welche Seite der PDF
-  createdAt: Date;
-}
-
-export interface Project {
-  id: string;
-  projectNumber: string;
-  projectType: 'aufmass' | 'aufmass_mit_plan';  // NEU
-  floorPlans?: FloorPlan[];                       // NEU
-  locations: Location[];
-  createdAt: Date;
-  updatedAt: Date;
-}
+customer_location_permissions (id, assignment_id, location_id, can_edit_guest_info)
+  -- Was der Kunde an welchem Standort bearbeiten darf
 ```
 
-**IndexedDB-Schema** (`indexedDBStorage.ts`): Neuer Object Store `floor-plans` mit Index `by-project` und `floor-plan-images` für die gerenderten Bilder als Blobs.
+Bestehende Tabellen-Änderungen:
+- `projects`: Spalte `user_id` wird zu `employee_id` (Referenz auf `employees`)
+- RLS wird deaktiviert, da kein Supabase Auth mehr verwendet wird -- stattdessen Zugriffskontrolle über Edge Functions
 
-#### 2b. Projekt erstellen (`NewProject.tsx`)
+### Auth-Konzept
 
-Nach Eingabe der Projektnummer erscheint eine Auswahl (Radio-Buttons):
-- **Aufmaß** -- Standard-Workflow wie bisher
-- **Aufmaß mit Plan** -- Nach Erstellung wird man zum PDF-Upload weitergeleitet
+Da keine Passwörter für Mitarbeiter/Kunden nötig sind, wird Supabase Auth nicht mehr verwendet. Stattdessen:
 
-#### 2c. PDF-Upload und Rendering
+- **Session via localStorage**: Rolle + ID + Name werden im Browser gespeichert
+- **Admin**: Gibt auf der Startseite das feste Admin-Passwort ein (gespeichert als Secret `ADMIN_PASSWORD`)
+- **Mitarbeiter**: Wählt seinen Namen aus einer Liste oder gibt ihn ein
+- **Kunden**: Gibt seinen Namen ein, sieht nur zugewiesene Projekte
 
-**Neue Seite `FloorPlanUpload.tsx`** (`/projects/:projectId/floor-plans/upload`):
-- Datei-Picker für eine oder mehrere PDFs
-- Jede PDF-Seite wird mit einem Canvas-basierten PDF-Renderer (mittels `pdfjs-dist`) als Bild gerendert
-- Jede Seite wird als eigener Grundriss gespeichert, mit optionalem Namen (z.B. "Erdgeschoss")
-- Nach Upload wird zur Grundriss-Ansicht navigiert
+Edge Functions validieren Zugriffe serverseitig (Admin-Passwort-Check, Mitarbeiter-Existenz, Kunden-Zuweisungen).
 
-**Abhängigkeit**: `pdfjs-dist` wird als neues npm-Paket benötigt, um PDF-Seiten clientseitig zu Bildern zu rendern.
+### Neue Seiten
 
-#### 2d. Grundriss-Ansicht mit Fähnchen
+| Route | Beschreibung |
+|---|---|
+| `/` | Login-Seite: Drei Buttons (Admin / Mitarbeiter / Kunde) |
+| `/admin` | Admin-Dashboard: Mitarbeiter verwalten, Kunden verwalten, Projekte-Übersicht, Kunden-Projekt-Zuweisungen |
+| `/projects` | Mitarbeiter-Projektliste (wie bisher) |
+| `/customer` | Kunden-Ansicht: zugewiesene Projekte |
 
-**Neue Seite `FloorPlanView.tsx`** (`/projects/:projectId/floor-plans`):
-- Zeigt den aktuellen Grundriss als Bild (zoom- und panbar)
-- Tabs oder Dropdown zum Wechseln zwischen mehreren Grundrissen
-- **Tap auf Grundriss**: Platziert ein neues Fähnchen (Marker-Icon) an der geklickten Stelle und navigiert zum Standort-Erstellungs-Workflow (Kamera/Upload → Editor → LocationDetails)
-- **Nach Speichern des Standorts**: Automatische Rückkehr zur Grundriss-Ansicht
-- **Tap auf bestehendes Fähnchen**: Navigiert zum zugehörigen Standort (LocationCard-Ansicht)
-- Fähnchen zeigen die Standortnummer als Label
+### Sicherheitsansatz
 
-#### 2e. ProjectDetail-Anpassung für "mit Plan"
+- Admin-Passwort wird als Secret gespeichert und nur serverseitig geprüft (Edge Function `validate-admin`)
+- Mitarbeiter/Kunden-Identifikation erfolgt über Namen -- bewusst ohne Passwort wie gewünscht
+- Edge Functions für sensible Operationen (Admin-Aktionen, Datenzugriff)
+- RLS wird durch service_role-Key in Edge Functions ersetzt
 
-Wenn `projectType === 'aufmass_mit_plan'`:
-- Statt der Standort-Liste als Hauptansicht wird die **Grundriss-Ansicht** angezeigt
-- Ein Button "Grundrisse verwalten" erlaubt das Hinzufügen weiterer PDFs
-- Die Standort-Liste bleibt als sekundäre Ansicht verfügbar (z.B. als Tab)
+### Umsetzungsschritte
 
-#### 2f. PDF-Export-Erweiterung (`Export.tsx`)
+1. **Secret `ADMIN_PASSWORD` anfordern** vom Benutzer
+2. **Migration**: Neue Tabellen erstellen, `projects.user_id` zu `employee_id` ändern
+3. **Edge Functions**: `validate-admin`, `admin-manage` (CRUD für Mitarbeiter/Kunden/Zuweisungen)
+4. **Startseite** (`/`): Rollen-Auswahl (Admin/Mitarbeiter/Kunde) mit jeweiligem Login
+5. **Admin-Dashboard** (`/admin`): Mitarbeiter-/Kundenverwaltung, Projekt-Zuweisungen
+6. **Bestehende Seiten anpassen**: AuthGuard durch RoleGuard ersetzen, Supabase Auth entfernen
+7. **Kunden-Bereich**: Zugewiesene Projekte anzeigen, erlaubte Felder bearbeitbar
 
-Für "Aufmaß mit Plan"-Projekte:
-- PDF beginnt mit den Grundriss-Seiten, wobei die Fähnchen mit Standortnummern eingezeichnet sind
-- Danach folgen die einzelnen Standort-Seiten wie bisher
-- Die Grundriss-Bilder mit Markern werden per Canvas gerendert und als Bild in die PDF eingefügt
+### Betroffene Dateien
 
----
-
-### 3. Routing-Erweiterungen (`App.tsx`)
-
-Neue Routes:
-- `/projects/:projectId/floor-plans` -- Grundriss-Ansicht
-- `/projects/:projectId/floor-plans/upload` -- PDF-Upload
-
----
-
-### 4. Technische Details
-
-**PDF-Rendering**: `pdfjs-dist` rendert jede Seite in ein `<canvas>`, das als PNG exportiert und in IndexedDB gespeichert wird. Dies vermeidet die Komplexität eines interaktiven PDF-Viewers.
-
-**Marker-Positionierung**: Positionen werden relativ (0-1) gespeichert, damit sie bei unterschiedlichen Bildschirmgrößen korrekt dargestellt werden. Die Anzeige nutzt absolute Positionierung über dem Grundriss-Bild.
-
-**Betroffene Dateien** (Änderungen und Neuerstellungen):
-- `src/types/project.ts` -- Erweiterte Interfaces
-- `src/lib/indexedDBStorage.ts` -- Neuer DB-Version-Upgrade, Floor-Plan-Stores
-- `src/pages/NewProject.tsx` -- Projekttyp-Auswahl
-- `src/pages/ProjectDetail.tsx` -- Bilder-Upload-Button, "mit Plan"-Logik
-- `src/pages/Camera.tsx` -- Upload-Alternative
-- `src/pages/FloorPlanUpload.tsx` -- NEU
-- `src/pages/FloorPlanView.tsx` -- NEU
-- `src/pages/LocationDetails.tsx` -- Rücknavigation zum Grundriss
-- `src/pages/Export.tsx` -- Grundriss-Seiten in PDF
-- `src/App.tsx` -- Neue Routes
-- `package.json` -- `pdfjs-dist` Abhängigkeit
+- `src/App.tsx` -- Routing komplett umbauen, AuthGuard durch RoleGuard ersetzen
+- `src/pages/Auth.tsx` -- Wird zur neuen Login-Seite mit Rollenauswahl
+- `src/pages/Projects.tsx` -- Logout-Button anpassen, Auth-Logik entfernen
+- `src/pages/Admin.tsx` -- NEU
+- `src/pages/CustomerView.tsx` -- NEU (ersetzt GuestProject)
+- `src/pages/GuestAccess.tsx` -- Wird zu Kunden-Login
+- Alle Edge Functions -- Anpassung der Validierung
 
