@@ -54,6 +54,7 @@ const Auth = () => {
         toast.error("Falsches Passwort");
       } else {
         setSession({ role: "admin", id: "admin", name: "Admin" });
+        localStorage.setItem("admin_pw", adminPassword);
         toast.success("Als Admin angemeldet");
         navigate("/admin");
       }

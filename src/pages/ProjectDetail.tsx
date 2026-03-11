@@ -125,7 +125,7 @@ const ProjectDetail = () => {
     <div className="min-h-screen bg-background pb-24">
       <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-6">
         <div className="flex items-center justify-between gap-2">
-          <Button variant="ghost" onClick={() => navigate("/")} size="sm">
+          <Button variant="ghost" onClick={() => navigate("/projects")} size="sm">
             <ArrowLeft className="mr-1 md:mr-2 h-4 w-4" />
             <span className="hidden sm:inline">Zurück</span>
           </Button>
