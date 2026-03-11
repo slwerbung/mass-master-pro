@@ -8,3 +8,12 @@ verify_jwt = false
 
 [functions.update-guest-info]
 verify_jwt = false
+
+[functions.validate-admin]
+verify_jwt = false
+
+[functions.admin-manage]
+verify_jwt = false
+
+[functions.customer-data]
+verify_jwt = false

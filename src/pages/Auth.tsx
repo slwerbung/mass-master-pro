@@ -1,46 +1,86 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Shield, User, Users, ArrowLeft, Lock } from "lucide-react";
 import { toast } from "sonner";
+import { setSession, getSession } from "@/lib/session";
+
+type LoginMode = "select" | "admin" | "employee" | "customer";
 
 const Auth = () => {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<LoginMode>("select");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
+  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
+  const [customerName, setCustomerName] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  // Redirect if already logged in
+  useEffect(() => {
+    const session = getSession();
+    if (session) {
+      if (session.role === "admin") navigate("/admin");
+      else if (session.role === "employee") navigate("/projects");
+      else if (session.role === "customer") navigate("/customer");
+    }
+  }, [navigate]);
+
+  // Load employees/customers when switching mode
+  useEffect(() => {
+    if (mode === "employee") {
+      supabase.from("employees").select("id, name").order("name").then(({ data }) => {
+        setEmployees(data || []);
+      });
+    } else if (mode === "customer") {
+      supabase.from("customers").select("id, name").order("name").then(({ data }) => {
+        setCustomers(data || []);
+      });
+    }
+  }, [mode]);
+
+  const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      toast.error(error.message);
-    } else {
-      toast.success("Angemeldet");
-      navigate("/");
+    try {
+      const { data, error } = await supabase.functions.invoke("validate-admin", {
+        body: { password: adminPassword },
+      });
+      if (error || !data?.valid) {
+        toast.error("Falsches Passwort");
+      } else {
+        setSession({ role: "admin", id: "admin", name: "Admin" });
+        localStorage.setItem("admin_pw", adminPassword);
+        toast.success("Als Admin angemeldet");
+        navigate("/admin");
+      }
+    } catch {
+      toast.error("Verbindungsfehler");
     }
     setLoading(false);
   };
 
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    const { error } = await supabase.auth.signUp({ 
-      email, 
-      password,
-      options: { emailRedirectTo: window.location.origin }
-    });
-    if (error) {
-      toast.error(error.message);
-    } else {
-      toast.success("Bestätigungsmail gesendet. Bitte prüfen Sie Ihr Postfach.");
+  const handleEmployeeSelect = (emp: { id: string; name: string }) => {
+    setSession({ role: "employee", id: emp.id, name: emp.name });
+    toast.success(`Angemeldet als ${emp.name}`);
+    navigate("/projects");
+  };
+
+  const handleCustomerLogin = () => {
+    const match = customers.find(
+      (c) => c.name.toLowerCase() === customerName.trim().toLowerCase()
+    );
+    if (!match) {
+      toast.error("Name nicht gefunden. Bitte wenden Sie sich an den Administrator.");
+      return;
     }
-    setLoading(false);
+    setSession({ role: "customer", id: match.id, name: match.name });
+    toast.success(`Angemeldet als ${match.name}`);
+    navigate("/customer");
   };
 
   return (
@@ -48,45 +88,131 @@ const Auth = () => {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">Aufmaß-App</CardTitle>
-          <CardDescription>Anmelden oder Konto erstellen</CardDescription>
+          <CardDescription>
+            {mode === "select" ? "Bitte wählen Sie Ihre Rolle" : ""}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="login">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="login">Anmelden</TabsTrigger>
-              <TabsTrigger value="signup">Registrieren</TabsTrigger>
-            </TabsList>
-            <TabsContent value="login">
-              <form onSubmit={handleLogin} className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="login-email">E-Mail</Label>
-                  <Input id="login-email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
+          {mode === "select" && (
+            <div className="space-y-3">
+              <Button
+                variant="outline"
+                className="w-full h-16 justify-start gap-3 text-left"
+                onClick={() => setMode("admin")}
+              >
+                <Shield className="h-6 w-6 text-primary shrink-0" />
+                <div>
+                  <div className="font-semibold">Admin</div>
+                  <div className="text-xs text-muted-foreground">Verwaltung & Einstellungen</div>
                 </div>
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full h-16 justify-start gap-3 text-left"
+                onClick={() => setMode("employee")}
+              >
+                <User className="h-6 w-6 text-primary shrink-0" />
+                <div>
+                  <div className="font-semibold">Mitarbeiter</div>
+                  <div className="text-xs text-muted-foreground">Projekte erstellen & bearbeiten</div>
+                </div>
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full h-16 justify-start gap-3 text-left"
+                onClick={() => setMode("customer")}
+              >
+                <Users className="h-6 w-6 text-primary shrink-0" />
+                <div>
+                  <div className="font-semibold">Kunde</div>
+                  <div className="text-xs text-muted-foreground">Zugewiesene Projekte bearbeiten</div>
+                </div>
+              </Button>
+            </div>
+          )}
+
+          {mode === "admin" && (
+            <div className="space-y-4">
+              <Button variant="ghost" size="sm" onClick={() => setMode("select")}>
+                <ArrowLeft className="h-4 w-4 mr-1" /> Zurück
+              </Button>
+              <form onSubmit={handleAdminLogin} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="login-password">Passwort</Label>
-                  <Input id="login-password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+                  <Label htmlFor="admin-pw">Admin-Passwort</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="admin-pw"
+                      type="password"
+                      className="pl-9"
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      placeholder="Passwort eingeben"
+                      required
+                      autoFocus
+                    />
+                  </div>
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? "..." : "Anmelden"}
+                  {loading ? "Prüfe..." : "Anmelden"}
                 </Button>
               </form>
-            </TabsContent>
-            <TabsContent value="signup">
-              <form onSubmit={handleSignup} className="space-y-4 mt-4">
+            </div>
+          )}
+
+          {mode === "employee" && (
+            <div className="space-y-4">
+              <Button variant="ghost" size="sm" onClick={() => setMode("select")}>
+                <ArrowLeft className="h-4 w-4 mr-1" /> Zurück
+              </Button>
+              {employees.length === 0 ? (
+                <p className="text-center text-muted-foreground py-8">
+                  Noch keine Mitarbeiter angelegt. Der Admin muss zuerst Mitarbeiter erstellen.
+                </p>
+              ) : (
                 <div className="space-y-2">
-                  <Label htmlFor="signup-email">E-Mail</Label>
-                  <Input id="signup-email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
+                  <Label>Mitarbeiter auswählen</Label>
+                  <div className="grid gap-2 max-h-64 overflow-y-auto">
+                    {employees.map((emp) => (
+                      <Button
+                        key={emp.id}
+                        variant="outline"
+                        className="w-full justify-start"
+                        onClick={() => handleEmployeeSelect(emp)}
+                      >
+                        <User className="h-4 w-4 mr-2" />
+                        {emp.name}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="signup-password">Passwort (min. 6 Zeichen)</Label>
-                  <Input id="signup-password" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
-                </div>
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? "..." : "Registrieren"}
-                </Button>
-              </form>
-            </TabsContent>
-          </Tabs>
+              )}
+            </div>
+          )}
+
+          {mode === "customer" && (
+            <div className="space-y-4">
+              <Button variant="ghost" size="sm" onClick={() => setMode("select")}>
+                <ArrowLeft className="h-4 w-4 mr-1" /> Zurück
+              </Button>
+              <div className="space-y-2">
+                <Label htmlFor="customer-name">Ihr Name</Label>
+                <Input
+                  id="customer-name"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="Name eingeben"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleCustomerLogin();
+                  }}
+                />
+              </div>
+              <Button className="w-full" onClick={handleCustomerLogin} disabled={!customerName.trim()}>
+                Weiter
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
