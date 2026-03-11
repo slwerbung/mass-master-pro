@@ -9,12 +9,13 @@ import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { StorageIndicator } from "@/components/StorageIndicator";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { getSession, clearSession } from "@/lib/session";
 
 const Projects = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
+  const session = getSession();
 
   useEffect(() => {
     loadProjects();
@@ -22,7 +23,6 @@ const Projects = () => {
 
   const loadProjects = async () => {
     try {
-      // First, try to migrate from localStorage
       const migrated = await indexedDBStorage.migrateFromLocalStorage();
       if (migrated) {
         toast.success("Daten wurden in neuen Speicher migriert - mehr Platz verfügbar!");
@@ -36,6 +36,11 @@ const Projects = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleLogout = () => {
+    clearSession();
+    navigate("/");
   };
 
   if (isLoading) {
@@ -52,7 +57,9 @@ const Projects = () => {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-foreground">Aufmaß App</h1>
-            <p className="text-muted-foreground mt-1 text-sm md:text-base">Projekte verwalten</p>
+            <p className="text-muted-foreground mt-1 text-sm md:text-base">
+              {session?.name ? `Angemeldet als ${session.name}` : "Projekte verwalten"}
+            </p>
           </div>
           <div className="flex gap-2">
             <Button
@@ -63,14 +70,7 @@ const Projects = () => {
               <Plus className="mr-2 h-5 w-5" />
               Neues Projekt
             </Button>
-            <Button
-              variant="outline"
-              size="lg"
-              onClick={async () => {
-                await supabase.auth.signOut();
-                navigate("/auth");
-              }}
-            >
+            <Button variant="outline" size="lg" onClick={handleLogout}>
               <LogOut className="h-5 w-5" />
             </Button>
           </div>
