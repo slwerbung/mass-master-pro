@@ -14,6 +14,96 @@ export type Database = {
   }
   public: {
     Tables: {
+      customer_location_permissions: {
+        Row: {
+          assignment_id: string
+          can_edit_guest_info: boolean
+          id: string
+          location_id: string
+        }
+        Insert: {
+          assignment_id: string
+          can_edit_guest_info?: boolean
+          id?: string
+          location_id: string
+        }
+        Update: {
+          assignment_id?: string
+          can_edit_guest_info?: boolean
+          id?: string
+          location_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_location_permissions_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "customer_project_assignments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customer_location_permissions_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      customer_project_assignments: {
+        Row: {
+          created_at: string
+          customer_id: string
+          id: string
+          project_id: string
+        }
+        Insert: {
+          created_at?: string
+          customer_id: string
+          id?: string
+          project_id: string
+        }
+        Update: {
+          created_at?: string
+          customer_id?: string
+          id?: string
+          project_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_project_assignments_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customer_project_assignments_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      customers: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
       detail_images: {
         Row: {
           annotated_path: string
@@ -48,6 +138,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      employees: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+        }
+        Relationships: []
       }
       location_images: {
         Row: {
@@ -163,6 +271,7 @@ export type Database = {
       projects: {
         Row: {
           created_at: string
+          employee_id: string | null
           guest_password: string | null
           id: string
           project_number: string
@@ -171,6 +280,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          employee_id?: string | null
           guest_password?: string | null
           id?: string
           project_number: string
@@ -179,13 +289,22 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          employee_id?: string | null
           guest_password?: string | null
           id?: string
           project_number?: string
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "projects_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
