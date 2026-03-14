@@ -37,23 +37,28 @@ const Projects = () => {
     }
   };
 
-  // Sync all local projects to Supabase so Admin can see them
+  // Sync all local projects to Supabase via Edge Function (uses service role)
   const syncToSupabase = async () => {
     setIsSyncing(true);
     try {
       const localProjects = await indexedDBStorage.getProjects();
-      if (localProjects.length === 0) { toast.info("Keine Projekte zum Synchronisieren"); setIsSyncing(false); return; }
-      const rows = localProjects.map(p => ({
+      if (localProjects.length === 0) {
+        toast.info("Keine Projekte zum Synchronisieren");
+        setIsSyncing(false);
+        return;
+      }
+      const projectsData = localProjects.map(p => ({
         id: p.id,
         project_number: p.projectNumber,
-        user_id: session?.id || "employee",
         employee_id: session?.role === "employee" ? session.id : null,
         created_at: p.createdAt instanceof Date ? p.createdAt.toISOString() : new Date().toISOString(),
         updated_at: p.updatedAt instanceof Date ? p.updatedAt.toISOString() : new Date().toISOString(),
       }));
-      const { error } = await supabase.from("projects").upsert(rows, { onConflict: "id" });
-      if (error) throw error;
-      toast.success(`${localProjects.length} Projekt(e) synchronisiert ✓`);
+      const { data, error } = await supabase.functions.invoke("admin-manage", {
+        body: { action: "sync_projects", projects: projectsData },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message);
+      toast.success(`${localProjects.length} Projekt(e) mit Admin synchronisiert ✓`);
     } catch (e: any) {
       toast.error("Sync fehlgeschlagen: " + e.message);
     } finally {
@@ -82,7 +87,7 @@ const Projects = () => {
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
-            <Button size="lg" onClick={() => navigate("/projects/new")} className="bg-primary hover:bg-primary-hover flex-1 sm:flex-none">
+            <Button size="lg" onClick={() => navigate("/projects/new")} className="flex-1 sm:flex-none">
               <Plus className="mr-2 h-5 w-5" /> Neues Projekt
             </Button>
             <Button size="lg" variant="outline" onClick={() => navigate("/projects/customers")} title="Kunden verwalten">

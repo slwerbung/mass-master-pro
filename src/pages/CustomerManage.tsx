@@ -72,8 +72,23 @@ const CustomerManage = () => {
 
   const addAssignment = async () => {
     if (!assignCustomerId || !assignProjectId) return;
+    // First ensure project exists in Supabase (sync it)
+    const proj = projects.find(p => p.id === assignProjectId);
+    if (proj) {
+      await supabase.functions.invoke("admin-manage", {
+        body: {
+          action: "sync_projects",
+          projects: [{ id: proj.id, project_number: proj.projectNumber, employee_id: session?.role === "employee" ? session.id : null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
+        },
+      });
+    }
     const { error } = await supabase.from("customer_project_assignments").insert({ customer_id: assignCustomerId, project_id: assignProjectId });
-    if (error) { toast.error(error.message.includes("unique") ? "Zuweisung existiert bereits" : "Fehler"); return; }
+    if (error) {
+      if (error.message.includes("unique")) toast.error("Zuweisung existiert bereits");
+      else if (error.message.includes("foreign key")) toast.error("Projekt konnte nicht synchronisiert werden. Bitte nochmals versuchen.");
+      else toast.error("Fehler: " + error.message);
+      return;
+    }
     toast.success("Projekt zugewiesen");
     setAssignCustomerId(""); setAssignProjectId("");
     loadData();

@@ -15,8 +15,9 @@ const CustomerLogin = () => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // If already logged in as customer, go straight to customer view
     const session = getSession();
-    if (session?.role === "customer") navigate("/customer");
+    if (session?.role === "customer") navigate("/customer", { replace: true });
   }, [navigate]);
 
   const handleLogin = async () => {
@@ -32,9 +33,11 @@ const CustomerLogin = () => {
       if (error || !data) {
         toast.error("Name nicht gefunden. Bitte wenden Sie sich an Ihren Ansprechpartner.");
       } else {
+        // Set session BEFORE navigating
         setSession({ role: "customer", id: data.id, name: data.name });
         toast.success(`Willkommen, ${data.name}!`);
-        navigate("/customer");
+        // Small delay to ensure session is written before navigation
+        setTimeout(() => navigate("/customer", { replace: true }), 50);
       }
     } catch {
       toast.error("Verbindungsfehler");
@@ -51,9 +54,7 @@ const CustomerLogin = () => {
             <Users className="h-8 w-8 text-primary" />
           </div>
           <CardTitle className="text-2xl">Kunden-Zugang</CardTitle>
-          <CardDescription>
-            Geben Sie Ihren Namen ein, um auf Ihr Projekt zuzugreifen.
-          </CardDescription>
+          <CardDescription>Geben Sie Ihren Namen ein, um auf Ihr Projekt zuzugreifen.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
@@ -67,11 +68,7 @@ const CustomerLogin = () => {
               autoFocus
             />
           </div>
-          <Button
-            className="w-full"
-            onClick={handleLogin}
-            disabled={!name.trim() || loading}
-          >
+          <Button className="w-full" onClick={handleLogin} disabled={!name.trim() || loading}>
             {loading ? "Prüfe..." : "Weiter"}
           </Button>
         </CardContent>

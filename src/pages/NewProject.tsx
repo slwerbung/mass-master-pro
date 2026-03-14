@@ -19,18 +19,12 @@ const NewProject = () => {
   const navigate = useNavigate();
 
   const handleCreate = async () => {
-    if (!projectNumber.trim()) {
-      toast.error("Bitte eine Projektnummer eingeben");
-      return;
-    }
-
+    if (!projectNumber.trim()) { toast.error("Bitte eine Projektnummer eingeben"); return; }
     setIsCreating(true);
-
     try {
       const fullProjectNumber = `WER-${projectNumber.trim()}`;
       const session = getSession();
       const projectId = crypto.randomUUID();
-
       const newProject: Project = {
         id: projectId,
         projectNumber: fullProjectNumber,
@@ -40,31 +34,30 @@ const NewProject = () => {
         updatedAt: new Date(),
       };
 
-      // Save locally (IndexedDB) - primary storage for images/data
+      // Save locally
       await indexedDBStorage.saveProject(newProject);
 
-      // Also register in Supabase so Admin can see it
+      // Sync to Supabase via Edge Function (uses service role, bypasses RLS)
       try {
-        await supabase.from("projects").upsert({
-          id: projectId,
-          project_number: fullProjectNumber,
-          user_id: session?.id || "employee",
-          employee_id: session?.role === "employee" ? session.id : null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+        await supabase.functions.invoke("admin-manage", {
+          body: {
+            action: "sync_projects",
+            projects: [{
+              id: projectId,
+              project_number: fullProjectNumber,
+              employee_id: session?.role === "employee" ? session.id : null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }],
+          },
         });
-      } catch (supabaseError) {
-        // Non-fatal: project still works locally even if Supabase sync fails
-        console.warn("Supabase sync failed:", supabaseError);
+      } catch (e) {
+        console.warn("Supabase sync failed (non-fatal):", e);
       }
 
       toast.success("Projekt erstellt");
-
-      if (projectType === 'aufmass_mit_plan') {
-        navigate(`/projects/${newProject.id}/floor-plans/upload`);
-      } else {
-        navigate(`/projects/${newProject.id}`);
-      }
+      if (projectType === 'aufmass_mit_plan') navigate(`/projects/${newProject.id}/floor-plans/upload`);
+      else navigate(`/projects/${newProject.id}`);
     } catch (error) {
       console.error("Error creating project:", error);
       toast.error("Fehler beim Erstellen des Projekts");
@@ -77,45 +70,27 @@ const NewProject = () => {
     <div className="min-h-screen bg-background">
       <div className="container max-w-2xl mx-auto p-4 md:p-6 space-y-6">
         <Button variant="ghost" onClick={() => navigate("/projects")} className="mb-4" size="sm">
-          <ArrowLeft className="mr-1 md:mr-2 h-4 w-4" />
-          <span className="text-sm md:text-base">Zurück</span>
+          <ArrowLeft className="mr-1 md:mr-2 h-4 w-4" /><span className="text-sm md:text-base">Zurück</span>
         </Button>
-
         <Card>
           <CardHeader className="p-4 md:p-6">
             <CardTitle className="text-xl md:text-2xl">Neues Projekt erstellen</CardTitle>
-            <CardDescription className="text-sm md:text-base">
-              Gib eine Projektnummer ein und wähle den Projekttyp
-            </CardDescription>
+            <CardDescription className="text-sm md:text-base">Gib eine Projektnummer ein und wähle den Projekttyp</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 md:space-y-6 p-4 md:p-6">
             <div className="space-y-2">
               <Label htmlFor="projectNumber">Projektnummer</Label>
               <div className="flex items-center gap-2">
-                <span className="text-lg font-semibold text-muted-foreground px-3 py-2 bg-muted rounded-md">
-                  WER-
-                </span>
-                <Input
-                  id="projectNumber"
-                  type="text"
-                  placeholder="2024-001"
-                  value={projectNumber}
+                <span className="text-lg font-semibold text-muted-foreground px-3 py-2 bg-muted rounded-md">WER-</span>
+                <Input id="projectNumber" type="text" placeholder="2024-001" value={projectNumber}
                   onChange={(e) => setProjectNumber(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
-                  autoFocus
-                  className="text-lg flex-1"
-                  disabled={isCreating}
-                />
+                  autoFocus className="text-lg flex-1" disabled={isCreating} />
               </div>
             </div>
-
             <div className="space-y-3">
               <Label>Projekttyp</Label>
-              <RadioGroup
-                value={projectType}
-                onValueChange={(v) => setProjectType(v as 'aufmass' | 'aufmass_mit_plan')}
-                className="grid gap-3"
-              >
+              <RadioGroup value={projectType} onValueChange={(v) => setProjectType(v as 'aufmass' | 'aufmass_mit_plan')} className="grid gap-3">
                 <label htmlFor="type-aufmass" className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${projectType === 'aufmass' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'}`}>
                   <RadioGroupItem value="aufmass" id="type-aufmass" className="mt-0.5" />
                   <div className="flex-1">
@@ -132,7 +107,6 @@ const NewProject = () => {
                 </label>
               </RadioGroup>
             </div>
-
             <Button size="lg" className="w-full" onClick={handleCreate} disabled={isCreating}>
               {isCreating ? "Erstellt..." : "Projekt erstellen"}
             </Button>

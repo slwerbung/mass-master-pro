@@ -18,10 +18,10 @@ const Auth = () => {
   const [employeePassword, setEmployeePassword] = useState("");
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<{ id: string; name: string } | null>(null);
+  const [storedEmployeePassword, setStoredEmployeePassword] = useState<string | null>(null);
   const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [loading, setLoading] = useState(false);
-  const [requiresPassword, setRequiresPassword] = useState(false);
 
   useEffect(() => {
     const session = getSession();
@@ -35,9 +35,9 @@ const Auth = () => {
   useEffect(() => {
     if (mode === "employee") {
       supabase.from("employees").select("id, name").order("name").then(({ data }) => setEmployees(data || []));
-      // Check if employee password is set
-      supabase.from("app_config").select("value").eq("key", "employee_password").single().then(({ data }) => {
-        setRequiresPassword(!!data?.value);
+      // Load employee password (null = no password set = free access)
+      supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle().then(({ data }) => {
+        setStoredEmployeePassword(data?.value || null);
       });
     } else if (mode === "customer") {
       supabase.from("customers").select("id, name").order("name").then(({ data }) => setCustomers(data || []));
@@ -49,29 +49,39 @@ const Auth = () => {
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("validate-admin", { body: { password: adminPassword } });
-      if (error || !data?.valid) { toast.error("Falsches Passwort"); }
-      else { setSession({ role: "admin", id: "admin", name: "Admin" }); localStorage.setItem("admin_pw", adminPassword); toast.success("Als Admin angemeldet"); navigate("/admin"); }
+      if (error || !data?.valid) toast.error("Falsches Passwort");
+      else {
+        setSession({ role: "admin", id: "admin", name: "Admin" });
+        localStorage.setItem("admin_pw", adminPassword);
+        toast.success("Als Admin angemeldet");
+        navigate("/admin");
+      }
     } catch { toast.error("Verbindungsfehler"); }
     setLoading(false);
   };
 
   const handleEmployeeSelect = (emp: { id: string; name: string }) => {
-    if (requiresPassword) { setSelectedEmployee(emp); }
-    else { setSession({ role: "employee", id: emp.id, name: emp.name }); toast.success(`Angemeldet als ${emp.name}`); navigate("/projects"); }
+    if (storedEmployeePassword) {
+      // Password is set → ask for it
+      setSelectedEmployee(emp);
+    } else {
+      // No password set → login directly
+      setSession({ role: "employee", id: emp.id, name: emp.name });
+      toast.success(`Angemeldet als ${emp.name}`);
+      navigate("/projects");
+    }
   };
 
-  const handleEmployeePasswordLogin = async () => {
+  const handleEmployeePasswordLogin = () => {
     if (!selectedEmployee) return;
-    setLoading(true);
-    const { data } = await supabase.from("app_config").select("value").eq("key", "employee_password").single();
-    if (data?.value === employeePassword) {
+    if (employeePassword === storedEmployeePassword) {
       setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name });
       toast.success(`Angemeldet als ${selectedEmployee.name}`);
       navigate("/projects");
     } else {
       toast.error("Falsches Passwort");
+      setEmployeePassword("");
     }
-    setLoading(false);
   };
 
   const handleCustomerLogin = () => {
@@ -113,7 +123,10 @@ const Auth = () => {
               <form onSubmit={handleAdminLogin} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="admin-pw">Admin-Passwort</Label>
-                  <div className="relative"><Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input id="admin-pw" type="password" className="pl-9" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="Passwort eingeben" required autoFocus /></div>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Input id="admin-pw" type="password" className="pl-9" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="Passwort eingeben" required autoFocus />
+                  </div>
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>{loading ? "Prüfe..." : "Anmelden"}</Button>
               </form>
@@ -146,9 +159,17 @@ const Auth = () => {
               <p className="text-sm text-muted-foreground">Anmelden als <strong>{selectedEmployee.name}</strong></p>
               <div className="space-y-2">
                 <Label htmlFor="emp-pw">Mitarbeiter-Passwort</Label>
-                <div className="relative"><Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input id="emp-pw" type="password" className="pl-9" value={employeePassword} onChange={(e) => setEmployeePassword(e.target.value)} placeholder="Passwort eingeben" autoFocus onKeyDown={(e) => e.key === "Enter" && handleEmployeePasswordLogin()} /></div>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                  <Input id="emp-pw" type="password" className="pl-9" value={employeePassword}
+                    onChange={(e) => setEmployeePassword(e.target.value)}
+                    placeholder="Passwort eingeben" autoFocus
+                    onKeyDown={(e) => e.key === "Enter" && handleEmployeePasswordLogin()} />
+                </div>
               </div>
-              <Button className="w-full" onClick={handleEmployeePasswordLogin} disabled={!employeePassword.trim() || loading}>{loading ? "Prüfe..." : "Anmelden"}</Button>
+              <Button className="w-full" onClick={handleEmployeePasswordLogin} disabled={!employeePassword.trim() || loading}>
+                {loading ? "Prüfe..." : "Anmelden"}
+              </Button>
             </div>
           )}
 
@@ -157,7 +178,8 @@ const Auth = () => {
               <Button variant="ghost" size="sm" onClick={() => setMode("select")}><ArrowLeft className="h-4 w-4 mr-1" /> Zurück</Button>
               <div className="space-y-2">
                 <Label htmlFor="customer-name">Ihr Name</Label>
-                <Input id="customer-name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Name eingeben" autoFocus onKeyDown={(e) => e.key === "Enter" && handleCustomerLogin()} />
+                <Input id="customer-name" value={customerName} onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="Name eingeben" autoFocus onKeyDown={(e) => e.key === "Enter" && handleCustomerLogin()} />
               </div>
               <Button className="w-full" onClick={handleCustomerLogin} disabled={!customerName.trim()}>Weiter</Button>
             </div>
