@@ -2,6 +2,40 @@ import { supabase } from "@/integrations/supabase/client";
 import { indexedDBStorage } from "./indexedDBStorage";
 import { getSession } from "./session";
 
+// Convert base64 to Blob for upload
+function base64ToBlob(base64: string): Blob {
+  const parts = base64.split(';base64,');
+  const contentType = parts[0].split(':')[1] || 'image/jpeg';
+  const raw = atob(parts[1]);
+  const uInt8Array = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) uInt8Array[i] = raw.charCodeAt(i);
+  return new Blob([uInt8Array], { type: contentType });
+}
+
+// Upload image to Supabase Storage and register in location_images
+async function syncLocationImage(locationId: string, imageData: string, imageType: 'annotated' | 'original'): Promise<void> {
+  if (!imageData) return;
+  try {
+    const path = `images/${locationId}/${imageType}.jpg`;
+    // Check if already uploaded
+    const { data: existing } = await supabase.from("location_images")
+      .select("id").eq("location_id", locationId).eq("image_type", imageType).maybeSingle();
+    if (existing) return; // Already synced
+
+    const blob = base64ToBlob(imageData);
+    const { error: uploadError } = await supabase.storage.from("project-files").upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+    if (uploadError) return;
+
+    await supabase.from("location_images").upsert({
+      location_id: locationId,
+      image_type: imageType,
+      storage_path: path,
+    }, { onConflict: "location_id,image_type" });
+  } catch (e) {
+    console.warn(`Image sync failed for ${locationId}:`, e);
+  }
+}
+
 // Automatically sync all projects and locations to Supabase
 // Called silently in background - errors are non-fatal
 export async function syncAllToSupabase(): Promise<void> {
@@ -37,6 +71,10 @@ export async function syncAllToSupabase(): Promise<void> {
         created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
       }));
       await supabase.from("locations").upsert(locationRows, { onConflict: "id" });
+      // Sync annotated images to Storage
+      for (const loc of project.locations) {
+        if (loc.imageData) await syncLocationImage(loc.id, loc.imageData, 'annotated');
+      }
     }
   } catch (e) {
     // Silent fail - sync is best-effort
@@ -76,6 +114,10 @@ export async function syncProjectToSupabase(projectId: string): Promise<void> {
         created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
       }));
       await supabase.from("locations").upsert(locationRows, { onConflict: "id" });
+      // Sync images
+      for (const loc of project.locations) {
+        if (loc.imageData) await syncLocationImage(loc.id, loc.imageData, 'annotated');
+      }
     }
   } catch (e) {
     console.warn("Project sync failed:", e);

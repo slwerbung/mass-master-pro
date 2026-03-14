@@ -211,7 +211,10 @@ const CustomerView = () => {
                             Standort {loc.location_number}
                             {loc.location_name && <span className="font-normal text-muted-foreground ml-2">· {loc.location_name}</span>}
                           </CardTitle>
-                          {loc.comment && <p className="text-sm text-muted-foreground mt-1">{loc.comment}</p>}
+                          {loc.location_type && <p className="text-sm text-muted-foreground mt-1">Art: {loc.location_type}</p>}
+                          {loc.system && <p className="text-sm text-muted-foreground">System: {loc.system}</p>}
+                          {loc.label && <p className="text-sm text-muted-foreground">Beschriftung: {loc.label}</p>}
+                          {loc.comment && <p className="text-sm text-muted-foreground">Kommentar: {loc.comment}</p>}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <Checkbox id={`approve-${loc.id}`} checked={isApproved}
