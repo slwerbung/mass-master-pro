@@ -37,20 +37,16 @@ const NewProject = () => {
       // Save locally
       await indexedDBStorage.saveProject(newProject);
 
-      // Sync to Supabase via Edge Function (uses service role, bypasses RLS)
+      // Sync to Supabase directly (RLS disabled for projects)
       try {
-        await supabase.functions.invoke("admin-manage", {
-          body: {
-            action: "sync_projects",
-            projects: [{
-              id: projectId,
-              project_number: fullProjectNumber,
-              employee_id: session?.role === "employee" ? session.id : null,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            }],
-          },
-        });
+        await supabase.from("projects").upsert({
+          id: projectId,
+          project_number: fullProjectNumber,
+          user_id: session?.id || "employee",
+          employee_id: session?.role === "employee" ? session.id : null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "id" });
       } catch (e) {
         console.warn("Supabase sync failed (non-fatal):", e);
       }

@@ -37,7 +37,7 @@ const Projects = () => {
     }
   };
 
-  // Sync all local projects to Supabase via Edge Function (uses service role)
+  // Sync all local projects to Supabase directly
   const syncToSupabase = async () => {
     setIsSyncing(true);
     try {
@@ -47,18 +47,17 @@ const Projects = () => {
         setIsSyncing(false);
         return;
       }
-      const projectsData = localProjects.map(p => ({
+      const rows = localProjects.map(p => ({
         id: p.id,
         project_number: p.projectNumber,
+        user_id: session?.id || "employee",
         employee_id: session?.role === "employee" ? session.id : null,
         created_at: p.createdAt instanceof Date ? p.createdAt.toISOString() : new Date().toISOString(),
         updated_at: p.updatedAt instanceof Date ? p.updatedAt.toISOString() : new Date().toISOString(),
       }));
-      const { data, error } = await supabase.functions.invoke("admin-manage", {
-        body: { action: "sync_projects", projects: projectsData },
-      });
-      if (error || data?.error) throw new Error(data?.error || error?.message);
-      toast.success(`${localProjects.length} Projekt(e) mit Admin synchronisiert ✓`);
+      const { error } = await supabase.from("projects").upsert(rows, { onConflict: "id" });
+      if (error) throw new Error(error.message);
+      toast.success(`${localProjects.length} Projekt(e) synchronisiert ✓`);
     } catch (e: any) {
       toast.error("Sync fehlgeschlagen: " + e.message);
     } finally {

@@ -72,15 +72,17 @@ const CustomerManage = () => {
 
   const addAssignment = async () => {
     if (!assignCustomerId || !assignProjectId) return;
-    // First ensure project exists in Supabase (sync it)
+    // First ensure project exists in Supabase directly (RLS disabled)
     const proj = projects.find(p => p.id === assignProjectId);
     if (proj) {
-      await supabase.functions.invoke("admin-manage", {
-        body: {
-          action: "sync_projects",
-          projects: [{ id: proj.id, project_number: proj.projectNumber, employee_id: session?.role === "employee" ? session.id : null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
-        },
-      });
+      await supabase.from("projects").upsert({
+        id: proj.id,
+        project_number: proj.projectNumber,
+        user_id: session?.id || "employee",
+        employee_id: session?.role === "employee" ? session.id : null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "id" });
     }
     const { error } = await supabase.from("customer_project_assignments").insert({ customer_id: assignCustomerId, project_id: assignProjectId });
     if (error) {
