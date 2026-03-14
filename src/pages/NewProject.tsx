@@ -8,6 +8,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ArrowLeft, Ruler, Map } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
+import { supabase } from "@/integrations/supabase/client";
+import { getSession } from "@/lib/session";
 import { toast } from "sonner";
 
 const NewProject = () => {
@@ -26,9 +28,11 @@ const NewProject = () => {
 
     try {
       const fullProjectNumber = `WER-${projectNumber.trim()}`;
+      const session = getSession();
+      const projectId = crypto.randomUUID();
 
       const newProject: Project = {
-        id: crypto.randomUUID(),
+        id: projectId,
         projectNumber: fullProjectNumber,
         projectType,
         locations: [],
@@ -36,9 +40,26 @@ const NewProject = () => {
         updatedAt: new Date(),
       };
 
+      // Save locally (IndexedDB) - primary storage for images/data
       await indexedDBStorage.saveProject(newProject);
+
+      // Also register in Supabase so Admin can see it
+      try {
+        await supabase.from("projects").upsert({
+          id: projectId,
+          project_number: fullProjectNumber,
+          user_id: session?.id || "employee",
+          employee_id: session?.role === "employee" ? session.id : null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      } catch (supabaseError) {
+        // Non-fatal: project still works locally even if Supabase sync fails
+        console.warn("Supabase sync failed:", supabaseError);
+      }
+
       toast.success("Projekt erstellt");
-      
+
       if (projectType === 'aufmass_mit_plan') {
         navigate(`/projects/${newProject.id}/floor-plans/upload`);
       } else {
@@ -55,12 +76,7 @@ const NewProject = () => {
   return (
     <div className="min-h-screen bg-background">
       <div className="container max-w-2xl mx-auto p-4 md:p-6 space-y-6">
-        <Button
-          variant="ghost"
-          onClick={() => navigate("/projects")}
-          className="mb-4"
-          size="sm"
-        >
+        <Button variant="ghost" onClick={() => navigate("/projects")} className="mb-4" size="sm">
           <ArrowLeft className="mr-1 md:mr-2 h-4 w-4" />
           <span className="text-sm md:text-base">Zurück</span>
         </Button>
@@ -85,9 +101,7 @@ const NewProject = () => {
                   placeholder="2024-001"
                   value={projectNumber}
                   onChange={(e) => setProjectNumber(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleCreate();
-                  }}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
                   autoFocus
                   className="text-lg flex-1"
                   disabled={isCreating}
@@ -102,49 +116,24 @@ const NewProject = () => {
                 onValueChange={(v) => setProjectType(v as 'aufmass' | 'aufmass_mit_plan')}
                 className="grid gap-3"
               >
-                <label
-                  htmlFor="type-aufmass"
-                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                    projectType === 'aufmass' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
-                  }`}
-                >
+                <label htmlFor="type-aufmass" className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${projectType === 'aufmass' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'}`}>
                   <RadioGroupItem value="aufmass" id="type-aufmass" className="mt-0.5" />
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 font-medium">
-                      <Ruler className="h-4 w-4" />
-                      Aufmaß
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Standorte mit Fotos und Bemaßungen erfassen
-                    </p>
+                    <div className="flex items-center gap-2 font-medium"><Ruler className="h-4 w-4" /> Aufmaß</div>
+                    <p className="text-sm text-muted-foreground mt-1">Standorte mit Fotos und Bemaßungen erfassen</p>
                   </div>
                 </label>
-                <label
-                  htmlFor="type-plan"
-                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                    projectType === 'aufmass_mit_plan' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
-                  }`}
-                >
+                <label htmlFor="type-plan" className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${projectType === 'aufmass_mit_plan' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'}`}>
                   <RadioGroupItem value="aufmass_mit_plan" id="type-plan" className="mt-0.5" />
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 font-medium">
-                      <Map className="h-4 w-4" />
-                      Aufmaß mit Plan
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Grundriss-PDF hochladen und Standorte auf dem Plan markieren
-                    </p>
+                    <div className="flex items-center gap-2 font-medium"><Map className="h-4 w-4" /> Aufmaß mit Plan</div>
+                    <p className="text-sm text-muted-foreground mt-1">Grundriss-PDF hochladen und Standorte auf dem Plan markieren</p>
                   </div>
                 </label>
               </RadioGroup>
             </div>
 
-            <Button
-              size="lg"
-              className="w-full"
-              onClick={handleCreate}
-              disabled={isCreating}
-            >
+            <Button size="lg" className="w-full" onClick={handleCreate} disabled={isCreating}>
               {isCreating ? "Erstellt..." : "Projekt erstellen"}
             </Button>
           </CardContent>

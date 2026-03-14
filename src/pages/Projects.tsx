@@ -2,9 +2,10 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, FolderOpen, Calendar, LogOut, Users } from "lucide-react";
+import { Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
+import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { StorageIndicator } from "@/components/StorageIndicator";
@@ -14,6 +15,7 @@ import { getSession, clearSession } from "@/lib/session";
 const Projects = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
   const navigate = useNavigate();
   const session = getSession();
 
@@ -24,10 +26,7 @@ const Projects = () => {
   const loadProjects = async () => {
     try {
       const migrated = await indexedDBStorage.migrateFromLocalStorage();
-      if (migrated) {
-        toast.success("Daten wurden in neuen Speicher migriert - mehr Platz verfügbar!");
-      }
-      
+      if (migrated) toast.success("Daten wurden in neuen Speicher migriert!");
       const loadedProjects = await indexedDBStorage.getProjects();
       setProjects(loadedProjects.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()));
     } catch (error) {
@@ -38,10 +37,31 @@ const Projects = () => {
     }
   };
 
-  const handleLogout = () => {
-    clearSession();
-    navigate("/");
+  // Sync all local projects to Supabase so Admin can see them
+  const syncToSupabase = async () => {
+    setIsSyncing(true);
+    try {
+      const localProjects = await indexedDBStorage.getProjects();
+      if (localProjects.length === 0) { toast.info("Keine Projekte zum Synchronisieren"); setIsSyncing(false); return; }
+      const rows = localProjects.map(p => ({
+        id: p.id,
+        project_number: p.projectNumber,
+        user_id: session?.id || "employee",
+        employee_id: session?.role === "employee" ? session.id : null,
+        created_at: p.createdAt instanceof Date ? p.createdAt.toISOString() : new Date().toISOString(),
+        updated_at: p.updatedAt instanceof Date ? p.updatedAt.toISOString() : new Date().toISOString(),
+      }));
+      const { error } = await supabase.from("projects").upsert(rows, { onConflict: "id" });
+      if (error) throw error;
+      toast.success(`${localProjects.length} Projekt(e) synchronisiert ✓`);
+    } catch (e: any) {
+      toast.error("Sync fehlgeschlagen: " + e.message);
+    } finally {
+      setIsSyncing(false);
+    }
   };
+
+  const handleLogout = () => { clearSession(); navigate("/"); };
 
   if (isLoading) {
     return (
@@ -61,24 +81,17 @@ const Projects = () => {
               {session?.name ? `Angemeldet als ${session.name}` : "Projekte verwalten"}
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button
-              size="lg"
-              onClick={() => navigate("/projects/new")}
-              className="bg-primary hover:bg-primary-hover flex-1 sm:flex-none"
-            >
-              <Plus className="mr-2 h-5 w-5" />
-              Neues Projekt
+          <div className="flex gap-2 flex-wrap">
+            <Button size="lg" onClick={() => navigate("/projects/new")} className="bg-primary hover:bg-primary-hover flex-1 sm:flex-none">
+              <Plus className="mr-2 h-5 w-5" /> Neues Projekt
             </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              onClick={() => navigate("/projects/customers")}
-              title="Kunden verwalten"
-            >
+            <Button size="lg" variant="outline" onClick={() => navigate("/projects/customers")} title="Kunden verwalten">
               <Users className="h-5 w-5" />
             </Button>
-            <Button variant="outline" size="lg" onClick={handleLogout}>
+            <Button size="lg" variant="outline" onClick={syncToSupabase} disabled={isSyncing} title="Projekte mit Admin synchronisieren">
+              <RefreshCw className={`h-5 w-5 ${isSyncing ? "animate-spin" : ""}`} />
+            </Button>
+            <Button size="lg" variant="ghost" onClick={handleLogout}>
               <LogOut className="h-5 w-5" />
             </Button>
           </div>
@@ -87,39 +100,34 @@ const Projects = () => {
         <StorageIndicator />
 
         {projects.length === 0 ? (
-          <Card className="border-2 border-dashed">
-            <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-              <FolderOpen className="h-16 w-16 text-muted-foreground mb-4" />
-              <h3 className="text-xl font-semibold mb-2">Noch keine Projekte</h3>
-              <p className="text-muted-foreground mb-6 max-w-sm">
-                Erstelle dein erstes Projekt, um mit dem Aufmaß zu beginnen
-              </p>
-              <Button onClick={() => navigate("/projects/new")} size="lg">
-                <Plus className="mr-2 h-5 w-5" />
-                Erstes Projekt erstellen
+          <Card className="text-center py-12">
+            <CardContent>
+              <FolderOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <p className="text-muted-foreground">Noch keine Projekte vorhanden.</p>
+              <Button className="mt-4" onClick={() => navigate("/projects/new")}>
+                <Plus className="mr-2 h-4 w-4" /> Erstes Projekt erstellen
               </Button>
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             {projects.map((project) => (
-              <Card
-                key={project.id}
-                className="cursor-pointer hover:shadow-md transition-shadow"
-                onClick={() => navigate(`/projects/${project.id}`)}
-              >
-                <CardHeader>
-                  <CardTitle className="flex items-center justify-between">
-                    <span>Projekt {project.projectNumber}</span>
-                    <span className="text-sm font-normal text-muted-foreground">
-                      {project.locations.length} Standorte
-                    </span>
+              <Card key={project.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/projects/${project.id}`)}>
+                <CardHeader className="p-4 pb-2">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <FolderOpen className="h-5 w-5 text-primary" />
+                    {project.projectNumber}
                   </CardTitle>
-                  <CardDescription className="flex items-center gap-2">
-                    <Calendar className="h-4 w-4" />
-                    {format(project.updatedAt, "dd. MMMM yyyy", { locale: de })}
+                  <CardDescription className="flex items-center gap-1 text-xs">
+                    <Calendar className="h-3 w-3" />
+                    {format(project.updatedAt, "dd. MMM yyyy", { locale: de })}
                   </CardDescription>
                 </CardHeader>
+                <CardContent className="p-4 pt-0">
+                  <p className="text-sm text-muted-foreground">
+                    {project.locations.length} Standort{project.locations.length !== 1 ? "e" : ""}
+                  </p>
+                </CardContent>
               </Card>
             ))}
           </div>
