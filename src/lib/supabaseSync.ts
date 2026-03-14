@@ -68,13 +68,10 @@ export async function syncAllToSupabase(): Promise<void> {
         label: l.label || null,
         location_type: l.locationType || null,
         guest_info: null,
+        image_data: l.imageData || null,
         created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
       }));
       await supabase.from("locations").upsert(locationRows, { onConflict: "id" });
-      // Sync annotated images to Storage
-      for (const loc of project.locations) {
-        if (loc.imageData) await syncLocationImage(loc.id, loc.imageData, 'annotated');
-      }
     }
   } catch (e) {
     // Silent fail - sync is best-effort
@@ -111,13 +108,10 @@ export async function syncProjectToSupabase(projectId: string): Promise<void> {
         label: l.label || null,
         location_type: l.locationType || null,
         guest_info: null,
+        image_data: l.imageData || null,
         created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
       }));
       await supabase.from("locations").upsert(locationRows, { onConflict: "id" });
-      // Sync images
-      for (const loc of project.locations) {
-        if (loc.imageData) await syncLocationImage(loc.id, loc.imageData, 'annotated');
-      }
     }
   } catch (e) {
     console.warn("Project sync failed:", e);

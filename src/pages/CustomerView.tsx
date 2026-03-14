@@ -47,7 +47,7 @@ const CustomerView = () => {
       // Load locations directly from Supabase
       const { data: locs, error } = await supabase
         .from("locations")
-        .select("id, location_number, location_name, comment, system, label, location_type, guest_info")
+        .select("id, location_number, location_name, comment, system, label, location_type, guest_info, image_data")
         .eq("project_id", assignment.project_id)
         .order("created_at");
       if (error) throw error;
@@ -227,7 +227,12 @@ const CustomerView = () => {
                       </div>
                     </CardHeader>
                     <CardContent className="p-4 space-y-4">
-                      {annotated && (
+                      {loc.image_data && (
+                        <div className="aspect-video bg-muted rounded-lg overflow-hidden">
+                          <img src={loc.image_data} alt={`Standort ${loc.location_number}`} className="w-full h-full object-contain" />
+                        </div>
+                      )}
+                      {!loc.image_data && annotated && (
                         <div className="aspect-video bg-muted rounded-lg overflow-hidden">
                           <img src={getImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-full object-contain" />
                         </div>
