@@ -15,12 +15,14 @@ const Auth = () => {
   const navigate = useNavigate();
   const [mode, setMode] = useState<LoginMode>("select");
   const [adminPassword, setAdminPassword] = useState("");
+  const [employeePassword, setEmployeePassword] = useState("");
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
+  const [selectedEmployee, setSelectedEmployee] = useState<{ id: string; name: string } | null>(null);
   const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [requiresPassword, setRequiresPassword] = useState(false);
 
-  // Redirect if already logged in
   useEffect(() => {
     const session = getSession();
     if (session) {
@@ -30,16 +32,15 @@ const Auth = () => {
     }
   }, [navigate]);
 
-  // Load employees/customers when switching mode
   useEffect(() => {
     if (mode === "employee") {
-      supabase.from("employees").select("id, name").order("name").then(({ data }) => {
-        setEmployees(data || []);
+      supabase.from("employees").select("id, name").order("name").then(({ data }) => setEmployees(data || []));
+      // Check if employee password is set
+      supabase.from("app_config").select("value").eq("key", "employee_password").single().then(({ data }) => {
+        setRequiresPassword(!!data?.value);
       });
     } else if (mode === "customer") {
-      supabase.from("customers").select("id, name").order("name").then(({ data }) => {
-        setCustomers(data || []);
-      });
+      supabase.from("customers").select("id, name").order("name").then(({ data }) => setCustomers(data || []));
     }
   }, [mode]);
 
@@ -47,37 +48,35 @@ const Auth = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("validate-admin", {
-        body: { password: adminPassword },
-      });
-      if (error || !data?.valid) {
-        toast.error("Falsches Passwort");
-      } else {
-        setSession({ role: "admin", id: "admin", name: "Admin" });
-        localStorage.setItem("admin_pw", adminPassword);
-        toast.success("Als Admin angemeldet");
-        navigate("/admin");
-      }
-    } catch {
-      toast.error("Verbindungsfehler");
-    }
+      const { data, error } = await supabase.functions.invoke("validate-admin", { body: { password: adminPassword } });
+      if (error || !data?.valid) { toast.error("Falsches Passwort"); }
+      else { setSession({ role: "admin", id: "admin", name: "Admin" }); localStorage.setItem("admin_pw", adminPassword); toast.success("Als Admin angemeldet"); navigate("/admin"); }
+    } catch { toast.error("Verbindungsfehler"); }
     setLoading(false);
   };
 
   const handleEmployeeSelect = (emp: { id: string; name: string }) => {
-    setSession({ role: "employee", id: emp.id, name: emp.name });
-    toast.success(`Angemeldet als ${emp.name}`);
-    navigate("/projects");
+    if (requiresPassword) { setSelectedEmployee(emp); }
+    else { setSession({ role: "employee", id: emp.id, name: emp.name }); toast.success(`Angemeldet als ${emp.name}`); navigate("/projects"); }
+  };
+
+  const handleEmployeePasswordLogin = async () => {
+    if (!selectedEmployee) return;
+    setLoading(true);
+    const { data } = await supabase.from("app_config").select("value").eq("key", "employee_password").single();
+    if (data?.value === employeePassword) {
+      setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name });
+      toast.success(`Angemeldet als ${selectedEmployee.name}`);
+      navigate("/projects");
+    } else {
+      toast.error("Falsches Passwort");
+    }
+    setLoading(false);
   };
 
   const handleCustomerLogin = () => {
-    const match = customers.find(
-      (c) => c.name.toLowerCase() === customerName.trim().toLowerCase()
-    );
-    if (!match) {
-      toast.error("Name nicht gefunden. Bitte wenden Sie sich an den Administrator.");
-      return;
-    }
+    const match = customers.find((c) => c.name.toLowerCase() === customerName.trim().toLowerCase());
+    if (!match) { toast.error("Name nicht gefunden. Bitte wenden Sie sich an den Administrator."); return; }
     setSession({ role: "customer", id: match.id, name: match.name });
     toast.success(`Angemeldet als ${match.name}`);
     navigate("/customer");
@@ -88,100 +87,51 @@ const Auth = () => {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">Aufmaß-App</CardTitle>
-          <CardDescription>
-            {mode === "select" ? "Bitte wählen Sie Ihre Rolle" : ""}
-          </CardDescription>
+          <CardDescription>{mode === "select" ? "Bitte wählen Sie Ihre Rolle" : ""}</CardDescription>
         </CardHeader>
         <CardContent>
           {mode === "select" && (
             <div className="space-y-3">
-              <Button
-                variant="outline"
-                className="w-full h-16 justify-start gap-3 text-left"
-                onClick={() => setMode("admin")}
-              >
+              <Button variant="outline" className="w-full h-16 justify-start gap-3 text-left" onClick={() => setMode("admin")}>
                 <Shield className="h-6 w-6 text-primary shrink-0" />
-                <div>
-                  <div className="font-semibold">Admin</div>
-                  <div className="text-xs text-muted-foreground">Verwaltung & Einstellungen</div>
-                </div>
+                <div><div className="font-semibold">Admin</div><div className="text-xs text-muted-foreground">Verwaltung & Einstellungen</div></div>
               </Button>
-              <Button
-                variant="outline"
-                className="w-full h-16 justify-start gap-3 text-left"
-                onClick={() => setMode("employee")}
-              >
+              <Button variant="outline" className="w-full h-16 justify-start gap-3 text-left" onClick={() => setMode("employee")}>
                 <User className="h-6 w-6 text-primary shrink-0" />
-                <div>
-                  <div className="font-semibold">Mitarbeiter</div>
-                  <div className="text-xs text-muted-foreground">Projekte erstellen & bearbeiten</div>
-                </div>
+                <div><div className="font-semibold">Mitarbeiter</div><div className="text-xs text-muted-foreground">Projekte erstellen & bearbeiten</div></div>
               </Button>
-              <Button
-                variant="outline"
-                className="w-full h-16 justify-start gap-3 text-left"
-                onClick={() => setMode("customer")}
-              >
+              <Button variant="outline" className="w-full h-16 justify-start gap-3 text-left" onClick={() => setMode("customer")}>
                 <Users className="h-6 w-6 text-primary shrink-0" />
-                <div>
-                  <div className="font-semibold">Kunde</div>
-                  <div className="text-xs text-muted-foreground">Zugewiesene Projekte bearbeiten</div>
-                </div>
+                <div><div className="font-semibold">Kunde</div><div className="text-xs text-muted-foreground">Zugewiesene Projekte ansehen</div></div>
               </Button>
             </div>
           )}
 
           {mode === "admin" && (
             <div className="space-y-4">
-              <Button variant="ghost" size="sm" onClick={() => setMode("select")}>
-                <ArrowLeft className="h-4 w-4 mr-1" /> Zurück
-              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setMode("select")}><ArrowLeft className="h-4 w-4 mr-1" /> Zurück</Button>
               <form onSubmit={handleAdminLogin} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="admin-pw">Admin-Passwort</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      id="admin-pw"
-                      type="password"
-                      className="pl-9"
-                      value={adminPassword}
-                      onChange={(e) => setAdminPassword(e.target.value)}
-                      placeholder="Passwort eingeben"
-                      required
-                      autoFocus
-                    />
-                  </div>
+                  <div className="relative"><Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input id="admin-pw" type="password" className="pl-9" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="Passwort eingeben" required autoFocus /></div>
                 </div>
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? "Prüfe..." : "Anmelden"}
-                </Button>
+                <Button type="submit" className="w-full" disabled={loading}>{loading ? "Prüfe..." : "Anmelden"}</Button>
               </form>
             </div>
           )}
 
-          {mode === "employee" && (
+          {mode === "employee" && !selectedEmployee && (
             <div className="space-y-4">
-              <Button variant="ghost" size="sm" onClick={() => setMode("select")}>
-                <ArrowLeft className="h-4 w-4 mr-1" /> Zurück
-              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setMode("select")}><ArrowLeft className="h-4 w-4 mr-1" /> Zurück</Button>
               {employees.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  Noch keine Mitarbeiter angelegt. Der Admin muss zuerst Mitarbeiter erstellen.
-                </p>
+                <p className="text-center text-muted-foreground py-8">Noch keine Mitarbeiter angelegt.</p>
               ) : (
                 <div className="space-y-2">
                   <Label>Mitarbeiter auswählen</Label>
                   <div className="grid gap-2 max-h-64 overflow-y-auto">
                     {employees.map((emp) => (
-                      <Button
-                        key={emp.id}
-                        variant="outline"
-                        className="w-full justify-start"
-                        onClick={() => handleEmployeeSelect(emp)}
-                      >
-                        <User className="h-4 w-4 mr-2" />
-                        {emp.name}
+                      <Button key={emp.id} variant="outline" className="w-full justify-start" onClick={() => handleEmployeeSelect(emp)}>
+                        <User className="h-4 w-4 mr-2" />{emp.name}
                       </Button>
                     ))}
                   </div>
@@ -190,27 +140,26 @@ const Auth = () => {
             </div>
           )}
 
+          {mode === "employee" && selectedEmployee && (
+            <div className="space-y-4">
+              <Button variant="ghost" size="sm" onClick={() => setSelectedEmployee(null)}><ArrowLeft className="h-4 w-4 mr-1" /> Zurück</Button>
+              <p className="text-sm text-muted-foreground">Anmelden als <strong>{selectedEmployee.name}</strong></p>
+              <div className="space-y-2">
+                <Label htmlFor="emp-pw">Mitarbeiter-Passwort</Label>
+                <div className="relative"><Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input id="emp-pw" type="password" className="pl-9" value={employeePassword} onChange={(e) => setEmployeePassword(e.target.value)} placeholder="Passwort eingeben" autoFocus onKeyDown={(e) => e.key === "Enter" && handleEmployeePasswordLogin()} /></div>
+              </div>
+              <Button className="w-full" onClick={handleEmployeePasswordLogin} disabled={!employeePassword.trim() || loading}>{loading ? "Prüfe..." : "Anmelden"}</Button>
+            </div>
+          )}
+
           {mode === "customer" && (
             <div className="space-y-4">
-              <Button variant="ghost" size="sm" onClick={() => setMode("select")}>
-                <ArrowLeft className="h-4 w-4 mr-1" /> Zurück
-              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setMode("select")}><ArrowLeft className="h-4 w-4 mr-1" /> Zurück</Button>
               <div className="space-y-2">
                 <Label htmlFor="customer-name">Ihr Name</Label>
-                <Input
-                  id="customer-name"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Name eingeben"
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleCustomerLogin();
-                  }}
-                />
+                <Input id="customer-name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Name eingeben" autoFocus onKeyDown={(e) => e.key === "Enter" && handleCustomerLogin()} />
               </div>
-              <Button className="w-full" onClick={handleCustomerLogin} disabled={!customerName.trim()}>
-                Weiter
-              </Button>
+              <Button className="w-full" onClick={handleCustomerLogin} disabled={!customerName.trim()}>Weiter</Button>
             </div>
           )}
         </CardContent>
