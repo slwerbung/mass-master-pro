@@ -10,24 +10,16 @@ import { LogOut, Save, ArrowLeft, CheckCheck, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 
-interface Assignment {
-  id: string;
-  project_id: string;
-  projects: { id: string; project_number: string };
-}
-
 const CustomerView = () => {
   const navigate = useNavigate();
   const session = getSession();
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [selectedAssignment, setSelectedAssignment] = useState<any | null>(null);
   const [locations, setLocations] = useState<any[]>([]);
-  const [permissions, setPermissions] = useState<any[]>([]);
   const [images, setImages] = useState<any[]>([]);
   const [guestInfoMap, setGuestInfoMap] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  // Approvals: locationId -> approved boolean
   const [approvals, setApprovals] = useState<Record<string, boolean>>({});
   const [savingApprovals, setSavingApprovals] = useState(false);
 
@@ -38,33 +30,51 @@ const CustomerView = () => {
 
   const loadAssignments = async () => {
     try {
-      const { data, error } = await supabase.functions.invoke("customer-data", {
-        body: { action: "get_projects", customerId: session!.id },
-      });
-      if (error || data?.error) { toast.error("Fehler beim Laden"); return; }
-      setAssignments(data.assignments || []);
-    } catch { toast.error("Verbindungsfehler"); }
+      const { data, error } = await supabase
+        .from("customer_project_assignments")
+        .select("id, project_id, projects(id, project_number)")
+        .eq("customer_id", session!.id);
+      if (error) throw error;
+      setAssignments(data || []);
+    } catch { toast.error("Fehler beim Laden"); }
     finally { setLoading(false); }
   };
 
-  const loadLocations = async (assignment: Assignment) => {
+  const loadLocations = async (assignment: any) => {
     setSelectedAssignment(assignment);
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("customer-data", {
-        body: { action: "get_locations", customerId: session!.id, assignmentId: assignment.id },
-      });
-      if (error || data?.error) { toast.error("Fehler beim Laden"); return; }
-      setLocations(data.locations || []);
-      setPermissions(data.permissions || []);
-      setImages(data.images || []);
+      // Load locations directly from Supabase
+      const { data: locs, error } = await supabase
+        .from("locations")
+        .select("id, location_number, location_name, comment, system, label, location_type, guest_info")
+        .eq("project_id", assignment.project_id)
+        .order("created_at");
+      if (error) throw error;
+      setLocations(locs || []);
+
+      const locationIds = (locs || []).map((l: any) => l.id);
       const infoMap: Record<string, string> = {};
-      (data.locations || []).forEach((l: any) => { infoMap[l.id] = l.guest_info || ""; });
+      (locs || []).forEach((l: any) => { infoMap[l.id] = l.guest_info || ""; });
       setGuestInfoMap(infoMap);
 
-      // Load approvals for this assignment
-      const locationIds = (data.locations || []).map((l: any) => l.id);
+      // Load images and PDFs
       if (locationIds.length > 0) {
+        const { data: imgs } = await supabase
+          .from("location_images")
+          .select("location_id, image_type, storage_path")
+          .in("location_id", locationIds);
+        const { data: pdfs } = await supabase
+          .from("location_pdfs")
+          .select("location_id, storage_path, file_name")
+          .in("location_id", locationIds);
+        const pdfEntries = (pdfs || []).map((p: any) => ({
+          location_id: p.location_id, image_type: "pdf",
+          storage_path: p.storage_path, file_name: p.file_name,
+        }));
+        setImages([...(imgs || []), ...pdfEntries]);
+
+        // Load approvals
         const { data: approvData } = await supabase
           .from("location_approvals")
           .select("location_id, approved")
@@ -74,11 +84,9 @@ const CustomerView = () => {
         (approvData || []).forEach((a: any) => { approvMap[a.location_id] = a.approved; });
         setApprovals(approvMap);
       }
-    } catch { toast.error("Verbindungsfehler"); }
+    } catch { toast.error("Fehler beim Laden"); }
     finally { setLoading(false); }
   };
-
-  const canEdit = (locationId: string) => permissions.some((p: any) => p.location_id === locationId && p.can_edit_guest_info);
 
   const getImageUrl = (path: string) => {
     const { data } = supabase.storage.from("project-files").getPublicUrl(path);
@@ -86,14 +94,14 @@ const CustomerView = () => {
   };
 
   const saveGuestInfo = async (locationId: string) => {
-    if (!selectedAssignment) return;
     setSavingId(locationId);
     try {
-      const { data, error } = await supabase.functions.invoke("customer-data", {
-        body: { action: "update_guest_info", customerId: session!.id, assignmentId: selectedAssignment.id, locationId, guestInfo: guestInfoMap[locationId] || null },
-      });
-      if (error || data?.error) toast.error("Fehler beim Speichern");
-      else toast.success("Gespeichert");
+      const { error } = await supabase
+        .from("locations")
+        .update({ guest_info: guestInfoMap[locationId] || null })
+        .eq("id", locationId);
+      if (error) throw error;
+      toast.success("Gespeichert");
     } catch { toast.error("Fehler beim Speichern"); }
     setSavingId(null);
   };
@@ -102,10 +110,8 @@ const CustomerView = () => {
     if (!selectedAssignment) return;
     setApprovals(prev => ({ ...prev, [locationId]: approved }));
     await supabase.from("location_approvals").upsert({
-      location_id: locationId,
-      assignment_id: selectedAssignment.id,
-      approved,
-      approved_at: approved ? new Date().toISOString() : null,
+      location_id: locationId, assignment_id: selectedAssignment.id,
+      approved, approved_at: approved ? new Date().toISOString() : null,
     }, { onConflict: "location_id,assignment_id" });
   };
 
@@ -126,7 +132,6 @@ const CustomerView = () => {
 
   const allApproved = locations.length > 0 && locations.every(l => approvals[l.id]);
   const someApproved = locations.some(l => approvals[l.id]);
-
   const handleLogout = () => { clearSession(); navigate("/"); };
 
   if (loading && !selectedAssignment) {
@@ -144,7 +149,9 @@ const CustomerView = () => {
               </Button>
             )}
             <div>
-              <h1 className="text-xl font-bold">{selectedAssignment ? `Projekt ${selectedAssignment.projects.project_number}` : "Meine Projekte"}</h1>
+              <h1 className="text-xl font-bold">
+                {selectedAssignment ? `Projekt ${selectedAssignment.projects.project_number}` : "Meine Projekte"}
+              </h1>
               <p className="text-sm text-muted-foreground">{session?.name}</p>
             </div>
           </div>
@@ -169,7 +176,6 @@ const CustomerView = () => {
           <p className="text-center text-muted-foreground py-12">Keine Standorte vorhanden.</p>
         ) : (
           <>
-            {/* Alle freigeben Banner */}
             <Card className="border-primary/30 bg-primary/5">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between gap-4">
@@ -181,9 +187,7 @@ const CustomerView = () => {
                   </div>
                   <div className="flex gap-2">
                     {someApproved && (
-                      <Button size="sm" variant="outline" onClick={() => approveAll(false)} disabled={savingApprovals}>
-                        Alle zurücknehmen
-                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => approveAll(false)} disabled={savingApprovals}>Alle zurücknehmen</Button>
                     )}
                     <Button size="sm" onClick={() => approveAll(true)} disabled={allApproved || savingApprovals}>
                       <CheckCheck className="h-4 w-4 mr-1" /> Alle freigeben
@@ -209,14 +213,10 @@ const CustomerView = () => {
                           </CardTitle>
                           {loc.comment && <p className="text-sm text-muted-foreground mt-1">{loc.comment}</p>}
                         </div>
-                        {/* Freigabe-Checkbox */}
                         <div className="flex items-center gap-2 shrink-0">
-                          <Checkbox
-                            id={`approve-${loc.id}`}
-                            checked={isApproved}
+                          <Checkbox id={`approve-${loc.id}`} checked={isApproved}
                             onCheckedChange={(checked) => toggleApproval(loc.id, !!checked)}
-                            className={isApproved ? "border-green-500 data-[state=checked]:bg-green-500" : ""}
-                          />
+                            className={isApproved ? "border-green-500 data-[state=checked]:bg-green-500" : ""} />
                           <Label htmlFor={`approve-${loc.id}`} className={`text-sm cursor-pointer ${isApproved ? "text-green-600 font-medium" : "text-muted-foreground"}`}>
                             {isApproved ? "Freigegeben ✓" : "Freigeben"}
                           </Label>
@@ -229,7 +229,6 @@ const CustomerView = () => {
                           <img src={getImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-full object-contain" />
                         </div>
                       )}
-                      {/* Druckdatei */}
                       {pdfEntry && (() => {
                         const { data: urlData } = supabase.storage.from("project-files").getPublicUrl(pdfEntry.storage_path);
                         return (
@@ -241,20 +240,18 @@ const CustomerView = () => {
                           </a>
                         );
                       })()}
-                      {canEdit(loc.id) && (
-                        <div className="space-y-2">
-                          <Label>Informationen</Label>
-                          <Textarea
-                            placeholder="Informationen zu diesem Standort ergänzen..."
-                            value={guestInfoMap[loc.id] || ""}
-                            onChange={(e) => setGuestInfoMap(prev => ({ ...prev, [loc.id]: e.target.value }))}
-                            rows={3}
-                          />
-                          <Button size="sm" onClick={() => saveGuestInfo(loc.id)} disabled={savingId === loc.id}>
-                            <Save className="h-4 w-4 mr-1" />{savingId === loc.id ? "Speichert..." : "Speichern"}
-                          </Button>
-                        </div>
-                      )}
+                      <div className="space-y-2">
+                        <Label>Informationen</Label>
+                        <Textarea
+                          placeholder="Informationen zu diesem Standort ergänzen..."
+                          value={guestInfoMap[loc.id] || ""}
+                          onChange={(e) => setGuestInfoMap(prev => ({ ...prev, [loc.id]: e.target.value }))}
+                          rows={3}
+                        />
+                        <Button size="sm" onClick={() => saveGuestInfo(loc.id)} disabled={savingId === loc.id}>
+                          <Save className="h-4 w-4 mr-1" />{savingId === loc.id ? "Speichert..." : "Speichern"}
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 );
