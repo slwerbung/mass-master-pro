@@ -20,6 +20,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { adminPassword, action, ...params } = body;
 
+    // validate-admin actions don't need password for sync_projects_public
     const publicActions = ["sync_projects"];
     if (!publicActions.includes(action)) {
       const expectedPassword = Deno.env.get("ADMIN_PASSWORD");
@@ -34,22 +35,30 @@ Deno.serve(async (req) => {
     );
 
     switch (action) {
+      // ---- SYNC PROJECTS (called by employees, no admin pw needed) ----
       case "sync_projects": {
         const projects = params.projects as Array<{
-          id: string; project_number: string;
-          employee_id?: string; created_at: string; updated_at: string;
+          id: string;
+          project_number: string;
+          employee_id?: string;
+          created_at: string;
+          updated_at: string;
         }>;
         if (!projects || !Array.isArray(projects)) return json({ error: "Missing projects" }, 400);
         const rows = projects.map(p => ({
-          id: p.id, project_number: p.project_number,
+          id: p.id,
+          project_number: p.project_number,
           user_id: p.employee_id || "employee",
           employee_id: p.employee_id || null,
-          created_at: p.created_at, updated_at: p.updated_at,
+          created_at: p.created_at,
+          updated_at: p.updated_at,
         }));
         const { error } = await supabase.from("projects").upsert(rows, { onConflict: "id" });
         if (error) return json({ error: error.message }, 500);
         return json({ success: true, synced: rows.length });
       }
+
+      // ---- EMPLOYEES ----
       case "list_employees": {
         const { data, error } = await supabase.from("employees").select("*").order("name");
         if (error) return json({ error: error.message }, 500);
@@ -65,6 +74,8 @@ Deno.serve(async (req) => {
         if (error) return json({ error: error.message }, 500);
         return json({ success: true });
       }
+
+      // ---- CUSTOMERS ----
       case "list_customers": {
         const { data, error } = await supabase.from("customers").select("*").order("name");
         if (error) return json({ error: error.message }, 500);
@@ -80,6 +91,8 @@ Deno.serve(async (req) => {
         if (error) return json({ error: error.message }, 500);
         return json({ success: true });
       }
+
+      // ---- ASSIGNMENTS ----
       case "list_assignments": {
         const { data, error } = await supabase
           .from("customer_project_assignments")
@@ -101,6 +114,8 @@ Deno.serve(async (req) => {
         if (error) return json({ error: error.message }, 500);
         return json({ success: true });
       }
+
+      // ---- PERMISSIONS ----
       case "list_permissions": {
         const { data, error } = await supabase
           .from("customer_location_permissions")
@@ -123,6 +138,8 @@ Deno.serve(async (req) => {
         }
         return json({ success: true });
       }
+
+      // ---- PROJECTS ----
       case "list_projects": {
         const { data, error } = await supabase
           .from("projects")
@@ -131,6 +148,7 @@ Deno.serve(async (req) => {
         if (error) return json({ error: error.message }, 500);
         return json({ projects: data });
       }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
