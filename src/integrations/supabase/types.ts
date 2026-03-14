@@ -14,6 +14,24 @@ export type Database = {
   }
   public: {
     Tables: {
+      app_config: {
+        Row: {
+          key: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: []
+      }
       customer_location_permissions: {
         Row: {
           assignment_id: string
@@ -157,6 +175,78 @@ export type Database = {
         }
         Relationships: []
       }
+      location_approvals: {
+        Row: {
+          approved: boolean
+          approved_at: string | null
+          assignment_id: string
+          id: string
+          location_id: string
+        }
+        Insert: {
+          approved?: boolean
+          approved_at?: string | null
+          assignment_id: string
+          id?: string
+          location_id: string
+        }
+        Update: {
+          approved?: boolean
+          approved_at?: string | null
+          assignment_id?: string
+          id?: string
+          location_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_approvals_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "customer_project_assignments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "location_approvals_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      location_field_config: {
+        Row: {
+          created_at: string
+          field_key: string
+          field_label: string
+          field_options: string | null
+          field_type: string
+          id: string
+          is_active: boolean
+          sort_order: number
+        }
+        Insert: {
+          created_at?: string
+          field_key: string
+          field_label: string
+          field_options?: string | null
+          field_type: string
+          id?: string
+          is_active?: boolean
+          sort_order?: number
+        }
+        Update: {
+          created_at?: string
+          field_key?: string
+          field_label?: string
+          field_options?: string | null
+          field_type?: string
+          id?: string
+          is_active?: boolean
+          sort_order?: number
+        }
+        Relationships: []
+      }
       location_images: {
         Row: {
           created_at: string
@@ -225,6 +315,7 @@ export type Database = {
         Row: {
           comment: string | null
           created_at: string
+          custom_fields: Json | null
           guest_info: string | null
           id: string
           label: string | null
@@ -237,6 +328,7 @@ export type Database = {
         Insert: {
           comment?: string | null
           created_at?: string
+          custom_fields?: Json | null
           guest_info?: string | null
           id?: string
           label?: string | null
@@ -249,6 +341,7 @@ export type Database = {
         Update: {
           comment?: string | null
           created_at?: string
+          custom_fields?: Json | null
           guest_info?: string | null
           id?: string
           label?: string | null
