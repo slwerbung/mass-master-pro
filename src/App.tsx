@@ -14,6 +14,8 @@ import Export from "./pages/Export";
 import Auth from "./pages/Auth";
 import Admin from "./pages/Admin";
 import CustomerView from "./pages/CustomerView";
+import CustomerManage from "./pages/CustomerManage";
+import CustomerLogin from "./pages/CustomerLogin";
 import FloorPlanUpload from "./pages/FloorPlanUpload";
 import FloorPlanView from "./pages/FloorPlanView";
 import NotFound from "./pages/NotFound";
@@ -57,6 +59,10 @@ const App = () => (
 
           {/* Customer routes */}
           <Route path="/customer" element={<RoleGuard allowedRoles={["customer"]}><CustomerView /></RoleGuard>} />
+          <Route path="/kunde" element={<CustomerLogin />} />
+
+          {/* Employee: Kunden verwalten */}
+          <Route path="/projects/customers" element={<RoleGuard allowedRoles={["admin", "employee"]}><CustomerManage /></RoleGuard>} />
 
           <Route path="*" element={<NotFound />} />
         </Routes>

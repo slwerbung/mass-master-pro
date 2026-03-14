@@ -73,16 +73,28 @@ Deno.serve(async (req) => {
             .order("created_at");
 
           const locationIds = (locations || []).map(l => l.id);
-          const { data: images } = await supabase
-            .from("location_images")
-            .select("location_id, image_type, storage_path")
-            .in("location_id", locationIds.length > 0 ? locationIds : ['none']);
+        const { data: images } = await supabase
+          .from("location_images")
+          .select("location_id, image_type, storage_path")
+          .in("location_id", locationIds.length > 0 ? locationIds : ['none']);
 
-          return json({
-            locations: locations || [],
-            permissions: [],
-            images: images || [],
-          });
+        const { data: pdfs } = await supabase
+          .from("location_pdfs")
+          .select("location_id, storage_path, file_name")
+          .in("location_id", locationIds.length > 0 ? locationIds : ['none']);
+
+        const pdfEntries = (pdfs || []).map((p: any) => ({
+          location_id: p.location_id,
+          image_type: "pdf",
+          storage_path: p.storage_path,
+          file_name: p.file_name,
+        }));
+
+        return json({
+          locations: locations || [],
+          permissions: [],
+          images: [...(images || []), ...pdfEntries],
+        });
         }
 
         const locationIds = permissions.map(p => p.location_id);
@@ -97,10 +109,22 @@ Deno.serve(async (req) => {
           .select("location_id, image_type, storage_path")
           .in("location_id", locationIds);
 
+        const { data: pdfs2 } = await supabase
+          .from("location_pdfs")
+          .select("location_id, storage_path, file_name")
+          .in("location_id", locationIds);
+
+        const pdfEntries2 = (pdfs2 || []).map((p: any) => ({
+          location_id: p.location_id,
+          image_type: "pdf",
+          storage_path: p.storage_path,
+          file_name: p.file_name,
+        }));
+
         return json({
           locations: locations || [],
           permissions,
-          images: images || [],
+          images: [...(images || []), ...pdfEntries2],
         });
       }
 

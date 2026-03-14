@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, FolderOpen, Calendar, LogOut } from "lucide-react";
+import { Plus, FolderOpen, Calendar, LogOut, Users } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { format } from "date-fns";
@@ -69,6 +69,14 @@ const Projects = () => {
             >
               <Plus className="mr-2 h-5 w-5" />
               Neues Projekt
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => navigate("/projects/customers")}
+              title="Kunden verwalten"
+            >
+              <Users className="h-5 w-5" />
             </Button>
             <Button variant="outline" size="lg" onClick={handleLogout}>
               <LogOut className="h-5 w-5" />

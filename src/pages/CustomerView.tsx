@@ -219,6 +219,23 @@ const CustomerView = () => {
                           />
                         </div>
                       )}
+                      {/* Druckdatei */}
+                      {images.some((i: any) => i.location_id === loc.id && i.image_type === "pdf") && (() => {
+                        const pdfEntry = images.find((i: any) => i.location_id === loc.id && i.image_type === "pdf");
+                        const { data: urlData } = supabase.storage.from("project-files").getPublicUrl(pdfEntry.storage_path);
+                        return (
+                          <a
+                            href={urlData.publicUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 p-3 border rounded-lg bg-muted/30 hover:bg-muted transition-colors text-sm no-underline"
+                          >
+                            <span>📄</span>
+                            <span className="flex-1 font-medium text-foreground">Druckdatei ansehen</span>
+                            <span className="text-muted-foreground text-xs">PDF öffnen →</span>
+                          </a>
+                        );
+                      })()}
                       {canEdit(loc.id) && (
                         <div className="space-y-2">
                           <Label>Informationen</Label>

@@ -42,8 +42,10 @@ const Admin = () => {
       navigate("/");
       return;
     }
-    loadAll();
-  }, []);
+    if (storedAdminPw) {
+      loadAll();
+    }
+  }, [storedAdminPw]);
 
   const invoke = useCallback(async (action: string, params: Record<string, any> = {}) => {
     const { data, error } = await supabase.functions.invoke("admin-manage", {

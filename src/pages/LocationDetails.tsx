@@ -6,6 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Check } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Location } from "@/types/project";
 import { toast } from "sonner";
@@ -222,21 +229,28 @@ const LocationDetails = () => {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="label">Beschriftung (optional)</Label>
-                    <Input
+                    <Textarea
                       id="label"
-                      placeholder="z.B. Raum 101"
+                      placeholder="z.B. Raum 101, Haupteingang Halle A"
                       value={label}
                       onChange={(e) => setLabel(e.target.value)}
+                      rows={3}
                     />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="locationType">Art (optional)</Label>
-                    <Input
-                      id="locationType"
-                      placeholder="z.B. Raum, Flur, Eingang"
-                      value={locationType}
-                      onChange={(e) => setLocationType(e.target.value)}
-                    />
+                    <Select value={locationType} onValueChange={setLocationType}>
+                      <SelectTrigger id="locationType">
+                        <SelectValue placeholder="Art auswählen..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Wand">Wand</SelectItem>
+                        <SelectItem value="Deckenhänger">Deckenhänger</SelectItem>
+                        <SelectItem value="Aufsteller Mobil">Aufsteller Mobil</SelectItem>
+                        <SelectItem value="Aufsteller Fest">Aufsteller Fest</SelectItem>
+                        <SelectItem value="Folienbeschriftung">Folienbeschriftung</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="comment">Kommentar (optional)</Label>

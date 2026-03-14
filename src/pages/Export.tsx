@@ -144,6 +144,24 @@ const Export = () => {
       const maxContentHeight = pageHeight - 2 * margin; // 257mm
 
       let isFirstPage = true;
+      // Seitennummern-Map aufbauen: locationId → Seitennummer
+      const locationPageMap: Record<string, number> = {};
+      const floorPlanPageMap: Record<string, number> = {}; // floorPlanId → Seitennummer
+      let pageCounter = 1;
+
+      // Grundrisse zählen
+      if (project.projectType === 'aufmass_mit_plan' && project.floorPlans && project.floorPlans.length > 0) {
+        for (const fp of project.floorPlans) {
+          floorPlanPageMap[fp.id] = pageCounter++;
+        }
+      }
+      // Standortseiten zählen (je Standort eine Seite, plus evtl. Detailseiten)
+      for (const location of project.locations) {
+        locationPageMap[location.id] = pageCounter++;
+        if (pdfOptions.includeDetailImages && location.detailImages && location.detailImages.length > 0) {
+          pageCounter++; // Detailseite
+        }
+      }
 
       // Floor plan pages for "Aufmaß mit Plan" projects
       if (project.projectType === 'aufmass_mit_plan' && project.floorPlans && project.floorPlans.length > 0) {
@@ -171,7 +189,7 @@ const Export = () => {
             console.error("Error adding floor plan image:", e);
           }
 
-          // Draw markers on the floor plan
+          // Draw markers on the floor plan – klickbar verlinkt zur Standortseite
           for (const marker of floorPlan.markers) {
             const loc = project.locations.find(l => l.id === marker.locationId);
             if (!loc) continue;
@@ -180,8 +198,14 @@ const Export = () => {
             const parts = loc.locationNumber.split("-");
             const shortNum = parts[parts.length - 1] || loc.locationNumber;
 
+            // Klickbarer Link zum Standort
+            const targetPage = locationPageMap[loc.id];
+            if (targetPage) {
+              pdf.link(mx - 4, my - 4, 8, 8, { pageNumber: targetPage });
+            }
+
             // Draw marker circle
-            pdf.setFillColor(59, 130, 246); // primary blue
+            pdf.setFillColor(59, 130, 246);
             pdf.circle(mx, my, 2.5, 'F');
             pdf.setFontSize(6);
             pdf.setFont("helvetica", "bold");
@@ -199,6 +223,25 @@ const Export = () => {
         isFirstPage = false;
 
         let y = margin;
+
+        // "Zurück zum Grundriss"-Link wenn Projekt mit Plan
+        if (project.projectType === 'aufmass_mit_plan' && project.floorPlans && project.floorPlans.length > 0) {
+          // Finde den Grundriss der diesen Standort als Marker hat
+          const parentFloorPlan = project.floorPlans.find(fp =>
+            fp.markers.some(m => m.locationId === location.id)
+          );
+          if (parentFloorPlan) {
+            const fpPage = floorPlanPageMap[parentFloorPlan.id];
+            if (fpPage) {
+              pdf.setFontSize(9);
+              pdf.setFont("helvetica", "normal");
+              pdf.setTextColor(59, 130, 246);
+              pdf.textWithLink(`← Zurück zum Grundriss: ${parentFloorPlan.name}`, margin, y + 4, { pageNumber: fpPage });
+              pdf.setTextColor(0, 0, 0);
+              y += 10;
+            }
+          }
+        }
 
         // Header
         if (pdfOptions.includeProjectHeader) {
@@ -220,6 +263,28 @@ const Export = () => {
           pdf.setFont("helvetica", "normal");
           pdf.text(location.locationName, margin, y + 5);
           y += 7;
+        }
+
+        if (pdfOptions.includeSystem && location.system) {
+          pdf.setFontSize(10);
+          pdf.setFont("helvetica", "normal");
+          pdf.text(`System: ${location.system}`, margin, y + 5);
+          y += 7;
+        }
+
+        if (pdfOptions.includeLocationType && location.locationType) {
+          pdf.setFontSize(10);
+          pdf.setFont("helvetica", "normal");
+          pdf.text(`Art: ${location.locationType}`, margin, y + 5);
+          y += 7;
+        }
+
+        if (pdfOptions.includeLabel && location.label) {
+          pdf.setFontSize(10);
+          pdf.setFont("helvetica", "normal");
+          const splitLabel = pdf.splitTextToSize(`Beschriftung: ${location.label}`, contentWidth);
+          pdf.text(splitLabel, margin, y + 5);
+          y += 5 + splitLabel.length * 4;
         }
 
         // Calculate space used by non-image elements

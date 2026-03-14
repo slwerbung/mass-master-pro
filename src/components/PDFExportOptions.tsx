@@ -9,6 +9,9 @@ export interface PDFExportOptions {
   includeProjectHeader: boolean;
   includeLocationNumber: boolean;
   includeLocationName: boolean;
+  includeSystem: boolean;
+  includeLabel: boolean;
+  includeLocationType: boolean;
   includeAnnotatedImage: boolean;
   includeOriginalImage: boolean;
   includeDetailImages: boolean;
@@ -20,6 +23,9 @@ export const defaultPDFOptions: PDFExportOptions = {
   includeProjectHeader: true,
   includeLocationNumber: true,
   includeLocationName: true,
+  includeSystem: true,
+  includeLabel: true,
+  includeLocationType: true,
   includeAnnotatedImage: true,
   includeOriginalImage: false,
   includeDetailImages: false,
@@ -43,6 +49,9 @@ const PDFExportOptionsUI = ({ options, onChange }: Props) => {
     { key: "includeProjectHeader", label: "Projektnummer", group: "Allgemein" },
     { key: "includeLocationNumber", label: "Standortnummer", group: "Allgemein" },
     { key: "includeLocationName", label: "Standortname", group: "Allgemein" },
+    { key: "includeSystem", label: "System", group: "Allgemein" },
+    { key: "includeLabel", label: "Beschriftung", group: "Allgemein" },
+    { key: "includeLocationType", label: "Art", group: "Allgemein" },
     { key: "includeCreatedDate", label: "Erstellungsdatum", group: "Allgemein" },
     { key: "includeAnnotatedImage", label: "Bemaßtes Bild", group: "Bilder" },
     { key: "includeOriginalImage", label: "Originalbild (unbearbeitet)", group: "Bilder" },

@@ -1,8 +1,11 @@
+import { useRef, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, Camera } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2 } from "lucide-react";
 import { Location } from "@/types/project";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +27,58 @@ interface LocationCardProps {
 
 const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: LocationCardProps) => {
   const navigate = useNavigate();
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [pdfName, setPdfName] = useState<string | null>(null);
+  const [uploadingPdf, setUploadingPdf] = useState(false);
+
+  useEffect(() => {
+    loadPdf();
+  }, [location.id]);
+
+  const loadPdf = async () => {
+    const { data } = await supabase
+      .from("location_pdfs")
+      .select("storage_path, file_name")
+      .eq("location_id", location.id)
+      .maybeSingle();
+    if (data) {
+      const { data: urlData } = supabase.storage
+        .from("project-files")
+        .getPublicUrl(data.storage_path);
+      setPdfUrl(urlData.publicUrl);
+      setPdfName(data.file_name);
+    }
+  };
+
+  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      toast.error("Bitte eine PDF-Datei auswählen");
+      return;
+    }
+    setUploadingPdf(true);
+    try {
+      const path = `pdfs/${location.id}/${Date.now()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from("project-files")
+        .upload(path, file, { upsert: true });
+      if (uploadError) throw uploadError;
+
+      await supabase.from("location_pdfs").upsert(
+        { location_id: location.id, storage_path: path, file_name: file.name },
+        { onConflict: "location_id" }
+      );
+      toast.success("Druckdatei hochgeladen");
+      loadPdf();
+    } catch (err: any) {
+      toast.error("Fehler beim Hochladen: " + err.message);
+    } finally {
+      setUploadingPdf(false);
+      if (pdfInputRef.current) pdfInputRef.current.value = "";
+    }
+  };
 
   return (
     <Card className="overflow-hidden">
@@ -87,16 +142,43 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => onDelete(location.id)}
-                    className="bg-destructive"
-                  >
+                  <AlertDialogAction onClick={() => onDelete(location.id)} className="bg-destructive">
                     Löschen
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
           </div>
+        </div>
+
+        {/* Druckdatei */}
+        <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Druckdatei</p>
+          {pdfUrl && pdfName ? (
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-primary shrink-0" />
+              <span className="text-sm truncate flex-1">{pdfName}</span>
+              <Button size="sm" variant="ghost" asChild>
+                <a href={pdfUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}>
+                <FileUp className="h-3 w-3" />
+              </Button>
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              onClick={() => pdfInputRef.current?.click()}
+              disabled={uploadingPdf}
+            >
+              {uploadingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileUp className="h-4 w-4 mr-2" />}
+              {uploadingPdf ? "Lädt hoch..." : "Druckdatei hochladen"}
+            </Button>
+          )}
         </div>
 
         {/* Detail Images */}
@@ -138,16 +220,11 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
                     <AlertDialogContent>
                       <AlertDialogHeader>
                         <AlertDialogTitle>Detailbild löschen?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Diese Aktion kann nicht rückgängig gemacht werden.
-                        </AlertDialogDescription>
+                        <AlertDialogDescription>Diese Aktion kann nicht rückgängig gemacht werden.</AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
                         <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={() => onDeleteDetailImage(location.id, detail.id)}
-                          className="bg-destructive"
-                        >
+                        <AlertDialogAction onClick={() => onDeleteDetailImage(location.id, detail.id)} className="bg-destructive">
                           Löschen
                         </AlertDialogAction>
                       </AlertDialogFooter>
@@ -159,7 +236,6 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
           </div>
         )}
 
-        {/* Add detail image button */}
         <Button
           variant="outline"
           size="sm"
@@ -170,6 +246,8 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
           Detailbild hinzufügen
         </Button>
       </CardContent>
+
+      <input ref={pdfInputRef} type="file" accept="application/pdf" onChange={handlePdfUpload} className="hidden" />
     </Card>
   );
 };

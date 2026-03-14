@@ -1,0 +1,262 @@
+import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { ArrowLeft, Plus, Copy, Check, Link, Users } from "lucide-react";
+import { toast } from "sonner";
+import { getSession } from "@/lib/session";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { indexedDBStorage } from "@/lib/indexedDBStorage";
+import { Project } from "@/types/project";
+
+const CustomerManage = () => {
+  const navigate = useNavigate();
+  const session = getSession();
+
+  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [assignments, setAssignments] = useState<any[]>([]);
+
+  const [newCustomerName, setNewCustomerName] = useState("");
+  const [assignCustomerId, setAssignCustomerId] = useState("");
+  const [assignProjectId, setAssignProjectId] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const customerLoginUrl = `${window.location.origin}/kunde`;
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [custRes, projRes, assignRes] = await Promise.all([
+        supabase.from("customers").select("id, name").order("name"),
+        indexedDBStorage.getProjects(),
+        supabase
+          .from("customer_project_assignments")
+          .select("id, customer_id, project_id, customers(name), projects(project_number)")
+          .order("created_at"),
+      ]);
+      setCustomers(custRes.data || []);
+      setProjects(projRes);
+      setAssignments(assignRes.data || []);
+    } catch {
+      toast.error("Fehler beim Laden");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!session || (session.role !== "employee" && session.role !== "admin")) {
+      navigate("/");
+      return;
+    }
+    loadData();
+  }, []);
+
+  const addCustomer = async () => {
+    if (!newCustomerName.trim()) return;
+    const { error } = await supabase
+      .from("customers")
+      .insert({ name: newCustomerName.trim() });
+    if (error) {
+      toast.error(error.message.includes("unique") ? "Kunde existiert bereits" : "Fehler beim Erstellen");
+      return;
+    }
+    setNewCustomerName("");
+    toast.success("Kunde angelegt");
+    loadData();
+  };
+
+  const addAssignment = async () => {
+    if (!assignCustomerId || !assignProjectId) return;
+    const { error } = await supabase
+      .from("customer_project_assignments")
+      .insert({ customer_id: assignCustomerId, project_id: assignProjectId });
+    if (error) {
+      toast.error(error.message.includes("unique") ? "Zuweisung existiert bereits" : "Fehler");
+      return;
+    }
+    toast.success("Projekt zugewiesen");
+    setAssignCustomerId("");
+    setAssignProjectId("");
+    loadData();
+  };
+
+  const copyLink = async (customerId: string) => {
+    await navigator.clipboard.writeText(customerLoginUrl);
+    setCopiedId(customerId);
+    toast.success("Link kopiert!");
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Laden...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="container max-w-2xl mx-auto p-4 md:p-6 space-y-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => navigate("/projects")}>
+            <ArrowLeft className="h-4 w-4 mr-1" /> Zurück
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold">Kunden verwalten</h1>
+            <p className="text-sm text-muted-foreground">Kunden anlegen & Projekte zuweisen</p>
+          </div>
+        </div>
+
+        {/* Kunden-Login-Link */}
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Link className="h-4 w-4" /> Kunden-Zugang – Link zum Teilen
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-sm bg-background border rounded px-3 py-2 truncate">
+                {customerLoginUrl}
+              </code>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => copyLink("main")}
+              >
+                {copiedId === "main" ? (
+                  <Check className="h-4 w-4 text-green-500" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Schick diesen Link an deinen Kunden. Er kann sich dort mit seinem Namen anmelden.
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Neuen Kunden anlegen */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Users className="h-5 w-5" /> Neuen Kunden anlegen
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex gap-2">
+              <Input
+                placeholder="Name des Kunden"
+                value={newCustomerName}
+                onChange={(e) => setNewCustomerName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addCustomer()}
+              />
+              <Button onClick={addCustomer} disabled={!newCustomerName.trim()}>
+                <Plus className="h-4 w-4 mr-1" /> Anlegen
+              </Button>
+            </div>
+            <div className="space-y-1 max-h-40 overflow-y-auto">
+              {customers.map((c) => (
+                <div key={c.id} className="flex items-center justify-between px-3 py-2 bg-muted rounded-lg text-sm">
+                  <span>{c.name}</span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => copyLink(c.id)}
+                    title="Link kopieren"
+                  >
+                    {copiedId === c.id ? (
+                      <Check className="h-3 w-3 text-green-500" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </Button>
+                </div>
+              ))}
+              {customers.length === 0 && (
+                <p className="text-muted-foreground text-sm text-center py-3">Noch keine Kunden</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Projekt zuweisen */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Projekt zuweisen</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Kunde</Label>
+                <Select value={assignCustomerId} onValueChange={setAssignCustomerId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Kunde wählen" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customers.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Projekt</Label>
+                <Select value={assignProjectId} onValueChange={setAssignProjectId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Projekt wählen" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {projects.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>Projekt {p.projectNumber}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <Button
+              onClick={addAssignment}
+              disabled={!assignCustomerId || !assignProjectId}
+              className="w-full"
+            >
+              <Plus className="h-4 w-4 mr-1" /> Zuweisen
+            </Button>
+
+            {/* Bestehende Zuweisungen */}
+            <div className="space-y-2 pt-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Aktuelle Zuweisungen</p>
+              {assignments.map((a) => (
+                <div key={a.id} className="flex items-center justify-between p-2 bg-muted rounded text-sm">
+                  <span>
+                    <span className="font-medium">{(a.customers as any)?.name}</span>
+                    {" → "}
+                    <span className="font-medium">Projekt {(a.projects as any)?.project_number}</span>
+                  </span>
+                </div>
+              ))}
+              {assignments.length === 0 && (
+                <p className="text-muted-foreground text-sm text-center py-2">Noch keine Zuweisungen</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+export default CustomerManage;
