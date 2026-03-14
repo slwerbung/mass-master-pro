@@ -11,6 +11,7 @@ import { de } from "date-fns/locale";
 import { StorageIndicator } from "@/components/StorageIndicator";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
+import { syncAllToSupabase } from "@/lib/supabaseSync";
 
 const Projects = () => {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -29,6 +30,8 @@ const Projects = () => {
       if (migrated) toast.success("Daten wurden in neuen Speicher migriert!");
       const loadedProjects = await indexedDBStorage.getProjects();
       setProjects(loadedProjects.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()));
+      // Auto sync to Supabase in background
+      syncAllToSupabase();
     } catch (error) {
       console.error("Error loading projects:", error);
       toast.error("Fehler beim Laden der Projekte");
@@ -37,27 +40,11 @@ const Projects = () => {
     }
   };
 
-  // Sync all local projects to Supabase directly
   const syncToSupabase = async () => {
     setIsSyncing(true);
     try {
-      const localProjects = await indexedDBStorage.getProjects();
-      if (localProjects.length === 0) {
-        toast.info("Keine Projekte zum Synchronisieren");
-        setIsSyncing(false);
-        return;
-      }
-      const rows = localProjects.map(p => ({
-        id: p.id,
-        project_number: p.projectNumber,
-        user_id: session?.id || "employee",
-        employee_id: session?.role === "employee" ? session.id : null,
-        created_at: p.createdAt instanceof Date ? p.createdAt.toISOString() : new Date().toISOString(),
-        updated_at: p.updatedAt instanceof Date ? p.updatedAt.toISOString() : new Date().toISOString(),
-      }));
-      const { error } = await supabase.from("projects").upsert(rows, { onConflict: "id" });
-      if (error) throw new Error(error.message);
-      toast.success(`${localProjects.length} Projekt(e) synchronisiert ✓`);
+      await syncAllToSupabase();
+      toast.success("Alle Projekte synchronisiert ✓");
     } catch (e: any) {
       toast.error("Sync fehlgeschlagen: " + e.message);
     } finally {

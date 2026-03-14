@@ -13,6 +13,7 @@ import { Location } from "@/types/project";
 import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
 import { supabase } from "@/integrations/supabase/client";
+import { syncProjectToSupabase } from "@/lib/supabaseSync";
 
 interface FieldConfig {
   id: string;
@@ -118,6 +119,7 @@ const LocationDetails = () => {
           ) as any),
         });
         toast.success("Standort aktualisiert");
+        syncProjectToSupabase(projectId);
         navigate(`/projects/${projectId}`);
       } else if (isDetailImage && stateImageData) {
         toast.loading("Bild wird komprimiert...");
@@ -158,6 +160,7 @@ const LocationDetails = () => {
         await indexedDBStorage.saveProject(project);
         toast.dismiss();
         toast.success("Standort gespeichert");
+        syncProjectToSupabase(projectId);
         if (floorPlanId) navigate(`/projects/${projectId}/floor-plans`);
         else navigate(`/projects/${projectId}`);
       }
