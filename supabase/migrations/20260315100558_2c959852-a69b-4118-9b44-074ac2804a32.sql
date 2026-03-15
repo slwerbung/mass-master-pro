@@ -1,0 +1,4 @@
+
+ALTER TABLE public.location_approvals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.app_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.location_field_config ENABLE ROW LEVEL SECURITY;
