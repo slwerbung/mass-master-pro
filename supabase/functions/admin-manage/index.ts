@@ -149,24 +149,6 @@ Deno.serve(async (req) => {
         return json({ projects: data });
       }
 
-      // ---- EMPLOYEE PASSWORD ----
-      case "get_employee_password": {
-        const { data } = await supabase
-          .from("app_config")
-          .select("value")
-          .eq("key", "employee_password")
-          .single();
-        return json({ password: data?.value || null });
-      }
-      case "set_employee_password": {
-        const { error } = await supabase.from("app_config").upsert(
-          { key: "employee_password", value: params.password },
-          { onConflict: "key" }
-        );
-        if (error) return json({ error: error.message }, 500);
-        return json({ success: true });
-      }
-
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

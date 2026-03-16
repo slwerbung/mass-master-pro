@@ -44,10 +44,9 @@ const CustomerView = () => {
     setSelectedAssignment(assignment);
     setLoading(true);
     try {
-      // Load locations directly from Supabase
       const { data: locs, error } = await supabase
         .from("locations")
-        .select("id, location_number, location_name, comment, system, label, location_type, guest_info, image_data")
+        .select("id, location_number, location_name, comment, system, label, location_type, guest_info")
         .eq("project_id", assignment.project_id)
         .order("created_at");
       if (error) throw error;
@@ -58,7 +57,6 @@ const CustomerView = () => {
       (locs || []).forEach((l: any) => { infoMap[l.id] = l.guest_info || ""; });
       setGuestInfoMap(infoMap);
 
-      // Load images and PDFs
       if (locationIds.length > 0) {
         const { data: imgs } = await supabase
           .from("location_images")
@@ -70,11 +68,10 @@ const CustomerView = () => {
           .in("location_id", locationIds);
         const pdfEntries = (pdfs || []).map((p: any) => ({
           location_id: p.location_id, image_type: "pdf",
-          storage_path: p.storage_path, file_name: p.file_name,
+          storage_path: p.storage_path,
         }));
         setImages([...(imgs || []), ...pdfEntries]);
 
-        // Load approvals
         const { data: approvData } = await supabase
           .from("location_approvals")
           .select("location_id, approved")
@@ -93,6 +90,22 @@ const CustomerView = () => {
     return data.publicUrl;
   };
 
+  const triggerNotification = async (changeType: "approval" | "comment") => {
+    if (!selectedAssignment) return;
+    try {
+      await supabase.functions.invoke("send-notification", {
+        body: {
+          assignmentId: selectedAssignment.id,
+          customerName: session?.name || "Unbekannt",
+          projectNumber: selectedAssignment.projects?.project_number || "",
+          changeType,
+        },
+      });
+    } catch (e) {
+      console.warn("Notification failed (non-fatal):", e);
+    }
+  };
+
   const saveGuestInfo = async (locationId: string) => {
     setSavingId(locationId);
     try {
@@ -102,6 +115,7 @@ const CustomerView = () => {
         .eq("id", locationId);
       if (error) throw error;
       toast.success("Gespeichert");
+      triggerNotification("comment");
     } catch { toast.error("Fehler beim Speichern"); }
     setSavingId(null);
   };
@@ -113,6 +127,7 @@ const CustomerView = () => {
       location_id: locationId, assignment_id: selectedAssignment.id,
       approved, approved_at: approved ? new Date().toISOString() : null,
     }, { onConflict: "location_id,assignment_id" });
+    if (approved) triggerNotification("approval");
   };
 
   const approveAll = async (approved: boolean) => {
@@ -126,6 +141,7 @@ const CustomerView = () => {
       approved, approved_at: approved ? new Date().toISOString() : null,
     }));
     await supabase.from("location_approvals").upsert(rows, { onConflict: "location_id,assignment_id" });
+    if (approved) triggerNotification("approval");
     toast.success(approved ? "Alle Standorte freigegeben" : "Alle Freigaben zurückgenommen");
     setSavingApprovals(false);
   };
@@ -227,12 +243,7 @@ const CustomerView = () => {
                       </div>
                     </CardHeader>
                     <CardContent className="p-4 space-y-4">
-                      {loc.image_data && (
-                        <div className="aspect-video bg-muted rounded-lg overflow-hidden">
-                          <img src={loc.image_data} alt={`Standort ${loc.location_number}`} className="w-full h-full object-contain" />
-                        </div>
-                      )}
-                      {!loc.image_data && annotated && (
+                      {annotated && (
                         <div className="aspect-video bg-muted rounded-lg overflow-hidden">
                           <img src={getImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-full object-contain" />
                         </div>
@@ -249,9 +260,9 @@ const CustomerView = () => {
                         );
                       })()}
                       <div className="space-y-2">
-                        <Label>Informationen</Label>
+                        <Label>Informationen zum Standort</Label>
                         <Textarea
-                          placeholder="Informationen zu diesem Standort ergänzen..."
+                          placeholder="Informationen ergänzen..."
                           value={guestInfoMap[loc.id] || ""}
                           onChange={(e) => setGuestInfoMap(prev => ({ ...prev, [loc.id]: e.target.value }))}
                           rows={3}

@@ -6,21 +6,6 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Simple in-memory rate limiter
-const rateLimits = new Map<string, { count: number; resetTime: number }>();
-
-function checkRateLimit(identifier: string, maxRequests: number, windowMs: number): boolean {
-  const now = Date.now();
-  const limit = rateLimits.get(identifier);
-  if (!limit || now > limit.resetTime) {
-    rateLimits.set(identifier, { count: 1, resetTime: now + windowMs });
-    return true;
-  }
-  if (limit.count >= maxRequests) return false;
-  limit.count++;
-  return true;
-}
-
 async function getHmacKey(): Promise<CryptoKey> {
   const secret = Deno.env.get("GUEST_TOKEN_SECRET")!;
   return crypto.subtle.importKey(
@@ -57,15 +42,6 @@ async function validateToken(token: string, projectId: string): Promise<boolean>
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
-  }
-
-  // Rate limit: 30 requests per minute per IP
-  const clientIp = req.headers.get("x-forwarded-for") || "unknown";
-  if (!checkRateLimit(`guest-data:${clientIp}`, 30, 60000)) {
-    return new Response(
-      JSON.stringify({ error: "Too many requests" }),
-      { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
   }
 
   try {
