@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { Project } from "@/types/project";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
@@ -13,8 +12,16 @@ import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
 
+interface ProjectListItem {
+  id: string;
+  projectNumber: string;
+  updatedAt: Date;
+  locationCount: number;
+  isLocal: boolean; // has local data (images etc.)
+}
+
 const Projects = () => {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const navigate = useNavigate();
@@ -26,11 +33,46 @@ const Projects = () => {
 
   const loadProjects = async () => {
     try {
-      const migrated = await indexedDBStorage.migrateFromLocalStorage();
-      if (migrated) toast.success("Daten wurden in neuen Speicher migriert!");
-      const loadedProjects = await indexedDBStorage.getProjects();
-      setProjects(loadedProjects.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()));
-      // Auto sync to Supabase in background
+      await indexedDBStorage.migrateFromLocalStorage();
+
+      // Load from BOTH sources and merge
+      const [supabaseResult, localProjects] = await Promise.all([
+        supabase.from("projects").select("id, project_number, updated_at").order("updated_at", { ascending: false }),
+        indexedDBStorage.getProjects(),
+      ]);
+
+      const localMap = new Map(localProjects.map(p => [p.id, p]));
+      const supabaseProjects = supabaseResult.data || [];
+
+      // Merge: Supabase is source of truth for list, local has location details
+      const merged: ProjectListItem[] = supabaseProjects.map(sp => {
+        const local = localMap.get(sp.id);
+        return {
+          id: sp.id,
+          projectNumber: sp.project_number,
+          updatedAt: new Date(sp.updated_at),
+          locationCount: local?.locations?.length || 0,
+          isLocal: !!local,
+        };
+      });
+
+      // Also add local-only projects not yet in Supabase
+      for (const lp of localProjects) {
+        if (!supabaseProjects.find(sp => sp.id === lp.id)) {
+          merged.push({
+            id: lp.id,
+            projectNumber: lp.projectNumber,
+            updatedAt: lp.updatedAt,
+            locationCount: lp.locations?.length || 0,
+            isLocal: true,
+          });
+        }
+      }
+
+      merged.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      setProjects(merged);
+
+      // Sync local projects to Supabase in background
       syncAllToSupabase();
     } catch (error) {
       console.error("Error loading projects:", error);
@@ -44,7 +86,8 @@ const Projects = () => {
     setIsSyncing(true);
     try {
       await syncAllToSupabase();
-      toast.success("Alle Projekte synchronisiert ✓");
+      toast.success("Synchronisiert ✓");
+      await loadProjects();
     } catch (e: any) {
       toast.error("Sync fehlgeschlagen: " + e.message);
     } finally {
@@ -79,7 +122,7 @@ const Projects = () => {
             <Button size="lg" variant="outline" onClick={() => navigate("/projects/customers")} title="Kunden verwalten">
               <Users className="h-5 w-5" />
             </Button>
-            <Button size="lg" variant="outline" onClick={syncToSupabase} disabled={isSyncing} title="Projekte mit Admin synchronisieren">
+            <Button size="lg" variant="outline" onClick={syncToSupabase} disabled={isSyncing} title="Synchronisieren">
               <RefreshCw className={`h-5 w-5 ${isSyncing ? "animate-spin" : ""}`} />
             </Button>
             <Button size="lg" variant="ghost" onClick={handleLogout}>
@@ -103,11 +146,20 @@ const Projects = () => {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             {projects.map((project) => (
-              <Card key={project.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/projects/${project.id}`)}>
+              <Card
+                key={project.id}
+                className="cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => navigate(`/projects/${project.id}`)}
+              >
                 <CardHeader className="p-4 pb-2">
                   <CardTitle className="text-lg flex items-center gap-2">
                     <FolderOpen className="h-5 w-5 text-primary" />
                     {project.projectNumber}
+                    {!project.isLocal && (
+                      <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded ml-auto">
+                        Nur online
+                      </span>
+                    )}
                   </CardTitle>
                   <CardDescription className="flex items-center gap-1 text-xs">
                     <Calendar className="h-3 w-3" />
@@ -116,7 +168,7 @@ const Projects = () => {
                 </CardHeader>
                 <CardContent className="p-4 pt-0">
                   <p className="text-sm text-muted-foreground">
-                    {project.locations.length} Standort{project.locations.length !== 1 ? "e" : ""}
+                    {project.locationCount} Standort{project.locationCount !== 1 ? "e" : ""}
                   </p>
                 </CardContent>
               </Card>
