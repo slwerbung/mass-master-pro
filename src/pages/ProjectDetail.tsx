@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { Project } from "@/types/project";
+import { Project, Location } from "@/types/project";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -23,27 +24,70 @@ const ProjectDetail = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOnlineOnly, setIsOnlineOnly] = useState(false);
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const loadProject = async () => {
-      if (projectId) {
-        try {
-          const loadedProject = await indexedDBStorage.getProject(projectId);
-          if (loadedProject) {
-            setProject(loadedProject);
-          } else {
-            toast.error("Projekt nicht gefunden");
-            navigate("/");
-          }
-        } catch (error) {
-          console.error("Error loading project:", error);
-          toast.error("Fehler beim Laden des Projekts");
-          navigate("/");
-        } finally {
+      if (!projectId) return;
+      try {
+        // Try local first
+        const localProject = await indexedDBStorage.getProject(projectId);
+        if (localProject) {
+          setProject(localProject);
           setIsLoading(false);
+          return;
         }
+
+        // Not found locally - load from Supabase
+        const { data: spData } = await supabase
+          .from("projects")
+          .select("id, project_number, updated_at, created_at")
+          .eq("id", projectId)
+          .single();
+
+        if (!spData) {
+          toast.error("Projekt nicht gefunden");
+          navigate("/projects");
+          return;
+        }
+
+        // Load locations from Supabase
+        const { data: locs } = await supabase
+          .from("locations")
+          .select("id, location_number, location_name, comment, system, label, location_type, created_at")
+          .eq("project_id", projectId)
+          .order("created_at");
+
+        // Build a minimal project object from Supabase data
+        const onlineProject: Project = {
+          id: spData.id,
+          projectNumber: spData.project_number,
+          locations: (locs || []).map(l => ({
+            id: l.id,
+            locationNumber: l.location_number,
+            locationName: l.location_name || undefined,
+            comment: l.comment || undefined,
+            system: l.system || undefined,
+            label: l.label || undefined,
+            locationType: l.location_type || undefined,
+            imageData: "", // no local image
+            originalImageData: "",
+            createdAt: new Date(l.created_at),
+          })),
+          createdAt: new Date(spData.created_at),
+          updatedAt: new Date(spData.updated_at),
+        };
+
+        setProject(onlineProject);
+        setIsOnlineOnly(true);
+      } catch (error) {
+        console.error("Error loading project:", error);
+        toast.error("Fehler beim Laden des Projekts");
+        navigate("/projects");
+      } finally {
+        setIsLoading(false);
       }
     };
     loadProject();
@@ -54,7 +98,7 @@ const ProjectDetail = () => {
       try {
         await indexedDBStorage.deleteProject(projectId);
         toast.success("Projekt gelöscht");
-        navigate("/");
+        navigate("/projects");
       } catch (error) {
         console.error("Error deleting project:", error);
         toast.error("Fehler beim Löschen");
@@ -124,6 +168,11 @@ const ProjectDetail = () => {
   return (
     <div className="min-h-screen bg-background pb-24">
       <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-6">
+        {isOnlineOnly && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+            ⚠️ Dieses Projekt wurde auf einem anderen Gerät erstellt. Bilder sind nur auf dem Originalgerät verfügbar. Neue Standorte können hier hinzugefügt werden.
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2">
           <Button variant="ghost" onClick={() => navigate("/projects")} size="sm">
             <ArrowLeft className="mr-1 md:mr-2 h-4 w-4" />
