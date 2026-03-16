@@ -71,16 +71,19 @@ const Admin = () => {
   }, [invoke]);
 
   const loadEmployeePassword = async () => {
-    const { data } = await supabase.from("app_config").select("value").eq("key", "employee_password").single();
-    if (data) setEmployeePassword(data.value);
+    try {
+      const result = await invoke("get_employee_password");
+      if (result?.password) setEmployeePassword(result.password);
+    } catch { /* ignore */ }
   };
 
   const saveEmployeePassword = async () => {
     if (!newEmployeePassword.trim()) return;
     setSavingPassword(true);
-    const { error } = await supabase.from("app_config").upsert({ key: "employee_password", value: newEmployeePassword.trim() });
-    if (error) toast.error("Fehler beim Speichern");
-    else { setEmployeePassword(newEmployeePassword.trim()); setNewEmployeePassword(""); toast.success("Passwort gespeichert"); }
+    try {
+      await invoke("set_employee_password", { password: newEmployeePassword.trim() });
+      setEmployeePassword(newEmployeePassword.trim()); setNewEmployeePassword(""); toast.success("Passwort gespeichert");
+    } catch { toast.error("Fehler beim Speichern"); }
     setSavingPassword(false);
   };
 
