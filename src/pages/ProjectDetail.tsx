@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { Project, Location } from "@/types/project";
+import { Project } from "@/types/project";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -94,15 +95,16 @@ const ProjectDetail = () => {
   }, [projectId, navigate]);
 
   const handleDeleteProject = async () => {
-    if (projectId) {
-      try {
-        await indexedDBStorage.deleteProject(projectId);
-        toast.success("Projekt gelöscht");
-        navigate("/projects");
-      } catch (error) {
-        console.error("Error deleting project:", error);
-        toast.error("Fehler beim Löschen");
-      }
+    if (!projectId) return;
+
+    try {
+      await deleteProjectFromSupabase(projectId);
+      await indexedDBStorage.deleteProject(projectId);
+      toast.success("Projekt gelöscht");
+      navigate("/projects");
+    } catch (error: any) {
+      console.error("Error deleting project:", error);
+      toast.error(error.message || "Fehler beim Löschen");
     }
   };
 
