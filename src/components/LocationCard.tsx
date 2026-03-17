@@ -7,15 +7,9 @@ import { Location } from "@/types/project";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
 interface LocationCardProps {
@@ -37,11 +31,12 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
   }, [location.id]);
 
   const loadPdf = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("location_pdfs")
       .select("storage_path, file_name")
       .eq("location_id", location.id)
       .maybeSingle();
+    if (error) console.warn("loadPdf error:", error.message);
     if (data) {
       const { data: urlData } = supabase.storage
         .from("project-files")
@@ -61,19 +56,33 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
     setUploadingPdf(true);
     try {
       const path = `pdfs/${location.id}/${Date.now()}_${file.name}`;
+      
+      // Upload to Storage
       const { error: uploadError } = await supabase.storage
         .from("project-files")
         .upload(path, file, { upsert: true });
-      if (uploadError) throw uploadError;
+      
+      if (uploadError) {
+        toast.error("Upload fehlgeschlagen: " + uploadError.message);
+        return;
+      }
 
-      await supabase.from("location_pdfs").upsert(
-        { location_id: location.id, storage_path: path, file_name: file.name },
-        { onConflict: "location_id" }
-      );
-      toast.success("Druckdatei hochgeladen");
-      loadPdf();
+      // Save to database - delete old entry first to avoid conflict
+      await supabase.from("location_pdfs").delete().eq("location_id", location.id);
+      
+      const { error: dbError } = await supabase
+        .from("location_pdfs")
+        .insert({ location_id: location.id, storage_path: path, file_name: file.name });
+      
+      if (dbError) {
+        toast.error("Datenbankfehler: " + dbError.message);
+        return;
+      }
+
+      toast.success("Druckdatei hochgeladen ✓");
+      await loadPdf();
     } catch (err: any) {
-      toast.error("Fehler beim Hochladen: " + err.message);
+      toast.error("Fehler: " + err.message);
     } finally {
       setUploadingPdf(false);
       if (pdfInputRef.current) pdfInputRef.current.value = "";
@@ -104,15 +113,9 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
             )}
             {(location.system || location.label || location.locationType) && (
               <div className="flex flex-wrap gap-1">
-                {location.system && (
-                  <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.system}</span>
-                )}
-                {location.locationType && (
-                  <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.locationType}</span>
-                )}
-                {location.label && (
-                  <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.label}</span>
-                )}
+                {location.system && <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.system}</span>}
+                {location.locationType && <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.locationType}</span>}
+                {location.label && <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.label}</span>}
               </div>
             )}
             {location.comment && (
@@ -120,31 +123,21 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
             )}
           </div>
           <div className="flex gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit`)}
-            >
+            <Button variant="ghost" size="sm" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit`)}>
               <Pencil className="h-4 w-4 text-muted-foreground" />
             </Button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
+                <Button variant="ghost" size="sm"><Trash2 className="h-4 w-4 text-destructive" /></Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Standort löschen?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Diese Aktion kann nicht rückgängig gemacht werden.
-                  </AlertDialogDescription>
+                  <AlertDialogDescription>Diese Aktion kann nicht rückgängig gemacht werden.</AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => onDelete(location.id)} className="bg-destructive">
-                    Löschen
-                  </AlertDialogAction>
+                  <AlertDialogAction onClick={() => onDelete(location.id)} className="bg-destructive">Löschen</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
@@ -158,23 +151,17 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
             <div className="flex items-center gap-2">
               <FileText className="h-4 w-4 text-primary shrink-0" />
               <span className="text-sm truncate flex-1">{pdfName}</span>
-              <Button size="sm" variant="ghost" asChild>
+              <Button size="sm" variant="outline" asChild>
                 <a href={pdfUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="h-3 w-3" />
+                  <ExternalLink className="h-3 w-3 mr-1" /> Öffnen
                 </a>
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}>
+              <Button size="sm" variant="ghost" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf} title="Ersetzen">
                 <FileUp className="h-3 w-3" />
               </Button>
             </div>
           ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              className="w-full"
-              onClick={() => pdfInputRef.current?.click()}
-              disabled={uploadingPdf}
-            >
+            <Button size="sm" variant="outline" className="w-full" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}>
               {uploadingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileUp className="h-4 w-4 mr-2" />}
               {uploadingPdf ? "Lädt hoch..." : "Druckdatei hochladen"}
             </Button>
@@ -188,32 +175,21 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
             <div className="grid grid-cols-3 gap-2">
               {location.detailImages.map((detail) => (
                 <div key={detail.id} className="relative group aspect-square bg-muted rounded overflow-hidden">
-                  <img
-                    src={detail.imageData}
-                    alt={detail.caption || "Detailbild"}
+                  <img src={detail.imageData} alt={detail.caption || "Detailbild"}
                     className="w-full h-full object-cover cursor-pointer"
-                    onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`)}
-                  />
+                    onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`)} />
                   {detail.caption && (
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate">
-                      {detail.caption}
-                    </div>
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate">{detail.caption}</div>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
+                  <Button variant="ghost" size="sm"
                     className="absolute top-0 left-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-muted/80 hover:bg-muted text-foreground rounded-none rounded-br"
-                    onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit`); }}
-                  >
+                    onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit`); }}>
                     <Pencil className="h-3 w-3" />
                   </Button>
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-destructive/80 hover:bg-destructive text-white rounded-none rounded-bl"
-                      >
+                      <Button variant="ghost" size="sm"
+                        className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-destructive/80 hover:bg-destructive text-white rounded-none rounded-bl">
                         <Trash2 className="h-3 w-3" />
                       </Button>
                     </AlertDialogTrigger>
@@ -224,9 +200,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
                       </AlertDialogHeader>
                       <AlertDialogFooter>
                         <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => onDeleteDetailImage(location.id, detail.id)} className="bg-destructive">
-                          Löschen
-                        </AlertDialogAction>
+                        <AlertDialogAction onClick={() => onDeleteDetailImage(location.id, detail.id)} className="bg-destructive">Löschen</AlertDialogAction>
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>
@@ -236,14 +210,9 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
           </div>
         )}
 
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full"
-          onClick={() => navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`)}
-        >
-          <ImagePlus className="h-4 w-4 mr-2" />
-          Detailbild hinzufügen
+        <Button variant="outline" size="sm" className="w-full"
+          onClick={() => navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`)}>
+          <ImagePlus className="h-4 w-4 mr-2" /> Detailbild hinzufügen
         </Button>
       </CardContent>
 
