@@ -1,50 +1,220 @@
-// Other existing content of supabaseSync.ts
+import { supabase } from "@/integrations/supabase/client";
+import { indexedDBStorage } from "./indexedDBStorage";
+import { getSession } from "./session";
 
-async function deleteProjectFromSupabase(projectId) {
-    // Delete project from Supabase
-    await supabase
-        .from('projects')
-        .delete()
-        .eq('id', projectId);
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-    // Delete locations related to the project
-    await supabase
-        .from('locations')
-        .delete()
-        .eq('project_id', projectId);
+// Upload image blob directly to Supabase Storage via fetch (bypasses size limits)
+async function uploadImageToStorage(path: string, base64: string): Promise<string | null> {
+  try {
+    const parts = base64.split(';base64,');
+    const contentType = parts[0].split(':')[1] || 'image/jpeg';
+    const raw = atob(parts[1]);
+    const uInt8Array = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) uInt8Array[i] = raw.charCodeAt(i);
+    const blob = new Blob([uInt8Array], { type: contentType });
 
-    // Delete location images related to the locations
-    await supabase
-        .from('location_images')
-        .delete()
-        .in('location_id', await supabase
-            .from('locations')
-            .select('id')
-            .eq('project_id', projectId)
-            .then(({ data }) => data.map(location => location.id)));
+    const response = await fetch(
+      `${SUPABASE_URL}/storage/v1/object/project-files/${path}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': contentType,
+          'x-upsert': 'true',
+        },
+        body: blob,
+      }
+    );
 
-    // Delete location PDFs related to the locations
-    await supabase
-        .from('location_pdfs')
-        .delete()
-        .in('location_id', await supabase
-            .from('locations')
-            .select('id')
-            .eq('project_id', projectId)
-            .then(({ data }) => data.map(location => location.id)));
+    if (!response.ok) {
+      console.warn('Storage upload failed:', await response.text());
+      return null;
+    }
 
-    // Delete location approvals related to the locations
-    await supabase
-        .from('location_approvals')
-        .delete()
-        .in('location_id', await supabase
-            .from('locations')
-            .select('id')
-            .eq('project_id', projectId)
-            .then(({ data }) => data.map(location => location.id)));
-
-    // Optional: Delete from IndexedDB if necessary
-    // Replace this comment with IndexedDB deletion logic if applicable
+    return path;
+  } catch (e) {
+    console.warn('Image upload error:', e);
+    return null;
+  }
 }
 
-// Place to call deleteProjectFromSupabase function as necessary
+async function syncLocationImage(locationId: string, imageData: string): Promise<void> {
+  if (!imageData) return;
+
+  try {
+    const { data: existing } = await supabase
+      .from("location_images")
+      .select("id")
+      .eq("location_id", locationId)
+      .eq("image_type", "annotated")
+      .maybeSingle();
+
+    if (existing) return;
+
+    const path = `images/${locationId}/annotated.jpg`;
+    const uploaded = await uploadImageToStorage(path, imageData);
+    if (!uploaded) return;
+
+    await supabase
+      .from("location_images")
+      .upsert(
+        {
+          location_id: locationId,
+          image_type: "annotated",
+          storage_path: path,
+        },
+        { onConflict: "location_id,image_type" }
+      );
+  } catch (e) {
+    console.warn(`Image sync failed for ${locationId}:`, e);
+  }
+}
+
+function buildLocationRows(project: any) {
+  return project.locations.map((l: any) => ({
+    id: l.id,
+    project_id: project.id,
+    location_number: l.locationNumber,
+    location_name: l.locationName || null,
+    comment: l.comment || null,
+    system: l.system || null,
+    label: l.label || null,
+    location_type: l.locationType || null,
+    guest_info: null,
+    created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
+  }));
+}
+
+export async function syncAllToSupabase(): Promise<void> {
+  try {
+    const session = getSession();
+    const projects = await indexedDBStorage.getProjects();
+    if (projects.length === 0) return;
+
+    const projectRows = projects.map((p) => ({
+      id: p.id,
+      project_number: p.projectNumber,
+      user_id: session?.id || "employee",
+      employee_id: session?.role === "employee" ? session.id : null,
+      created_at: p.createdAt instanceof Date ? p.createdAt.toISOString() : new Date().toISOString(),
+      updated_at: p.updatedAt instanceof Date ? p.updatedAt.toISOString() : new Date().toISOString(),
+    }));
+
+    await supabase.from("projects").upsert(projectRows, { onConflict: "id" });
+
+    for (const project of projects) {
+      if (!project.locations || project.locations.length === 0) continue;
+      await supabase.from("locations").upsert(buildLocationRows(project), { onConflict: "id" });
+
+      for (const loc of project.locations) {
+        if (loc.imageData) await syncLocationImage(loc.id, loc.imageData);
+      }
+    }
+  } catch (e) {
+    console.warn("Background sync failed:", e);
+  }
+}
+
+export async function syncProjectToSupabase(projectId: string): Promise<void> {
+  try {
+    const session = getSession();
+    const project = await indexedDBStorage.getProject(projectId);
+    if (!project) return;
+
+    await supabase.from("projects").upsert(
+      {
+        id: project.id,
+        project_number: project.projectNumber,
+        user_id: session?.id || "employee",
+        employee_id: session?.role === "employee" ? session.id : null,
+        created_at: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    );
+
+    if (project.locations && project.locations.length > 0) {
+      await supabase.from("locations").upsert(buildLocationRows(project), { onConflict: "id" });
+
+      for (const loc of project.locations) {
+        if (loc.imageData) await syncLocationImage(loc.id, loc.imageData);
+      }
+    }
+  } catch (e) {
+    console.warn("Project sync failed:", e);
+  }
+}
+
+export async function syncLocationToSupabase(projectId: string, locationId: string): Promise<void> {
+  try {
+    const project = await indexedDBStorage.getProject(projectId);
+    if (!project) return;
+    const location = project.locations.find((l) => l.id === locationId);
+    if (!location) return;
+
+    await supabase.from("locations").upsert(
+      {
+        id: location.id,
+        project_id: projectId,
+        location_number: location.locationNumber,
+        location_name: location.locationName || null,
+        comment: location.comment || null,
+        system: location.system || null,
+        label: location.label || null,
+        location_type: location.locationType || null,
+        guest_info: null,
+        created_at: location.createdAt instanceof Date ? location.createdAt.toISOString() : new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    );
+
+    if (location.imageData) await syncLocationImage(location.id, location.imageData);
+  } catch (e) {
+    console.warn("Location sync failed:", e);
+  }
+}
+
+export async function deleteProjectFromSupabase(projectId: string): Promise<void> {
+  const { data: locations, error: locationsError } = await supabase
+    .from("locations")
+    .select("id")
+    .eq("project_id", projectId);
+
+  if (locationsError) throw locationsError;
+
+  const locationIds = (locations || []).map((location) => location.id);
+
+  if (locationIds.length > 0) {
+    const { error: detailImagesError } = await supabase
+      .from("detail_images")
+      .delete()
+      .in("location_id", locationIds);
+    if (detailImagesError) throw detailImagesError;
+
+    const { error: locationImagesError } = await supabase
+      .from("location_images")
+      .delete()
+      .in("location_id", locationIds);
+    if (locationImagesError) throw locationImagesError;
+
+    const { error: locationPdfsError } = await supabase
+      .from("location_pdfs")
+      .delete()
+      .in("location_id", locationIds);
+    if (locationPdfsError) throw locationPdfsError;
+  }
+
+  const { error: deleteLocationsError } = await supabase
+    .from("locations")
+    .delete()
+    .eq("project_id", projectId);
+  if (deleteLocationsError) throw deleteLocationsError;
+
+  const { error: deleteProjectError } = await supabase
+    .from("projects")
+    .delete()
+    .eq("id", projectId);
+  if (deleteProjectError) throw deleteProjectError;
+}
