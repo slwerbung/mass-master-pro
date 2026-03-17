@@ -177,12 +177,17 @@ export async function syncLocationToSupabase(projectId: string, locationId: stri
 }
 
 export async function deleteProjectFromSupabase(projectId: string): Promise<void> {
+<<<<<<< HEAD
   // Get location IDs first
   const { data: locations } = await supabase
+=======
+  const { data: locations, error: locationsError } = await supabase
+>>>>>>> 4d71a70639401f8a56c09c6453ec429f96d70347
     .from("locations")
     .select("id")
     .eq("project_id", projectId);
 
+<<<<<<< HEAD
   const locationIds = (locations || []).map((l) => l.id);
 
   if (locationIds.length > 0) {
@@ -201,4 +206,41 @@ export async function deleteProjectFromSupabase(projectId: string): Promise<void
   // Delete project - this is the critical one
   const { error } = await supabase.from("projects").delete().eq("id", projectId);
   if (error) throw new Error("Projekt konnte nicht gelöscht werden: " + error.message);
+=======
+  if (locationsError) throw locationsError;
+
+  const locationIds = (locations || []).map((location) => location.id);
+
+  if (locationIds.length > 0) {
+    const { error: detailImagesError } = await supabase
+      .from("detail_images")
+      .delete()
+      .in("location_id", locationIds);
+    if (detailImagesError) throw detailImagesError;
+
+    const { error: locationImagesError } = await supabase
+      .from("location_images")
+      .delete()
+      .in("location_id", locationIds);
+    if (locationImagesError) throw locationImagesError;
+
+    const { error: locationPdfsError } = await supabase
+      .from("location_pdfs")
+      .delete()
+      .in("location_id", locationIds);
+    if (locationPdfsError) throw locationPdfsError;
+  }
+
+  const { error: deleteLocationsError } = await supabase
+    .from("locations")
+    .delete()
+    .eq("project_id", projectId);
+  if (deleteLocationsError) throw deleteLocationsError;
+
+  const { error: deleteProjectError } = await supabase
+    .from("projects")
+    .delete()
+    .eq("id", projectId);
+  if (deleteProjectError) throw deleteProjectError;
+>>>>>>> 4d71a70639401f8a56c09c6453ec429f96d70347
 }

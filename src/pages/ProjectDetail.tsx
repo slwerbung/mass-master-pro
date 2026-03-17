@@ -102,9 +102,15 @@ const ProjectDetail = () => {
       await indexedDBStorage.deleteProject(projectId);
       toast.success("Projekt gelöscht");
       navigate("/projects");
+<<<<<<< HEAD
     } catch (error: any) {
       console.error("Error deleting project:", error);
       toast.error(error.message || "Fehler beim Löschen");
+=======
+    } catch (error) {
+      console.error("Error deleting project:", error);
+      toast.error("Fehler beim Löschen");
+>>>>>>> 4d71a70639401f8a56c09c6453ec429f96d70347
     }
   };
 
