@@ -5,9 +5,11 @@ import { getSession } from "./session";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-// Upload image blob directly to Supabase Storage via fetch (bypasses size limits)
+// Upload image blob directly to Supabase Storage
 async function uploadImageToStorage(path: string, base64: string): Promise<string | null> {
   try {
+    if (!base64 || !base64.includes(';base64,')) return null;
+    
     const parts = base64.split(';base64,');
     const contentType = parts[0].split(':')[1] || 'image/jpeg';
     const raw = atob(parts[1]);
@@ -15,21 +17,15 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
     for (let i = 0; i < raw.length; i++) uInt8Array[i] = raw.charCodeAt(i);
     const blob = new Blob([uInt8Array], { type: contentType });
 
-    const response = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/project-files/${path}`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          'Content-Type': contentType,
-          'x-upsert': 'true',
-        },
-        body: blob,
-      }
-    );
+    const { error } = await supabase.storage
+      .from('project-files')
+      .upload(path, blob, {
+        contentType,
+        upsert: true,
+      });
 
-    if (!response.ok) {
-      console.warn('Storage upload failed:', await response.text());
+    if (error) {
+      console.warn('Storage upload failed:', error.message);
       return null;
     }
 
@@ -44,17 +40,21 @@ async function syncLocationImage(locationId: string, imageData: string): Promise
   if (!imageData) return;
 
   try {
-    const { data: existing } = await supabase
-      .from("location_images")
-      .select("id")
-      .eq("location_id", locationId)
-      .eq("image_type", "annotated")
-      .maybeSingle();
-
-    if (existing) return;
-
     const path = `images/${locationId}/annotated.jpg`;
     const uploaded = await uploadImageToStorage(path, imageData);
+    if (!uploaded) return;
+
+    await supabase
+      .from("location_images")
+      .upsert({
+        location_id: locationId,
+        image_type: "annotated",
+        storage_path: path,
+      }, { onConflict: "location_id,image_type" });
+  } catch (e) {
+    console.warn(`Image sync failed for ${locationId}:`, e);
+  }
+}
     if (!uploaded) return;
 
     await supabase
@@ -177,17 +177,12 @@ export async function syncLocationToSupabase(projectId: string, locationId: stri
 }
 
 export async function deleteProjectFromSupabase(projectId: string): Promise<void> {
-<<<<<<< HEAD
   // Get location IDs first
   const { data: locations } = await supabase
-=======
-  const { data: locations, error: locationsError } = await supabase
->>>>>>> 4d71a70639401f8a56c09c6453ec429f96d70347
     .from("locations")
     .select("id")
     .eq("project_id", projectId);
 
-<<<<<<< HEAD
   const locationIds = (locations || []).map((l) => l.id);
 
   if (locationIds.length > 0) {
@@ -206,41 +201,4 @@ export async function deleteProjectFromSupabase(projectId: string): Promise<void
   // Delete project - this is the critical one
   const { error } = await supabase.from("projects").delete().eq("id", projectId);
   if (error) throw new Error("Projekt konnte nicht gelöscht werden: " + error.message);
-=======
-  if (locationsError) throw locationsError;
-
-  const locationIds = (locations || []).map((location) => location.id);
-
-  if (locationIds.length > 0) {
-    const { error: detailImagesError } = await supabase
-      .from("detail_images")
-      .delete()
-      .in("location_id", locationIds);
-    if (detailImagesError) throw detailImagesError;
-
-    const { error: locationImagesError } = await supabase
-      .from("location_images")
-      .delete()
-      .in("location_id", locationIds);
-    if (locationImagesError) throw locationImagesError;
-
-    const { error: locationPdfsError } = await supabase
-      .from("location_pdfs")
-      .delete()
-      .in("location_id", locationIds);
-    if (locationPdfsError) throw locationPdfsError;
-  }
-
-  const { error: deleteLocationsError } = await supabase
-    .from("locations")
-    .delete()
-    .eq("project_id", projectId);
-  if (deleteLocationsError) throw deleteLocationsError;
-
-  const { error: deleteProjectError } = await supabase
-    .from("projects")
-    .delete()
-    .eq("id", projectId);
-  if (deleteProjectError) throw deleteProjectError;
->>>>>>> 4d71a70639401f8a56c09c6453ec429f96d70347
 }
