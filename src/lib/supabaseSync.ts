@@ -55,22 +55,6 @@ async function syncLocationImage(locationId: string, imageData: string): Promise
     console.warn(`Image sync failed for ${locationId}:`, e);
   }
 }
-    if (!uploaded) return;
-
-    await supabase
-      .from("location_images")
-      .upsert(
-        {
-          location_id: locationId,
-          image_type: "annotated",
-          storage_path: path,
-        },
-        { onConflict: "location_id,image_type" }
-      );
-  } catch (e) {
-    console.warn(`Image sync failed for ${locationId}:`, e);
-  }
-}
 
 function buildLocationRows(project: any) {
   return project.locations.map((l: any) => ({
