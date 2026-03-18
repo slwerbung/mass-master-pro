@@ -249,7 +249,7 @@ async function removeDeletedLocationsFromSupabase(project: Project) {
   const { data: remoteLocationImages } = await supabase.from('location_images').select('storage_path').in('location_id', deletedLocationIds);
   const { data: remoteDetailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', deletedLocationIds);
   await removeStoragePaths([...(remoteLocationImages || []).map((row) => row.storage_path), ...(remoteDetailImages || []).flatMap((row) => [row.annotated_path, row.original_path])]);
-  await supabase.from('location_feedback').delete().in('location_id', deletedLocationIds);
+  await (supabase as any).from('location_feedback').delete().in('location_id', deletedLocationIds);
   await supabase.from('location_approvals').delete().in('location_id', deletedLocationIds);
   await supabase.from('location_pdfs').delete().in('location_id', deletedLocationIds);
   await supabase.from('detail_images').delete().in('location_id', deletedLocationIds);
