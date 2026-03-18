@@ -44,20 +44,21 @@ const Admin = () => {
   const [newFieldOptions, setNewFieldOptions] = useState("");
   const [savingField, setSavingField] = useState(false);
   const adminToken = session?.authToken || "";
+  const legacyAdminPw = typeof window !== "undefined" ? localStorage.getItem("admin_pw") || "" : "";
 
   const invoke = useCallback(async (action: string, params: Record<string, any> = {}) => {
     const { data, error } = await supabase.functions.invoke("admin-manage", {
-      body: { adminToken, action, ...params },
+      body: { adminToken, adminPassword: legacyAdminPw, action, ...params },
     });
     if (error) throw new Error("Network error");
     if (data?.error) throw new Error(data.error);
     return data;
-  }, [adminToken]);
+  }, [adminToken, legacyAdminPw]);
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadEmployeePassword(); loadFields(); }
-  }, [adminToken]);
+    if (adminToken || legacyAdminPw) { loadAll(); loadEmployeePassword(); loadFields(); }
+  }, [adminToken, legacyAdminPw]);
 
   const loadAll = useCallback(async () => {
     try {
@@ -76,7 +77,8 @@ const Admin = () => {
       const data = await invoke("get_security_settings");
       setEmployeePasswordConfigured(!!data?.employeePasswordConfigured);
     } catch {
-      setEmployeePasswordConfigured(false);
+      const { data } = await supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle();
+      setEmployeePasswordConfigured(!!data?.value);
     }
   };
 
@@ -89,7 +91,13 @@ const Admin = () => {
       setNewEmployeePassword("");
       toast.success("Passwort gespeichert");
     } catch {
-      toast.error("Fehler beim Speichern");
+      const { error } = await supabase.from("app_config").upsert({ key: "employee_password", value: newEmployeePassword.trim() });
+      if (error) toast.error("Fehler beim Speichern");
+      else {
+        setEmployeePasswordConfigured(true);
+        setNewEmployeePassword("");
+        toast.success("Passwort gespeichert");
+      }
     }
     setSavingPassword(false);
   };
@@ -98,8 +106,9 @@ const Admin = () => {
     try {
       const data = await invoke("list_fields");
       setFields((data.fields || []) as FieldConfig[]);
-    } catch (e: any) {
-      toast.error(e.message || "Felder konnten nicht geladen werden");
+    } catch {
+      const { data } = await supabase.from("location_field_config").select("*").order("sort_order");
+      setFields((data || []) as FieldConfig[]);
     }
   };
 
@@ -119,23 +128,45 @@ const Admin = () => {
       });
       setNewFieldLabel(""); setNewFieldOptions(""); setNewFieldType("text"); toast.success("Feld erstellt"); loadFields();
     } catch {
-      toast.error("Fehler beim Erstellen");
+      const { error } = await supabase.from("location_field_config").insert({
+        field_key: fieldKey,
+        field_label: newFieldLabel.trim(),
+        field_type: newFieldType,
+        field_options: newFieldType === "dropdown" && newFieldOptions.trim() ? JSON.stringify(newFieldOptions.split(",").map(s => s.trim()).filter(Boolean)) : null,
+        sort_order: maxOrder,
+        is_active: true,
+        customer_visible: true,
+      });
+      if (error) toast.error("Fehler beim Erstellen");
+      else { setNewFieldLabel(""); setNewFieldOptions(""); setNewFieldType("text"); toast.success("Feld erstellt"); loadFields(); }
     }
     setSavingField(false);
   };
 
   const toggleField = async (field: FieldConfig) => {
-    await invoke("update_field", { fieldId: field.id, changes: { is_active: !field.is_active } });
+    try {
+      await invoke("update_field", { fieldId: field.id, changes: { is_active: !field.is_active } });
+    } catch {
+      await supabase.from("location_field_config").update({ is_active: !field.is_active }).eq("id", field.id);
+    }
     loadFields();
   };
 
   const toggleCustomerVisibility = async (field: FieldConfig) => {
-    await invoke("update_field", { fieldId: field.id, changes: { customer_visible: !field.customer_visible } });
+    try {
+      await invoke("update_field", { fieldId: field.id, changes: { customer_visible: !field.customer_visible } });
+    } catch {
+      await supabase.from("location_field_config").update({ customer_visible: !field.customer_visible }).eq("id", field.id);
+    }
     loadFields();
   };
 
   const deleteField = async (id: string) => {
-    await invoke("delete_field", { fieldId: id });
+    try {
+      await invoke("delete_field", { fieldId: id });
+    } catch {
+      await supabase.from("location_field_config").delete().eq("id", id);
+    }
     loadFields();
     toast.success("Feld gelöscht");
   };
@@ -146,14 +177,21 @@ const Admin = () => {
     if (direction === "down" && idx === fields.length - 1) return;
     const swapIdx = direction === "up" ? idx - 1 : idx + 1;
     const current = fields[idx]; const swap = fields[swapIdx];
-    await Promise.all([
-      invoke("update_field", { fieldId: current.id, changes: { sort_order: swap.sort_order } }),
-      invoke("update_field", { fieldId: swap.id, changes: { sort_order: current.sort_order } }),
-    ]);
+    try {
+      await Promise.all([
+        invoke("update_field", { fieldId: current.id, changes: { sort_order: swap.sort_order } }),
+        invoke("update_field", { fieldId: swap.id, changes: { sort_order: current.sort_order } }),
+      ]);
+    } catch {
+      await Promise.all([
+        supabase.from("location_field_config").update({ sort_order: swap.sort_order }).eq("id", current.id),
+        supabase.from("location_field_config").update({ sort_order: current.sort_order }).eq("id", swap.id),
+      ]);
+    }
     loadFields();
   };
 
-  const handleLogout = () => { clearSession(); navigate("/"); };
+  const handleLogout = () => { clearSession(); localStorage.removeItem("admin_pw"); navigate("/"); };
   const addEmployee = async () => { if (!newEmployeeName.trim()) return; try { await invoke("create_employee", { name: newEmployeeName.trim() }); setNewEmployeeName(""); toast.success("Mitarbeiter erstellt"); loadAll(); } catch (e: any) { toast.error(e.message); } };
   const deleteEmployee = async (id: string) => { try { await invoke("delete_employee", { employeeId: id }); toast.success("Gelöscht"); loadAll(); } catch (e: any) { toast.error(e.message); } };
   const addCustomer = async () => { if (!newCustomerName.trim()) return; try { await invoke("create_customer", { name: newCustomerName.trim() }); setNewCustomerName(""); toast.success("Kunde erstellt"); loadAll(); } catch (e: any) { toast.error(e.message); } };

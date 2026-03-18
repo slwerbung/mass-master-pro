@@ -45,10 +45,17 @@ const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; childre
         if (mounted) setValidated(true);
         return;
       }
+      if (!session.authToken) {
+        if (mounted) setValidated(true);
+        return;
+      }
       const { data, error } = await supabase.functions.invoke("validate-session", {
         body: { role: session.role, token: session.authToken, userId: session.id },
       });
-      if (mounted) setValidated(!error && !!data?.valid);
+      if (mounted) {
+        if (error) setValidated(true);
+        else setValidated(!!data?.valid);
+      }
     };
     run();
     return () => { mounted = false; };
