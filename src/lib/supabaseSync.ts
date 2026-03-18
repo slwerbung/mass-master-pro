@@ -89,7 +89,7 @@ async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<v
   const path = getFloorPlanPath(projectId, floorPlan.id);
   const uploaded = await uploadImageToStorage(path, floorPlan.imageData);
   if (!uploaded) return;
-  await supabase.from("floor_plans").upsert({
+  await (supabase as any).from("floor_plans").upsert({
     id: floorPlan.id,
     project_id: projectId,
     name: floorPlan.name,
@@ -104,12 +104,12 @@ async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Prom
   const current = floorPlans || [];
   const currentIds = new Set(current.map((fp) => fp.id));
   for (const floorPlan of current) await syncFloorPlan(projectId, floorPlan);
-  const { data: existingRows, error } = await supabase.from('floor_plans').select('id, storage_path').eq('project_id', projectId);
+  const { data: existingRows, error } = await (supabase as any).from('floor_plans').select('id, storage_path').eq('project_id', projectId);
   if (error) return;
   const rowsToDelete = (existingRows || []).filter((row) => !currentIds.has(row.id));
   if (rowsToDelete.length) {
     await removeStoragePaths(rowsToDelete.map((row) => row.storage_path));
-    await supabase.from('floor_plans').delete().eq('project_id', projectId).in('id', rowsToDelete.map((row) => row.id));
+    await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).in('id', rowsToDelete.map((row: any) => row.id));
   }
 }
 
@@ -181,7 +181,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     }
   }
 
-  const { data: floorPlanRows } = await supabase.from("floor_plans").select("id, name, storage_path, markers, page_index, created_at").eq("project_id", projectId).order("page_index");
+  const { data: floorPlanRows } = await (supabase as any).from("floor_plans").select("id, name, storage_path, markers, page_index, created_at").eq("project_id", projectId).order("page_index");
   const floorPlans: FloorPlan[] = [];
   for (const row of floorPlanRows || []) {
     const imageData = await pathToBase64(row.storage_path);
@@ -249,7 +249,7 @@ async function removeDeletedLocationsFromSupabase(project: Project) {
   const { data: remoteLocationImages } = await supabase.from('location_images').select('storage_path').in('location_id', deletedLocationIds);
   const { data: remoteDetailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', deletedLocationIds);
   await removeStoragePaths([...(remoteLocationImages || []).map((row) => row.storage_path), ...(remoteDetailImages || []).flatMap((row) => [row.annotated_path, row.original_path])]);
-  await supabase.from('location_feedback').delete().in('location_id', deletedLocationIds);
+  await (supabase as any).from('location_feedback').delete().in('location_id', deletedLocationIds);
   await supabase.from('location_approvals').delete().in('location_id', deletedLocationIds);
   await supabase.from('location_pdfs').delete().in('location_id', deletedLocationIds);
   await supabase.from('detail_images').delete().in('location_id', deletedLocationIds);
@@ -320,9 +320,9 @@ export async function syncLocationToSupabase(projectId: string, _locationId: str
 }
 
 export async function deleteFloorPlanFromSupabase(projectId: string, floorPlanId: string): Promise<void> {
-  const { data } = await supabase.from('floor_plans').select('storage_path').eq('project_id', projectId).eq('id', floorPlanId).maybeSingle();
+  const { data } = await (supabase as any).from('floor_plans').select('storage_path').eq('project_id', projectId).eq('id', floorPlanId).maybeSingle();
   await removeStoragePaths([data?.storage_path]);
-  await supabase.from('floor_plans').delete().eq('project_id', projectId).eq('id', floorPlanId);
+  await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).eq('id', floorPlanId);
 }
 
 export async function deleteDetailImageFromSupabase(detailImageId: string): Promise<void> {
@@ -338,15 +338,15 @@ export async function deleteProjectFromSupabase(projectId: string): Promise<void
     const { data: locationImages } = await supabase.from('location_images').select('storage_path').in('location_id', locationIds);
     const { data: detailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', locationIds);
     await removeStoragePaths([...(locationImages || []).map((row) => row.storage_path), ...(detailImages || []).flatMap((row) => [row.annotated_path, row.original_path])]);
-    await supabase.from("location_feedback").delete().in("location_id", locationIds);
+    await (supabase as any).from("location_feedback").delete().in("location_id", locationIds);
     await supabase.from("location_approvals").delete().in("location_id", locationIds);
     await supabase.from("location_images").delete().in("location_id", locationIds);
     await supabase.from("location_pdfs").delete().in("location_id", locationIds);
     await supabase.from("detail_images").delete().in("location_id", locationIds);
   }
-  const { data: floorPlans } = await supabase.from('floor_plans').select('storage_path').eq('project_id', projectId);
-  await removeStoragePaths((floorPlans || []).map((row) => row.storage_path));
-  await supabase.from('floor_plans').delete().eq('project_id', projectId);
+  const { data: floorPlans } = await (supabase as any).from('floor_plans').select('storage_path').eq('project_id', projectId);
+  await removeStoragePaths((floorPlans || []).map((row: any) => row.storage_path));
+  await (supabase as any).from('floor_plans').delete().eq('project_id', projectId);
   await supabase.from("customer_project_assignments").delete().eq("project_id", projectId);
   await supabase.from("locations").delete().eq("project_id", projectId);
   const { error } = await supabase.from("projects").delete().eq('id', projectId);

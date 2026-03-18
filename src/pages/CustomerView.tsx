@@ -158,7 +158,7 @@ const CustomerView = () => {
     setLoading(true);
     try {
       const [{ data: fieldData }, assignmentResult] = await Promise.all([
-        supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+        (supabase as any).from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
         isRealCustomerId(session?.id)
           ? supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", session!.id)
           : Promise.resolve({ data: [], error: null } as any),
@@ -201,7 +201,7 @@ const CustomerView = () => {
     setLoading(true);
     try {
       const [{ data: fieldData }, response] = await Promise.all([
-        supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+        (supabase as any).from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
         supabase.functions.invoke("guest-data", { body: { projectId, token: guestToken } }),
       ]);
 
@@ -226,7 +226,7 @@ const CustomerView = () => {
             feedbackMap[entry.location_id].push(entry as FeedbackItem);
           });
         } else {
-          const feedbackResponse = await supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
+          const feedbackResponse = await (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
           if (!feedbackResponse.error) {
             (feedbackResponse.data || []).forEach((entry: any) => {
               if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
@@ -274,7 +274,7 @@ const CustomerView = () => {
           supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds),
           supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
           supabase.from("location_approvals").select("location_id, approved").eq("assignment_id", assignment.id).in("location_id", locationIds),
-          supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at"),
+          (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at"),
         ]);
 
         const pdfEntries = (pdfs || []).map((p: any) => ({ location_id: p.location_id, image_type: "pdf", storage_path: p.storage_path, file_name: p.file_name, id: p.id }));
@@ -310,7 +310,7 @@ const CustomerView = () => {
 
   const reloadFeedbacks = async (locationIds: string[]) => {
     if (locationIds.length === 0) return;
-    const response = await supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
+    const response = await (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
     const feedbackMap: Record<string, FeedbackItem[]> = {};
     if (!response.error) {
       (response.data || []).forEach((entry: any) => {

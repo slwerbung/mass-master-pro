@@ -112,7 +112,7 @@ const Admin = () => {
       const data = await invoke("list_fields");
       setFields(mergeWithDefaultLocationFields((data.fields || []) as FieldConfig[]) as FieldConfig[]);
     } catch {
-      const { data } = await supabase.from("location_field_config").select("*").order("sort_order");
+      const { data } = await (supabase as any).from("location_field_config").select("*").order("sort_order");
       setFields(mergeWithDefaultLocationFields((data || []) as FieldConfig[]) as FieldConfig[]);
     }
   };
@@ -133,7 +133,7 @@ const Admin = () => {
       });
       setNewFieldLabel(""); setNewFieldOptions(""); setNewFieldType("text"); toast.success("Feld erstellt"); loadFields();
     } catch {
-      const { error } = await supabase.from("location_field_config").insert({
+      const { error } = await (supabase as any).from("location_field_config").insert({
         field_key: fieldKey,
         field_label: newFieldLabel.trim(),
         field_type: newFieldType,
@@ -152,7 +152,7 @@ const Admin = () => {
     try {
       await invoke("update_field", { fieldId: field.id, changes: { is_active: !field.is_active } });
     } catch {
-      await supabase.from("location_field_config").update({ is_active: !field.is_active }).eq("id", field.id);
+      await (supabase as any).from("location_field_config").update({ is_active: !field.is_active }).eq("id", field.id);
     }
     loadFields();
   };
@@ -161,7 +161,7 @@ const Admin = () => {
     try {
       await invoke("update_field", { fieldId: field.id, changes: { customer_visible: !field.customer_visible } });
     } catch {
-      await supabase.from("location_field_config").update({ customer_visible: !field.customer_visible }).eq("id", field.id);
+      await (supabase as any).from("location_field_config").update({ customer_visible: !field.customer_visible }).eq("id", field.id);
     }
     loadFields();
   };
@@ -197,7 +197,7 @@ const Admin = () => {
     try {
       await invoke("update_field", { fieldId: field.id, changes });
     } catch {
-      await supabase.from("location_field_config").update(changes).eq("id", field.id);
+      await (supabase as any).from("location_field_config").update(changes).eq("id", field.id);
     }
     cancelEditField();
     loadFields();
@@ -208,7 +208,7 @@ const Admin = () => {
     try {
       await invoke("delete_field", { fieldId: id });
     } catch {
-      await supabase.from("location_field_config").delete().eq("id", id);
+      await (supabase as any).from("location_field_config").delete().eq("id", id);
     }
     loadFields();
     toast.success("Feld gelöscht");
@@ -227,8 +227,8 @@ const Admin = () => {
       ]);
     } catch {
       await Promise.all([
-        supabase.from("location_field_config").update({ sort_order: swap.sort_order }).eq("id", current.id),
-        supabase.from("location_field_config").update({ sort_order: current.sort_order }).eq("id", swap.id),
+        (supabase as any).from("location_field_config").update({ sort_order: swap.sort_order }).eq("id", current.id),
+        (supabase as any).from("location_field_config").update({ sort_order: current.sort_order }).eq("id", swap.id),
       ]);
     }
     loadFields();
