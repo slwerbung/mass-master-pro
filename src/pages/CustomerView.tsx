@@ -226,7 +226,7 @@ const CustomerView = () => {
             feedbackMap[entry.location_id].push(entry as FeedbackItem);
           });
         } else {
-          const feedbackResponse = await supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
+          const feedbackResponse = await (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
           if (!feedbackResponse.error) {
             (feedbackResponse.data || []).forEach((entry: any) => {
               if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
