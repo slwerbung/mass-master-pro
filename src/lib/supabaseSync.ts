@@ -338,7 +338,7 @@ export async function deleteProjectFromSupabase(projectId: string): Promise<void
     const { data: locationImages } = await supabase.from('location_images').select('storage_path').in('location_id', locationIds);
     const { data: detailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', locationIds);
     await removeStoragePaths([...(locationImages || []).map((row) => row.storage_path), ...(detailImages || []).flatMap((row) => [row.annotated_path, row.original_path])]);
-    await supabase.from("location_feedback").delete().in("location_id", locationIds);
+    await (supabase as any).from("location_feedback").delete().in("location_id", locationIds);
     await supabase.from("location_approvals").delete().in("location_id", locationIds);
     await supabase.from("location_images").delete().in("location_id", locationIds);
     await supabase.from("location_pdfs").delete().in("location_id", locationIds);
