@@ -227,8 +227,8 @@ const Admin = () => {
       ]);
     } catch {
       await Promise.all([
-        supabase.from("location_field_config").update({ sort_order: swap.sort_order }).eq("id", current.id),
-        supabase.from("location_field_config").update({ sort_order: current.sort_order }).eq("id", swap.id),
+        (supabase as any).from("location_field_config").update({ sort_order: swap.sort_order }).eq("id", current.id),
+        (supabase as any).from("location_field_config").update({ sort_order: current.sort_order }).eq("id", swap.id),
       ]);
     }
     loadFields();
