@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Plus, MapPin, List, Upload } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
+import { syncProjectToSupabase } from "@/lib/supabaseSync";
 import { Project, FloorPlan, FloorPlanMarker } from "@/types/project";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -64,6 +65,7 @@ const FloorPlanView = () => {
 
     const updatedMarkers = [...activeFloorPlan.markers, newMarker];
     await indexedDBStorage.updateFloorPlanMarkers(projectId, activeFloorPlan.id, updatedMarkers);
+    syncProjectToSupabase(projectId);
 
     setPlacingMarker(false);
 

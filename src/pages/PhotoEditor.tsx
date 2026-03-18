@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage } from "fabric";
@@ -23,11 +23,46 @@ const PhotoEditor = () => {
   const [showMeasureDialog, setShowMeasureDialog] = useState(false);
   const [canvasHistory, setCanvasHistory] = useState<string[]>([]);
   const [historyStep, setHistoryStep] = useState(-1);
+  const historyRef = useRef<string[]>([]);
+  const historyStepRef = useRef(-1);
+  const isRestoringHistoryRef = useRef(false);
   const [imageDataState, setImageDataState] = useState<string | null>(location.state?.imageData || null);
   const [loading, setLoading] = useState(false);
 
   const isReEdit = !!locationId;
   const isDetailReEdit = !!detailId;
+
+
+  const pushHistoryState = useCallback((canvas: FabricCanvas) => {
+    if (isRestoringHistoryRef.current) return;
+
+    const json = JSON.stringify(canvas.toJSON());
+    const nextHistory = historyRef.current.slice(0, historyStepRef.current + 1);
+
+    if (nextHistory[nextHistory.length - 1] === json) return;
+
+    nextHistory.push(json);
+    historyRef.current = nextHistory;
+    historyStepRef.current = nextHistory.length - 1;
+    setCanvasHistory(nextHistory);
+    setHistoryStep(historyStepRef.current);
+  }, []);
+
+  const restoreHistoryStep = useCallback((step: number) => {
+    if (!fabricCanvas || !historyRef.current[step]) return;
+
+    isRestoringHistoryRef.current = true;
+    historyStepRef.current = step;
+    setHistoryStep(step);
+
+    fabricCanvas.loadFromJSON(historyRef.current[step]).then(() => {
+      fabricCanvas.renderAll();
+      isRestoringHistoryRef.current = false;
+    }).catch((error) => {
+      console.error("History restore failed:", error);
+      isRestoringHistoryRef.current = false;
+    });
+  }, [fabricCanvas]);
 
   // Load image from IndexedDB for re-edit mode
   useEffect(() => {
@@ -80,6 +115,19 @@ const PhotoEditor = () => {
     });
 
     const img = new Image();
+
+    const brush = new PencilBrush(canvas);
+    brush.color = "#ef4444";
+    brush.width = 3;
+    canvas.freeDrawingBrush = brush;
+
+    const saveHist = () => pushHistoryState(canvas);
+
+    canvas.on("object:added", saveHist);
+    canvas.on("object:modified", saveHist);
+    canvas.on("object:removed", saveHist);
+    setFabricCanvas(canvas);
+
     img.onload = () => {
       const scale = Math.min(canvas.width! / img.width, canvas.height! / img.height);
       const fabricImage = new FabricImage(img, {
@@ -89,53 +137,30 @@ const PhotoEditor = () => {
       });
       canvas.backgroundImage = fabricImage;
       canvas.renderAll();
+      pushHistoryState(canvas);
     };
     img.src = imageDataState;
-
-    const brush = new PencilBrush(canvas);
-    brush.color = "#ef4444";
-    brush.width = 3;
-    canvas.freeDrawingBrush = brush;
-
-    const saveHist = () => {
-      const json = JSON.stringify(canvas.toJSON());
-      setCanvasHistory(prev => {
-        const newHistory = prev.slice(0, historyStep + 1);
-        newHistory.push(json);
-        return newHistory;
-      });
-      setHistoryStep(prev => prev + 1);
-    };
-
-    canvas.on("object:added", saveHist);
-    canvas.on("object:modified", saveHist);
-    canvas.on("object:removed", saveHist);
-    setFabricCanvas(canvas);
 
     return () => {
       canvas.off("object:added", saveHist);
       canvas.off("object:modified", saveHist);
       canvas.off("object:removed", saveHist);
       canvas.dispose();
+      historyRef.current = [];
+      historyStepRef.current = -1;
+      setCanvasHistory([]);
+      setHistoryStep(-1);
     };
   }, [imageDataState]);
 
   const handleUndo = () => {
-    if (!fabricCanvas || historyStep <= 0) return;
-    const prevStep = historyStep - 1;
-    setHistoryStep(prevStep);
-    fabricCanvas.loadFromJSON(JSON.parse(canvasHistory[prevStep]), () => {
-      fabricCanvas.renderAll();
-    });
+    if (historyStepRef.current <= 0) return;
+    restoreHistoryStep(historyStepRef.current - 1);
   };
 
   const handleRedo = () => {
-    if (!fabricCanvas || historyStep >= canvasHistory.length - 1) return;
-    const nextStep = historyStep + 1;
-    setHistoryStep(nextStep);
-    fabricCanvas.loadFromJSON(JSON.parse(canvasHistory[nextStep]), () => {
-      fabricCanvas.renderAll();
-    });
+    if (historyStepRef.current >= historyRef.current.length - 1) return;
+    restoreHistoryStep(historyStepRef.current + 1);
   };
 
   const handleDelete = () => {

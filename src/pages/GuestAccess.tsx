@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,6 @@ const GuestAccess = () => {
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [guestName, setGuestName] = useState(() => localStorage.getItem("guest_name") || "");
-  const [needsPassword, setNeedsPassword] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<"check" | "password" | "name">("check");
 
@@ -36,7 +35,6 @@ const GuestAccess = () => {
         localStorage.setItem("guest_project_number", data.projectNumber);
         setStep("name");
       } else if (data.needsPassword) {
-        setNeedsPassword(true);
         setStep("password");
         if (pw) toast.error("Falsches Passwort");
       } else {
@@ -50,10 +48,10 @@ const GuestAccess = () => {
     }
   };
 
-  // On mount, try without password first
-  useState(() => {
+  useEffect(() => {
     checkAndValidate();
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();

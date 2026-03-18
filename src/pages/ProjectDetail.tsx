@@ -7,7 +7,7 @@ import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
+import { deleteProjectFromSupabase, hydrateProjectFromSupabase } from "@/lib/supabaseSync";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,48 +41,16 @@ const ProjectDetail = () => {
           return;
         }
 
-        // Not found locally - load from Supabase
-        const { data: spData } = await supabase
-          .from("projects")
-          .select("id, project_number, updated_at, created_at")
-          .eq("id", projectId)
-          .single();
+        const hydratedProject = await hydrateProjectFromSupabase(projectId);
 
-        if (!spData) {
+        if (!hydratedProject) {
           toast.error("Projekt nicht gefunden");
           navigate("/projects");
           return;
         }
 
-        // Load locations from Supabase
-        const { data: locs } = await supabase
-          .from("locations")
-          .select("id, location_number, location_name, comment, system, label, location_type, created_at")
-          .eq("project_id", projectId)
-          .order("created_at");
-
-        // Build a minimal project object from Supabase data
-        const onlineProject: Project = {
-          id: spData.id,
-          projectNumber: spData.project_number,
-          locations: (locs || []).map(l => ({
-            id: l.id,
-            locationNumber: l.location_number,
-            locationName: l.location_name || undefined,
-            comment: l.comment || undefined,
-            system: l.system || undefined,
-            label: l.label || undefined,
-            locationType: l.location_type || undefined,
-            imageData: "", // no local image
-            originalImageData: "",
-            createdAt: new Date(l.created_at),
-          })),
-          createdAt: new Date(spData.created_at),
-          updatedAt: new Date(spData.updated_at),
-        };
-
-        setProject(onlineProject);
-        setIsOnlineOnly(true);
+        setProject(hydratedProject);
+        setIsOnlineOnly(false);
       } catch (error) {
         console.error("Error loading project:", error);
         toast.error("Fehler beim Laden des Projekts");
@@ -172,7 +140,7 @@ const ProjectDetail = () => {
       <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-6">
         {isOnlineOnly && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
-            ⚠️ Dieses Projekt wurde auf einem anderen Gerät erstellt. Bilder sind nur auf dem Originalgerät verfügbar. Neue Standorte können hier hinzugefügt werden.
+            ⚠️ Dieses Projekt wurde von Supabase auf dieses Gerät geladen. Die Bilder stehen jetzt lokal für Bearbeitung und Export zur Verfügung.
           </div>
         )}
         <div className="flex items-center justify-between gap-2">

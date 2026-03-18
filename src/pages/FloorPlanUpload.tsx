@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Upload, FileText, Loader2, Trash2 } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
+import { syncProjectToSupabase } from "@/lib/supabaseSync";
 import { FloorPlan } from "@/types/project";
 import { toast } from "sonner";
 import * as pdfjsLib from "pdfjs-dist";
@@ -108,6 +109,7 @@ const FloorPlanUpload = () => {
         await indexedDBStorage.saveFloorPlan(projectId, floorPlan);
       }
 
+      syncProjectToSupabase(projectId);
       toast.success("Grundrisse gespeichert");
       navigate(`/projects/${projectId}/floor-plans`);
     } catch (error) {

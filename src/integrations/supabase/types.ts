@@ -189,6 +189,44 @@ export type Database = {
           },
         ]
       }
+      floor_plans: {
+        Row: {
+          created_at: string
+          id: string
+          markers: Json
+          name: string
+          page_index: number
+          project_id: string
+          storage_path: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          markers?: Json
+          name: string
+          page_index: number
+          project_id: string
+          storage_path: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          markers?: Json
+          name?: string
+          page_index?: number
+          project_id?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "floor_plans_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       employees: {
         Row: {
           created_at: string

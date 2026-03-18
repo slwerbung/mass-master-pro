@@ -18,6 +18,8 @@ import CustomerManage from "./pages/CustomerManage";
 import CustomerLogin from "./pages/CustomerLogin";
 import FloorPlanUpload from "./pages/FloorPlanUpload";
 import FloorPlanView from "./pages/FloorPlanView";
+import GuestAccess from "./pages/GuestAccess";
+import GuestProject from "./pages/GuestProject";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -56,6 +58,8 @@ const App = () => (
           {/* Customer routes - /kunde is public login, /customer is protected */}
           <Route path="/kunde" element={<CustomerLogin />} />
           <Route path="/customer" element={<RoleGuard allowedRoles={["customer"]}><CustomerView /></RoleGuard>} />
+          <Route path="/guest/:projectId" element={<GuestAccess />} />
+          <Route path="/guest/:projectId/view" element={<GuestProject />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

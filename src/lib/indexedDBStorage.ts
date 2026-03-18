@@ -401,6 +401,37 @@ export const indexedDBStorage = {
       }
     }
     
+    for (const location of project.locations) {
+      const currentDetailIds = new Set((location.detailImages || []).map(di => di.id));
+      const existingDetailImages = await db.getAllFromIndex('detail-images', 'by-location', location.id);
+
+      for (const detailImage of location.detailImages || []) {
+        await this.saveDetailImage(location.id, detailImage);
+      }
+
+      for (const existingDetail of existingDetailImages) {
+        if (!currentDetailIds.has(existingDetail.id)) {
+          await db.delete('detail-image-blobs', createDetailBlobId(existingDetail.id, 'annotated'));
+          await db.delete('detail-image-blobs', createDetailBlobId(existingDetail.id, 'original'));
+          await db.delete('detail-images', existingDetail.id);
+        }
+      }
+    }
+
+    const existingFloorPlans = await db.getAllFromIndex('floor-plans', 'by-project', project.id);
+    const currentFloorPlanIds = new Set((project.floorPlans || []).map(fp => fp.id));
+
+    for (const floorPlan of project.floorPlans || []) {
+      await this.saveFloorPlan(project.id, floorPlan);
+    }
+
+    for (const existingFloorPlan of existingFloorPlans) {
+      if (!currentFloorPlanIds.has(existingFloorPlan.id)) {
+        await db.delete('floor-plan-images', existingFloorPlan.id);
+        await db.delete('floor-plans', existingFloorPlan.id);
+      }
+    }
+
     const currentLocationIds = new Set(project.locations.map(l => l.id));
     for (const existingLocation of existingLocations) {
       if (!currentLocationIds.has(existingLocation.id)) {
