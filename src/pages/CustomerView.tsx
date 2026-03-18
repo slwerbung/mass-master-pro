@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { LogOut, Save, ArrowLeft, CheckCheck, FileText, MessageSquare, Pencil, Check } from "lucide-react";
+import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
+import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 
 interface FieldConfig {
+  id?: string;
   field_key: string;
   field_label: string;
   field_type: "text" | "textarea" | "dropdown" | "checkbox";
@@ -27,13 +29,26 @@ interface FeedbackItem {
   status: "open" | "done";
   created_at: string;
   resolved_at: string | null;
+  legacy?: boolean;
 }
+
+const LEGACY_FEEDBACK_PREFIX = "legacy-feedback-";
+const DIRECT_ASSIGNMENT_ID_PREFIX = "direct-project-";
+
+const isFeedbackTableUnavailable = (error: any) => {
+  const message = String(error?.message || error?.details || "").toLowerCase();
+  return error?.code === "42P01" || error?.code === "PGRST205" || message.includes("location_feedback") || message.includes("could not find the table");
+};
+
+const isRealCustomerId = (value?: string | null) => !!value && !String(value).startsWith("guest:");
 
 const CustomerView = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const session = getSession();
   const directProjectId = searchParams.get("project");
+  const guestToken = typeof window !== "undefined" ? localStorage.getItem("guest_token") : null;
+  const guestProjectNumber = typeof window !== "undefined" ? localStorage.getItem("guest_project_number") : null;
 
   const [assignments, setAssignments] = useState<any[]>([]);
   const [selectedAssignment, setSelectedAssignment] = useState<any | null>(null);
@@ -51,30 +66,152 @@ const CustomerView = () => {
   useEffect(() => {
     if (!session || session.role !== "customer") { navigate("/"); return; }
     loadInitial();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!directProjectId || assignments.length === 0 || selectedAssignment) return;
+    if (!directProjectId || selectedAssignment) return;
     const match = assignments.find((a) => a.project_id === directProjectId);
-    if (match) loadLocations(match);
-  }, [assignments, directProjectId, selectedAssignment]);
+    if (match) {
+      loadLocations(match);
+      return;
+    }
+    if (guestToken) {
+      loadDirectGuestProject(directProjectId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignments, directProjectId, selectedAssignment, guestToken]);
 
-  const visibleFields = useMemo(() => fields.filter((f) => f.is_active && f.customer_visible), [fields]);
+  const visibleFields = useMemo(() => mergeWithDefaultLocationFields(fields).filter((f) => f.is_active && f.customer_visible), [fields]);
+
+  const parseLegacyFeedback = (loc: any): FeedbackItem[] => {
+    const raw = String(loc?.guest_info || "").trim();
+    if (!raw) return [];
+    return [{
+      id: `${LEGACY_FEEDBACK_PREFIX}${loc.id}`,
+      location_id: loc.id,
+      message: raw,
+      author_name: session?.name || "Kunde",
+      author_customer_id: isRealCustomerId(session?.id) ? session?.id : null,
+      status: "open",
+      created_at: new Date(0).toISOString(),
+      resolved_at: null,
+      legacy: true,
+    }];
+  };
+
+  const buildLegacyFeedbackMap = (locs: any[]) => {
+    const map: Record<string, FeedbackItem[]> = {};
+    (locs || []).forEach((loc: any) => {
+      const entries = parseLegacyFeedback(loc);
+      if (entries.length > 0) map[loc.id] = entries;
+    });
+    return map;
+  };
+
+  const getSelectedProjectId = () => selectedAssignment?.project_id || directProjectId || null;
+  const isDirectGuestMode = !!selectedAssignment?.direct || (!!directProjectId && !assignments.some((a) => a.project_id === directProjectId));
+
+  const saveLegacyFeedback = async (locationId: string, message: string) => {
+    const projectId = getSelectedProjectId();
+    if (!projectId) throw new Error("missing-project");
+
+    if (guestToken) {
+      const { data, error } = await supabase.functions.invoke("update-guest-info", {
+        body: { projectId, token: guestToken, locationId, guestInfo: message },
+      });
+      if (error || data?.error) throw error || new Error(data?.error || "legacy-save-failed");
+      return;
+    }
+
+    if (!selectedAssignment || !session || !isRealCustomerId(session.id)) {
+      throw new Error("missing-session");
+    }
+
+    const { data, error } = await supabase.functions.invoke("customer-data", {
+      body: {
+        action: "update_guest_info",
+        customerId: session.id,
+        assignmentId: selectedAssignment.id,
+        locationId,
+        guestInfo: message,
+      },
+    });
+
+    if (error || data?.error) throw error || new Error(data?.error || "legacy-save-failed");
+  };
 
   const loadInitial = async () => {
     setLoading(true);
     try {
-      const [{ data: assignmentsData, error: assignmentError }, { data: fieldData }] = await Promise.all([
-        supabase
-          .from("customer_project_assignments")
-          .select("id, project_id, projects(id, project_number)")
-          .eq("customer_id", session!.id),
-        supabase.from("location_field_config").select("field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+      const [{ data: fieldData }, assignmentResult] = await Promise.all([
+        supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+        isRealCustomerId(session?.id)
+          ? supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", session!.id)
+          : Promise.resolve({ data: [], error: null } as any),
       ]);
-      if (assignmentError) throw assignmentError;
-      setAssignments(assignmentsData || []);
-      setFields((fieldData || []) as FieldConfig[]);
-    } catch {
+
+      setFields(mergeWithDefaultLocationFields((fieldData || []) as FieldConfig[]));
+
+      if (assignmentResult?.error) throw assignmentResult.error;
+      setAssignments(assignmentResult?.data || []);
+
+      if ((!assignmentResult?.data || assignmentResult.data.length === 0) && directProjectId && guestToken) {
+        await loadDirectGuestProject(directProjectId);
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("Fehler beim Laden");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadDirectGuestProject = async (projectId: string) => {
+    if (!guestToken) return;
+    setSelectedAssignment({
+      id: `${DIRECT_ASSIGNMENT_ID_PREFIX}${projectId}`,
+      project_id: projectId,
+      projects: { id: projectId, project_number: guestProjectNumber || "Direktlink" },
+      direct: true,
+    });
+    setLoading(true);
+    try {
+      const [{ data: fieldData }, response] = await Promise.all([
+        supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+        supabase.functions.invoke("guest-data", { body: { projectId, token: guestToken } }),
+      ]);
+
+      setFields(mergeWithDefaultLocationFields((fieldData || []) as FieldConfig[]));
+      const payload = response.data || {};
+      if (response.error || payload?.error) throw response.error || new Error(payload.error || "guest-load-failed");
+
+      const locs = payload.locations || [];
+      const imgs = payload.images || [];
+      const pdfs = payload.pdfs || [];
+      const locationIds = locs.map((l: any) => l.id);
+      setLocations(locs);
+      setImages([...(imgs || []), ...((pdfs || []).map((p: any) => ({ ...p, image_type: "pdf" })))]);
+      setApprovals({});
+
+      if (locationIds.length > 0) {
+        const feedbackResponse = await supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
+        const feedbackMap: Record<string, FeedbackItem[]> = {};
+        if (!feedbackResponse.error) {
+          (feedbackResponse.data || []).forEach((entry: any) => {
+            if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
+            feedbackMap[entry.location_id].push(entry as FeedbackItem);
+          });
+        }
+        for (const [locationId, entries] of Object.entries(buildLegacyFeedbackMap(locs))) {
+          feedbackMap[locationId] = [...(feedbackMap[locationId] || []), ...entries];
+        }
+        setFeedbacks(feedbackMap);
+      } else {
+        setFeedbacks({});
+      }
+    } catch (error) {
+      console.error(error);
       toast.error("Fehler beim Laden");
     } finally {
       setLoading(false);
@@ -82,6 +219,11 @@ const CustomerView = () => {
   };
 
   const loadLocations = async (assignment: any) => {
+    if (assignment?.direct) {
+      await loadDirectGuestProject(assignment.project_id);
+      return;
+    }
+
     setSelectedAssignment(assignment);
     setLoading(true);
     try {
@@ -95,7 +237,7 @@ const CustomerView = () => {
       setLocations(locs || []);
 
       if (locationIds.length > 0) {
-        const [{ data: imgs }, { data: pdfs }, { data: approvData }, { data: feedbackData }] = await Promise.all([
+        const [{ data: imgs }, { data: pdfs }, { data: approvData }, feedbackResponse] = await Promise.all([
           supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds),
           supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
           supabase.from("location_approvals").select("location_id, approved").eq("assignment_id", assignment.id).in("location_id", locationIds),
@@ -110,17 +252,23 @@ const CustomerView = () => {
         setApprovals(approvMap);
 
         const feedbackMap: Record<string, FeedbackItem[]> = {};
-        (feedbackData || []).forEach((entry: any) => {
-          if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
-          feedbackMap[entry.location_id].push(entry as FeedbackItem);
-        });
+        if (!feedbackResponse.error) {
+          (feedbackResponse.data || []).forEach((entry: any) => {
+            if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
+            feedbackMap[entry.location_id].push(entry as FeedbackItem);
+          });
+        }
+        for (const [locationId, entries] of Object.entries(buildLegacyFeedbackMap(locs || []))) {
+          feedbackMap[locationId] = [...(feedbackMap[locationId] || []), ...entries];
+        }
         setFeedbacks(feedbackMap);
       } else {
         setImages([]);
         setApprovals({});
         setFeedbacks({});
       }
-    } catch {
+    } catch (error) {
+      console.error(error);
       toast.error("Fehler beim Laden");
     } finally {
       setLoading(false);
@@ -129,13 +277,19 @@ const CustomerView = () => {
 
   const reloadFeedbacks = async (locationIds: string[]) => {
     if (locationIds.length === 0) return;
-    const { data } = await supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
+    const response = await supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
     const feedbackMap: Record<string, FeedbackItem[]> = {};
-    (data || []).forEach((entry: any) => {
-      if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
-      feedbackMap[entry.location_id].push(entry as FeedbackItem);
-    });
-    setFeedbacks(feedbackMap);
+    if (!response.error) {
+      (response.data || []).forEach((entry: any) => {
+        if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
+        feedbackMap[entry.location_id].push(entry as FeedbackItem);
+      });
+    }
+    const relevantLocations = locations.filter((loc) => locationIds.includes(loc.id));
+    for (const [locationId, entries] of Object.entries(buildLegacyFeedbackMap(relevantLocations))) {
+      feedbackMap[locationId] = [...(feedbackMap[locationId] || []), ...entries];
+    }
+    setFeedbacks((prev) => ({ ...prev, ...feedbackMap }));
   };
 
   const getImageUrl = (path: string) => {
@@ -144,7 +298,7 @@ const CustomerView = () => {
   };
 
   const triggerNotification = async (changeType: "approval" | "comment") => {
-    if (!selectedAssignment) return;
+    if (!selectedAssignment || selectedAssignment.direct) return;
     try {
       await supabase.functions.invoke("send-notification", {
         body: {
@@ -165,30 +319,40 @@ const CustomerView = () => {
     setSavingId(locationId);
     try {
       const editId = editingFeedbackId[locationId];
-      if (editId) {
-        const { error } = await supabase
-          .from("location_feedback")
-          .update({ message })
-          .eq("id", editId)
-          .eq("author_customer_id", session!.id)
-          .eq("status", "open");
-        if (error) throw error;
+      const isLegacyEdit = !!editId && editId.startsWith(LEGACY_FEEDBACK_PREFIX);
+
+      if (isLegacyEdit) {
+        await saveLegacyFeedback(locationId, message);
+      } else if (editId) {
+        const query = supabase.from("location_feedback").update({ message }).eq("id", editId).eq("status", "open");
+        const scopedQuery = isRealCustomerId(session?.id) ? query.eq("author_customer_id", session!.id) : query.eq("author_name", session?.name || "Kunde");
+        const { error } = await scopedQuery;
+        if (error) {
+          if (isFeedbackTableUnavailable(error)) await saveLegacyFeedback(locationId, message);
+          else throw error;
+        }
       } else {
         const { error } = await supabase.from("location_feedback").insert({
           location_id: locationId,
           message,
           author_name: session?.name || "Kunde",
-          author_customer_id: session?.id || null,
+          author_customer_id: isRealCustomerId(session?.id) ? session?.id : null,
           status: "open",
         });
-        if (error) throw error;
+        if (error) {
+          if (isFeedbackTableUnavailable(error)) await saveLegacyFeedback(locationId, message);
+          else throw error;
+        }
       }
+
+      setLocations((prev) => prev.map((loc) => loc.id === locationId ? { ...loc, guest_info: message } : loc));
       setDraftFeedback((prev) => ({ ...prev, [locationId]: "" }));
       setEditingFeedbackId((prev) => ({ ...prev, [locationId]: null }));
-      await reloadFeedbacks(locations.map((l) => l.id));
+      await reloadFeedbacks([locationId]);
       toast.success("Hinweis gespeichert");
       triggerNotification("comment");
-    } catch {
+    } catch (error) {
+      console.error("saveFeedback failed", error);
       toast.error("Fehler beim Speichern");
     } finally {
       setSavingId(null);
@@ -201,7 +365,7 @@ const CustomerView = () => {
   };
 
   const toggleApproval = async (locationId: string, approved: boolean) => {
-    if (!selectedAssignment) return;
+    if (!selectedAssignment || selectedAssignment.direct) return;
     setApprovals(prev => ({ ...prev, [locationId]: approved }));
     await supabase.from("location_approvals").upsert({
       location_id: locationId, assignment_id: selectedAssignment.id,
@@ -211,7 +375,7 @@ const CustomerView = () => {
   };
 
   const approveAll = async (approved: boolean) => {
-    if (!selectedAssignment) return;
+    if (!selectedAssignment || selectedAssignment.direct) return;
     setSavingApprovals(true);
     const newApprovals: Record<string, boolean> = {};
     locations.forEach(l => { newApprovals[l.id] = approved; });
@@ -229,6 +393,7 @@ const CustomerView = () => {
   const renderVisibleField = (loc: any, field: FieldConfig) => {
     const customFields = (loc.custom_fields && typeof loc.custom_fields === "object") ? loc.custom_fields : {};
     const value =
+      field.field_key === "locationName" ? loc.location_name :
       field.field_key === "system" ? loc.system :
       field.field_key === "label" ? loc.label :
       field.field_key === "locationType" ? loc.location_type :
@@ -245,8 +410,8 @@ const CustomerView = () => {
     );
   };
 
-  const allApproved = locations.length > 0 && locations.every(l => approvals[l.id]);
-  const someApproved = locations.some(l => approvals[l.id]);
+  const allApproved = !isDirectGuestMode && locations.length > 0 && locations.every(l => approvals[l.id]);
+  const someApproved = !isDirectGuestMode && locations.some(l => approvals[l.id]);
   const handleLogout = () => { clearSession(); navigate("/"); };
 
   if (loading && !selectedAssignment) {
@@ -291,26 +456,28 @@ const CustomerView = () => {
           <p className="text-center text-muted-foreground py-12">Keine Standorte vorhanden.</p>
         ) : (
           <>
-            <Card className="border-primary/30 bg-primary/5">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="font-medium text-sm">Gesamtfreigabe</p>
-                    <p className="text-xs text-muted-foreground">
-                      {locations.filter(l => approvals[l.id]).length} von {locations.length} Standorten freigegeben
-                    </p>
+            {!isDirectGuestMode && (
+              <Card className="border-primary/30 bg-primary/5">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="font-medium text-sm">Gesamtfreigabe</p>
+                      <p className="text-xs text-muted-foreground">
+                        {locations.filter(l => approvals[l.id]).length} von {locations.length} Standorten freigegeben
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      {someApproved && (
+                        <Button size="sm" variant="outline" onClick={() => approveAll(false)} disabled={savingApprovals}>Alle zurücknehmen</Button>
+                      )}
+                      <Button size="sm" onClick={() => approveAll(true)} disabled={allApproved || savingApprovals}>
+                        <CheckCheck className="h-4 w-4 mr-1" /> Alle freigeben
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    {someApproved && (
-                      <Button size="sm" variant="outline" onClick={() => approveAll(false)} disabled={savingApprovals}>Alle zurücknehmen</Button>
-                    )}
-                    <Button size="sm" onClick={() => approveAll(true)} disabled={allApproved || savingApprovals}>
-                      <CheckCheck className="h-4 w-4 mr-1" /> Alle freigeben
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            )}
 
             <div className="space-y-4">
               {locations.map((loc) => {
@@ -328,9 +495,11 @@ const CustomerView = () => {
                             {loc.location_name && <span className="font-normal text-muted-foreground ml-2">· {loc.location_name}</span>}
                           </CardTitle>
                         </div>
-                        <Button size="sm" variant={isApproved ? "outline" : "default"} onClick={() => toggleApproval(loc.id, !isApproved)}>
-                          <Check className="h-4 w-4 mr-1" /> {isApproved ? "Freigabe zurücknehmen" : "Freigeben"}
-                        </Button>
+                        {!isDirectGuestMode && (
+                          <Button size="sm" variant={isApproved ? "outline" : "default"} onClick={() => toggleApproval(loc.id, !isApproved)}>
+                            <Check className="h-4 w-4 mr-1" /> {isApproved ? "Freigabe zurücknehmen" : "Freigeben"}
+                          </Button>
+                        )}
                       </div>
                     </CardHeader>
                     <CardContent className="p-4 space-y-4">
@@ -377,7 +546,7 @@ const CustomerView = () => {
                                   <span className={`text-xs px-2 py-0.5 rounded ${entry.status === "done" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{entry.status === "done" ? "Umgesetzt" : "Offen"}</span>
                                 </div>
                                 <p className="text-sm whitespace-pre-wrap">{entry.message}</p>
-                                {entry.author_customer_id === session?.id && entry.status === "open" && (
+                                {(entry.author_customer_id === session?.id || (!entry.author_customer_id && entry.author_name === session?.name)) && entry.status === "open" && (
                                   <Button variant="ghost" size="sm" className="px-0" onClick={() => startEditFeedback(loc.id, entry)}>
                                     <Pencil className="h-4 w-4 mr-1" /> Bearbeiten
                                   </Button>

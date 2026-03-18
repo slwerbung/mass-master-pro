@@ -64,15 +64,23 @@ const GuestAccess = () => {
     if (!guestName.trim() || !projectId) return;
     setLoading(true);
     try {
+      const trimmedName = guestName.trim();
+      let customerId = `guest:${trimmedName}`;
+      let customerName = trimmedName;
+
       const { data, error } = await supabase.functions.invoke("ensure-customer-assignment", {
-        body: { projectId, customerName: guestName.trim() },
+        body: { projectId, customerName: trimmedName },
       });
-      if (error || !data?.customer) {
-        toast.error("Kundenzugang konnte nicht vorbereitet werden");
-        return;
+
+      if (!error && data?.customer?.id) {
+        customerId = data.customer.id;
+        customerName = data.customer.name || trimmedName;
+      } else {
+        console.warn("ensure-customer-assignment unavailable, falling back to direct guest project access", error || data);
       }
-      localStorage.setItem("guest_name", guestName.trim());
-      setSession({ role: "customer", id: data.customer.id, name: data.customer.name });
+
+      localStorage.setItem("guest_name", customerName);
+      setSession({ role: "customer", id: customerId, name: customerName });
       navigate(`/customer?project=${projectId}`, { replace: true });
     } catch {
       toast.error("Fehler beim Anmelden");

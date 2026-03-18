@@ -19,7 +19,15 @@ interface FeedbackItem {
   author_name: string;
   status: "open" | "done";
   created_at: string;
+  legacy?: boolean;
 }
+
+const LEGACY_FEEDBACK_PREFIX = "legacy-feedback-";
+
+const isFeedbackTableUnavailable = (error: any) => {
+  const message = String(error?.message || error?.details || "").toLowerCase();
+  return error?.code === "42P01" || error?.code === "PGRST205" || message.includes("location_feedback") || message.includes("could not find the table");
+};
 
 interface LocationCardProps {
   location: Location;
@@ -64,10 +72,30 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
       .select("id, location_id, message, author_name, status, created_at")
       .eq("location_id", location.id)
       .order("created_at", { ascending: true });
-    if (!error) setFeedbacks((data || []) as FeedbackItem[]);
+
+    const items = !error ? ((data || []) as FeedbackItem[]) : [];
+    const legacyItems = location.guestInfo ? [{
+      id: `${LEGACY_FEEDBACK_PREFIX}${location.id}`,
+      location_id: location.id,
+      message: location.guestInfo,
+      author_name: "Kunde",
+      status: "open" as const,
+      created_at: new Date(0).toISOString(),
+      legacy: true,
+    }] : [];
+
+    if (error && !isFeedbackTableUnavailable(error)) {
+      console.warn("loadFeedbacks error:", error.message || error);
+    }
+
+    setFeedbacks([...items, ...legacyItems]);
   };
 
   const toggleFeedbackDone = async (feedback: FeedbackItem) => {
+    if (feedback.legacy) {
+      toast.error("Legacy-Kundenhinweise können hier nicht als umgesetzt markiert werden");
+      return;
+    }
     setUpdatingFeedbackId(feedback.id);
     try {
       const nextStatus = feedback.status === "done" ? "open" : "done";
