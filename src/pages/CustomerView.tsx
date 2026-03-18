@@ -274,7 +274,7 @@ const CustomerView = () => {
           supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds),
           supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
           supabase.from("location_approvals").select("location_id, approved").eq("assignment_id", assignment.id).in("location_id", locationIds),
-          supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at"),
+          (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at"),
         ]);
 
         const pdfEntries = (pdfs || []).map((p: any) => ({ location_id: p.location_id, image_type: "pdf", storage_path: p.storage_path, file_name: p.file_name, id: p.id }));
