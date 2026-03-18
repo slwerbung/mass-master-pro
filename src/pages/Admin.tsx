@@ -208,7 +208,7 @@ const Admin = () => {
     try {
       await invoke("delete_field", { fieldId: id });
     } catch {
-      await supabase.from("location_field_config").delete().eq("id", id);
+      await (supabase as any).from("location_field_config").delete().eq("id", id);
     }
     loadFields();
     toast.success("Feld gelöscht");
