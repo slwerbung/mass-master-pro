@@ -25,41 +25,35 @@ async function validateToken(token: string, projectId: string): Promise<boolean>
     if (Date.now() - parsed.ts > 24 * 60 * 60 * 1000) return false;
 
     const key = await getHmacKey();
-    const sigBytes = new Uint8Array(
-      sigHex.match(/.{2}/g)!.map((h: string) => parseInt(h, 16))
-    );
-    return crypto.subtle.verify(
-      "HMAC",
-      key,
-      sigBytes,
-      new TextEncoder().encode(payload)
-    );
+    const sigBytes = new Uint8Array(sigHex.match(/.{2}/g)!.map((h: string) => parseInt(h, 16)));
+    return crypto.subtle.verify("HMAC", key, sigBytes, new TextEncoder().encode(payload));
   } catch {
     return false;
   }
 }
 
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { projectId, token, locationId, guestInfo } = await req.json();
+    const { projectId, token, locationId, guestInfo, authorName, feedbackId } = await req.json();
 
     if (!projectId || !token || !locationId || !(await validateToken(token, projectId))) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return json({ error: "Unauthorized" }, 401);
     }
 
-    const sanitizedInfo = typeof guestInfo === "string" ? guestInfo.slice(0, 5000) : null;
+    const sanitizedInfo = typeof guestInfo === "string" ? guestInfo.trim().slice(0, 5000) : "";
+    const sanitizedAuthor = typeof authorName === "string" && authorName.trim() ? authorName.trim().slice(0, 120) : "Kunde";
+    if (!sanitizedInfo) return json({ error: "Missing guestInfo" }, 400);
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
     const { data: loc } = await supabase
       .from("locations")
@@ -68,33 +62,51 @@ Deno.serve(async (req) => {
       .eq("project_id", projectId)
       .single();
 
-    if (!loc) {
-      return new Response(
-        JSON.stringify({ error: "Location not found" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (!loc) return json({ error: "Location not found" }, 404);
+
+    let feedback: any = null;
+    const requestedFeedbackId = typeof feedbackId === "string" && feedbackId ? feedbackId : null;
+
+    try {
+      if (requestedFeedbackId) {
+        const { data, error } = await supabase
+          .from("location_feedback")
+          .update({ message: sanitizedInfo, author_name: sanitizedAuthor })
+          .eq("id", requestedFeedbackId)
+          .eq("location_id", locationId)
+          .eq("status", "open")
+          .select("*")
+          .single();
+        if (error) throw error;
+        feedback = data;
+      } else {
+        const { data, error } = await supabase
+          .from("location_feedback")
+          .insert({
+            location_id: locationId,
+            author_name: sanitizedAuthor,
+            author_customer_id: null,
+            message: sanitizedInfo,
+            status: "open",
+          })
+          .select("*")
+          .single();
+        if (error) throw error;
+        feedback = data;
+      }
+    } catch (feedbackError) {
+      // legacy fallback keeps old installs functional, but only as single text field
+      const { error } = await supabase
+        .from("locations")
+        .update({ guest_info: sanitizedInfo })
+        .eq("id", locationId);
+
+      if (error) return json({ error: "Update failed" }, 500);
+      return json({ success: true, feedback: null, legacy: true, warning: String((feedbackError as any)?.message || feedbackError || "") });
     }
 
-    const { error } = await supabase
-      .from("locations")
-      .update({ guest_info: sanitizedInfo })
-      .eq("id", locationId);
-
-    if (error) {
-      return new Response(
-        JSON.stringify({ error: "Update failed" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    return new Response(
-      JSON.stringify({ success: true }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return json({ success: true, feedback, legacy: false });
   } catch {
-    return new Response(
-      JSON.stringify({ error: "Server error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return json({ error: "Server error" }, 500);
   }
 });

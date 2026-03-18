@@ -128,6 +128,63 @@ Deno.serve(async (req) => {
         });
       }
 
+
+      case "create_feedback": {
+        const { data: assignment } = await supabase
+          .from("customer_project_assignments")
+          .select("id")
+          .eq("id", params.assignmentId)
+          .eq("customer_id", customerId)
+          .single();
+
+        if (!assignment) return json({ error: "No access" }, 403);
+
+        const sanitizedMessage = String(params.message || "").trim().slice(0, 5000);
+        if (!sanitizedMessage) return json({ error: "Missing message" }, 400);
+
+        const { data, error } = await supabase
+          .from("location_feedback")
+          .insert({
+            location_id: params.locationId,
+            author_name: String(params.authorName || customerId || "Kunde").trim().slice(0, 120),
+            author_customer_id: customerId,
+            message: sanitizedMessage,
+            status: "open",
+          })
+          .select("*")
+          .single();
+
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true, feedback: data });
+      }
+
+      case "update_feedback": {
+        const { data: assignment } = await supabase
+          .from("customer_project_assignments")
+          .select("id")
+          .eq("id", params.assignmentId)
+          .eq("customer_id", customerId)
+          .single();
+
+        if (!assignment) return json({ error: "No access" }, 403);
+
+        const sanitizedMessage = String(params.message || "").trim().slice(0, 5000);
+        if (!sanitizedMessage) return json({ error: "Missing message" }, 400);
+
+        const { data, error } = await supabase
+          .from("location_feedback")
+          .update({ message: sanitizedMessage })
+          .eq("id", params.feedbackId)
+          .eq("location_id", params.locationId)
+          .eq("author_customer_id", customerId)
+          .eq("status", "open")
+          .select("*")
+          .single();
+
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true, feedback: data });
+      }
+
       case "update_guest_info": {
         const { data: perm } = await supabase
           .from("customer_location_permissions")

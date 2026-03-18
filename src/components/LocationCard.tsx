@@ -6,6 +6,7 @@ import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, Mes
 import { Location } from "@/types/project";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import LocationInfoFields from "@/components/LocationInfoFields";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
@@ -34,9 +35,10 @@ interface LocationCardProps {
   projectId: string;
   onDelete: (locationId: string) => void;
   onDeleteDetailImage: (locationId: string, detailImageId: string) => void;
+  fieldConfigs?: any[];
 }
 
-const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: LocationCardProps) => {
+const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fieldConfigs = [] }: LocationCardProps) => {
   const navigate = useNavigate();
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -48,7 +50,22 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
   useEffect(() => {
     loadPdf();
     loadFeedbacks();
-  }, [location.id]);
+
+    const channel = supabase
+      .channel(`location-feedback-${location.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "location_feedback", filter: `location_id=eq.${location.id}` },
+        () => {
+          loadFeedbacks();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [location.id, location.guestInfo]);
 
   const loadPdf = async () => {
     const { data, error } = await supabase
@@ -74,11 +91,11 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
       .order("created_at", { ascending: true });
 
     const items = !error ? ((data || []) as FeedbackItem[]) : [];
-    const legacyItems = location.guestInfo ? [{
+    const legacyItems = !items.length && location.guestInfo ? [{
       id: `${LEGACY_FEEDBACK_PREFIX}${location.id}`,
       location_id: location.id,
       message: location.guestInfo,
-      author_name: "Kunde",
+      author_name: "Historischer Kommentar",
       status: "open" as const,
       created_at: new Date(0).toISOString(),
       legacy: true,
@@ -157,14 +174,17 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
           <div className="space-y-1 flex-1 min-w-0">
             <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
             {location.locationName && <p className="text-sm text-foreground truncate">{location.locationName}</p>}
-            {(location.system || location.label || location.locationType) && (
-              <div className="flex flex-wrap gap-1">
-                {location.system && <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.system}</span>}
-                {location.locationType && <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.locationType}</span>}
-                {location.label && <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.label}</span>}
-              </div>
-            )}
-            {location.comment && <p className="text-sm text-muted-foreground line-clamp-2">{location.comment}</p>}
+            <LocationInfoFields
+              location={{
+                location_name: location.locationName,
+                system: location.system,
+                label: location.label,
+                location_type: location.locationType,
+                comment: location.comment,
+                customFields: location.customFields,
+              }}
+              fields={fieldConfigs}
+            />
           </div>
           <div className="flex gap-1">
             <Button variant="ghost" size="sm" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit`)}>

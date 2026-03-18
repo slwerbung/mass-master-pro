@@ -9,6 +9,7 @@ import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check } from "lu
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+import LocationInfoFields from "@/components/LocationInfoFields";
 
 interface FieldConfig {
   id?: string;
@@ -91,8 +92,8 @@ const CustomerView = () => {
       id: `${LEGACY_FEEDBACK_PREFIX}${loc.id}`,
       location_id: loc.id,
       message: raw,
-      author_name: session?.name || "Kunde",
-      author_customer_id: isRealCustomerId(session?.id) ? session?.id : null,
+      author_name: "Historischer Kommentar",
+      author_customer_id: null,
       status: "open",
       created_at: new Date(0).toISOString(),
       resolved_at: null,
@@ -141,6 +142,18 @@ const CustomerView = () => {
     if (error || data?.error) throw error || new Error(data?.error || "legacy-save-failed");
   };
 
+  const ensureDirectProjectAssignment = async (projectId: string) => {
+    if (!session?.name || !isRealCustomerId(session?.id)) return false;
+    try {
+      const { data, error } = await supabase.functions.invoke("ensure-customer-assignment", {
+        body: { projectId, customerName: session.name },
+      });
+      return !error && !!data?.success;
+    } catch {
+      return false;
+    }
+  };
+
   const loadInitial = async () => {
     setLoading(true);
     try {
@@ -154,9 +167,19 @@ const CustomerView = () => {
       setFields(mergeWithDefaultLocationFields((fieldData || []) as FieldConfig[]));
 
       if (assignmentResult?.error) throw assignmentResult.error;
-      setAssignments(assignmentResult?.data || []);
+      let loadedAssignments = assignmentResult?.data || [];
 
-      if ((!assignmentResult?.data || assignmentResult.data.length === 0) && directProjectId && guestToken) {
+      if (directProjectId && isRealCustomerId(session?.id) && !loadedAssignments.some((a: any) => a.project_id === directProjectId)) {
+        const ensured = await ensureDirectProjectAssignment(directProjectId);
+        if (ensured) {
+          const refreshed = await supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", session!.id);
+          loadedAssignments = refreshed.data || loadedAssignments;
+        }
+      }
+
+      setAssignments(loadedAssignments);
+
+      if ((!loadedAssignments || loadedAssignments.length === 0) && directProjectId && guestToken) {
         await loadDirectGuestProject(directProjectId);
       }
     } catch (error) {
@@ -195,16 +218,26 @@ const CustomerView = () => {
       setApprovals({});
 
       if (locationIds.length > 0) {
-        const feedbackResponse = await supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
         const feedbackMap: Record<string, FeedbackItem[]> = {};
-        if (!feedbackResponse.error) {
-          (feedbackResponse.data || []).forEach((entry: any) => {
+        const payloadFeedbacks = payload.feedbacks || [];
+        if (payloadFeedbacks.length > 0) {
+          payloadFeedbacks.forEach((entry: any) => {
             if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
             feedbackMap[entry.location_id].push(entry as FeedbackItem);
           });
+        } else {
+          const feedbackResponse = await supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
+          if (!feedbackResponse.error) {
+            (feedbackResponse.data || []).forEach((entry: any) => {
+              if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
+              feedbackMap[entry.location_id].push(entry as FeedbackItem);
+            });
+          }
         }
         for (const [locationId, entries] of Object.entries(buildLegacyFeedbackMap(locs))) {
-          feedbackMap[locationId] = [...(feedbackMap[locationId] || []), ...entries];
+          if ((feedbackMap[locationId] || []).length === 0) {
+            feedbackMap[locationId] = [...entries];
+          }
         }
         setFeedbacks(feedbackMap);
       } else {
@@ -287,10 +320,36 @@ const CustomerView = () => {
     }
     const relevantLocations = locations.filter((loc) => locationIds.includes(loc.id));
     for (const [locationId, entries] of Object.entries(buildLegacyFeedbackMap(relevantLocations))) {
-      feedbackMap[locationId] = [...(feedbackMap[locationId] || []), ...entries];
+      if ((feedbackMap[locationId] || []).length === 0) {
+        feedbackMap[locationId] = [...entries];
+      }
     }
     setFeedbacks((prev) => ({ ...prev, ...feedbackMap }));
   };
+
+
+  useEffect(() => {
+    const locationIds = locations.map((loc) => loc.id);
+    if (locationIds.length === 0) return;
+
+    const channel = supabase
+      .channel(`customer-feedback-${getSelectedProjectId() || "project"}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "location_feedback" },
+        (payload) => {
+          const changedLocationId = (payload.new as any)?.location_id || (payload.old as any)?.location_id;
+          if (changedLocationId && locationIds.includes(changedLocationId)) {
+            reloadFeedbacks([changedLocationId]);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [locations, selectedAssignment, directProjectId]);
 
   const getImageUrl = (path: string) => {
     const { data } = supabase.storage.from("project-files").getPublicUrl(path);
@@ -320,35 +379,76 @@ const CustomerView = () => {
     try {
       const editId = editingFeedbackId[locationId];
       const isLegacyEdit = !!editId && editId.startsWith(LEGACY_FEEDBACK_PREFIX);
+      let savedEntry: FeedbackItem | null = null;
 
-      if (isLegacyEdit) {
-        await saveLegacyFeedback(locationId, message);
-      } else if (editId) {
-        const query = supabase.from("location_feedback").update({ message }).eq("id", editId).eq("status", "open");
-        const scopedQuery = isRealCustomerId(session?.id) ? query.eq("author_customer_id", session!.id) : query.eq("author_name", session?.name || "Kunde");
-        const { error } = await scopedQuery;
-        if (error) {
-          if (isFeedbackTableUnavailable(error)) await saveLegacyFeedback(locationId, message);
-          else throw error;
-        }
-      } else {
-        const { error } = await supabase.from("location_feedback").insert({
-          location_id: locationId,
-          message,
-          author_name: session?.name || "Kunde",
-          author_customer_id: isRealCustomerId(session?.id) ? session?.id : null,
-          status: "open",
+      if (isDirectGuestMode && guestToken) {
+        const { data, error } = await supabase.functions.invoke("update-guest-info", {
+          body: {
+            projectId: getSelectedProjectId(),
+            token: guestToken,
+            locationId,
+            guestInfo: message,
+            authorName: session?.name || localStorage.getItem("guest_name") || "Kunde",
+            feedbackId: isLegacyEdit ? null : (editId || null),
+          },
         });
-        if (error) {
-          if (isFeedbackTableUnavailable(error)) await saveLegacyFeedback(locationId, message);
-          else throw error;
-        }
+        if (error || data?.error) throw error || new Error(data?.error || "guest-feedback-save-failed");
+        savedEntry = data?.feedback || null;
+      } else if (editId && !isLegacyEdit) {
+        const { data, error } = await supabase.functions.invoke("customer-data", {
+          body: {
+            action: "update_feedback",
+            customerId: session?.id,
+            assignmentId: selectedAssignment?.id,
+            locationId,
+            feedbackId: editId,
+            message,
+          },
+        });
+        if (error || data?.error) throw error || new Error(data?.error || "update-feedback-failed");
+        savedEntry = data?.feedback || null;
+      } else if (isLegacyEdit) {
+        const { data, error } = await supabase.functions.invoke("customer-data", {
+          body: {
+            action: "create_feedback",
+            customerId: session?.id,
+            assignmentId: selectedAssignment?.id,
+            locationId,
+            message,
+            authorName: session?.name || "Kunde",
+          },
+        });
+        if (error || data?.error) throw error || new Error(data?.error || "create-feedback-failed");
+        savedEntry = data?.feedback || null;
+      } else {
+        const { data, error } = await supabase.functions.invoke("customer-data", {
+          body: {
+            action: "create_feedback",
+            customerId: session?.id,
+            assignmentId: selectedAssignment?.id,
+            locationId,
+            message,
+            authorName: session?.name || "Kunde",
+          },
+        });
+        if (error || data?.error) throw error || new Error(data?.error || "create-feedback-failed");
+        savedEntry = data?.feedback || null;
       }
 
-      setLocations((prev) => prev.map((loc) => loc.id === locationId ? { ...loc, guest_info: message } : loc));
+      if (savedEntry) {
+        setFeedbacks((prev) => {
+          const existing = (prev[locationId] || []).filter((entry) => entry.id !== savedEntry!.id && entry.id !== `${LEGACY_FEEDBACK_PREFIX}${locationId}`);
+          return {
+            ...prev,
+            [locationId]: [...existing, savedEntry!].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
+          };
+        });
+      } else {
+        await reloadFeedbacks([locationId]);
+      }
+
       setDraftFeedback((prev) => ({ ...prev, [locationId]: "" }));
       setEditingFeedbackId((prev) => ({ ...prev, [locationId]: null }));
-      await reloadFeedbacks([locationId]);
       toast.success("Hinweis gespeichert");
       triggerNotification("comment");
     } catch (error) {
@@ -388,26 +488,6 @@ const CustomerView = () => {
     if (approved) triggerNotification("approval");
     toast.success(approved ? "Alle Standorte freigegeben" : "Alle Freigaben zurückgenommen");
     setSavingApprovals(false);
-  };
-
-  const renderVisibleField = (loc: any, field: FieldConfig) => {
-    const customFields = (loc.custom_fields && typeof loc.custom_fields === "object") ? loc.custom_fields : {};
-    const value =
-      field.field_key === "locationName" ? loc.location_name :
-      field.field_key === "system" ? loc.system :
-      field.field_key === "label" ? loc.label :
-      field.field_key === "locationType" ? loc.location_type :
-      field.field_key === "comment" ? loc.comment :
-      customFields?.[field.field_key];
-
-    if (value === undefined || value === null || value === "") return null;
-    const displayValue = field.field_type === "checkbox" ? (value === true || value === "true" ? "Ja" : "Nein") : String(value);
-    return (
-      <div key={field.field_key} className="space-y-1 rounded-lg border p-3 bg-muted/20">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{field.field_label}</p>
-        <p className="text-sm whitespace-pre-wrap">{displayValue}</p>
-      </div>
-    );
   };
 
   const allApproved = !isDirectGuestMode && locations.length > 0 && locations.every(l => approvals[l.id]);
@@ -510,9 +590,7 @@ const CustomerView = () => {
                       )}
 
                       {visibleFields.length > 0 && (
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          {visibleFields.map((field) => renderVisibleField(loc, field))}
-                        </div>
+                        <LocationInfoFields location={loc} fields={visibleFields} customerOnly />
                       )}
 
                       {pdfEntries.length > 0 && (

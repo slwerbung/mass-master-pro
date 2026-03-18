@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
-import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp } from "lucide-react";
+import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -44,6 +44,10 @@ const Admin = () => {
   const [newFieldType, setNewFieldType] = useState<FieldConfig["field_type"]>("text");
   const [newFieldOptions, setNewFieldOptions] = useState("");
   const [savingField, setSavingField] = useState(false);
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const [editFieldLabel, setEditFieldLabel] = useState("");
+  const [editFieldType, setEditFieldType] = useState<FieldConfig["field_type"]>("text");
+  const [editFieldOptions, setEditFieldOptions] = useState("");
   const adminToken = session?.authToken || "";
   const legacyAdminPw = typeof window !== "undefined" ? localStorage.getItem("admin_pw") || "" : "";
 
@@ -162,6 +166,44 @@ const Admin = () => {
     loadFields();
   };
 
+  const startEditField = (field: FieldConfig) => {
+    setEditingFieldId(field.id);
+    setEditFieldLabel(field.field_label);
+    setEditFieldType(field.field_type);
+    try {
+      const parsed = field.field_options ? JSON.parse(field.field_options) : [];
+      setEditFieldOptions(Array.isArray(parsed) ? parsed.join(", ") : "");
+    } catch {
+      setEditFieldOptions("");
+    }
+  };
+
+  const cancelEditField = () => {
+    setEditingFieldId(null);
+    setEditFieldLabel("");
+    setEditFieldType("text");
+    setEditFieldOptions("");
+  };
+
+  const saveFieldEdit = async (field: FieldConfig) => {
+    const changes: any = {
+      field_label: editFieldLabel.trim() || field.field_label,
+      field_type: editFieldType,
+      field_options: editFieldType === "dropdown" && editFieldOptions.trim()
+        ? JSON.stringify(editFieldOptions.split(",").map(s => s.trim()).filter(Boolean))
+        : null,
+    };
+
+    try {
+      await invoke("update_field", { fieldId: field.id, changes });
+    } catch {
+      await supabase.from("location_field_config").update(changes).eq("id", field.id);
+    }
+    cancelEditField();
+    loadFields();
+    toast.success("Feld aktualisiert");
+  };
+
   const deleteField = async (id: string) => {
     try {
       await invoke("delete_field", { fieldId: id });
@@ -266,26 +308,78 @@ const Admin = () => {
             <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Standortfelder konfigurieren</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">Diese Felder erscheinen beim Erfassen eines Standorts.</p>
+                <p className="text-sm text-muted-foreground">Hier legst du fest, welche Standortfelder intern genutzt werden und welche davon der Kunde in seiner Ansicht sehen darf.</p>
                 <div className="space-y-2">
-                  {fields.map((field, idx) => (
-                    <div key={field.id} className={`flex items-center gap-3 p-3 rounded-lg border ${field.is_active ? "bg-background" : "bg-muted opacity-60"}`}>
-                      <div className="flex flex-col gap-0.5">
-                        <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => moveField(field.id, "up")} disabled={idx === 0}><ChevronUp className="h-3 w-3" /></Button>
-                        <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => moveField(field.id, "down")} disabled={idx === fields.length - 1}><ChevronDown className="h-3 w-3" /></Button>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm">{field.field_label}</span>
-                          <Badge variant="outline" className="text-xs">{fieldTypeLabel(field.field_type)}</Badge>
-                          {!field.is_active && <Badge variant="secondary" className="text-xs">Inaktiv</Badge>}
+                  {fields.map((field, idx) => {
+                    const isEditing = editingFieldId === field.id;
+                    return (
+                    <div key={field.id || field.field_key} className={`p-3 rounded-lg border space-y-3 ${field.is_active ? "bg-background" : "bg-muted opacity-60"}`}>
+                      <div className="flex items-start gap-3">
+                        <div className="flex flex-col gap-0.5">
+                          <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => field.id && moveField(field.id, "up")} disabled={idx === 0 || !field.id}><ChevronUp className="h-3 w-3" /></Button>
+                          <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => field.id && moveField(field.id, "down")} disabled={idx === fields.length - 1 || !field.id}><ChevronDown className="h-3 w-3" /></Button>
                         </div>
-                        {field.field_options && <p className="text-xs text-muted-foreground mt-0.5 truncate">Optionen: {JSON.parse(field.field_options).join(", ")}</p>}
+                        <div className="flex-1 min-w-0 space-y-2">
+                          {isEditing ? (
+                            <div className="space-y-2">
+                              <Input value={editFieldLabel} onChange={(e) => setEditFieldLabel(e.target.value)} placeholder="Feldbezeichnung" />
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <Select value={editFieldType} onValueChange={(v) => setEditFieldType(v as FieldConfig["field_type"])}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="text">Textfeld (einzeilig)</SelectItem>
+                                    <SelectItem value="textarea">Textarea (mehrzeilig)</SelectItem>
+                                    <SelectItem value="dropdown">Dropdown (Auswahl)</SelectItem>
+                                    <SelectItem value="checkbox">Checkbox (Ja/Nein)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                {editFieldType === "dropdown" ? <Input value={editFieldOptions} onChange={(e) => setEditFieldOptions(e.target.value)} placeholder="Optionen, kommagetrennt" /> : <div />}
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-sm">{field.field_label}</span>
+                                <Badge variant="outline" className="text-xs">{fieldTypeLabel(field.field_type)}</Badge>
+                                {!field.is_active && <Badge variant="secondary" className="text-xs">Intern ausgeblendet</Badge>}
+                                {!field.customer_visible && <Badge variant="secondary" className="text-xs">Für Kunden ausgeblendet</Badge>}
+                              </div>
+                              {field.field_options && <p className="text-xs text-muted-foreground mt-0.5 truncate">Optionen: {JSON.parse(field.field_options).join(", ")}</p>}
+                            </>
+                          )}
+                        </div>
+                        <div className="flex gap-1">
+                          {isEditing ? (
+                            <>
+                              <Button variant="ghost" size="sm" onClick={() => saveFieldEdit(field)}><Save className="h-4 w-4" /></Button>
+                              <Button variant="ghost" size="sm" onClick={cancelEditField}><X className="h-4 w-4" /></Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button variant="ghost" size="sm" onClick={() => startEditField(field)} disabled={!field.id}><Pencil className="h-4 w-4" /></Button>
+                              <Button variant="ghost" size="sm" onClick={() => field.id && deleteField(field.id)} disabled={!field.id}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            </>
+                          )}
+                        </div>
                       </div>
-                      <Switch checked={field.is_active} onCheckedChange={() => toggleField(field)} />
-                      <Button variant="ghost" size="sm" onClick={() => deleteField(field.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="flex items-center justify-between rounded border px-3 py-2">
+                          <div>
+                            <p className="text-sm font-medium">Intern sichtbar</p>
+                            <p className="text-xs text-muted-foreground">Feld erscheint in der App für Mitarbeiter/Admin</p>
+                          </div>
+                          <Switch checked={field.is_active} onCheckedChange={() => toggleField(field)} disabled={!field.id} />
+                        </div>
+                        <div className="flex items-center justify-between rounded border px-3 py-2">
+                          <div>
+                            <p className="text-sm font-medium">Für Kunden sichtbar</p>
+                            <p className="text-xs text-muted-foreground">Dieses Feld wird in der Kundenansicht eingeblendet</p>
+                          </div>
+                          <Switch checked={field.customer_visible} onCheckedChange={() => toggleCustomerVisibility(field)} disabled={!field.id} />
+                        </div>
+                      </div>
                     </div>
-                  ))}
+                  )})}
                 </div>
                 <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
                   <p className="text-sm font-medium">Neues Feld hinzufügen</p>

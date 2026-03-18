@@ -84,11 +84,18 @@ Deno.serve(async (req) => {
       .select("id, location_id, storage_path, file_name")
       .in("location_id", locationIds);
 
+    const { data: feedbacks } = await supabase
+      .from("location_feedback")
+      .select("id, location_id, message, author_name, author_customer_id, status, created_at, resolved_at")
+      .in("location_id", locationIds)
+      .order("created_at", { ascending: true });
+
     return new Response(
       JSON.stringify({
         locations: locations || [],
         images: images || [],
         pdfs: pdfs || [],
+        feedbacks: feedbacks || [],
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

@@ -19,6 +19,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import LocationCard from "@/components/LocationCard";
+import { supabase } from "@/integrations/supabase/client";
+import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
@@ -26,10 +28,17 @@ const ProjectDetail = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isOnlineOnly, setIsOnlineOnly] = useState(false);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
+  const [fieldConfigs, setFieldConfigs] = useState<any[]>([]);
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    const loadFieldConfigs = async () => {
+      const { data } = await supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order");
+      setFieldConfigs(mergeWithDefaultLocationFields((data || []) as any[]));
+    };
+    loadFieldConfigs();
+
     const loadProject = async () => {
       if (!projectId) return;
       try {
@@ -187,7 +196,7 @@ const ProjectDetail = () => {
         {project.locations.length === 0 ? (
           <Card className="border-2 border-dashed"><CardContent className="flex flex-col items-center justify-center py-16 text-center"><MapPin className="h-16 w-16 text-muted-foreground mb-4" /><h3 className="text-xl font-semibold mb-2">Noch keine Standorte</h3><p className="text-muted-foreground mb-6 max-w-sm">{isPlanProject ? "Öffne die Grundrisse, um Standorte auf dem Plan zu platzieren" : "Nimm das erste Foto auf, um einen Standort zu erfassen"}</p></CardContent></Card>
         ) : (
-          <div className="grid gap-4">{project.locations.map((location) => <LocationCard key={location.id} location={location} projectId={projectId!} onDelete={handleDeleteLocation} onDeleteDetailImage={handleDeleteDetailImage} />)}</div>
+          <div className="grid gap-4">{project.locations.map((location) => <LocationCard key={location.id} location={location} projectId={projectId!} onDelete={handleDeleteLocation} onDeleteDetailImage={handleDeleteDetailImage} fieldConfigs={fieldConfigs} />)}</div>
         )}
       </div>
 
