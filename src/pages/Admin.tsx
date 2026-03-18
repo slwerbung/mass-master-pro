@@ -197,7 +197,7 @@ const Admin = () => {
     try {
       await invoke("update_field", { fieldId: field.id, changes });
     } catch {
-      await supabase.from("location_field_config").update(changes).eq("id", field.id);
+      await (supabase as any).from("location_field_config").update(changes).eq("id", field.id);
     }
     cancelEditField();
     loadFields();
