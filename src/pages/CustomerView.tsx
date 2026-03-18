@@ -310,7 +310,7 @@ const CustomerView = () => {
 
   const reloadFeedbacks = async (locationIds: string[]) => {
     if (locationIds.length === 0) return;
-    const response = await supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
+    const response = await (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
     const feedbackMap: Record<string, FeedbackItem[]> = {};
     if (!response.error) {
       (response.data || []).forEach((entry: any) => {
