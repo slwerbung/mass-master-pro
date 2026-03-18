@@ -112,7 +112,7 @@ const Admin = () => {
       const data = await invoke("list_fields");
       setFields(mergeWithDefaultLocationFields((data.fields || []) as FieldConfig[]) as FieldConfig[]);
     } catch {
-      const { data } = await supabase.from("location_field_config").select("*").order("sort_order");
+      const { data } = await (supabase as any).from("location_field_config").select("*").order("sort_order");
       setFields(mergeWithDefaultLocationFields((data || []) as FieldConfig[]) as FieldConfig[]);
     }
   };
