@@ -84,7 +84,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   };
 
   const loadFeedbacks = async () => {
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from("location_feedback")
       .select("id, location_id, message, author_name, status, created_at")
       .eq("location_id", location.id)
