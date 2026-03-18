@@ -109,7 +109,7 @@ async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Prom
   const rowsToDelete = (existingRows || []).filter((row) => !currentIds.has(row.id));
   if (rowsToDelete.length) {
     await removeStoragePaths(rowsToDelete.map((row) => row.storage_path));
-    await supabase.from('floor_plans').delete().eq('project_id', projectId).in('id', rowsToDelete.map((row) => row.id));
+    await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).in('id', rowsToDelete.map((row: any) => row.id));
   }
 }
 
