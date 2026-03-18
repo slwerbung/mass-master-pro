@@ -17,3 +17,9 @@ verify_jwt = false
 
 [functions.customer-data]
 verify_jwt = false
+
+[functions.validate-employee]
+verify_jwt = false
+
+[functions.validate-session]
+verify_jwt = false

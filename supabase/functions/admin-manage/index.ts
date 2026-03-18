@@ -1,4 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { hash } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
+import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,13 +20,18 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { adminPassword, action, ...params } = body;
+    const { adminToken, employeeToken, action, ...params } = body;
 
-    // validate-admin actions don't need password for sync_projects_public
     const publicActions = ["sync_projects"];
     if (!publicActions.includes(action)) {
-      const expectedPassword = Deno.env.get("ADMIN_PASSWORD");
-      if (!expectedPassword || adminPassword !== expectedPassword) {
+      const payload = adminToken ? await verifySessionToken(adminToken, getSessionSecret()) : null;
+      if (!payload || payload.role !== "admin" || payload.userId !== "admin") {
+        return json({ error: "Unauthorized" }, 401);
+      }
+    } else {
+      const adminPayload = adminToken ? await verifySessionToken(adminToken, getSessionSecret()) : null;
+      const employeePayload = employeeToken ? await verifySessionToken(employeeToken, getSessionSecret()) : null;
+      if (!adminPayload && !employeePayload) {
         return json({ error: "Unauthorized" }, 401);
       }
     }
@@ -35,6 +42,49 @@ Deno.serve(async (req) => {
     );
 
     switch (action) {
+      case "get_security_settings": {
+        const { data: hashConfig } = await supabase.from("app_config").select("value").eq("key", "employee_password_hash").maybeSingle();
+        const { data: legacyConfig } = await supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle();
+        return json({ employeePasswordConfigured: !!(hashConfig?.value || legacyConfig?.value) });
+      }
+      case "set_employee_password": {
+        const password = String(params.password || "").trim();
+        if (!password) return json({ error: "Missing password" }, 400);
+        const passwordHash = await hash(password);
+        const { error } = await supabase.from("app_config").upsert({ key: "employee_password_hash", value: passwordHash });
+        if (error) return json({ error: error.message }, 500);
+        await supabase.from("app_config").delete().eq("key", "employee_password");
+        return json({ success: true });
+      }
+      case "list_fields": {
+        const { data, error } = await supabase.from("location_field_config").select("*").order("sort_order");
+        if (error) return json({ error: error.message }, 500);
+        return json({ fields: data });
+      }
+      case "create_field": {
+        const { error } = await supabase.from("location_field_config").insert({
+          field_key: params.fieldKey,
+          field_label: params.fieldLabel,
+          field_type: params.fieldType,
+          field_options: Array.isArray(params.fieldOptions) ? JSON.stringify(params.fieldOptions) : null,
+          sort_order: params.sortOrder ?? 1,
+          is_active: true,
+          customer_visible: true,
+        });
+        if (error) return json({ error: error.message }, 400);
+        return json({ success: true });
+      }
+      case "update_field": {
+        const { error } = await supabase.from("location_field_config").update(params.changes || {}).eq("id", params.fieldId);
+        if (error) return json({ error: error.message }, 400);
+        return json({ success: true });
+      }
+      case "delete_field": {
+        const { error } = await supabase.from("location_field_config").delete().eq("id", params.fieldId);
+        if (error) return json({ error: error.message }, 400);
+        return json({ success: true });
+      }
+
       // ---- SYNC PROJECTS (called by employees, no admin pw needed) ----
       case "sync_projects": {
         const projects = params.projects as Array<{

@@ -35,7 +35,7 @@ const Admin = () => {
   const [newCustomerName, setNewCustomerName] = useState("");
   const [assignCustomerId, setAssignCustomerId] = useState("");
   const [assignProjectId, setAssignProjectId] = useState("");
-  const [employeePassword, setEmployeePassword] = useState("");
+  const [employeePasswordConfigured, setEmployeePasswordConfigured] = useState(false);
   const [newEmployeePassword, setNewEmployeePassword] = useState("");
   const [savingPassword, setSavingPassword] = useState(false);
   const [fields, setFields] = useState<FieldConfig[]>([]);
@@ -43,21 +43,21 @@ const Admin = () => {
   const [newFieldType, setNewFieldType] = useState<FieldConfig["field_type"]>("text");
   const [newFieldOptions, setNewFieldOptions] = useState("");
   const [savingField, setSavingField] = useState(false);
-  const [storedAdminPw] = useState(() => localStorage.getItem("admin_pw") || "");
+  const adminToken = session?.authToken || "";
 
   const invoke = useCallback(async (action: string, params: Record<string, any> = {}) => {
     const { data, error } = await supabase.functions.invoke("admin-manage", {
-      body: { adminPassword: storedAdminPw, action, ...params },
+      body: { adminToken, action, ...params },
     });
     if (error) throw new Error("Network error");
     if (data?.error) throw new Error(data.error);
     return data;
-  }, [storedAdminPw]);
+  }, [adminToken]);
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (storedAdminPw) { loadAll(); loadEmployeePassword(); loadFields(); }
-  }, [storedAdminPw]);
+    if (adminToken) { loadAll(); loadEmployeePassword(); loadFields(); }
+  }, [adminToken]);
 
   const loadAll = useCallback(async () => {
     try {
@@ -72,22 +72,35 @@ const Admin = () => {
   }, [invoke]);
 
   const loadEmployeePassword = async () => {
-    const { data } = await supabase.from("app_config").select("value").eq("key", "employee_password").single();
-    if (data) setEmployeePassword(data.value);
+    try {
+      const data = await invoke("get_security_settings");
+      setEmployeePasswordConfigured(!!data?.employeePasswordConfigured);
+    } catch {
+      setEmployeePasswordConfigured(false);
+    }
   };
 
   const saveEmployeePassword = async () => {
     if (!newEmployeePassword.trim()) return;
     setSavingPassword(true);
-    const { error } = await supabase.from("app_config").upsert({ key: "employee_password", value: newEmployeePassword.trim() });
-    if (error) toast.error("Fehler beim Speichern");
-    else { setEmployeePassword(newEmployeePassword.trim()); setNewEmployeePassword(""); toast.success("Passwort gespeichert"); }
+    try {
+      await invoke("set_employee_password", { password: newEmployeePassword.trim() });
+      setEmployeePasswordConfigured(true);
+      setNewEmployeePassword("");
+      toast.success("Passwort gespeichert");
+    } catch {
+      toast.error("Fehler beim Speichern");
+    }
     setSavingPassword(false);
   };
 
   const loadFields = async () => {
-    const { data } = await supabase.from("location_field_config").select("*").order("sort_order");
-    if (data) setFields(data as FieldConfig[]);
+    try {
+      const data = await invoke("list_fields");
+      setFields((data.fields || []) as FieldConfig[]);
+    } catch (e: any) {
+      toast.error(e.message || "Felder konnten nicht geladen werden");
+    }
   };
 
   const addField = async () => {
@@ -95,29 +108,34 @@ const Admin = () => {
     setSavingField(true);
     const fieldKey = `custom_${Date.now()}`;
     const maxOrder = fields.length > 0 ? Math.max(...fields.map(f => f.sort_order)) + 1 : 1;
-    const { error } = await supabase.from("location_field_config").insert({
-      field_key: fieldKey, field_label: newFieldLabel.trim(), field_type: newFieldType,
-      field_options: newFieldType === "dropdown" && newFieldOptions.trim()
-        ? JSON.stringify(newFieldOptions.split(",").map(s => s.trim()).filter(Boolean)) : null,
-      sort_order: maxOrder, is_active: true, customer_visible: true,
-    });
-    if (error) toast.error("Fehler beim Erstellen");
-    else { setNewFieldLabel(""); setNewFieldOptions(""); setNewFieldType("text"); toast.success("Feld erstellt"); loadFields(); }
+    try {
+      await invoke("create_field", {
+        fieldKey,
+        fieldLabel: newFieldLabel.trim(),
+        fieldType: newFieldType,
+        fieldOptions: newFieldType === "dropdown" && newFieldOptions.trim()
+          ? newFieldOptions.split(",").map(s => s.trim()).filter(Boolean) : null,
+        sortOrder: maxOrder,
+      });
+      setNewFieldLabel(""); setNewFieldOptions(""); setNewFieldType("text"); toast.success("Feld erstellt"); loadFields();
+    } catch {
+      toast.error("Fehler beim Erstellen");
+    }
     setSavingField(false);
   };
 
   const toggleField = async (field: FieldConfig) => {
-    await supabase.from("location_field_config").update({ is_active: !field.is_active }).eq("id", field.id);
+    await invoke("update_field", { fieldId: field.id, changes: { is_active: !field.is_active } });
     loadFields();
   };
 
   const toggleCustomerVisibility = async (field: FieldConfig) => {
-    await supabase.from("location_field_config").update({ customer_visible: !field.customer_visible }).eq("id", field.id);
+    await invoke("update_field", { fieldId: field.id, changes: { customer_visible: !field.customer_visible } });
     loadFields();
   };
 
   const deleteField = async (id: string) => {
-    await supabase.from("location_field_config").delete().eq("id", id);
+    await invoke("delete_field", { fieldId: id });
     loadFields();
     toast.success("Feld gelöscht");
   };
@@ -129,13 +147,13 @@ const Admin = () => {
     const swapIdx = direction === "up" ? idx - 1 : idx + 1;
     const current = fields[idx]; const swap = fields[swapIdx];
     await Promise.all([
-      supabase.from("location_field_config").update({ sort_order: swap.sort_order }).eq("id", current.id),
-      supabase.from("location_field_config").update({ sort_order: current.sort_order }).eq("id", swap.id),
+      invoke("update_field", { fieldId: current.id, changes: { sort_order: swap.sort_order } }),
+      invoke("update_field", { fieldId: swap.id, changes: { sort_order: current.sort_order } }),
     ]);
     loadFields();
   };
 
-  const handleLogout = () => { clearSession(); localStorage.removeItem("admin_pw"); navigate("/"); };
+  const handleLogout = () => { clearSession(); navigate("/"); };
   const addEmployee = async () => { if (!newEmployeeName.trim()) return; try { await invoke("create_employee", { name: newEmployeeName.trim() }); setNewEmployeeName(""); toast.success("Mitarbeiter erstellt"); loadAll(); } catch (e: any) { toast.error(e.message); } };
   const deleteEmployee = async (id: string) => { try { await invoke("delete_employee", { employeeId: id }); toast.success("Gelöscht"); loadAll(); } catch (e: any) { toast.error(e.message); } };
   const addCustomer = async () => { if (!newCustomerName.trim()) return; try { await invoke("create_customer", { name: newCustomerName.trim() }); setNewCustomerName(""); toast.success("Kunde erstellt"); loadAll(); } catch (e: any) { toast.error(e.message); } };
@@ -197,7 +215,7 @@ const Admin = () => {
             <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Lock className="h-5 w-5" /> Mitarbeiter-Passwort</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                {employeePassword && <p className="text-sm text-muted-foreground">Aktuelles Passwort: <code className="bg-muted px-2 py-0.5 rounded font-mono">{employeePassword}</code></p>}
+                <p className="text-sm text-muted-foreground">Status: {employeePasswordConfigured ? <strong>Passwort gesetzt</strong> : <strong>Kein Passwort gesetzt</strong>}</p>
                 <div className="flex gap-2">
                   <Input type="text" placeholder="Neues Mitarbeiter-Passwort" value={newEmployeePassword} onChange={(e) => setNewEmployeePassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveEmployeePassword()} />
                   <Button onClick={saveEmployeePassword} disabled={!newEmployeePassword.trim() || savingPassword}>Speichern</Button>

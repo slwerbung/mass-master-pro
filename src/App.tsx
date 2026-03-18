@@ -2,8 +2,10 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { getSession } from "@/lib/session";
+import { supabase } from "@/integrations/supabase/client";
 import Projects from "./pages/Projects";
 import NewProject from "./pages/NewProject";
 import ProjectDetail from "./pages/ProjectDetail";
@@ -25,10 +27,35 @@ import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient();
 
 const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; children: React.ReactNode }) => {
-  // Always read fresh from localStorage to avoid race conditions after login
   const session = getSession();
-  if (!session) return <Navigate to="/" replace />;
-  if (!allowedRoles.includes(session.role)) return <Navigate to="/" replace />;
+  const [validated, setValidated] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const run = async () => {
+      if (!session) {
+        if (mounted) setValidated(false);
+        return;
+      }
+      if (!allowedRoles.includes(session.role)) {
+        if (mounted) setValidated(false);
+        return;
+      }
+      if (session.role === "customer") {
+        if (mounted) setValidated(true);
+        return;
+      }
+      const { data, error } = await supabase.functions.invoke("validate-session", {
+        body: { role: session.role, token: session.authToken, userId: session.id },
+      });
+      if (mounted) setValidated(!error && !!data?.valid);
+    };
+    run();
+    return () => { mounted = false; };
+  }, [allowedRoles, session?.role, session?.authToken, session?.id]);
+
+  if (validated === null) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Sitzung wird geprüft...</div>;
+  if (!validated) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
