@@ -104,7 +104,7 @@ async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Prom
   const current = floorPlans || [];
   const currentIds = new Set(current.map((fp) => fp.id));
   for (const floorPlan of current) await syncFloorPlan(projectId, floorPlan);
-  const { data: existingRows, error } = await supabase.from('floor_plans').select('id, storage_path').eq('project_id', projectId);
+  const { data: existingRows, error } = await (supabase as any).from('floor_plans').select('id, storage_path').eq('project_id', projectId);
   if (error) return;
   const rowsToDelete = (existingRows || []).filter((row) => !currentIds.has(row.id));
   if (rowsToDelete.length) {
