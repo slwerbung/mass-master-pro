@@ -161,7 +161,7 @@ const Admin = () => {
     try {
       await invoke("update_field", { fieldId: field.id, changes: { customer_visible: !field.customer_visible } });
     } catch {
-      await supabase.from("location_field_config").update({ customer_visible: !field.customer_visible }).eq("id", field.id);
+      await (supabase as any).from("location_field_config").update({ customer_visible: !field.customer_visible }).eq("id", field.id);
     }
     loadFields();
   };
