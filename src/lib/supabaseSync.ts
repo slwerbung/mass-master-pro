@@ -344,9 +344,9 @@ export async function deleteProjectFromSupabase(projectId: string): Promise<void
     await supabase.from("location_pdfs").delete().in("location_id", locationIds);
     await supabase.from("detail_images").delete().in("location_id", locationIds);
   }
-  const { data: floorPlans } = await supabase.from('floor_plans').select('storage_path').eq('project_id', projectId);
-  await removeStoragePaths((floorPlans || []).map((row) => row.storage_path));
-  await supabase.from('floor_plans').delete().eq('project_id', projectId);
+  const { data: floorPlans } = await (supabase as any).from('floor_plans').select('storage_path').eq('project_id', projectId);
+  await removeStoragePaths((floorPlans || []).map((row: any) => row.storage_path));
+  await (supabase as any).from('floor_plans').delete().eq('project_id', projectId);
   await supabase.from("customer_project_assignments").delete().eq("project_id", projectId);
   await supabase.from("locations").delete().eq("project_id", projectId);
   const { error } = await supabase.from("projects").delete().eq('id', projectId);

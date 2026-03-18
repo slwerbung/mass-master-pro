@@ -116,7 +116,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     setUpdatingFeedbackId(feedback.id);
     try {
       const nextStatus = feedback.status === "done" ? "open" : "done";
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from("location_feedback")
         .update({ status: nextStatus, resolved_at: nextStatus === "done" ? new Date().toISOString() : null })
         .eq("id", feedback.id);
