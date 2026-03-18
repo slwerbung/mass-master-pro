@@ -181,7 +181,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     }
   }
 
-  const { data: floorPlanRows } = await supabase.from("floor_plans").select("id, name, storage_path, markers, page_index, created_at").eq("project_id", projectId).order("page_index");
+  const { data: floorPlanRows } = await (supabase as any).from("floor_plans").select("id, name, storage_path, markers, page_index, created_at").eq("project_id", projectId).order("page_index");
   const floorPlans: FloorPlan[] = [];
   for (const row of floorPlanRows || []) {
     const imageData = await pathToBase64(row.storage_path);
