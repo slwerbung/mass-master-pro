@@ -189,44 +189,6 @@ export type Database = {
           },
         ]
       }
-      floor_plans: {
-        Row: {
-          created_at: string
-          id: string
-          markers: Json
-          name: string
-          page_index: number
-          project_id: string
-          storage_path: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          markers?: Json
-          name: string
-          page_index: number
-          project_id: string
-          storage_path: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          markers?: Json
-          name?: string
-          page_index?: number
-          project_id?: string
-          storage_path?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "floor_plans_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       employees: {
         Row: {
           created_at: string
@@ -287,7 +249,6 @@ export type Database = {
       location_field_config: {
         Row: {
           created_at: string
-          customer_visible: boolean
           field_key: string
           field_label: string
           field_options: string | null
@@ -298,7 +259,6 @@ export type Database = {
         }
         Insert: {
           created_at?: string
-          customer_visible?: boolean
           field_key: string
           field_label: string
           field_options?: string | null
@@ -309,7 +269,6 @@ export type Database = {
         }
         Update: {
           created_at?: string
-          customer_visible?: boolean
           field_key?: string
           field_label?: string
           field_options?: string | null
@@ -319,54 +278,6 @@ export type Database = {
           sort_order?: number
         }
         Relationships: []
-      }
-      location_feedback: {
-        Row: {
-          author_customer_id: string | null
-          author_name: string
-          created_at: string
-          id: string
-          location_id: string
-          message: string
-          resolved_at: string | null
-          status: string
-        }
-        Insert: {
-          author_customer_id?: string | null
-          author_name: string
-          created_at?: string
-          id?: string
-          location_id: string
-          message: string
-          resolved_at?: string | null
-          status?: string
-        }
-        Update: {
-          author_customer_id?: string | null
-          author_name?: string
-          created_at?: string
-          id?: string
-          location_id?: string
-          message?: string
-          resolved_at?: string | null
-          status?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "location_feedback_author_customer_id_fkey"
-            columns: ["author_customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "location_feedback_location_id_fkey"
-            columns: ["location_id"]
-            isOneToOne: false
-            referencedRelation: "locations"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       location_images: {
         Row: {
