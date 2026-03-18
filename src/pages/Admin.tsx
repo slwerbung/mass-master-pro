@@ -21,6 +21,7 @@ interface FieldConfig {
   field_options: string | null;
   sort_order: number;
   is_active: boolean;
+  customer_visible: boolean;
 }
 
 const Admin = () => {
@@ -98,7 +99,7 @@ const Admin = () => {
       field_key: fieldKey, field_label: newFieldLabel.trim(), field_type: newFieldType,
       field_options: newFieldType === "dropdown" && newFieldOptions.trim()
         ? JSON.stringify(newFieldOptions.split(",").map(s => s.trim()).filter(Boolean)) : null,
-      sort_order: maxOrder, is_active: true,
+      sort_order: maxOrder, is_active: true, customer_visible: true,
     });
     if (error) toast.error("Fehler beim Erstellen");
     else { setNewFieldLabel(""); setNewFieldOptions(""); setNewFieldType("text"); toast.success("Feld erstellt"); loadFields(); }
@@ -107,6 +108,11 @@ const Admin = () => {
 
   const toggleField = async (field: FieldConfig) => {
     await supabase.from("location_field_config").update({ is_active: !field.is_active }).eq("id", field.id);
+    loadFields();
+  };
+
+  const toggleCustomerVisibility = async (field: FieldConfig) => {
+    await supabase.from("location_field_config").update({ customer_visible: !field.customer_visible }).eq("id", field.id);
     loadFields();
   };
 

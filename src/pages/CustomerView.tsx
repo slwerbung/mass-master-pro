@@ -1,23 +1,48 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { LogOut, Save, ArrowLeft, CheckCheck, FileText } from "lucide-react";
+import { LogOut, Save, ArrowLeft, CheckCheck, FileText, MessageSquare, Pencil, Check } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 
+interface FieldConfig {
+  field_key: string;
+  field_label: string;
+  field_type: "text" | "textarea" | "dropdown" | "checkbox";
+  is_active: boolean;
+  customer_visible: boolean;
+  sort_order: number;
+}
+
+interface FeedbackItem {
+  id: string;
+  location_id: string;
+  message: string;
+  author_name: string;
+  author_customer_id: string | null;
+  status: "open" | "done";
+  created_at: string;
+  resolved_at: string | null;
+}
+
 const CustomerView = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const session = getSession();
+  const directProjectId = searchParams.get("project");
+
   const [assignments, setAssignments] = useState<any[]>([]);
   const [selectedAssignment, setSelectedAssignment] = useState<any | null>(null);
   const [locations, setLocations] = useState<any[]>([]);
   const [images, setImages] = useState<any[]>([]);
-  const [guestInfoMap, setGuestInfoMap] = useState<Record<string, string>>({});
+  const [fields, setFields] = useState<FieldConfig[]>([]);
+  const [feedbacks, setFeedbacks] = useState<Record<string, FeedbackItem[]>>({});
+  const [draftFeedback, setDraftFeedback] = useState<Record<string, string>>({});
+  const [editingFeedbackId, setEditingFeedbackId] = useState<Record<string, string | null>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [approvals, setApprovals] = useState<Record<string, boolean>>({});
@@ -25,19 +50,35 @@ const CustomerView = () => {
 
   useEffect(() => {
     if (!session || session.role !== "customer") { navigate("/"); return; }
-    loadAssignments();
+    loadInitial();
   }, []);
 
-  const loadAssignments = async () => {
+  useEffect(() => {
+    if (!directProjectId || assignments.length === 0 || selectedAssignment) return;
+    const match = assignments.find((a) => a.project_id === directProjectId);
+    if (match) loadLocations(match);
+  }, [assignments, directProjectId, selectedAssignment]);
+
+  const visibleFields = useMemo(() => fields.filter((f) => f.is_active && f.customer_visible), [fields]);
+
+  const loadInitial = async () => {
+    setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("customer_project_assignments")
-        .select("id, project_id, projects(id, project_number)")
-        .eq("customer_id", session!.id);
-      if (error) throw error;
-      setAssignments(data || []);
-    } catch { toast.error("Fehler beim Laden"); }
-    finally { setLoading(false); }
+      const [{ data: assignmentsData, error: assignmentError }, { data: fieldData }] = await Promise.all([
+        supabase
+          .from("customer_project_assignments")
+          .select("id, project_id, projects(id, project_number)")
+          .eq("customer_id", session!.id),
+        supabase.from("location_field_config").select("field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+      ]);
+      if (assignmentError) throw assignmentError;
+      setAssignments(assignmentsData || []);
+      setFields((fieldData || []) as FieldConfig[]);
+    } catch {
+      toast.error("Fehler beim Laden");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const loadLocations = async (assignment: any) => {
@@ -46,43 +87,55 @@ const CustomerView = () => {
     try {
       const { data: locs, error } = await supabase
         .from("locations")
-        .select("id, location_number, location_name, comment, system, label, location_type, guest_info")
+        .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields")
         .eq("project_id", assignment.project_id)
         .order("created_at");
       if (error) throw error;
+      const locationIds = (locs || []).map((l: any) => l.id);
       setLocations(locs || []);
 
-      const locationIds = (locs || []).map((l: any) => l.id);
-      const infoMap: Record<string, string> = {};
-      (locs || []).forEach((l: any) => { infoMap[l.id] = l.guest_info || ""; });
-      setGuestInfoMap(infoMap);
-
       if (locationIds.length > 0) {
-        const { data: imgs } = await supabase
-          .from("location_images")
-          .select("location_id, image_type, storage_path")
-          .in("location_id", locationIds);
-        const { data: pdfs } = await supabase
-          .from("location_pdfs")
-          .select("location_id, storage_path, file_name")
-          .in("location_id", locationIds);
-        const pdfEntries = (pdfs || []).map((p: any) => ({
-          location_id: p.location_id, image_type: "pdf",
-          storage_path: p.storage_path,
-        }));
+        const [{ data: imgs }, { data: pdfs }, { data: approvData }, { data: feedbackData }] = await Promise.all([
+          supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds),
+          supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
+          supabase.from("location_approvals").select("location_id, approved").eq("assignment_id", assignment.id).in("location_id", locationIds),
+          supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at"),
+        ]);
+
+        const pdfEntries = (pdfs || []).map((p: any) => ({ location_id: p.location_id, image_type: "pdf", storage_path: p.storage_path, file_name: p.file_name, id: p.id }));
         setImages([...(imgs || []), ...pdfEntries]);
 
-        const { data: approvData } = await supabase
-          .from("location_approvals")
-          .select("location_id, approved")
-          .eq("assignment_id", assignment.id)
-          .in("location_id", locationIds);
         const approvMap: Record<string, boolean> = {};
         (approvData || []).forEach((a: any) => { approvMap[a.location_id] = a.approved; });
         setApprovals(approvMap);
+
+        const feedbackMap: Record<string, FeedbackItem[]> = {};
+        (feedbackData || []).forEach((entry: any) => {
+          if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
+          feedbackMap[entry.location_id].push(entry as FeedbackItem);
+        });
+        setFeedbacks(feedbackMap);
+      } else {
+        setImages([]);
+        setApprovals({});
+        setFeedbacks({});
       }
-    } catch { toast.error("Fehler beim Laden"); }
-    finally { setLoading(false); }
+    } catch {
+      toast.error("Fehler beim Laden");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reloadFeedbacks = async (locationIds: string[]) => {
+    if (locationIds.length === 0) return;
+    const { data } = await supabase.from("location_feedback").select("*").in("location_id", locationIds).order("created_at");
+    const feedbackMap: Record<string, FeedbackItem[]> = {};
+    (data || []).forEach((entry: any) => {
+      if (!feedbackMap[entry.location_id]) feedbackMap[entry.location_id] = [];
+      feedbackMap[entry.location_id].push(entry as FeedbackItem);
+    });
+    setFeedbacks(feedbackMap);
   };
 
   const getImageUrl = (path: string) => {
@@ -106,18 +159,45 @@ const CustomerView = () => {
     }
   };
 
-  const saveGuestInfo = async (locationId: string) => {
+  const saveFeedback = async (locationId: string) => {
+    const message = (draftFeedback[locationId] || "").trim();
+    if (!message) return;
     setSavingId(locationId);
     try {
-      const { error } = await supabase
-        .from("locations")
-        .update({ guest_info: guestInfoMap[locationId] || null })
-        .eq("id", locationId);
-      if (error) throw error;
-      toast.success("Gespeichert");
+      const editId = editingFeedbackId[locationId];
+      if (editId) {
+        const { error } = await supabase
+          .from("location_feedback")
+          .update({ message })
+          .eq("id", editId)
+          .eq("author_customer_id", session!.id)
+          .eq("status", "open");
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("location_feedback").insert({
+          location_id: locationId,
+          message,
+          author_name: session?.name || "Kunde",
+          author_customer_id: session?.id || null,
+          status: "open",
+        });
+        if (error) throw error;
+      }
+      setDraftFeedback((prev) => ({ ...prev, [locationId]: "" }));
+      setEditingFeedbackId((prev) => ({ ...prev, [locationId]: null }));
+      await reloadFeedbacks(locations.map((l) => l.id));
+      toast.success("Hinweis gespeichert");
       triggerNotification("comment");
-    } catch { toast.error("Fehler beim Speichern"); }
-    setSavingId(null);
+    } catch {
+      toast.error("Fehler beim Speichern");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const startEditFeedback = (locationId: string, feedback: FeedbackItem) => {
+    setEditingFeedbackId((prev) => ({ ...prev, [locationId]: feedback.id }));
+    setDraftFeedback((prev) => ({ ...prev, [locationId]: feedback.message }));
   };
 
   const toggleApproval = async (locationId: string, approved: boolean) => {
@@ -146,6 +226,25 @@ const CustomerView = () => {
     setSavingApprovals(false);
   };
 
+  const renderVisibleField = (loc: any, field: FieldConfig) => {
+    const customFields = (loc.custom_fields && typeof loc.custom_fields === "object") ? loc.custom_fields : {};
+    const value =
+      field.field_key === "system" ? loc.system :
+      field.field_key === "label" ? loc.label :
+      field.field_key === "locationType" ? loc.location_type :
+      field.field_key === "comment" ? loc.comment :
+      customFields?.[field.field_key];
+
+    if (value === undefined || value === null || value === "") return null;
+    const displayValue = field.field_type === "checkbox" ? (value === true || value === "true" ? "Ja" : "Nein") : String(value);
+    return (
+      <div key={field.field_key} className="space-y-1 rounded-lg border p-3 bg-muted/20">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{field.field_label}</p>
+        <p className="text-sm whitespace-pre-wrap">{displayValue}</p>
+      </div>
+    );
+  };
+
   const allApproved = locations.length > 0 && locations.every(l => approvals[l.id]);
   const someApproved = locations.some(l => approvals[l.id]);
   const handleLogout = () => { clearSession(); navigate("/"); };
@@ -160,7 +259,7 @@ const CustomerView = () => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             {selectedAssignment && (
-              <Button variant="ghost" size="sm" onClick={() => { setSelectedAssignment(null); setLocations([]); }}>
+              <Button variant="ghost" size="sm" onClick={() => { setSelectedAssignment(null); setLocations([]); const next = new URLSearchParams(searchParams); next.delete("project"); setSearchParams(next); }}>
                 <ArrowLeft className="h-4 w-4" />
               </Button>
             )}
@@ -216,7 +315,8 @@ const CustomerView = () => {
             <div className="space-y-4">
               {locations.map((loc) => {
                 const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
-                const pdfEntry = images.find((i: any) => i.location_id === loc.id && i.image_type === "pdf");
+                const pdfEntries = images.filter((i: any) => i.location_id === loc.id && i.image_type === "pdf");
+                const locationFeedback = feedbacks[loc.id] || [];
                 const isApproved = !!approvals[loc.id];
                 return (
                   <Card key={loc.id} className={isApproved ? "border-green-500/50 bg-green-50/30 dark:bg-green-950/10" : ""}>
@@ -227,19 +327,10 @@ const CustomerView = () => {
                             Standort {loc.location_number}
                             {loc.location_name && <span className="font-normal text-muted-foreground ml-2">· {loc.location_name}</span>}
                           </CardTitle>
-                          {loc.location_type && <p className="text-sm text-muted-foreground mt-1">Art: {loc.location_type}</p>}
-                          {loc.system && <p className="text-sm text-muted-foreground">System: {loc.system}</p>}
-                          {loc.label && <p className="text-sm text-muted-foreground">Beschriftung: {loc.label}</p>}
-                          {loc.comment && <p className="text-sm text-muted-foreground">Kommentar: {loc.comment}</p>}
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Checkbox id={`approve-${loc.id}`} checked={isApproved}
-                            onCheckedChange={(checked) => toggleApproval(loc.id, !!checked)}
-                            className={isApproved ? "border-green-500 data-[state=checked]:bg-green-500" : ""} />
-                          <Label htmlFor={`approve-${loc.id}`} className={`text-sm cursor-pointer ${isApproved ? "text-green-600 font-medium" : "text-muted-foreground"}`}>
-                            {isApproved ? "Freigegeben ✓" : "Freigeben"}
-                          </Label>
-                        </div>
+                        <Button size="sm" variant={isApproved ? "outline" : "default"} onClick={() => toggleApproval(loc.id, !isApproved)}>
+                          <Check className="h-4 w-4 mr-1" /> {isApproved ? "Freigabe zurücknehmen" : "Freigeben"}
+                        </Button>
                       </div>
                     </CardHeader>
                     <CardContent className="p-4 space-y-4">
@@ -248,27 +339,62 @@ const CustomerView = () => {
                           <img src={getImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-full object-contain" />
                         </div>
                       )}
-                      {pdfEntry && (() => {
-                        const { data: urlData } = supabase.storage.from("project-files").getPublicUrl(pdfEntry.storage_path);
-                        return (
-                          <a href={urlData.publicUrl} target="_blank" rel="noopener noreferrer"
-                            className="flex items-center gap-2 p-3 border rounded-lg bg-muted/30 hover:bg-muted transition-colors text-sm no-underline">
-                            <FileText className="h-4 w-4 text-primary shrink-0" />
-                            <span className="flex-1 font-medium text-foreground">Druckdatei ansehen</span>
-                            <span className="text-muted-foreground text-xs">PDF öffnen →</span>
-                          </a>
-                        );
-                      })()}
-                      <div className="space-y-2">
-                        <Label>Informationen zum Standort</Label>
+
+                      {visibleFields.length > 0 && (
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {visibleFields.map((field) => renderVisibleField(loc, field))}
+                        </div>
+                      )}
+
+                      {pdfEntries.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">Druckdaten</p>
+                          {pdfEntries.map((pdf: any) => (
+                            <a
+                              key={pdf.id}
+                              href={getImageUrl(pdf.storage_path)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 text-sm text-primary hover:underline"
+                            >
+                              <FileText className="h-4 w-4" />
+                              {pdf.file_name}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="space-y-3">
+                        <Label>Hinweise / Korrekturen</Label>
+                        {locationFeedback.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">Noch keine Rückmeldungen vorhanden.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {locationFeedback.map((entry) => (
+                              <div key={entry.id} className="rounded-lg border p-3 bg-muted/20 space-y-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-sm font-medium">{entry.author_name}</p>
+                                  <span className={`text-xs px-2 py-0.5 rounded ${entry.status === "done" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{entry.status === "done" ? "Umgesetzt" : "Offen"}</span>
+                                </div>
+                                <p className="text-sm whitespace-pre-wrap">{entry.message}</p>
+                                {entry.author_customer_id === session?.id && entry.status === "open" && (
+                                  <Button variant="ghost" size="sm" className="px-0" onClick={() => startEditFeedback(loc.id, entry)}>
+                                    <Pencil className="h-4 w-4 mr-1" /> Bearbeiten
+                                  </Button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <Textarea
-                          placeholder="Informationen ergänzen..."
-                          value={guestInfoMap[loc.id] || ""}
-                          onChange={(e) => setGuestInfoMap(prev => ({ ...prev, [loc.id]: e.target.value }))}
+                          placeholder="Hinweis oder Korrektur zu diesem Standort eingeben..."
+                          value={draftFeedback[loc.id] || ""}
+                          onChange={(e) => setDraftFeedback((prev) => ({ ...prev, [loc.id]: e.target.value }))}
                           rows={3}
                         />
-                        <Button size="sm" onClick={() => saveGuestInfo(loc.id)} disabled={savingId === loc.id}>
-                          <Save className="h-4 w-4 mr-1" />{savingId === loc.id ? "Speichert..." : "Speichern"}
+                        <Button size="sm" onClick={() => saveFeedback(loc.id)} disabled={savingId === loc.id || !(draftFeedback[loc.id] || "").trim()}>
+                          <Save className="h-4 w-4 mr-1" />
+                          {savingId === loc.id ? "Speichert..." : editingFeedbackId[loc.id] ? "Hinweis aktualisieren" : "Hinweis speichern"}
                         </Button>
                       </div>
                     </CardContent>

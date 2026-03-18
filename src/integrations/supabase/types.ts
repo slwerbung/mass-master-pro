@@ -287,6 +287,7 @@ export type Database = {
       location_field_config: {
         Row: {
           created_at: string
+          customer_visible: boolean
           field_key: string
           field_label: string
           field_options: string | null
@@ -297,6 +298,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          customer_visible?: boolean
           field_key: string
           field_label: string
           field_options?: string | null
@@ -307,6 +309,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          customer_visible?: boolean
           field_key?: string
           field_label?: string
           field_options?: string | null
@@ -316,6 +319,54 @@ export type Database = {
           sort_order?: number
         }
         Relationships: []
+      }
+      location_feedback: {
+        Row: {
+          author_customer_id: string | null
+          author_name: string
+          created_at: string
+          id: string
+          location_id: string
+          message: string
+          resolved_at: string | null
+          status: string
+        }
+        Insert: {
+          author_customer_id?: string | null
+          author_name: string
+          created_at?: string
+          id?: string
+          location_id: string
+          message: string
+          resolved_at?: string | null
+          status?: string
+        }
+        Update: {
+          author_customer_id?: string | null
+          author_name?: string
+          created_at?: string
+          id?: string
+          location_id?: string
+          message?: string
+          resolved_at?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_feedback_author_customer_id_fkey"
+            columns: ["author_customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "location_feedback_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       location_images: {
         Row: {

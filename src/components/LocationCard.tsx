@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2 } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check } from "lucide-react";
 import { Location } from "@/types/project";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -11,6 +11,15 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
   AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+
+interface FeedbackItem {
+  id: string;
+  location_id: string;
+  message: string;
+  author_name: string;
+  status: "open" | "done";
+  created_at: string;
+}
 
 interface LocationCardProps {
   location: Location;
@@ -25,9 +34,12 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState<string | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
+  const [updatingFeedbackId, setUpdatingFeedbackId] = useState<string | null>(null);
 
   useEffect(() => {
     loadPdf();
+    loadFeedbacks();
   }, [location.id]);
 
   const loadPdf = async () => {
@@ -46,6 +58,33 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
     }
   };
 
+  const loadFeedbacks = async () => {
+    const { data, error } = await supabase
+      .from("location_feedback")
+      .select("id, location_id, message, author_name, status, created_at")
+      .eq("location_id", location.id)
+      .order("created_at", { ascending: true });
+    if (!error) setFeedbacks((data || []) as FeedbackItem[]);
+  };
+
+  const toggleFeedbackDone = async (feedback: FeedbackItem) => {
+    setUpdatingFeedbackId(feedback.id);
+    try {
+      const nextStatus = feedback.status === "done" ? "open" : "done";
+      const { error } = await supabase
+        .from("location_feedback")
+        .update({ status: nextStatus, resolved_at: nextStatus === "done" ? new Date().toISOString() : null })
+        .eq("id", feedback.id);
+      if (error) throw error;
+      await loadFeedbacks();
+      toast.success(nextStatus === "done" ? "Kommentar als umgesetzt markiert" : "Kommentar wieder geöffnet");
+    } catch {
+      toast.error("Kommentar konnte nicht aktualisiert werden");
+    } finally {
+      setUpdatingFeedbackId(null);
+    }
+  };
+
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -56,29 +95,17 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
     setUploadingPdf(true);
     try {
       const path = `pdfs/${location.id}/${Date.now()}_${file.name}`;
-      
-      // Upload to Storage
-      const { error: uploadError } = await supabase.storage
-        .from("project-files")
-        .upload(path, file, { upsert: true });
-      
+      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { upsert: true });
       if (uploadError) {
         toast.error("Upload fehlgeschlagen: " + uploadError.message);
         return;
       }
-
-      // Save to database - delete old entry first to avoid conflict
       await supabase.from("location_pdfs").delete().eq("location_id", location.id);
-      
-      const { error: dbError } = await supabase
-        .from("location_pdfs")
-        .insert({ location_id: location.id, storage_path: path, file_name: file.name });
-      
+      const { error: dbError } = await supabase.from("location_pdfs").insert({ location_id: location.id, storage_path: path, file_name: file.name });
       if (dbError) {
         toast.error("Datenbankfehler: " + dbError.message);
         return;
       }
-
       toast.success("Druckdatei hochgeladen ✓");
       await loadPdf();
     } catch (err: any) {
@@ -91,15 +118,8 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
 
   return (
     <Card className="overflow-hidden">
-      <div
-        className="aspect-video bg-muted relative cursor-pointer group"
-        onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}
-      >
-        <img
-          src={location.imageData}
-          alt={`Standort ${location.locationNumber}`}
-          className="w-full h-full object-contain"
-        />
+      <div className="aspect-video bg-muted relative cursor-pointer group" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}>
+        <img src={location.imageData} alt={`Standort ${location.locationNumber}`} className="w-full h-full object-contain" />
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
           <Pencil className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
         </div>
@@ -108,9 +128,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
         <div className="flex items-start justify-between gap-2">
           <div className="space-y-1 flex-1 min-w-0">
             <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
-            {location.locationName && (
-              <p className="text-sm text-foreground truncate">{location.locationName}</p>
-            )}
+            {location.locationName && <p className="text-sm text-foreground truncate">{location.locationName}</p>}
             {(location.system || location.label || location.locationType) && (
               <div className="flex flex-wrap gap-1">
                 {location.system && <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.system}</span>}
@@ -118,9 +136,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
                 {location.label && <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{location.label}</span>}
               </div>
             )}
-            {location.comment && (
-              <p className="text-sm text-muted-foreground line-clamp-2">{location.comment}</p>
-            )}
+            {location.comment && <p className="text-sm text-muted-foreground line-clamp-2">{location.comment}</p>}
           </div>
           <div className="flex gap-1">
             <Button variant="ghost" size="sm" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit`)}>
@@ -144,7 +160,6 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
           </div>
         </div>
 
-        {/* Druckdatei */}
         <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Druckdatei</p>
           {pdfUrl && pdfName ? (
@@ -168,7 +183,33 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
           )}
         </div>
 
-        {/* Detail Images */}
+        <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="h-4 w-4 text-primary" />
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Kunden-Feedback</p>
+          </div>
+          {feedbacks.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Noch keine Rückmeldungen.</p>
+          ) : (
+            <div className="space-y-2">
+              {feedbacks.map((feedback) => (
+                <div key={feedback.id} className="rounded border bg-background p-2 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">{feedback.author_name}</p>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-2 py-0.5 rounded ${feedback.status === "done" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{feedback.status === "done" ? "Umgesetzt" : "Offen"}</span>
+                      <Button size="sm" variant="ghost" disabled={updatingFeedbackId === feedback.id} onClick={() => toggleFeedbackDone(feedback)}>
+                        <Check className="h-4 w-4 mr-1" /> {feedback.status === "done" ? "Öffnen" : "Erledigt"}
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="text-sm whitespace-pre-wrap">{feedback.message}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {location.detailImages && location.detailImages.length > 0 && (
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Detailbilder</p>
@@ -178,18 +219,13 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
                   <img src={detail.imageData} alt={detail.caption || "Detailbild"}
                     className="w-full h-full object-cover cursor-pointer"
                     onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`)} />
-                  {detail.caption && (
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate">{detail.caption}</div>
-                  )}
-                  <Button variant="ghost" size="sm"
-                    className="absolute top-0 left-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-muted/80 hover:bg-muted text-foreground rounded-none rounded-br"
-                    onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit`); }}>
+                  {detail.caption && <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate">{detail.caption}</div>}
+                  <Button variant="ghost" size="sm" className="absolute top-0 left-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-muted/80 hover:bg-muted text-foreground rounded-none rounded-br" onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit`); }}>
                     <Pencil className="h-3 w-3" />
                   </Button>
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="sm"
-                        className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-destructive/80 hover:bg-destructive text-white rounded-none rounded-bl">
+                      <Button variant="ghost" size="sm" className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-destructive/80 hover:bg-destructive text-white rounded-none rounded-bl">
                         <Trash2 className="h-3 w-3" />
                       </Button>
                     </AlertDialogTrigger>
@@ -210,8 +246,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage }: Lo
           </div>
         )}
 
-        <Button variant="outline" size="sm" className="w-full"
-          onClick={() => navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`)}>
+        <Button variant="outline" size="sm" className="w-full" onClick={() => navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`)}>
           <ImagePlus className="h-4 w-4 mr-2" /> Detailbild hinzufügen
         </Button>
       </CardContent>

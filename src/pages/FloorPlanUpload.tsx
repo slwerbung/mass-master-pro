@@ -109,8 +109,9 @@ const FloorPlanUpload = () => {
         await indexedDBStorage.saveFloorPlan(projectId, floorPlan);
       }
 
-      syncProjectToSupabase(projectId);
-      toast.success("Grundrisse gespeichert");
+      const syncResult = await syncProjectToSupabase(projectId);
+      if (syncResult === "remote-won") toast.warning("Neuere Online-Version übernommen");
+      else toast.success("Grundrisse gespeichert");
       navigate(`/projects/${projectId}/floor-plans`);
     } catch (error) {
       console.error("Error saving floor plans:", error);

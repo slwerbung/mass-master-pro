@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Lock } from "lucide-react";
 import { toast } from "sonner";
+import { setSession } from "@/lib/session";
 
 const GuestAccess = () => {
   const { projectId } = useParams();
@@ -58,11 +59,26 @@ const GuestAccess = () => {
     checkAndValidate(password);
   };
 
-  const handleNameSubmit = (e: React.FormEvent) => {
+  const handleNameSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!guestName.trim()) return;
-    localStorage.setItem("guest_name", guestName.trim());
-    navigate(`/guest/${projectId}/view`);
+    if (!guestName.trim() || !projectId) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("ensure-customer-assignment", {
+        body: { projectId, customerName: guestName.trim() },
+      });
+      if (error || !data?.customer) {
+        toast.error("Kundenzugang konnte nicht vorbereitet werden");
+        return;
+      }
+      localStorage.setItem("guest_name", guestName.trim());
+      setSession({ role: "customer", id: data.customer.id, name: data.customer.name });
+      navigate(`/customer?project=${projectId}`, { replace: true });
+    } catch {
+      toast.error("Fehler beim Anmelden");
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (step === "check") {
@@ -114,7 +130,7 @@ const GuestAccess = () => {
                   required
                 />
               </div>
-              <Button type="submit" className="w-full">Projekt ansehen</Button>
+              <Button type="submit" className="w-full" disabled={loading}>{loading ? "Lädt..." : "Projekt ansehen"}</Button>
             </form>
           )}
         </CardContent>

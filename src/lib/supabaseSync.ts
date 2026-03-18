@@ -1,132 +1,115 @@
 import { supabase } from "@/integrations/supabase/client";
 import { indexedDBStorage } from "./indexedDBStorage";
 import { getSession } from "./session";
-import { Project, Location, DetailImage, FloorPlan } from "@/types/project";
+import { Project, DetailImage, FloorPlan } from "@/types/project";
+import { finishSyncError, finishSyncSuccess, startSync } from "./syncStatus";
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+function getLocationImagePath(locationId: string, imageType: "annotated" | "original") {
+  return `images/${locationId}/${imageType}`;
+}
+function getDetailImagePath(locationId: string, detailImageId: string, imageType: "annotated" | "original") {
+  return `detail-images/${locationId}/${detailImageId}/${imageType}`;
+}
+function getFloorPlanPath(projectId: string, floorPlanId: string) {
+  return `floor-plans/${projectId}/${floorPlanId}`;
+}
 
-// Upload image blob directly to Supabase Storage
 async function uploadImageToStorage(path: string, base64: string): Promise<string | null> {
   try {
     if (!base64 || !base64.includes(';base64,')) return null;
-    
     const parts = base64.split(';base64,');
     const contentType = parts[0].split(':')[1] || 'image/jpeg';
     const raw = atob(parts[1]);
     const uInt8Array = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) uInt8Array[i] = raw.charCodeAt(i);
     const blob = new Blob([uInt8Array], { type: contentType });
-
-    const { error } = await supabase.storage
-      .from('project-files')
-      .upload(path, blob, {
-        contentType,
-        upsert: true,
-      });
-
-    if (error) {
-      console.warn('Storage upload failed:', error.message);
-      return null;
-    }
-
+    const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType, upsert: true });
+    if (error) return null;
     return path;
-  } catch (e) {
-    console.warn('Image upload error:', e);
+  } catch {
     return null;
   }
 }
 
+async function removeStoragePaths(paths: (string | null | undefined)[]) {
+  const uniquePaths = [...new Set(paths.filter(Boolean) as string[])];
+  if (uniquePaths.length === 0) return;
+  await supabase.storage.from('project-files').remove(uniquePaths);
+}
+
 async function syncImageVariant(locationId: string, imageType: "annotated" | "original", imageData: string): Promise<void> {
   if (!imageData) return;
-
-  try {
-    const extension = imageData.includes("image/png") ? "png" : "jpg";
-    const path = `images/${locationId}/${imageType}.${extension}`;
-    const uploaded = await uploadImageToStorage(path, imageData);
-    if (!uploaded) return;
-
-    await supabase
-      .from("location_images")
-      .upsert({
-        location_id: locationId,
-        image_type: imageType,
-        storage_path: path,
-      }, { onConflict: "location_id,image_type" });
-  } catch (e) {
-    console.warn(`Image sync failed for ${locationId}/${imageType}:`, e);
-  }
+  const path = getLocationImagePath(locationId, imageType);
+  const uploaded = await uploadImageToStorage(path, imageData);
+  if (!uploaded) return;
+  await supabase.from("location_images").upsert({ location_id: locationId, image_type: imageType, storage_path: path }, { onConflict: "location_id,image_type" });
 }
 
 async function syncLocationImages(locationId: string, annotatedImage?: string, originalImage?: string): Promise<void> {
-  if (annotatedImage) await syncImageVariant(locationId, "annotated", annotatedImage);
-  if (originalImage) await syncImageVariant(locationId, "original", originalImage);
-}
-
-
-
-async function syncDetailImage(detailImage: DetailImage, locationId: string): Promise<void> {
-  try {
-    const annotatedExtension = detailImage.imageData.includes("image/png") ? "png" : "jpg";
-    const originalExtension = detailImage.originalImageData?.includes("image/png") ? "png" : annotatedExtension;
-
-    const annotatedPath = `detail-images/${locationId}/${detailImage.id}/annotated.${annotatedExtension}`;
-    const originalPath = `detail-images/${locationId}/${detailImage.id}/original.${originalExtension}`;
-
-    const uploadedAnnotated = await uploadImageToStorage(annotatedPath, detailImage.imageData);
-    const uploadedOriginal = await uploadImageToStorage(originalPath, detailImage.originalImageData || detailImage.imageData);
-
-    if (!uploadedAnnotated || !uploadedOriginal) return;
-
-    await supabase
-      .from("detail_images")
-      .upsert({
-        id: detailImage.id,
-        location_id: locationId,
-        caption: detailImage.caption || null,
-        annotated_path: annotatedPath,
-        original_path: originalPath,
-        created_at: detailImage.createdAt instanceof Date ? detailImage.createdAt.toISOString() : new Date().toISOString(),
-      }, { onConflict: "id" });
-  } catch (e) {
-    console.warn(`Detail image sync failed for ${detailImage.id}:`, e);
+  const desiredTypes = new Set<string>();
+  if (annotatedImage) { desiredTypes.add('annotated'); await syncImageVariant(locationId, "annotated", annotatedImage); }
+  if (originalImage) { desiredTypes.add('original'); await syncImageVariant(locationId, "original", originalImage); }
+  const { data: existingRows } = await supabase.from('location_images').select('image_type, storage_path').eq('location_id', locationId);
+  const rowsToDelete = (existingRows || []).filter((row) => !desiredTypes.has(row.image_type));
+  if (rowsToDelete.length) {
+    await removeStoragePaths(rowsToDelete.map((row) => row.storage_path));
+    await supabase.from('location_images').delete().eq('location_id', locationId).in('image_type', rowsToDelete.map((row) => row.image_type));
   }
 }
 
+async function syncDetailImage(detailImage: DetailImage, locationId: string): Promise<void> {
+  const annotatedPath = getDetailImagePath(locationId, detailImage.id, 'annotated');
+  const originalPath = getDetailImagePath(locationId, detailImage.id, 'original');
+  const uploadedAnnotated = await uploadImageToStorage(annotatedPath, detailImage.imageData);
+  const uploadedOriginal = await uploadImageToStorage(originalPath, detailImage.originalImageData || detailImage.imageData);
+  if (!uploadedAnnotated || !uploadedOriginal) return;
+  await supabase.from("detail_images").upsert({
+    id: detailImage.id,
+    location_id: locationId,
+    caption: detailImage.caption || null,
+    annotated_path: annotatedPath,
+    original_path: originalPath,
+    created_at: detailImage.createdAt instanceof Date ? detailImage.createdAt.toISOString() : new Date().toISOString(),
+  }, { onConflict: "id" });
+}
+
 async function syncDetailImages(locationId: string, detailImages?: DetailImage[]): Promise<void> {
-  if (!detailImages || detailImages.length === 0) return;
-  for (const detailImage of detailImages) {
-    await syncDetailImage(detailImage, locationId);
+  const current = detailImages || [];
+  const currentIds = new Set(current.map((d) => d.id));
+  for (const detailImage of current) await syncDetailImage(detailImage, locationId);
+  const { data: existingRows } = await supabase.from('detail_images').select('id, annotated_path, original_path').eq('location_id', locationId);
+  const rowsToDelete = (existingRows || []).filter((row) => !currentIds.has(row.id));
+  if (rowsToDelete.length) {
+    await removeStoragePaths(rowsToDelete.flatMap((row) => [row.annotated_path, row.original_path]));
+    await supabase.from('detail_images').delete().eq('location_id', locationId).in('id', rowsToDelete.map((row) => row.id));
   }
 }
 
 async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<void> {
-  try {
-    const extension = floorPlan.imageData.includes("image/jpeg") ? "jpg" : "png";
-    const path = `floor-plans/${projectId}/${floorPlan.id}.${extension}`;
-    const uploaded = await uploadImageToStorage(path, floorPlan.imageData);
-    if (!uploaded) return;
-
-    await supabase
-      .from("floor_plans")
-      .upsert({
-        id: floorPlan.id,
-        project_id: projectId,
-        name: floorPlan.name,
-        storage_path: path,
-        markers: floorPlan.markers as any,
-        page_index: floorPlan.pageIndex,
-        created_at: floorPlan.createdAt instanceof Date ? floorPlan.createdAt.toISOString() : new Date().toISOString(),
-      }, { onConflict: "id" });
-  } catch (e) {
-    console.warn(`Floor plan sync failed for ${floorPlan.id}:`, e);
-  }
+  const path = getFloorPlanPath(projectId, floorPlan.id);
+  const uploaded = await uploadImageToStorage(path, floorPlan.imageData);
+  if (!uploaded) return;
+  await supabase.from("floor_plans").upsert({
+    id: floorPlan.id,
+    project_id: projectId,
+    name: floorPlan.name,
+    storage_path: path,
+    markers: floorPlan.markers as any,
+    page_index: floorPlan.pageIndex,
+    created_at: floorPlan.createdAt instanceof Date ? floorPlan.createdAt.toISOString() : new Date().toISOString(),
+  }, { onConflict: "id" });
 }
 
 async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Promise<void> {
-  if (!floorPlans || floorPlans.length === 0) return;
-  for (const floorPlan of floorPlans) {
-    await syncFloorPlan(projectId, floorPlan);
+  const current = floorPlans || [];
+  const currentIds = new Set(current.map((fp) => fp.id));
+  for (const floorPlan of current) await syncFloorPlan(projectId, floorPlan);
+  const { data: existingRows, error } = await supabase.from('floor_plans').select('id, storage_path').eq('project_id', projectId);
+  if (error) return;
+  const rowsToDelete = (existingRows || []).filter((row) => !currentIds.has(row.id));
+  if (rowsToDelete.length) {
+    await removeStoragePaths(rowsToDelete.map((row) => row.storage_path));
+    await supabase.from('floor_plans').delete().eq('project_id', projectId).in('id', rowsToDelete.map((row) => row.id));
   }
 }
 
@@ -142,27 +125,25 @@ async function pathToBase64(path: string): Promise<string | null> {
       reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(blob);
     });
-  } catch (e) {
-    console.warn(`Image download failed for ${path}:`, e);
+  } catch {
     return null;
   }
 }
 
-export async function hydrateProjectFromSupabase(projectId: string): Promise<Project | null> {
-  const { data: projectRow, error: projectError } = await supabase
-    .from("projects")
-    .select("id, project_number, created_at, updated_at")
-    .eq("id", projectId)
-    .single();
+export async function getProjectRemoteTimestamp(projectId: string): Promise<Date | null> {
+  const { data } = await supabase.from('projects').select('updated_at').eq('id', projectId).maybeSingle();
+  return data?.updated_at ? new Date(data.updated_at) : null;
+}
 
+export async function hydrateProjectFromSupabase(projectId: string): Promise<Project | null> {
+  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, created_at, updated_at").eq("id", projectId).single();
   if (projectError || !projectRow) return null;
 
   const { data: locationRows, error: locationError } = await supabase
     .from("locations")
-    .select("id, location_number, location_name, comment, system, label, location_type, created_at")
+    .select("id, location_number, location_name, comment, system, label, location_type, custom_fields, guest_info, created_at")
     .eq("project_id", projectId)
     .order("created_at");
-
   if (locationError) throw locationError;
 
   const locationIds = (locationRows || []).map((row) => row.id);
@@ -170,13 +151,8 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
   const detailImageMap = new Map<string, DetailImage[]>();
 
   if (locationIds.length > 0) {
-    const { data: imageRows, error: imageError } = await supabase
-      .from("location_images")
-      .select("location_id, image_type, storage_path")
-      .in("location_id", locationIds);
-
+    const { data: imageRows, error: imageError } = await supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds);
     if (imageError) throw imageError;
-
     for (const row of imageRows || []) {
       const entry = imageMap.get(row.location_id) || {};
       const base64 = await pathToBase64(row.storage_path);
@@ -187,14 +163,8 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
       imageMap.set(row.location_id, entry);
     }
 
-    const { data: detailRows, error: detailError } = await supabase
-      .from("detail_images")
-      .select("id, location_id, caption, annotated_path, original_path, created_at")
-      .in("location_id", locationIds)
-      .order("created_at");
-
+    const { data: detailRows, error: detailError } = await supabase.from("detail_images").select("id, location_id, caption, annotated_path, original_path, created_at").in("location_id", locationIds).order("created_at");
     if (detailError) throw detailError;
-
     for (const row of detailRows || []) {
       const annotated = await pathToBase64(row.annotated_path);
       const original = await pathToBase64(row.original_path);
@@ -211,17 +181,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     }
   }
 
-  const { data: floorPlanRows, error: floorPlanError } = await supabase
-    .from("floor_plans")
-    .select("id, name, storage_path, markers, page_index, created_at")
-    .eq("project_id", projectId)
-    .order("page_index");
-
-  if (floorPlanError) {
-    const message = String(floorPlanError.message || "");
-    if (!message.toLowerCase().includes("floor_plans")) throw floorPlanError;
-  }
-
+  const { data: floorPlanRows } = await supabase.from("floor_plans").select("id, name, storage_path, markers, page_index, created_at").eq("project_id", projectId).order("page_index");
   const floorPlans: FloorPlan[] = [];
   for (const row of floorPlanRows || []) {
     const imageData = await pathToBase64(row.storage_path);
@@ -235,11 +195,8 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     });
   }
 
-  const locations: Location[] = (locationRows || []).map((row) => {
+  const locations = (locationRows || []).map((row) => {
     const images = imageMap.get(row.id) || {};
-    const annotated = images.annotated || images.original || "";
-    const original = images.original || images.annotated || "";
-
     return {
       id: row.id,
       locationNumber: row.location_number,
@@ -248,8 +205,10 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
       system: row.system || undefined,
       label: row.label || undefined,
       locationType: row.location_type || undefined,
-      imageData: annotated,
-      originalImageData: original,
+      customFields: row.custom_fields && typeof row.custom_fields === 'object' ? row.custom_fields as Record<string, string> : undefined,
+      guestInfo: row.guest_info || undefined,
+      imageData: images.annotated || images.original || "",
+      originalImageData: images.original || images.annotated || "",
       createdAt: new Date(row.created_at),
       detailImages: detailImageMap.get(row.id) || [],
     };
@@ -263,13 +222,12 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     createdAt: new Date(projectRow.created_at),
     updatedAt: new Date(projectRow.updated_at),
   };
-
   await indexedDBStorage.saveProject(hydratedProject);
   return hydratedProject;
 }
 
-function buildLocationRows(project: any) {
-  return project.locations.map((l: any) => ({
+function buildLocationRows(project: Project) {
+  return project.locations.map((l) => ({
     id: l.id,
     project_id: project.id,
     location_number: l.locationNumber,
@@ -278,131 +236,119 @@ function buildLocationRows(project: any) {
     system: l.system || null,
     label: l.label || null,
     location_type: l.locationType || null,
-    guest_info: null,
+    custom_fields: l.customFields || {},
     created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
   }));
 }
 
+async function removeDeletedLocationsFromSupabase(project: Project) {
+  const { data: remoteLocations } = await supabase.from('locations').select('id').eq('project_id', project.id);
+  const localLocationIds = new Set(project.locations.map((location) => location.id));
+  const deletedLocationIds = (remoteLocations || []).map((row) => row.id).filter((id) => !localLocationIds.has(id));
+  if (deletedLocationIds.length === 0) return;
+  const { data: remoteLocationImages } = await supabase.from('location_images').select('storage_path').in('location_id', deletedLocationIds);
+  const { data: remoteDetailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', deletedLocationIds);
+  await removeStoragePaths([...(remoteLocationImages || []).map((row) => row.storage_path), ...(remoteDetailImages || []).flatMap((row) => [row.annotated_path, row.original_path])]);
+  await supabase.from('location_feedback').delete().in('location_id', deletedLocationIds);
+  await supabase.from('location_approvals').delete().in('location_id', deletedLocationIds);
+  await supabase.from('location_pdfs').delete().in('location_id', deletedLocationIds);
+  await supabase.from('detail_images').delete().in('location_id', deletedLocationIds);
+  await supabase.from('location_images').delete().in('location_id', deletedLocationIds);
+  await supabase.from('locations').delete().eq('project_id', project.id).in('id', deletedLocationIds);
+}
+
+async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'remote-won' | 'skipped'> {
+  const session = getSession();
+  const project = await indexedDBStorage.getProject(projectId);
+  if (!project) return 'skipped';
+  const remoteUpdatedAt = await getProjectRemoteTimestamp(projectId);
+  if (remoteUpdatedAt && remoteUpdatedAt.getTime() > project.updatedAt.getTime() + 1000) {
+    await hydrateProjectFromSupabase(projectId);
+    return 'remote-won';
+  }
+  const syncTimestamp = new Date().toISOString();
+  await supabase.from('projects').upsert({
+    id: project.id,
+    project_number: project.projectNumber,
+    user_id: session?.id || 'employee',
+    employee_id: session?.role === 'employee' ? session.id : null,
+    created_at: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),
+    updated_at: syncTimestamp,
+  }, { onConflict: 'id' });
+
+  if (project.locations?.length) {
+    await supabase.from('locations').upsert(buildLocationRows(project), { onConflict: 'id' });
+    for (const loc of project.locations) {
+      await syncLocationImages(loc.id, loc.imageData, loc.originalImageData);
+      await syncDetailImages(loc.id, loc.detailImages);
+    }
+  }
+
+  await removeDeletedLocationsFromSupabase(project);
+  await syncFloorPlans(project.id, project.floorPlans);
+  project.updatedAt = new Date(syncTimestamp);
+  await indexedDBStorage.saveProject(project);
+  return 'uploaded';
+}
+
 export async function syncAllToSupabase(): Promise<void> {
+  startSync();
   try {
-    const session = getSession();
     const projects = await indexedDBStorage.getProjects();
-    if (projects.length === 0) return;
-
-    const projectRows = projects.map((p) => ({
-      id: p.id,
-      project_number: p.projectNumber,
-      user_id: session?.id || "employee",
-      employee_id: session?.role === "employee" ? session.id : null,
-      created_at: p.createdAt instanceof Date ? p.createdAt.toISOString() : new Date().toISOString(),
-      updated_at: p.updatedAt instanceof Date ? p.updatedAt.toISOString() : new Date().toISOString(),
-    }));
-
-    await supabase.from("projects").upsert(projectRows, { onConflict: "id" });
-
-    for (const project of projects) {
-      if (!project.locations || project.locations.length === 0) continue;
-      await supabase.from("locations").upsert(buildLocationRows(project), { onConflict: "id" });
-
-      for (const loc of project.locations) {
-        await syncLocationImages(loc.id, loc.imageData, loc.originalImageData);
-        await syncDetailImages(loc.id, loc.detailImages);
-      }
-
-      await syncFloorPlans(project.id, project.floorPlans);
-    }
+    for (const project of projects) await syncProjectInternal(project.id);
+    finishSyncSuccess();
   } catch (e) {
-    console.warn("Background sync failed:", e);
+    finishSyncError(e);
+    throw e;
   }
 }
 
-export async function syncProjectToSupabase(projectId: string): Promise<void> {
+export async function syncProjectToSupabase(projectId: string): Promise<'uploaded' | 'remote-won' | 'skipped'> {
+  startSync();
   try {
-    const session = getSession();
-    const project = await indexedDBStorage.getProject(projectId);
-    if (!project) return;
-
-    await supabase.from("projects").upsert(
-      {
-        id: project.id,
-        project_number: project.projectNumber,
-        user_id: session?.id || "employee",
-        employee_id: session?.role === "employee" ? session.id : null,
-        created_at: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "id" }
-    );
-
-    if (project.locations && project.locations.length > 0) {
-      await supabase.from("locations").upsert(buildLocationRows(project), { onConflict: "id" });
-
-      for (const loc of project.locations) {
-        await syncLocationImages(loc.id, loc.imageData, loc.originalImageData);
-        await syncDetailImages(loc.id, loc.detailImages);
-      }
-
-      await syncFloorPlans(project.id, project.floorPlans);
-    }
+    const result = await syncProjectInternal(projectId);
+    finishSyncSuccess();
+    return result;
   } catch (e) {
-    console.warn("Project sync failed:", e);
+    finishSyncError(e);
+    throw e;
   }
 }
 
-export async function syncLocationToSupabase(projectId: string, locationId: string): Promise<void> {
-  try {
-    const project = await indexedDBStorage.getProject(projectId);
-    if (!project) return;
-    const location = project.locations.find((l) => l.id === locationId);
-    if (!location) return;
+export async function syncLocationToSupabase(projectId: string, _locationId: string): Promise<void> {
+  await syncProjectToSupabase(projectId);
+}
 
-    await supabase.from("locations").upsert(
-      {
-        id: location.id,
-        project_id: projectId,
-        location_number: location.locationNumber,
-        location_name: location.locationName || null,
-        comment: location.comment || null,
-        system: location.system || null,
-        label: location.label || null,
-        location_type: location.locationType || null,
-        guest_info: null,
-        created_at: location.createdAt instanceof Date ? location.createdAt.toISOString() : new Date().toISOString(),
-      },
-      { onConflict: "id" }
-    );
+export async function deleteFloorPlanFromSupabase(projectId: string, floorPlanId: string): Promise<void> {
+  const { data } = await supabase.from('floor_plans').select('storage_path').eq('project_id', projectId).eq('id', floorPlanId).maybeSingle();
+  await removeStoragePaths([data?.storage_path]);
+  await supabase.from('floor_plans').delete().eq('project_id', projectId).eq('id', floorPlanId);
+}
 
-    await syncLocationImages(location.id, location.imageData, location.originalImageData);
-    await syncDetailImages(location.id, location.detailImages);
-    await syncFloorPlans(projectId, project.floorPlans);
-  } catch (e) {
-    console.warn("Location sync failed:", e);
-  }
+export async function deleteDetailImageFromSupabase(detailImageId: string): Promise<void> {
+  const { data } = await supabase.from('detail_images').select('annotated_path, original_path').eq('id', detailImageId).maybeSingle();
+  await removeStoragePaths([data?.annotated_path, data?.original_path]);
+  await supabase.from('detail_images').delete().eq('id', detailImageId);
 }
 
 export async function deleteProjectFromSupabase(projectId: string): Promise<void> {
-  // Get location IDs first
-  const { data: locations } = await supabase
-    .from("locations")
-    .select("id")
-    .eq("project_id", projectId);
-
+  const { data: locations } = await supabase.from("locations").select("id").eq("project_id", projectId);
   const locationIds = (locations || []).map((l) => l.id);
-
   if (locationIds.length > 0) {
-    // Delete child records - ignore errors (tables may not exist)
+    const { data: locationImages } = await supabase.from('location_images').select('storage_path').in('location_id', locationIds);
+    const { data: detailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', locationIds);
+    await removeStoragePaths([...(locationImages || []).map((row) => row.storage_path), ...(detailImages || []).flatMap((row) => [row.annotated_path, row.original_path])]);
+    await supabase.from("location_feedback").delete().in("location_id", locationIds);
     await supabase.from("location_approvals").delete().in("location_id", locationIds);
     await supabase.from("location_images").delete().in("location_id", locationIds);
     await supabase.from("location_pdfs").delete().in("location_id", locationIds);
+    await supabase.from("detail_images").delete().in("location_id", locationIds);
   }
-
-  // Delete customer assignments
+  const { data: floorPlans } = await supabase.from('floor_plans').select('storage_path').eq('project_id', projectId);
+  await removeStoragePaths((floorPlans || []).map((row) => row.storage_path));
+  await supabase.from('floor_plans').delete().eq('project_id', projectId);
   await supabase.from("customer_project_assignments").delete().eq("project_id", projectId);
-
-  // Delete locations
   await supabase.from("locations").delete().eq("project_id", projectId);
-
-  // Delete project - this is the critical one
-  const { error } = await supabase.from("projects").delete().eq("id", projectId);
+  const { error } = await supabase.from("projects").delete().eq('id', projectId);
   if (error) throw new Error("Projekt konnte nicht gelöscht werden: " + error.message);
 }

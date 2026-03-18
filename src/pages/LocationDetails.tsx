@@ -72,8 +72,7 @@ const LocationDetails = () => {
         if (loc.locationType) vals["locationType"] = loc.locationType;
         if (loc.comment) vals["comment"] = loc.comment;
         // custom fields stored in loc as any
-        const locAny = loc as any;
-        if (locAny.customFields) Object.assign(vals, locAny.customFields);
+        if (loc.customFields) Object.assign(vals, loc.customFields);
         setFieldValues(vals);
         setIsLoaded(true);
       };
@@ -114,12 +113,11 @@ const LocationDetails = () => {
           system: fieldValues["system"]?.trim() || undefined,
           label: fieldValues["label"]?.trim() || undefined,
           locationType: fieldValues["locationType"]?.trim() || undefined,
-          ...(Object.fromEntries(
-            Object.entries(fieldValues).filter(([k]) => k.startsWith("custom_"))
-          ) as any),
+          customFields: Object.fromEntries(Object.entries(fieldValues).filter(([k]) => k.startsWith("custom_"))),
         });
-        toast.success("Standort aktualisiert");
-        syncProjectToSupabase(projectId);
+        const syncResult = await syncProjectToSupabase(projectId);
+        if (syncResult === "remote-won") toast.warning("Neuere Online-Version übernommen");
+        else toast.success("Standort aktualisiert");
         navigate(`/projects/${projectId}`);
       } else if (isDetailImage && stateImageData) {
         toast.loading("Bild wird komprimiert...");
@@ -129,8 +127,10 @@ const LocationDetails = () => {
         if (!targetLocationId) { toast.error("Standort nicht gefunden"); return; }
         const detailImage = { id: crypto.randomUUID(), imageData: compressedImageData, originalImageData: compressedOriginalImageData, caption: caption.trim() || undefined, createdAt: new Date() };
         await indexedDBStorage.saveDetailImage(targetLocationId, detailImage);
+        const syncResult = await syncProjectToSupabase(projectId);
         toast.dismiss();
-        toast.success("Detailbild gespeichert");
+        if (syncResult === "remote-won") toast.warning("Neuere Online-Version übernommen");
+        else toast.success("Detailbild gespeichert");
         navigate(`/projects/${projectId}`);
       } else if (stateImageData) {
         const project = await indexedDBStorage.getProject(projectId);
@@ -155,12 +155,13 @@ const LocationDetails = () => {
         // Store custom fields
         const customFields: Record<string, string> = {};
         Object.entries(fieldValues).forEach(([k, v]) => { if (k.startsWith("custom_")) customFields[k] = v; });
-        if (Object.keys(customFields).length > 0) (newLocation as any).customFields = customFields;
+        if (Object.keys(customFields).length > 0) newLocation.customFields = customFields;
         project.locations.push(newLocation);
         await indexedDBStorage.saveProject(project);
+        const syncResult = await syncProjectToSupabase(projectId);
         toast.dismiss();
-        toast.success("Standort gespeichert");
-        syncProjectToSupabase(projectId);
+        if (syncResult === "remote-won") toast.warning("Neuere Online-Version übernommen");
+        else toast.success("Standort gespeichert");
         if (floorPlanId) navigate(`/projects/${projectId}/floor-plans`);
         else navigate(`/projects/${projectId}`);
       }

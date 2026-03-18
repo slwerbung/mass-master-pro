@@ -14,6 +14,17 @@ export interface DetailImage {
   createdAt: Date;
 }
 
+export interface LocationFeedback {
+  id: string;
+  locationId: string;
+  message: string;
+  authorName: string;
+  authorCustomerId?: string;
+  status: 'open' | 'done';
+  createdAt: Date;
+  resolvedAt?: Date;
+}
+
 export interface Location {
   id: string;
   locationNumber: string; // Projektnummer + fortlaufende Nummer
@@ -25,6 +36,9 @@ export interface Location {
   system?: string;        // z.B. "Türschilder"
   label?: string;         // Beschriftung
   locationType?: string;  // Art, z.B. "Raum", "Flur", "Eingang"
+  customFields?: Record<string, string>;
+  guestInfo?: string;
+  feedbacks?: LocationFeedback[];
   createdAt: Date;
 }
 

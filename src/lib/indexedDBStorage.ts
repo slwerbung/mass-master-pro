@@ -24,6 +24,8 @@ interface AufmassDBSchema extends DBSchema {
       system?: string;
       label?: string;
       locationType?: string;
+      customFields?: string;
+      guestInfo?: string;
       createdAt: string;
     };
     indexes: { 'by-project': string };
@@ -226,6 +228,8 @@ export const indexedDBStorage = {
         system: record.system,
         label: record.label,
         locationType: record.locationType,
+        customFields: record.customFields ? JSON.parse(record.customFields) : undefined,
+        guestInfo: record.guestInfo,
         imageData,
         originalImageData,
         detailImages,
@@ -331,7 +335,7 @@ export const indexedDBStorage = {
     await db.delete('detail-image-blobs', createDetailBlobId(detailImageId, 'original'));
   },
 
-  async updateLocationMetadata(projectId: string, locationId: string, data: { locationName?: string; comment?: string; system?: string; label?: string; locationType?: string }): Promise<void> {
+  async updateLocationMetadata(projectId: string, locationId: string, data: { locationName?: string; comment?: string; system?: string; label?: string; locationType?: string; customFields?: Record<string, string>; guestInfo?: string }): Promise<void> {
     const db = await getDB();
     const record = await db.get('locations', locationId);
     if (!record) return;
@@ -343,6 +347,8 @@ export const indexedDBStorage = {
       system: data.system,
       label: data.label,
       locationType: data.locationType,
+      customFields: data.customFields ? JSON.stringify(data.customFields) : undefined,
+      guestInfo: data.guestInfo,
     });
 
     const project = await db.get('projects', projectId);
@@ -375,6 +381,8 @@ export const indexedDBStorage = {
         system: location.system,
         label: location.label,
         locationType: location.locationType,
+        customFields: location.customFields ? JSON.stringify(location.customFields) : undefined,
+        guestInfo: location.guestInfo,
         createdAt: location.createdAt.toISOString(),
       });
       
