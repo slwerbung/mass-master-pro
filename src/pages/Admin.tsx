@@ -133,7 +133,7 @@ const Admin = () => {
       });
       setNewFieldLabel(""); setNewFieldOptions(""); setNewFieldType("text"); toast.success("Feld erstellt"); loadFields();
     } catch {
-      const { error } = await supabase.from("location_field_config").insert({
+      const { error } = await (supabase as any).from("location_field_config").insert({
         field_key: fieldKey,
         field_label: newFieldLabel.trim(),
         field_type: newFieldType,
