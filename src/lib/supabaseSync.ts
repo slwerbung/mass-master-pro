@@ -320,9 +320,9 @@ export async function syncLocationToSupabase(projectId: string, _locationId: str
 }
 
 export async function deleteFloorPlanFromSupabase(projectId: string, floorPlanId: string): Promise<void> {
-  const { data } = await supabase.from('floor_plans').select('storage_path').eq('project_id', projectId).eq('id', floorPlanId).maybeSingle();
+  const { data } = await (supabase as any).from('floor_plans').select('storage_path').eq('project_id', projectId).eq('id', floorPlanId).maybeSingle();
   await removeStoragePaths([data?.storage_path]);
-  await supabase.from('floor_plans').delete().eq('project_id', projectId).eq('id', floorPlanId);
+  await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).eq('id', floorPlanId);
 }
 
 export async function deleteDetailImageFromSupabase(detailImageId: string): Promise<void> {
