@@ -152,7 +152,7 @@ const Admin = () => {
     try {
       await invoke("update_field", { fieldId: field.id, changes: { is_active: !field.is_active } });
     } catch {
-      await supabase.from("location_field_config").update({ is_active: !field.is_active }).eq("id", field.id);
+      await (supabase as any).from("location_field_config").update({ is_active: !field.is_active }).eq("id", field.id);
     }
     loadFields();
   };
