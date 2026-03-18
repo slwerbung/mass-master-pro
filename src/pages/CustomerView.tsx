@@ -158,7 +158,7 @@ const CustomerView = () => {
     setLoading(true);
     try {
       const [{ data: fieldData }, assignmentResult] = await Promise.all([
-        supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+        (supabase as any).from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
         isRealCustomerId(session?.id)
           ? supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", session!.id)
           : Promise.resolve({ data: [], error: null } as any),
