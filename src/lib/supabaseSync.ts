@@ -89,7 +89,7 @@ async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<v
   const path = getFloorPlanPath(projectId, floorPlan.id);
   const uploaded = await uploadImageToStorage(path, floorPlan.imageData);
   if (!uploaded) return;
-  await supabase.from("floor_plans").upsert({
+  await (supabase as any).from("floor_plans").upsert({
     id: floorPlan.id,
     project_id: projectId,
     name: floorPlan.name,
