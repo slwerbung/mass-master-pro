@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { compare } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 import { createSessionToken, getSessionSecret } from "../_shared/session.ts";
+import { verifyPassword } from "../_shared/passwords.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
 
     let valid = false;
     if (storedHash) {
-      valid = !!password && await compare(password, storedHash);
+      valid = !!password && await verifyPassword(password, storedHash);
     } else if (envPassword) {
       valid = password === envPassword;
     } else {
