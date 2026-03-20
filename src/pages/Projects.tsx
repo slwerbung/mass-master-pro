@@ -38,14 +38,10 @@ const Projects = () => {
       const projectQuery = supabase.from("projects").select("id, project_number, updated_at, employee_id").order("updated_at", { ascending: false });
       const scopedQuery = session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery;
 
-      const [supabaseResult, localProjectsRaw] = await Promise.all([
+      const [supabaseResult, localProjects] = await Promise.all([
         scopedQuery,
         indexedDBStorage.getProjects(),
       ]);
-
-      const localProjects = session?.role === 'employee'
-        ? localProjectsRaw.filter((p) => p.employeeId === session.id)
-        : localProjectsRaw;
 
       const localMap = new Map(localProjects.map(p => [p.id, p]));
       const supabaseProjects = supabaseResult.data || [];

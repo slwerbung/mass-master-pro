@@ -61,7 +61,6 @@ export interface FloorPlan {
 export interface Project {
   id: string;
   projectNumber: string;
-  employeeId?: string;
   projectType?: 'aufmass' | 'aufmass_mit_plan';
   floorPlans?: FloorPlan[];
   locations: Location[];

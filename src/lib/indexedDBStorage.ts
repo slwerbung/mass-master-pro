@@ -7,7 +7,6 @@ interface AufmassDBSchema extends DBSchema {
     value: {
       id: string;
       projectNumber: string;
-      employeeId?: string;
       projectType?: 'aufmass' | 'aufmass_mit_plan';
       createdAt: string;
       updatedAt: string;
@@ -85,7 +84,7 @@ interface AufmassDBSchema extends DBSchema {
 }
 
 const DB_NAME = 'aufmass-db';
-const DB_VERSION = 4;
+const DB_VERSION = 3;
 
 let dbInstance: IDBPDatabase<AufmassDBSchema> | null = null;
 
@@ -93,7 +92,7 @@ async function getDB(): Promise<IDBPDatabase<AufmassDBSchema>> {
   if (dbInstance) return dbInstance;
 
   dbInstance = await openDB<AufmassDBSchema>(DB_NAME, DB_VERSION, {
-    upgrade(db, oldVersion, _newVersion, transaction) {
+    upgrade(db, oldVersion) {
       if (oldVersion < 1) {
         const projectStore = db.createObjectStore('projects', { keyPath: 'id' });
         projectStore.createIndex('by-updated', 'updatedAt');
@@ -117,17 +116,6 @@ async function getDB(): Promise<IDBPDatabase<AufmassDBSchema>> {
 
         const floorPlanImageStore = db.createObjectStore('floor-plan-images', { keyPath: 'id' });
         floorPlanImageStore.createIndex('by-floor-plan', 'floorPlanId');
-      }
-      if (oldVersion < 4) {
-        const projectStore = transaction.objectStore('projects');
-        const idbRequest = projectStore.getAll() as unknown as IDBRequest;
-        idbRequest.onsuccess = () => {
-          for (const record of idbRequest.result || []) {
-            if (!('employeeId' in record)) {
-              projectStore.put({ ...record, employeeId: undefined });
-            }
-          }
-        };
       }
     },
   });
@@ -182,7 +170,6 @@ export const indexedDBStorage = {
       projects.push({
         id: record.id,
         projectNumber: record.projectNumber,
-        employeeId: record.employeeId,
         projectType: record.projectType,
         createdAt: new Date(record.createdAt),
         updatedAt: new Date(record.updatedAt),
@@ -206,7 +193,6 @@ export const indexedDBStorage = {
     return {
       id: record.id,
       projectNumber: record.projectNumber,
-      employeeId: record.employeeId,
       projectType: record.projectType,
       createdAt: new Date(record.createdAt),
       updatedAt: new Date(record.updatedAt),
@@ -377,10 +363,9 @@ export const indexedDBStorage = {
     await db.put('projects', {
       id: project.id,
       projectNumber: project.projectNumber,
-      employeeId: project.employeeId,
       projectType: project.projectType,
       createdAt: project.createdAt.toISOString(),
-      updatedAt: project.updatedAt.toISOString(),
+      updatedAt: new Date().toISOString(),
     });
     
     const existingLocations = await db.getAllFromIndex('locations', 'by-project', project.id);
@@ -601,7 +586,6 @@ export const indexedDBStorage = {
         const project: Project = {
           id: p.id,
           projectNumber: p.projectNumber,
-          employeeId: p.employeeId,
           createdAt: new Date(p.createdAt),
           updatedAt: new Date(p.updatedAt),
           locations: p.locations.map((l: any) => ({

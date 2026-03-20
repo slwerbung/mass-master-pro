@@ -28,7 +28,6 @@ const NewProject = () => {
       const newProject: Project = {
         id: projectId,
         projectNumber: fullProjectNumber,
-        employeeId: session?.role === 'employee' ? session.id : undefined,
         projectType,
         locations: [],
         createdAt: new Date(),

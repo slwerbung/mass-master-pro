@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { getSession } from "@/lib/session";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
 import { deleteDetailImageFromSupabase, deleteProjectFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, syncProjectToSupabase } from "@/lib/supabaseSync";
@@ -32,7 +31,6 @@ const ProjectDetail = () => {
   const [fieldConfigs, setFieldConfigs] = useState<any[]>([]);
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const session = getSession();
 
   useEffect(() => {
     const loadFieldConfigs = async () => {
@@ -59,11 +57,6 @@ const ProjectDetail = () => {
         }
 
         if (localProject) {
-          if (session?.role === "employee" && localProject.employeeId && localProject.employeeId !== session.id) {
-            toast.error("Dieses Projekt gehört zu einem anderen Mitarbeiter");
-            navigate("/projects");
-            return;
-          }
           setProject(localProject);
           setIsLoading(false);
           return;
@@ -72,12 +65,6 @@ const ProjectDetail = () => {
         const hydratedProject = await hydrateProjectFromSupabase(projectId);
         if (!hydratedProject) {
           toast.error("Projekt nicht gefunden");
-          navigate("/projects");
-          return;
-        }
-
-        if (session?.role === "employee" && hydratedProject.employeeId && hydratedProject.employeeId !== session.id) {
-          toast.error("Dieses Projekt gehört zu einem anderen Mitarbeiter");
           navigate("/projects");
           return;
         }

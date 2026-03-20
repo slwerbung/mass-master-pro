@@ -194,19 +194,16 @@ export type Database = {
           created_at: string
           id: string
           name: string
-          password_hash: string | null
         }
         Insert: {
           created_at?: string
           id?: string
           name: string
-          password_hash?: string | null
         }
         Update: {
           created_at?: string
           id?: string
           name?: string
-          password_hash?: string | null
         }
         Relationships: []
       }
