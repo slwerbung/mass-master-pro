@@ -120,9 +120,9 @@ async function getDB(): Promise<IDBPDatabase<AufmassDBSchema>> {
       }
       if (oldVersion < 4) {
         const projectStore = transaction.objectStore('projects');
-        const request = projectStore.getAll();
-        request.onsuccess = () => {
-          for (const record of request.result || []) {
+        const idbRequest = projectStore.getAll() as unknown as IDBRequest;
+        idbRequest.onsuccess = () => {
+          for (const record of idbRequest.result || []) {
             if (!('employeeId' in record)) {
               projectStore.put({ ...record, employeeId: undefined });
             }

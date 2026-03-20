@@ -64,7 +64,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken || legacyAdminPw) { loadAll(); loadEmployeePassword(); loadFields(); }
+    if (adminToken || legacyAdminPw) { loadAll(); loadSecuritySettings(); loadFields(); }
   }, [adminToken, legacyAdminPw]);
 
   const loadAll = useCallback(async () => {
