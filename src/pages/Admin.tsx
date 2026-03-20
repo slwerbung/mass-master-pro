@@ -33,12 +33,14 @@ const Admin = () => {
   const [projects, setProjects] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   const [newEmployeeName, setNewEmployeeName] = useState("");
+  const [newEmployeeInitialPassword, setNewEmployeeInitialPassword] = useState("");
+  const [employeePasswordDrafts, setEmployeePasswordDrafts] = useState<Record<string, string>>({});
   const [newCustomerName, setNewCustomerName] = useState("");
   const [assignCustomerId, setAssignCustomerId] = useState("");
   const [assignProjectId, setAssignProjectId] = useState("");
-  const [employeePasswordConfigured, setEmployeePasswordConfigured] = useState(false);
-  const [newEmployeePassword, setNewEmployeePassword] = useState("");
-  const [savingPassword, setSavingPassword] = useState(false);
+  const [adminPasswordConfigured, setAdminPasswordConfigured] = useState(false);
+  const [newAdminPassword, setNewAdminPassword] = useState("");
+  const [savingAdminPassword, setSavingAdminPassword] = useState(false);
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [newFieldLabel, setNewFieldLabel] = useState("");
   const [newFieldType, setNewFieldType] = useState<FieldConfig["field_type"]>("text");
@@ -77,34 +79,52 @@ const Admin = () => {
     } catch (e: any) { toast.error(e.message || "Fehler beim Laden"); }
   }, [invoke]);
 
-  const loadEmployeePassword = async () => {
+  const loadSecuritySettings = async () => {
     try {
       const data = await invoke("get_security_settings");
-      setEmployeePasswordConfigured(!!data?.employeePasswordConfigured);
+      setAdminPasswordConfigured(!!data?.adminPasswordConfigured);
     } catch {
-      const { data } = await supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle();
-      setEmployeePasswordConfigured(!!data?.value);
+      const { data } = await supabase.from("app_config").select("value").eq("key", "admin_password_hash").maybeSingle();
+      setAdminPasswordConfigured(!!data?.value);
     }
   };
 
-  const saveEmployeePassword = async () => {
-    if (!newEmployeePassword.trim()) return;
-    setSavingPassword(true);
+  const saveAdminPassword = async () => {
+    if (!newAdminPassword.trim()) return;
+    setSavingAdminPassword(true);
     try {
-      await invoke("set_employee_password", { password: newEmployeePassword.trim() });
-      setEmployeePasswordConfigured(true);
-      setNewEmployeePassword("");
-      toast.success("Passwort gespeichert");
-    } catch {
-      const { error } = await supabase.from("app_config").upsert({ key: "employee_password", value: newEmployeePassword.trim() });
-      if (error) toast.error("Fehler beim Speichern");
-      else {
-        setEmployeePasswordConfigured(true);
-        setNewEmployeePassword("");
-        toast.success("Passwort gespeichert");
-      }
+      await invoke("set_admin_password", { password: newAdminPassword.trim() });
+      setAdminPasswordConfigured(true);
+      setNewAdminPassword("");
+      toast.success("Admin-Passwort gespeichert");
+    } catch (e: any) {
+      toast.error(e.message || "Fehler beim Speichern");
     }
-    setSavingPassword(false);
+    setSavingAdminPassword(false);
+  };
+
+  const setEmployeePassword = async (employeeId: string) => {
+    const password = (employeePasswordDrafts[employeeId] || "").trim();
+    if (!password) return;
+    try {
+      await invoke("set_employee_password", { employeeId, password });
+      setEmployeePasswordDrafts((prev) => ({ ...prev, [employeeId]: "" }));
+      toast.success("Mitarbeiter-Passwort gespeichert");
+      loadAll();
+    } catch (e: any) {
+      toast.error(e.message || "Fehler beim Speichern");
+    }
+  };
+
+  const clearEmployeePassword = async (employeeId: string) => {
+    try {
+      await invoke("delete_employee_password", { employeeId });
+      setEmployeePasswordDrafts((prev) => ({ ...prev, [employeeId]: "" }));
+      toast.success("Mitarbeiter-Passwort gelöscht");
+      loadAll();
+    } catch (e: any) {
+      toast.error(e.message || "Fehler beim Löschen");
+    }
   };
 
   const loadFields = async () => {
@@ -235,7 +255,7 @@ const Admin = () => {
   };
 
   const handleLogout = () => { clearSession(); localStorage.removeItem("admin_pw"); navigate("/"); };
-  const addEmployee = async () => { if (!newEmployeeName.trim()) return; try { await invoke("create_employee", { name: newEmployeeName.trim() }); setNewEmployeeName(""); toast.success("Mitarbeiter erstellt"); loadAll(); } catch (e: any) { toast.error(e.message); } };
+  const addEmployee = async () => { if (!newEmployeeName.trim()) return; try { await invoke("create_employee", { name: newEmployeeName.trim(), password: newEmployeeInitialPassword.trim() || undefined }); setNewEmployeeName(""); setNewEmployeeInitialPassword(""); toast.success("Mitarbeiter erstellt"); loadAll(); } catch (e: any) { toast.error(e.message); } };
   const deleteEmployee = async (id: string) => { try { await invoke("delete_employee", { employeeId: id }); toast.success("Gelöscht"); loadAll(); } catch (e: any) { toast.error(e.message); } };
   const addCustomer = async () => { if (!newCustomerName.trim()) return; try { await invoke("create_customer", { name: newCustomerName.trim() }); setNewCustomerName(""); toast.success("Kunde erstellt"); loadAll(); } catch (e: any) { toast.error(e.message); } };
   const deleteCustomer = async (id: string) => { try { await invoke("delete_customer", { customerId: id }); toast.success("Gelöscht"); loadAll(); } catch (e: any) { toast.error(e.message); } };
@@ -262,8 +282,27 @@ const Admin = () => {
           <TabsContent value="employees" className="space-y-4 mt-4">
             <Card><CardHeader><CardTitle className="text-lg flex items-center gap-2"><User className="h-5 w-5" /> Mitarbeiter verwalten</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex gap-2"><Input placeholder="Name des Mitarbeiters" value={newEmployeeName} onChange={(e) => setNewEmployeeName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEmployee()} /><Button onClick={addEmployee} disabled={!newEmployeeName.trim()}><Plus className="h-4 w-4 mr-1" /> Hinzufügen</Button></div>
-                <div className="space-y-2">{employees.map((emp) => (<div key={emp.id} className="flex items-center justify-between p-3 bg-muted rounded-lg"><span className="font-medium">{emp.name}</span><Button variant="ghost" size="sm" onClick={() => deleteEmployee(emp.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>))}{employees.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Mitarbeiter</p>}</div>
+                <div className="grid gap-2 md:grid-cols-[1fr,1fr,auto]">
+                  <Input placeholder="Name des Mitarbeiters" value={newEmployeeName} onChange={(e) => setNewEmployeeName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEmployee()} />
+                  <Input type="text" placeholder="Optionales Start-Passwort" value={newEmployeeInitialPassword} onChange={(e) => setNewEmployeeInitialPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEmployee()} />
+                  <Button onClick={addEmployee} disabled={!newEmployeeName.trim()}><Plus className="h-4 w-4 mr-1" /> Hinzufügen</Button>
+                </div>
+                <div className="space-y-3">{employees.map((emp) => (
+                  <div key={emp.id} className="p-3 bg-muted rounded-lg space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="font-medium">{emp.name}</span>
+                        <p className="text-xs text-muted-foreground">{emp.hasPassword ? "Eigenes Passwort gesetzt" : "Kein Passwort gesetzt"}</p>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={() => deleteEmployee(emp.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-[1fr,auto,auto]">
+                      <Input type="text" placeholder={emp.hasPassword ? "Neues Passwort setzen" : "Passwort vergeben"} value={employeePasswordDrafts[emp.id] || ""} onChange={(e) => setEmployeePasswordDrafts((prev) => ({ ...prev, [emp.id]: e.target.value }))} onKeyDown={(e) => e.key === "Enter" && setEmployeePassword(emp.id)} />
+                      <Button variant="outline" onClick={() => setEmployeePassword(emp.id)} disabled={!(employeePasswordDrafts[emp.id] || "").trim()}>Speichern</Button>
+                      <Button variant="ghost" onClick={() => clearEmployeePassword(emp.id)} disabled={!emp.hasPassword}>Passwort löschen</Button>
+                    </div>
+                  </div>
+                ))}{employees.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Mitarbeiter</p>}</div>
               </CardContent></Card>
           </TabsContent>
 
@@ -294,14 +333,14 @@ const Admin = () => {
 
           <TabsContent value="settings" className="space-y-4 mt-4">
             <Card>
-              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Lock className="h-5 w-5" /> Mitarbeiter-Passwort</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Lock className="h-5 w-5" /> Administratoren-Passwort</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">Status: {employeePasswordConfigured ? <strong>Passwort gesetzt</strong> : <strong>Kein Passwort gesetzt</strong>}</p>
+                <p className="text-sm text-muted-foreground">Status: {adminPasswordConfigured ? <strong>Passwort gesetzt</strong> : <strong>Kein Passwort gesetzt</strong>}</p>
                 <div className="flex gap-2">
-                  <Input type="text" placeholder="Neues Mitarbeiter-Passwort" value={newEmployeePassword} onChange={(e) => setNewEmployeePassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveEmployeePassword()} />
-                  <Button onClick={saveEmployeePassword} disabled={!newEmployeePassword.trim() || savingPassword}>Speichern</Button>
+                  <Input type="text" placeholder="Neues Administratoren-Passwort" value={newAdminPassword} onChange={(e) => setNewAdminPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveAdminPassword()} />
+                  <Button onClick={saveAdminPassword} disabled={!newAdminPassword.trim() || savingAdminPassword}>Speichern</Button>
                 </div>
-                <p className="text-xs text-muted-foreground">Mitarbeiter müssen dieses Passwort beim Login eingeben.</p>
+                <p className="text-xs text-muted-foreground">Das hier ändert nur das Administratoren-Passwort. Mitarbeiter-Passwörter verwaltest du direkt im Reiter „Mitarbeiter“.</p>
               </CardContent>
             </Card>
 

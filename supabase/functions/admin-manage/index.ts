@@ -43,17 +43,40 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "get_security_settings": {
-        const { data: hashConfig } = await supabase.from("app_config").select("value").eq("key", "employee_password_hash").maybeSingle();
-        const { data: legacyConfig } = await supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle();
-        return json({ employeePasswordConfigured: !!(hashConfig?.value || legacyConfig?.value) });
+        const [{ data: adminHash }, { data: adminLegacy }, { data: globalEmployeeHash }, { data: globalEmployeeLegacy }] = await Promise.all([
+          supabase.from("app_config").select("value").eq("key", "admin_password_hash").maybeSingle(),
+          supabase.from("app_config").select("value").eq("key", "admin_password").maybeSingle(),
+          supabase.from("app_config").select("value").eq("key", "employee_password_hash").maybeSingle(),
+          supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle(),
+        ]);
+        return json({
+          adminPasswordConfigured: !!(adminHash?.value || adminLegacy?.value || Deno.env.get("ADMIN_PASSWORD")),
+          employeePasswordConfigured: !!(globalEmployeeHash?.value || globalEmployeeLegacy?.value),
+        });
       }
-      case "set_employee_password": {
+      case "set_admin_password": {
         const password = String(params.password || "").trim();
         if (!password) return json({ error: "Missing password" }, 400);
         const passwordHash = await hash(password);
-        const { error } = await supabase.from("app_config").upsert({ key: "employee_password_hash", value: passwordHash });
+        const { error } = await supabase.from("app_config").upsert({ key: "admin_password_hash", value: passwordHash });
         if (error) return json({ error: error.message }, 500);
-        await supabase.from("app_config").delete().eq("key", "employee_password");
+        await supabase.from("app_config").delete().in("key", ["admin_password"]);
+        return json({ success: true });
+      }
+      case "set_employee_password": {
+        const employeeId = String(params.employeeId || "").trim();
+        const password = String(params.password || "").trim();
+        if (!employeeId || !password) return json({ error: "Missing employeeId or password" }, 400);
+        const passwordHash = await hash(password);
+        const { error } = await supabase.from("employees").update({ password_hash: passwordHash }).eq("id", employeeId);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+      case "delete_employee_password": {
+        const employeeId = String(params.employeeId || "").trim();
+        if (!employeeId) return json({ error: "Missing employeeId" }, 400);
+        const { error } = await supabase.from("employees").update({ password_hash: null }).eq("id", employeeId);
+        if (error) return json({ error: error.message }, 500);
         return json({ success: true });
       }
       case "list_fields": {
@@ -85,17 +108,10 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
-      // ---- SYNC PROJECTS (called by employees, no admin pw needed) ----
       case "sync_projects": {
-        const projects = params.projects as Array<{
-          id: string;
-          project_number: string;
-          employee_id?: string;
-          created_at: string;
-          updated_at: string;
-        }>;
+        const projects = params.projects as Array<{ id: string; project_number: string; employee_id?: string; created_at: string; updated_at: string }>;
         if (!projects || !Array.isArray(projects)) return json({ error: "Missing projects" }, 400);
-        const rows = projects.map(p => ({
+        const rows = projects.map((p) => ({
           id: p.id,
           project_number: p.project_number,
           user_id: p.employee_id || "employee",
@@ -108,16 +124,20 @@ Deno.serve(async (req) => {
         return json({ success: true, synced: rows.length });
       }
 
-      // ---- EMPLOYEES ----
       case "list_employees": {
-        const { data, error } = await supabase.from("employees").select("*").order("name");
+        const { data, error } = await supabase.from("employees").select("id, name, password_hash").order("name");
         if (error) return json({ error: error.message }, 500);
-        return json({ employees: data });
+        return json({ employees: (data || []).map((employee: any) => ({ ...employee, hasPassword: !!employee.password_hash })) });
       }
       case "create_employee": {
-        const { data, error } = await supabase.from("employees").insert({ name: params.name }).select().single();
+        const name = String(params.name || "").trim();
+        if (!name) return json({ error: "Missing name" }, 400);
+        const password = String(params.password || "").trim();
+        const payload: Record<string, unknown> = { name };
+        if (password) payload.password_hash = await hash(password);
+        const { data, error } = await supabase.from("employees").insert(payload).select("id, name, password_hash").single();
         if (error) return json({ error: error.message }, 400);
-        return json({ employee: data });
+        return json({ employee: { ...data, hasPassword: !!(data as any).password_hash } });
       }
       case "delete_employee": {
         const { error } = await supabase.from("employees").delete().eq("id", params.employeeId);
@@ -125,7 +145,6 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
-      // ---- CUSTOMERS ----
       case "list_customers": {
         const { data, error } = await supabase.from("customers").select("*").order("name");
         if (error) return json({ error: error.message }, 500);
@@ -142,7 +161,6 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
-      // ---- ASSIGNMENTS ----
       case "list_assignments": {
         const { data, error } = await supabase
           .from("customer_project_assignments")
@@ -165,7 +183,6 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
-      // ---- PERMISSIONS ----
       case "list_permissions": {
         const { data, error } = await supabase
           .from("customer_location_permissions")
@@ -189,7 +206,6 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
-      // ---- PROJECTS ----
       case "list_projects": {
         const { data, error } = await supabase
           .from("projects")
@@ -202,7 +218,7 @@ Deno.serve(async (req) => {
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
-  } catch (e) {
+  } catch {
     return json({ error: "Server error" }, 500);
   }
 });
