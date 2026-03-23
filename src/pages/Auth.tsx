@@ -18,8 +18,6 @@ const Auth = () => {
   const [employeePassword, setEmployeePassword] = useState("");
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<{ id: string; name: string } | null>(null);
-  const [storedEmployeePassword, setStoredEmployeePassword] = useState<string | null>(null);
-  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -34,12 +32,9 @@ const Auth = () => {
 
   useEffect(() => {
     if (mode === "employee") {
-      supabase.from("employees").select("id, name").order("name").then(({ data }) => setEmployees(data || []));
-      supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle().then(({ data }) => {
-        setStoredEmployeePassword(data?.value || null);
+      supabase.functions.invoke("list-employees").then(({ data }) => {
+        setEmployees(data?.employees || []);
       });
-    } else if (mode === "customer") {
-      supabase.from("customers").select("id, name").order("name").then(({ data }) => setCustomers(data || []));
     }
   }, [mode]);
 
@@ -55,10 +50,7 @@ const Auth = () => {
         toast.success("Als Admin angemeldet");
         navigate("/admin");
       } else {
-        setSession({ role: "admin", id: "admin", name: "Admin" });
-        localStorage.setItem("admin_pw", adminPassword);
-        toast.success("Als Admin angemeldet");
-        navigate("/admin");
+        toast.error("Anmeldung fehlgeschlagen");
       }
     } catch { toast.error("Verbindungsfehler"); }
     setLoading(false);
@@ -74,21 +66,11 @@ const Auth = () => {
         setSession({ role: "employee", id: emp.id, name: emp.name, authToken: data.token, expiresAt: data.expiresAt });
         toast.success(`Angemeldet als ${emp.name}`);
         navigate("/projects");
-      } else if (storedEmployeePassword) {
-        setSelectedEmployee(emp);
       } else {
-        setSession({ role: "employee", id: emp.id, name: emp.name });
-        toast.success(`Angemeldet als ${emp.name}`);
-        navigate("/projects");
+        toast.error("Anmeldung fehlgeschlagen");
       }
     } catch {
-      if (storedEmployeePassword) {
-        setSelectedEmployee(emp);
-      } else {
-        setSession({ role: "employee", id: emp.id, name: emp.name });
-        toast.success(`Angemeldet als ${emp.name}`);
-        navigate("/projects");
-      }
+      toast.error("Verbindungsfehler");
     } finally {
       setLoading(false);
     }
@@ -103,33 +85,41 @@ const Auth = () => {
         setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name, authToken: data.token, expiresAt: data.expiresAt });
         toast.success(`Angemeldet als ${selectedEmployee.name}`);
         navigate("/projects");
-      } else if (storedEmployeePassword && employeePassword === storedEmployeePassword) {
-        setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name });
-        toast.success(`Angemeldet als ${selectedEmployee.name}`);
-        navigate("/projects");
       } else {
         toast.error("Falsches Passwort");
         setEmployeePassword("");
       }
     } catch {
-      if (storedEmployeePassword && employeePassword === storedEmployeePassword) {
-        setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name });
-        toast.success(`Angemeldet als ${selectedEmployee.name}`);
-        navigate("/projects");
-      } else {
-        toast.error("Verbindungsfehler");
-      }
+      toast.error("Verbindungsfehler");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCustomerLogin = () => {
-    const match = customers.find((c) => c.name.toLowerCase() === customerName.trim().toLowerCase());
-    if (!match) { toast.error("Name nicht gefunden. Bitte wenden Sie sich an den Administrator."); return; }
-    setSession({ role: "customer", id: match.id, name: match.name });
-    toast.success(`Angemeldet als ${match.name}`);
-    navigate("/customer");
+  const handleCustomerLogin = async () => {
+    if (!customerName.trim()) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("validate-customer", {
+        body: { name: customerName.trim() },
+      });
+      if (error || !data?.valid) {
+        toast.error(data?.error || "Name nicht gefunden. Bitte wenden Sie sich an den Administrator.");
+      } else {
+        setSession({
+          role: "customer",
+          id: data.customer.id,
+          name: data.customer.name,
+          authToken: data.token,
+          expiresAt: data.expiresAt,
+        });
+        toast.success(`Angemeldet als ${data.customer.name}`);
+        navigate("/customer");
+      }
+    } catch {
+      toast.error("Verbindungsfehler");
+    }
+    setLoading(false);
   };
 
   return (

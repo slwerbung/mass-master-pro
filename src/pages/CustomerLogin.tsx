@@ -15,7 +15,6 @@ const CustomerLogin = () => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // If already logged in as customer, go straight to customer view
     const session = getSession();
     if (session?.role === "customer") navigate("/customer", { replace: true });
   }, [navigate]);
@@ -24,19 +23,21 @@ const CustomerLogin = () => {
     if (!name.trim()) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("customers")
-        .select("id, name")
-        .ilike("name", name.trim())
-        .single();
+      const { data, error } = await supabase.functions.invoke("validate-customer", {
+        body: { name: name.trim() },
+      });
 
-      if (error || !data) {
-        toast.error("Name nicht gefunden. Bitte wenden Sie sich an Ihren Ansprechpartner.");
+      if (error || !data?.valid) {
+        toast.error(data?.error || "Name nicht gefunden. Bitte wenden Sie sich an Ihren Ansprechpartner.");
       } else {
-        // Set session BEFORE navigating
-        setSession({ role: "customer", id: data.id, name: data.name });
-        toast.success(`Willkommen, ${data.name}!`);
-        // Small delay to ensure session is written before navigation
+        setSession({
+          role: "customer",
+          id: data.customer.id,
+          name: data.customer.name,
+          authToken: data.token,
+          expiresAt: data.expiresAt,
+        });
+        toast.success(`Willkommen, ${data.customer.name}!`);
         setTimeout(() => navigate("/customer", { replace: true }), 50);
       }
     } catch {
