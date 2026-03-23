@@ -18,8 +18,7 @@ const Auth = () => {
   const [employeePassword, setEmployeePassword] = useState("");
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<{ id: string; name: string } | null>(null);
-  const [storedEmployeePassword, setStoredEmployeePassword] = useState<string | null>(null);
-  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
+  const [customerName, setCustomerName] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [loading, setLoading] = useState(false);
 
