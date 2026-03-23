@@ -133,6 +133,7 @@ const CustomerView = () => {
       body: {
         action: "update_guest_info",
         customerId: session.id,
+        customerToken: session.authToken,
         assignmentId: selectedAssignment.id,
         locationId,
         guestInfo: message,
