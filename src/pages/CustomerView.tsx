@@ -418,6 +418,7 @@ const CustomerView = () => {
           body: {
             action: "create_feedback",
             customerId: session?.id,
+            customerToken: session?.authToken,
             assignmentId: selectedAssignment?.id,
             locationId,
             message,
