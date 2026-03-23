@@ -23,3 +23,9 @@ verify_jwt = false
 
 [functions.validate-session]
 verify_jwt = false
+
+[functions.list-employees]
+verify_jwt = false
+
+[functions.validate-customer]
+verify_jwt = false
