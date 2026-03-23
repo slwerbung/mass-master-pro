@@ -19,7 +19,6 @@ const Auth = () => {
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<{ id: string; name: string } | null>(null);
   const [customerName, setCustomerName] = useState("");
-  const [customerName, setCustomerName] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
