@@ -66,8 +66,11 @@ const CustomerManage = () => {
 
   const addCustomer = async () => {
     if (!newCustomerName.trim()) return;
-    const { error } = await supabase.from("customers").insert({ name: newCustomerName.trim() });
-    if (error) { toast.error(error.message.includes("unique") ? "Kunde existiert bereits" : "Fehler beim Erstellen"); return; }
+    const token = session?.authToken;
+    const { data, error } = await supabase.functions.invoke("admin-manage", {
+      body: { action: "create_customer", adminToken: token, employeeToken: token, name: newCustomerName.trim() },
+    });
+    if (error || data?.error) { toast.error(data?.error?.includes?.("unique") ? "Kunde existiert bereits" : (data?.error || "Fehler beim Erstellen")); return; }
     setNewCustomerName("");
     toast.success("Kunde angelegt");
     loadData();
