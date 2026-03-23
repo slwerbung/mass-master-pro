@@ -34,12 +34,9 @@ const Auth = () => {
 
   useEffect(() => {
     if (mode === "employee") {
-      supabase.from("employees").select("id, name").order("name").then(({ data }) => setEmployees(data || []));
-      supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle().then(({ data }) => {
-        setStoredEmployeePassword(data?.value || null);
+      supabase.functions.invoke("list-employees").then(({ data }) => {
+        setEmployees(data?.employees || []);
       });
-    } else if (mode === "customer") {
-      supabase.from("customers").select("id, name").order("name").then(({ data }) => setCustomers(data || []));
     }
   }, [mode]);
 
