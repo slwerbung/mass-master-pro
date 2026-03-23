@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { hash } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
-import { hashPassword, verifyPassword } from "../_shared/passwords.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,26 +24,8 @@ Deno.serve(async (req) => {
 
     const publicActions = ["sync_projects"];
     if (!publicActions.includes(action)) {
-      let authorized = false;
       const payload = adminToken ? await verifySessionToken(adminToken, getSessionSecret()) : null;
-      if (payload && payload.role === "admin" && payload.userId === "admin") {
-        authorized = true;
-      }
-      if (!authorized && body.adminPassword) {
-        const supabaseForAuth = createClient(
-          Deno.env.get("SUPABASE_URL")!,
-          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-        );
-        const { data: adminHashConfig } = await supabaseForAuth.from("app_config").select("value").eq("key", "admin_password_hash").maybeSingle();
-        const storedHash = adminHashConfig?.value || null;
-        const envPassword = Deno.env.get("ADMIN_PASSWORD");
-        if (storedHash) {
-          authorized = await verifyPassword(String(body.adminPassword), storedHash);
-        } else if (envPassword) {
-          authorized = String(body.adminPassword) === envPassword;
-        }
-      }
-      if (!authorized) {
+      if (!payload || payload.role !== "admin" || payload.userId !== "admin") {
         return json({ error: "Unauthorized" }, 401);
       }
     } else {
@@ -61,41 +43,17 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "get_security_settings": {
-        const { data: employeesData, error: employeesError } = await supabase.from("employees").select("id, name, password_hash").order("name");
-        if (employeesError) return json({ error: employeesError.message }, 500);
-        const { data: adminHashConfig } = await supabase.from("app_config").select("value").eq("key", "admin_password_hash").maybeSingle();
-        return json({
-          adminPasswordConfigured: !!adminHashConfig?.value || !!Deno.env.get("ADMIN_PASSWORD"),
-          employees: (employeesData || []).map((employee: any) => ({
-            id: employee.id,
-            name: employee.name,
-            passwordConfigured: !!employee.password_hash,
-          })),
-        });
+        const { data: hashConfig } = await supabase.from("app_config").select("value").eq("key", "employee_password_hash").maybeSingle();
+        const { data: legacyConfig } = await supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle();
+        return json({ employeePasswordConfigured: !!(hashConfig?.value || legacyConfig?.value) });
       }
       case "set_employee_password": {
-        const employeeId = String(params.employeeId || "").trim();
-        const password = String(params.password || "").trim();
-        if (!employeeId) return json({ error: "Missing employeeId" }, 400);
-        if (!password) return json({ error: "Missing password" }, 400);
-        const passwordHash = await hashPassword(password);
-        const { error } = await supabase.from("employees").update({ password_hash: passwordHash }).eq("id", employeeId);
-        if (error) return json({ error: error.message }, 500);
-        return json({ success: true });
-      }
-      case "clear_employee_password": {
-        const employeeId = String(params.employeeId || "").trim();
-        if (!employeeId) return json({ error: "Missing employeeId" }, 400);
-        const { error } = await supabase.from("employees").update({ password_hash: null }).eq("id", employeeId);
-        if (error) return json({ error: error.message }, 500);
-        return json({ success: true });
-      }
-      case "set_admin_password": {
         const password = String(params.password || "").trim();
         if (!password) return json({ error: "Missing password" }, 400);
-        const passwordHash = await hashPassword(password);
-        const { error } = await supabase.from("app_config").upsert({ key: "admin_password_hash", value: passwordHash });
+        const passwordHash = await hash(password);
+        const { error } = await supabase.from("app_config").upsert({ key: "employee_password_hash", value: passwordHash });
         if (error) return json({ error: error.message }, 500);
+        await supabase.from("app_config").delete().eq("key", "employee_password");
         return json({ success: true });
       }
       case "list_fields": {

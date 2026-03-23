@@ -29,27 +29,24 @@ const CustomerManage = () => {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const token = session?.authToken;
-      
-      // Load customers via admin-manage edge function
-      const { data: custResult } = await supabase.functions.invoke("admin-manage", {
-        body: { action: "list_customers", adminToken: token, employeeToken: token },
-      });
-      setCustomers((custResult?.customers || []).map((c: any) => ({ id: c.id, name: c.name })));
+      // Load customers from Supabase
+      const { data: custData } = await supabase.from("customers").select("id, name").order("name");
+      setCustomers(custData || []);
 
       // Load projects from IndexedDB (local storage)
       const localProjects = await indexedDBStorage.getProjects();
       setProjects(localProjects.map(p => ({ id: p.id, projectNumber: p.projectNumber })));
 
-      // Load assignments via admin-manage edge function
-      const { data: assignResult } = await supabase.functions.invoke("admin-manage", {
-        body: { action: "list_assignments", adminToken: token, employeeToken: token },
-      });
+      // Load assignments from Supabase
+      const { data: assignData } = await supabase
+        .from("customer_project_assignments")
+        .select("id, customer_id, project_id, customers(name)")
+        .order("created_at");
       
       // Enrich assignments with local project info
-      const enriched = (assignResult?.assignments || []).map((a: any) => {
+      const enriched = (assignData || []).map((a: any) => {
         const proj = localProjects.find(p => p.id === a.project_id);
-        return { ...a, projectNumber: proj?.projectNumber || a.projects?.project_number || a.project_id.slice(0, 8) };
+        return { ...a, projectNumber: proj?.projectNumber || a.project_id.slice(0, 8) };
       });
       setAssignments(enriched);
     } catch {
@@ -57,7 +54,7 @@ const CustomerManage = () => {
     } finally {
       setLoading(false);
     }
-  }, [session?.authToken]);
+  }, []);
 
   useEffect(() => {
     if (!session || (session.role !== "employee" && session.role !== "admin")) { navigate("/"); return; }
@@ -66,11 +63,8 @@ const CustomerManage = () => {
 
   const addCustomer = async () => {
     if (!newCustomerName.trim()) return;
-    const token = session?.authToken;
-    const { data, error } = await supabase.functions.invoke("admin-manage", {
-      body: { action: "create_customer", adminToken: token, employeeToken: token, name: newCustomerName.trim() },
-    });
-    if (error || data?.error) { toast.error(data?.error?.includes?.("unique") ? "Kunde existiert bereits" : (data?.error || "Fehler beim Erstellen")); return; }
+    const { error } = await supabase.from("customers").insert({ name: newCustomerName.trim() });
+    if (error) { toast.error(error.message.includes("unique") ? "Kunde existiert bereits" : "Fehler beim Erstellen"); return; }
     setNewCustomerName("");
     toast.success("Kunde angelegt");
     loadData();
@@ -78,33 +72,23 @@ const CustomerManage = () => {
 
   const addAssignment = async () => {
     if (!assignCustomerId || !assignProjectId) return;
-    const token = session?.authToken;
-    // First sync the project via admin-manage
+    // First ensure project exists in Supabase directly (RLS disabled)
     const proj = projects.find(p => p.id === assignProjectId);
     if (proj) {
-      await supabase.functions.invoke("admin-manage", {
-        body: {
-          action: "sync_projects",
-          adminToken: token,
-          employeeToken: token,
-          projects: [{
-            id: proj.id,
-            project_number: proj.projectNumber,
-            employee_id: session?.role === "employee" ? session.id : null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }],
-        },
-      });
+      await supabase.from("projects").upsert({
+        id: proj.id,
+        project_number: proj.projectNumber,
+        user_id: session?.id || "employee",
+        employee_id: session?.role === "employee" ? session.id : null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "id" });
     }
-    const { data, error } = await supabase.functions.invoke("admin-manage", {
-      body: { action: "create_assignment", adminToken: token, employeeToken: token, customerId: assignCustomerId, projectId: assignProjectId },
-    });
-    if (error || data?.error) {
-      const msg = data?.error || "";
-      if (msg.includes("unique")) toast.error("Zuweisung existiert bereits");
-      else if (msg.includes("foreign key")) toast.error("Projekt konnte nicht synchronisiert werden. Bitte nochmals versuchen.");
-      else toast.error("Fehler: " + (msg || "Unbekannter Fehler"));
+    const { error } = await supabase.from("customer_project_assignments").insert({ customer_id: assignCustomerId, project_id: assignProjectId });
+    if (error) {
+      if (error.message.includes("unique")) toast.error("Zuweisung existiert bereits");
+      else if (error.message.includes("foreign key")) toast.error("Projekt konnte nicht synchronisiert werden. Bitte nochmals versuchen.");
+      else toast.error("Fehler: " + error.message);
       return;
     }
     toast.success("Projekt zugewiesen");

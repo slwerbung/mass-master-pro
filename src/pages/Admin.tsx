@@ -36,11 +36,9 @@ const Admin = () => {
   const [newCustomerName, setNewCustomerName] = useState("");
   const [assignCustomerId, setAssignCustomerId] = useState("");
   const [assignProjectId, setAssignProjectId] = useState("");
-  const [adminPasswordConfigured, setAdminPasswordConfigured] = useState(false);
-  const [newAdminPassword, setNewAdminPassword] = useState("");
-  const [savingAdminPassword, setSavingAdminPassword] = useState(false);
-  const [employeePasswords, setEmployeePasswords] = useState<Record<string, string>>({});
-  const [savingEmployeePasswordId, setSavingEmployeePasswordId] = useState<string | null>(null);
+  const [employeePasswordConfigured, setEmployeePasswordConfigured] = useState(false);
+  const [newEmployeePassword, setNewEmployeePassword] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [newFieldLabel, setNewFieldLabel] = useState("");
   const [newFieldType, setNewFieldType] = useState<FieldConfig["field_type"]>("text");
@@ -64,7 +62,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken || legacyAdminPw) { loadAll(); loadSecuritySettings(); loadFields(); }
+    if (adminToken || legacyAdminPw) { loadAll(); loadEmployeePassword(); loadFields(); }
   }, [adminToken, legacyAdminPw]);
 
   const loadAll = useCallback(async () => {
@@ -79,65 +77,34 @@ const Admin = () => {
     } catch (e: any) { toast.error(e.message || "Fehler beim Laden"); }
   }, [invoke]);
 
-  const loadSecuritySettings = async () => {
+  const loadEmployeePassword = async () => {
     try {
       const data = await invoke("get_security_settings");
-      setAdminPasswordConfigured(!!data?.adminPasswordConfigured);
-      if (Array.isArray(data?.employees)) {
-        setEmployees((prev) => {
-          const names = new Map((prev || []).map((employee: any) => [employee.id, employee.name]));
-          return data.employees.map((employee: any) => ({
-            id: employee.id,
-            name: employee.name || names.get(employee.id) || "",
-            passwordConfigured: !!employee.passwordConfigured,
-          }));
-        });
-      }
+      setEmployeePasswordConfigured(!!data?.employeePasswordConfigured);
     } catch {
-      setAdminPasswordConfigured(true);
+      const { data } = await supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle();
+      setEmployeePasswordConfigured(!!data?.value);
     }
   };
 
-  const saveAdminPassword = async () => {
-    if (!newAdminPassword.trim()) return;
-    setSavingAdminPassword(true);
+  const saveEmployeePassword = async () => {
+    if (!newEmployeePassword.trim()) return;
+    setSavingPassword(true);
     try {
-      await invoke("set_admin_password", { password: newAdminPassword.trim() });
-      setAdminPasswordConfigured(true);
-      setNewAdminPassword("");
-      toast.success("Administrator-Passwort gespeichert");
-    } catch (e: any) {
-      toast.error(e.message || "Fehler beim Speichern");
+      await invoke("set_employee_password", { password: newEmployeePassword.trim() });
+      setEmployeePasswordConfigured(true);
+      setNewEmployeePassword("");
+      toast.success("Passwort gespeichert");
+    } catch {
+      const { error } = await supabase.from("app_config").upsert({ key: "employee_password", value: newEmployeePassword.trim() });
+      if (error) toast.error("Fehler beim Speichern");
+      else {
+        setEmployeePasswordConfigured(true);
+        setNewEmployeePassword("");
+        toast.success("Passwort gespeichert");
+      }
     }
-    setSavingAdminPassword(false);
-  };
-
-  const setEmployeePassword = async (employeeId: string) => {
-    const password = (employeePasswords[employeeId] || "").trim();
-    if (!password) return;
-    setSavingEmployeePasswordId(employeeId);
-    try {
-      await invoke("set_employee_password", { employeeId, password });
-      setEmployeePasswords((prev) => ({ ...prev, [employeeId]: "" }));
-      setEmployees((prev) => prev.map((employee) => employee.id === employeeId ? { ...employee, passwordConfigured: true } : employee));
-      toast.success("Mitarbeiter-Passwort gespeichert");
-    } catch (e: any) {
-      toast.error(e.message || "Fehler beim Speichern");
-    }
-    setSavingEmployeePasswordId(null);
-  };
-
-  const clearEmployeePassword = async (employeeId: string) => {
-    setSavingEmployeePasswordId(employeeId);
-    try {
-      await invoke("clear_employee_password", { employeeId });
-      setEmployeePasswords((prev) => ({ ...prev, [employeeId]: "" }));
-      setEmployees((prev) => prev.map((employee) => employee.id === employeeId ? { ...employee, passwordConfigured: false } : employee));
-      toast.success("Mitarbeiter-Passwort gelöscht");
-    } catch (e: any) {
-      toast.error(e.message || "Fehler beim Löschen");
-    }
-    setSavingEmployeePasswordId(null);
+    setSavingPassword(false);
   };
 
   const loadFields = async () => {
@@ -296,7 +263,7 @@ const Admin = () => {
             <Card><CardHeader><CardTitle className="text-lg flex items-center gap-2"><User className="h-5 w-5" /> Mitarbeiter verwalten</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex gap-2"><Input placeholder="Name des Mitarbeiters" value={newEmployeeName} onChange={(e) => setNewEmployeeName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEmployee()} /><Button onClick={addEmployee} disabled={!newEmployeeName.trim()}><Plus className="h-4 w-4 mr-1" /> Hinzufügen</Button></div>
-                <div className="space-y-2">{employees.map((emp) => (<div key={emp.id} className="p-3 bg-muted rounded-lg space-y-3"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><span className="font-medium">{emp.name}</span><p className="text-xs text-muted-foreground mt-1">{emp.passwordConfigured ? "Passwort gesetzt" : "Kein Passwort gesetzt"}</p></div><Button variant="ghost" size="sm" onClick={() => deleteEmployee(emp.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div><div className="flex gap-2"><Input type="text" placeholder="Passwort für diesen Mitarbeiter" value={employeePasswords[emp.id] || ""} onChange={(e) => setEmployeePasswords((prev) => ({ ...prev, [emp.id]: e.target.value }))} onKeyDown={(e) => e.key === "Enter" && setEmployeePassword(emp.id)} /><Button onClick={() => setEmployeePassword(emp.id)} disabled={!(employeePasswords[emp.id] || "").trim() || savingEmployeePasswordId === emp.id}>Speichern</Button><Button variant="outline" onClick={() => clearEmployeePassword(emp.id)} disabled={savingEmployeePasswordId === emp.id || !emp.passwordConfigured}>Löschen</Button></div></div>))}{employees.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Mitarbeiter</p>}</div>
+                <div className="space-y-2">{employees.map((emp) => (<div key={emp.id} className="flex items-center justify-between p-3 bg-muted rounded-lg"><span className="font-medium">{emp.name}</span><Button variant="ghost" size="sm" onClick={() => deleteEmployee(emp.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>))}{employees.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Mitarbeiter</p>}</div>
               </CardContent></Card>
           </TabsContent>
 
@@ -327,14 +294,14 @@ const Admin = () => {
 
           <TabsContent value="settings" className="space-y-4 mt-4">
             <Card>
-              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Lock className="h-5 w-5" /> Administratoren-Passwort</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Lock className="h-5 w-5" /> Mitarbeiter-Passwort</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">Status: {adminPasswordConfigured ? <strong>Passwort gesetzt</strong> : <strong>Kein Passwort gesetzt</strong>}</p>
+                <p className="text-sm text-muted-foreground">Status: {employeePasswordConfigured ? <strong>Passwort gesetzt</strong> : <strong>Kein Passwort gesetzt</strong>}</p>
                 <div className="flex gap-2">
-                  <Input type="text" placeholder="Neues Administratoren-Passwort" value={newAdminPassword} onChange={(e) => setNewAdminPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveAdminPassword()} />
-                  <Button onClick={saveAdminPassword} disabled={!newAdminPassword.trim() || savingAdminPassword}>Speichern</Button>
+                  <Input type="text" placeholder="Neues Mitarbeiter-Passwort" value={newEmployeePassword} onChange={(e) => setNewEmployeePassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveEmployeePassword()} />
+                  <Button onClick={saveEmployeePassword} disabled={!newEmployeePassword.trim() || savingPassword}>Speichern</Button>
                 </div>
-                <p className="text-xs text-muted-foreground">Dieses Passwort wird für den Admin-Login verwendet.</p>
+                <p className="text-xs text-muted-foreground">Mitarbeiter müssen dieses Passwort beim Login eingeben.</p>
               </CardContent>
             </Card>
 

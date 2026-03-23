@@ -1,5 +1,4 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifySessionToken, getSessionSecret } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,35 +20,23 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { action, customerId, customerToken, ...params } = body;
+    const { action, customerId, ...params } = body;
 
     if (!customerId) return json({ error: "Missing customerId" }, 400);
-
-    // Validate customer session token
-    let authorized = false;
-    if (customerToken) {
-      const payload = await verifySessionToken(customerToken, getSessionSecret());
-      if (payload && payload.role === "customer" && payload.userId === customerId) {
-        authorized = true;
-      }
-    }
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Fallback: verify customer exists (for backward compat during migration)
-    if (!authorized) {
-      const { data: customer } = await supabase
-        .from("customers")
-        .select("id")
-        .eq("id", customerId)
-        .single();
+    // Verify customer exists
+    const { data: customer } = await supabase
+      .from("customers")
+      .select("id")
+      .eq("id", customerId)
+      .single();
 
-      if (!customer) return json({ error: "Invalid customer" }, 401);
-      // Allow but log warning — clients should migrate to token-based auth
-    }
+    if (!customer) return json({ error: "Invalid customer" }, 401);
 
     switch (action) {
       case "get_projects": {
@@ -78,6 +65,7 @@ Deno.serve(async (req) => {
           .eq("assignment_id", params.assignmentId);
 
         if (!permissions || permissions.length === 0) {
+          // If no specific permissions, show all locations of the project (read-only)
           const { data: locations } = await supabase
             .from("locations")
             .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields")
@@ -85,28 +73,28 @@ Deno.serve(async (req) => {
             .order("created_at");
 
           const locationIds = (locations || []).map(l => l.id);
-          const { data: images } = await supabase
-            .from("location_images")
-            .select("location_id, image_type, storage_path")
-            .in("location_id", locationIds.length > 0 ? locationIds : ['none']);
+        const { data: images } = await supabase
+          .from("location_images")
+          .select("location_id, image_type, storage_path")
+          .in("location_id", locationIds.length > 0 ? locationIds : ['none']);
 
-          const { data: pdfs } = await supabase
-            .from("location_pdfs")
-            .select("location_id, storage_path, file_name")
-            .in("location_id", locationIds.length > 0 ? locationIds : ['none']);
+        const { data: pdfs } = await supabase
+          .from("location_pdfs")
+          .select("location_id, storage_path, file_name")
+          .in("location_id", locationIds.length > 0 ? locationIds : ['none']);
 
-          const pdfEntries = (pdfs || []).map((p: any) => ({
-            location_id: p.location_id,
-            image_type: "pdf",
-            storage_path: p.storage_path,
-            file_name: p.file_name,
-          }));
+        const pdfEntries = (pdfs || []).map((p: any) => ({
+          location_id: p.location_id,
+          image_type: "pdf",
+          storage_path: p.storage_path,
+          file_name: p.file_name,
+        }));
 
-          return json({
-            locations: locations || [],
-            permissions: [],
-            images: [...(images || []), ...pdfEntries],
-          });
+        return json({
+          locations: locations || [],
+          permissions: [],
+          images: [...(images || []), ...pdfEntries],
+        });
         }
 
         const locationIds = permissions.map(p => p.location_id);
@@ -139,6 +127,7 @@ Deno.serve(async (req) => {
           images: [...(images || []), ...pdfEntries2],
         });
       }
+
 
       case "create_feedback": {
         const { data: assignment } = await supabase
@@ -204,6 +193,7 @@ Deno.serve(async (req) => {
           .eq("location_id", params.locationId)
           .single();
 
+        // Also verify the assignment belongs to customer
         const { data: assignment } = await supabase
           .from("customer_project_assignments")
           .select("id")
