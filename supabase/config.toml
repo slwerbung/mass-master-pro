@@ -29,3 +29,9 @@ verify_jwt = false
 
 [functions.validate-customer]
 verify_jwt = false
+
+[functions.send-notification]
+verify_jwt = false
+
+[functions.ensure-customer-assignment]
+verify_jwt = false
