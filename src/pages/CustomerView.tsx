@@ -404,6 +404,7 @@ const CustomerView = () => {
           body: {
             action: "update_feedback",
             customerId: session?.id,
+            customerToken: session?.authToken,
             assignmentId: selectedAssignment?.id,
             locationId,
             feedbackId: editId,
