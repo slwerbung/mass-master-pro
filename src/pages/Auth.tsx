@@ -88,22 +88,12 @@ const Auth = () => {
         setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name, authToken: data.token, expiresAt: data.expiresAt });
         toast.success(`Angemeldet als ${selectedEmployee.name}`);
         navigate("/projects");
-      } else if (storedEmployeePassword && employeePassword === storedEmployeePassword) {
-        setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name });
-        toast.success(`Angemeldet als ${selectedEmployee.name}`);
-        navigate("/projects");
       } else {
         toast.error("Falsches Passwort");
         setEmployeePassword("");
       }
     } catch {
-      if (storedEmployeePassword && employeePassword === storedEmployeePassword) {
-        setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name });
-        toast.success(`Angemeldet als ${selectedEmployee.name}`);
-        navigate("/projects");
-      } else {
-        toast.error("Verbindungsfehler");
-      }
+      toast.error("Verbindungsfehler");
     } finally {
       setLoading(false);
     }
