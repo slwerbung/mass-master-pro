@@ -160,20 +160,24 @@ const CustomerView = () => {
       const [{ data: fieldData }, assignmentResult] = await Promise.all([
         (supabase as any).from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
         isRealCustomerId(session?.id)
-          ? supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", session!.id)
-          : Promise.resolve({ data: [], error: null } as any),
+          ? supabase.functions.invoke("customer-data", {
+              body: { action: "get_projects", customerId: session!.id, customerToken: session?.authToken },
+            })
+          : Promise.resolve({ data: { assignments: [] }, error: null } as any),
       ]);
 
       setFields(mergeWithDefaultLocationFields((fieldData || []) as FieldConfig[]));
 
       if (assignmentResult?.error) throw assignmentResult.error;
-      let loadedAssignments = assignmentResult?.data || [];
+      let loadedAssignments = assignmentResult?.data?.assignments || [];
 
       if (directProjectId && isRealCustomerId(session?.id) && !loadedAssignments.some((a: any) => a.project_id === directProjectId)) {
         const ensured = await ensureDirectProjectAssignment(directProjectId);
         if (ensured) {
-          const refreshed = await supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", session!.id);
-          loadedAssignments = refreshed.data || loadedAssignments;
+          const refreshed = await supabase.functions.invoke("customer-data", {
+            body: { action: "get_projects", customerId: session!.id, customerToken: session?.authToken },
+          });
+          loadedAssignments = refreshed.data?.assignments || loadedAssignments;
         }
       }
 

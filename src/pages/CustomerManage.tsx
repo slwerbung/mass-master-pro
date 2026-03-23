@@ -78,23 +78,33 @@ const CustomerManage = () => {
 
   const addAssignment = async () => {
     if (!assignCustomerId || !assignProjectId) return;
-    // First ensure project exists in Supabase directly (RLS disabled)
+    const token = session?.authToken;
+    // First sync the project via admin-manage
     const proj = projects.find(p => p.id === assignProjectId);
     if (proj) {
-      await supabase.from("projects").upsert({
-        id: proj.id,
-        project_number: proj.projectNumber,
-        user_id: session?.id || "employee",
-        employee_id: session?.role === "employee" ? session.id : null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "id" });
+      await supabase.functions.invoke("admin-manage", {
+        body: {
+          action: "sync_projects",
+          adminToken: token,
+          employeeToken: token,
+          projects: [{
+            id: proj.id,
+            project_number: proj.projectNumber,
+            employee_id: session?.role === "employee" ? session.id : null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        },
+      });
     }
-    const { error } = await supabase.from("customer_project_assignments").insert({ customer_id: assignCustomerId, project_id: assignProjectId });
-    if (error) {
-      if (error.message.includes("unique")) toast.error("Zuweisung existiert bereits");
-      else if (error.message.includes("foreign key")) toast.error("Projekt konnte nicht synchronisiert werden. Bitte nochmals versuchen.");
-      else toast.error("Fehler: " + error.message);
+    const { data, error } = await supabase.functions.invoke("admin-manage", {
+      body: { action: "create_assignment", adminToken: token, employeeToken: token, customerId: assignCustomerId, projectId: assignProjectId },
+    });
+    if (error || data?.error) {
+      const msg = data?.error || "";
+      if (msg.includes("unique")) toast.error("Zuweisung existiert bereits");
+      else if (msg.includes("foreign key")) toast.error("Projekt konnte nicht synchronisiert werden. Bitte nochmals versuchen.");
+      else toast.error("Fehler: " + (msg || "Unbekannter Fehler"));
       return;
     }
     toast.success("Projekt zugewiesen");
