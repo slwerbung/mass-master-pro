@@ -69,21 +69,11 @@ const Auth = () => {
         setSession({ role: "employee", id: emp.id, name: emp.name, authToken: data.token, expiresAt: data.expiresAt });
         toast.success(`Angemeldet als ${emp.name}`);
         navigate("/projects");
-      } else if (storedEmployeePassword) {
-        setSelectedEmployee(emp);
       } else {
-        setSession({ role: "employee", id: emp.id, name: emp.name });
-        toast.success(`Angemeldet als ${emp.name}`);
-        navigate("/projects");
+        toast.error("Anmeldung fehlgeschlagen");
       }
     } catch {
-      if (storedEmployeePassword) {
-        setSelectedEmployee(emp);
-      } else {
-        setSession({ role: "employee", id: emp.id, name: emp.name });
-        toast.success(`Angemeldet als ${emp.name}`);
-        navigate("/projects");
-      }
+      toast.error("Verbindungsfehler");
     } finally {
       setLoading(false);
     }
