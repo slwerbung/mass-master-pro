@@ -121,12 +121,30 @@ const Auth = () => {
     }
   };
 
-  const handleCustomerLogin = () => {
-    const match = customers.find((c) => c.name.toLowerCase() === customerName.trim().toLowerCase());
-    if (!match) { toast.error("Name nicht gefunden. Bitte wenden Sie sich an den Administrator."); return; }
-    setSession({ role: "customer", id: match.id, name: match.name });
-    toast.success(`Angemeldet als ${match.name}`);
-    navigate("/customer");
+  const handleCustomerLogin = async () => {
+    if (!customerName.trim()) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("validate-customer", {
+        body: { name: customerName.trim() },
+      });
+      if (error || !data?.valid) {
+        toast.error(data?.error || "Name nicht gefunden. Bitte wenden Sie sich an den Administrator.");
+      } else {
+        setSession({
+          role: "customer",
+          id: data.customer.id,
+          name: data.customer.name,
+          authToken: data.token,
+          expiresAt: data.expiresAt,
+        });
+        toast.success(`Angemeldet als ${data.customer.name}`);
+        navigate("/customer");
+      }
+    } catch {
+      toast.error("Verbindungsfehler");
+    }
+    setLoading(false);
   };
 
   return (
