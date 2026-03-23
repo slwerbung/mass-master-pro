@@ -29,24 +29,27 @@ const CustomerManage = () => {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      // Load customers from Supabase
-      const { data: custData } = await supabase.from("customers").select("id, name").order("name");
-      setCustomers(custData || []);
+      const token = session?.authToken;
+      
+      // Load customers via admin-manage edge function
+      const { data: custResult } = await supabase.functions.invoke("admin-manage", {
+        body: { action: "list_customers", adminToken: token, employeeToken: token },
+      });
+      setCustomers((custResult?.customers || []).map((c: any) => ({ id: c.id, name: c.name })));
 
       // Load projects from IndexedDB (local storage)
       const localProjects = await indexedDBStorage.getProjects();
       setProjects(localProjects.map(p => ({ id: p.id, projectNumber: p.projectNumber })));
 
-      // Load assignments from Supabase
-      const { data: assignData } = await supabase
-        .from("customer_project_assignments")
-        .select("id, customer_id, project_id, customers(name)")
-        .order("created_at");
+      // Load assignments via admin-manage edge function
+      const { data: assignResult } = await supabase.functions.invoke("admin-manage", {
+        body: { action: "list_assignments", adminToken: token, employeeToken: token },
+      });
       
       // Enrich assignments with local project info
-      const enriched = (assignData || []).map((a: any) => {
+      const enriched = (assignResult?.assignments || []).map((a: any) => {
         const proj = localProjects.find(p => p.id === a.project_id);
-        return { ...a, projectNumber: proj?.projectNumber || a.project_id.slice(0, 8) };
+        return { ...a, projectNumber: proj?.projectNumber || a.projects?.project_number || a.project_id.slice(0, 8) };
       });
       setAssignments(enriched);
     } catch {
@@ -54,7 +57,7 @@ const CustomerManage = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [session?.authToken]);
 
   useEffect(() => {
     if (!session || (session.role !== "employee" && session.role !== "admin")) { navigate("/"); return; }
