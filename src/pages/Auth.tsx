@@ -50,10 +50,7 @@ const Auth = () => {
         toast.success("Als Admin angemeldet");
         navigate("/admin");
       } else {
-        setSession({ role: "admin", id: "admin", name: "Admin" });
-        localStorage.setItem("admin_pw", adminPassword);
-        toast.success("Als Admin angemeldet");
-        navigate("/admin");
+        toast.error("Anmeldung fehlgeschlagen");
       }
     } catch { toast.error("Verbindungsfehler"); }
     setLoading(false);
