@@ -6,6 +6,7 @@ import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map } f
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
+import { getSession } from "@/lib/session";
 import { deleteDetailImageFromSupabase, deleteProjectFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, syncProjectToSupabase } from "@/lib/supabaseSync";
 import {
   AlertDialog,
@@ -57,6 +58,16 @@ const ProjectDetail = () => {
         }
 
         if (localProject) {
+          // Check employee access via remote project data
+          const currentSession = getSession();
+          if (currentSession?.role === "employee") {
+            const { data: projRow } = await supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle();
+            if (projRow?.employee_id && projRow.employee_id !== currentSession.id) {
+              toast.error("Kein Zugriff auf dieses Projekt");
+              navigate("/projects");
+              return;
+            }
+          }
           setProject(localProject);
           setIsLoading(false);
           return;
@@ -67,6 +78,17 @@ const ProjectDetail = () => {
           toast.error("Projekt nicht gefunden");
           navigate("/projects");
           return;
+        }
+
+        // Check employee access for online-only projects
+        const currentSession = getSession();
+        if (currentSession?.role === "employee") {
+          const { data: projRow } = await supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle();
+          if (projRow?.employee_id && projRow.employee_id !== currentSession.id) {
+            toast.error("Kein Zugriff auf dieses Projekt");
+            navigate("/projects");
+            return;
+          }
         }
 
         setProject(hydratedProject);
