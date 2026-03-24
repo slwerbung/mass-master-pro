@@ -223,6 +223,24 @@ const ProjectDetail = () => {
           </Card>
         )}
 
+        {customerUploads.length > 0 && (
+          <Card>
+            <CardContent className="p-4 space-y-2">
+              <p className="text-sm font-medium flex items-center gap-2"><FileText className="h-4 w-4 text-primary" /> Kundendateien</p>
+              {customerUploads.map((upload: any) => (
+                <div key={upload.id} className="flex items-center justify-between gap-2 p-2 rounded border bg-muted/30">
+                  <span className="text-sm truncate">{upload.file_name}</span>
+                  <Button size="sm" variant="outline" asChild>
+                    <a href={supabase.storage.from("project-files").getPublicUrl(upload.storage_path).data.publicUrl} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="h-3 w-3 mr-1" /> Öffnen
+                    </a>
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
         {project.locations.length === 0 ? (
           <Card className="border-2 border-dashed"><CardContent className="flex flex-col items-center justify-center py-16 text-center"><MapPin className="h-16 w-16 text-muted-foreground mb-4" /><h3 className="text-xl font-semibold mb-2">Noch keine Standorte</h3><p className="text-muted-foreground mb-6 max-w-sm">{isPlanProject ? "Öffne die Grundrisse, um Standorte auf dem Plan zu platzieren" : "Nimm das erste Foto auf, um einen Standort zu erfassen"}</p></CardContent></Card>
         ) : (
