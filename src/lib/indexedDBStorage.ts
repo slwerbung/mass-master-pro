@@ -1,4 +1,4 @@
-import { openDB, DBSchema, IDBPDatabase } from 'idb';
+import { openDB, deleteDB, DBSchema, IDBPDatabase } from 'idb';
 import { Project, Location, DetailImage, FloorPlan } from '@/types/project';
 
 interface AufmassDBSchema extends DBSchema {
@@ -84,14 +84,12 @@ interface AufmassDBSchema extends DBSchema {
 }
 
 const DB_NAME = 'aufmass-db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 let dbInstance: IDBPDatabase<AufmassDBSchema> | null = null;
 
-async function getDB(): Promise<IDBPDatabase<AufmassDBSchema>> {
-  if (dbInstance) return dbInstance;
-
-  dbInstance = await openDB<AufmassDBSchema>(DB_NAME, DB_VERSION, {
+function createDB() {
+  return openDB<AufmassDBSchema>(DB_NAME, DB_VERSION, {
     upgrade(db, oldVersion) {
       if (oldVersion < 1) {
         const projectStore = db.createObjectStore('projects', { keyPath: 'id' });
@@ -117,8 +115,25 @@ async function getDB(): Promise<IDBPDatabase<AufmassDBSchema>> {
         const floorPlanImageStore = db.createObjectStore('floor-plan-images', { keyPath: 'id' });
         floorPlanImageStore.createIndex('by-floor-plan', 'floorPlanId');
       }
+      // Version 4: no schema changes, bump to fix VersionError downgrades
     },
   });
+}
+
+async function getDB(): Promise<IDBPDatabase<AufmassDBSchema>> {
+  if (dbInstance) return dbInstance;
+
+  try {
+    dbInstance = await createDB();
+  } catch (err: any) {
+    if (err?.name === 'VersionError') {
+      console.warn('IndexedDB VersionError – deleting and recreating database');
+      await deleteDB(DB_NAME);
+      dbInstance = await createDB();
+    } else {
+      throw err;
+    }
+  }
 
   return dbInstance;
 }
