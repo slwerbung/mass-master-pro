@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { compare } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
+import bcrypt from "https://esm.sh/bcryptjs@3.0.2";
 import { createSessionToken, getSessionSecret } from "../_shared/session.ts";
 
 const corsHeaders = {
@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
 
     let valid = false;
     if (hashConfig?.value) {
-      valid = await compare(password, hashConfig.value);
+      valid = bcrypt.compareSync(password, hashConfig.value);
     } else {
       // Fallback to ADMIN_PASSWORD secret (plaintext comparison)
       const adminPassword = Deno.env.get("ADMIN_PASSWORD");
