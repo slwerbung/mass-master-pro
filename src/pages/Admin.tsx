@@ -366,6 +366,17 @@ const Admin = () => {
             </Card>
 
             <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Projekt-Präfix</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Dieses Präfix wird automatisch vor jede neue Projektnummer gesetzt.</p>
+                <div className="flex gap-2">
+                  <Input placeholder="z.B. WER-" value={projectPrefix} onChange={(e) => setProjectPrefix(e.target.value)} />
+                  <Button onClick={savePrefix} disabled={savingPrefix}>Speichern</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Standortfelder konfigurieren</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm text-muted-foreground">Hier legst du fest, welche Standortfelder intern genutzt werden und welche davon der Kunde in seiner Ansicht sehen darf.</p>
