@@ -40,7 +40,7 @@ const Admin = () => {
   const [projects, setProjects] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   const [newEmployeeName, setNewEmployeeName] = useState("");
-  const [newEmployeePassword, setNewEmployeePasswordInput] = useState("");
+  const [newEmployeePasswordInput, setNewEmployeePasswordInput] = useState("");
   const [newCustomerName, setNewCustomerName] = useState("");
   const [assignCustomerId, setAssignCustomerId] = useState("");
   const [assignProjectId, setAssignProjectId] = useState("");

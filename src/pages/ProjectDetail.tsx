@@ -58,6 +58,13 @@ const ProjectDetail = () => {
         }
 
         if (localProject) {
+          // Check employee access
+          const currentSession = getSession();
+          if (currentSession?.role === "employee" && localProject.employeeId && localProject.employeeId !== currentSession.id) {
+            toast.error("Kein Zugriff auf dieses Projekt");
+            navigate("/projects");
+            return;
+          }
           setProject(localProject);
           setIsLoading(false);
           return;
