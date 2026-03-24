@@ -63,7 +63,7 @@ const LocationDetails = () => {
         if (!project) { navigate("/"); return; }
         const loc = project.locations.find(l => l.id === locationId);
         if (!loc) { navigate(`/projects/${projectId}`); return; }
-        setLocationName(loc.locationName || "");
+        if (loc.locationName) vals["locationName"] = loc.locationName;
         setPreviewImage(loc.imageData);
         // Load field values - map old static fields + custom fields
         const vals: Record<string, string> = {};
