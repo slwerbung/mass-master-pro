@@ -679,17 +679,29 @@ const CustomerView = () => {
                             {locationFeedback.map((entry) => (
                               <div key={entry.id} className="rounded-lg border p-3 bg-muted/20 space-y-1">
                                 <div className="flex items-center justify-between gap-2">
-                                  <p className="text-sm font-medium">{entry.author_name}</p>
+                                  <div>
+                                    <p className="text-sm font-medium">{entry.author_name}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {entry.created_at && new Date(entry.created_at).getTime() > 0
+                                        ? format(new Date(entry.created_at), "dd.MM.yyyy, HH:mm", { locale: de })
+                                        : ""}
+                                    </p>
+                                  </div>
                                   <span className={`text-xs px-2 py-0.5 rounded ${entry.status === "done" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{entry.status === "done" ? "Umgesetzt" : "Offen"}</span>
                                 </div>
                                 <p className="text-sm whitespace-pre-wrap">{entry.message}</p>
                                 {(entry.author_customer_id === session?.id || (!entry.author_customer_id && entry.author_name === session?.name)) && entry.status === "open" && (
-                                  <Button variant="ghost" size="sm" className="px-0" onClick={() => startEditFeedback(loc.id, entry)}>
-                                    <Pencil className="h-4 w-4 mr-1" /> Bearbeiten
-                                  </Button>
+                                  <div className="flex gap-2">
+                                    <Button variant="ghost" size="sm" className="px-0" onClick={() => startEditFeedback(loc.id, entry)}>
+                                      <Pencil className="h-4 w-4 mr-1" /> Bearbeiten
+                                    </Button>
+                                    <Button variant="ghost" size="sm" className="px-0 text-destructive" onClick={() => deleteFeedback(loc.id, entry.id)}>
+                                      <Trash2 className="h-4 w-4 mr-1" /> Löschen
+                                    </Button>
+                                  </div>
                                 )}
                               </div>
-                            ))}
+                            ))
                           </div>
                         )}
                         <Textarea
