@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Plus, Copy, Check, Link, Users } from "lucide-react";
+import { ArrowLeft, Plus, Copy, Check, Link, Users, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { getSession } from "@/lib/session";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -93,6 +93,13 @@ const CustomerManage = () => {
     }
     toast.success("Projekt zugewiesen");
     setAssignCustomerId(""); setAssignProjectId("");
+    loadData();
+  };
+
+  const deleteAssignment = async (id: string) => {
+    const { error } = await supabase.from("customer_project_assignments").delete().eq("id", id);
+    if (error) { toast.error("Fehler beim Löschen"); return; }
+    toast.success("Zuweisung gelöscht");
     loadData();
   };
 
@@ -189,6 +196,9 @@ const CustomerManage = () => {
                     <span className="font-medium">{(a.customers as any)?.name}</span>{" → "}
                     <span className="font-medium">Projekt {a.projectNumber}</span>
                   </span>
+                  <Button size="sm" variant="ghost" onClick={() => deleteAssignment(a.id)} title="Zuweisung löschen">
+                    <Trash2 className="h-3 w-3 text-destructive" />
+                  </Button>
                 </div>
               ))}
               {assignments.length === 0 && <p className="text-muted-foreground text-sm text-center py-2">Noch keine Zuweisungen</p>}
