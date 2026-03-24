@@ -38,7 +38,7 @@ const LocationDetails = () => {
   const floorPlanId = searchParams.get("floorPlan");
   const presetLocationId = searchParams.get("locationId");
 
-  const { imageData: stateImageData, originalImageData: stateOriginalImageData } = location.state || {};
+  const { imageData: stateImageData, originalImageData: stateOriginalImageData, areaMeasurements: stateAreaMeasurements } = location.state || {};
 
   const [caption, setCaption] = useState("");
   const [previewImage, setPreviewImage] = useState<string | null>(stateImageData || null);
