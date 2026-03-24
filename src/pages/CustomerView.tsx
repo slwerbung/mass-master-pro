@@ -65,6 +65,8 @@ const CustomerView = () => {
   const [loading, setLoading] = useState(true);
   const [approvals, setApprovals] = useState<Record<string, boolean>>({});
   const [savingApprovals, setSavingApprovals] = useState(false);
+  const [customerUploads, setCustomerUploads] = useState<any[]>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
 
   useEffect(() => {
     if (!session || session.role !== "customer") { navigate("/"); return; }
