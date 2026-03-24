@@ -40,7 +40,7 @@ const CustomerManage = () => {
       // Load assignments from Supabase
       const { data: assignData } = await supabase
         .from("customer_project_assignments")
-        .select("id, customer_id, project_id, customers(name)")
+        .select("id, customer_id, project_id, customers(name), projects(project_number)")
         .order("created_at");
       
       // Enrich assignments with local project info
