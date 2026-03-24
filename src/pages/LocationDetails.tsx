@@ -141,7 +141,7 @@ const LocationDetails = () => {
         const newLocation: Location = {
           id: presetLocationId || crypto.randomUUID(),
           locationNumber: fullLocationNumber,
-          locationName: locationName.trim() || undefined,
+          locationName: fieldValues["locationName"]?.trim() || undefined,
           comment: fieldValues["comment"]?.trim() || undefined,
           system: fieldValues["system"]?.trim() || undefined,
           label: fieldValues["label"]?.trim() || undefined,
