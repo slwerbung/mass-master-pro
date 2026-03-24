@@ -174,6 +174,19 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           <div className="space-y-1 flex-1 min-w-0">
             <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
             {location.locationName && <p className="text-sm text-foreground truncate">{location.locationName}</p>}
+            {location.areaMeasurements && location.areaMeasurements.length > 0 && (
+              <div className="mt-1 p-2 rounded bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 space-y-1">
+                <p className="text-xs font-medium text-blue-700 dark:text-blue-300">Flächen</p>
+                {location.areaMeasurements.map((am) => (
+                  <p key={am.index} className="text-xs text-blue-600 dark:text-blue-400">
+                    F {am.index}: {am.widthMm} × {am.heightMm} mm ({((am.widthMm * am.heightMm) / 1_000_000).toFixed(2)} m²)
+                  </p>
+                ))}
+                <p className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                  Gesamt: {location.areaMeasurements.reduce((sum, am) => sum + (am.widthMm * am.heightMm) / 1_000_000, 0).toFixed(2)} m²
+                </p>
+              </div>
+            )}
             <LocationInfoFields
               location={{
                 location_name: location.locationName,
