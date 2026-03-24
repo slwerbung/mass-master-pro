@@ -468,6 +468,61 @@ const CustomerView = () => {
     setDraftFeedback((prev) => ({ ...prev, [locationId]: feedback.message }));
   };
 
+  const deleteFeedback = async (locationId: string, feedbackId: string) => {
+    if (feedbackId.startsWith(LEGACY_FEEDBACK_PREFIX)) return;
+    setSavingId(locationId);
+    try {
+      if (isDirectGuestMode && guestToken) {
+        // Guest mode: use guest-data function or direct delete
+        await supabase.from("location_feedback").delete().eq("id", feedbackId);
+      } else {
+        const { data, error } = await supabase.functions.invoke("customer-data", {
+          body: { action: "delete_feedback", customerId: session?.id, assignmentId: selectedAssignment?.id, locationId, feedbackId },
+        });
+        if (error || data?.error) throw error || new Error(data?.error);
+      }
+      await reloadFeedbacks([locationId]);
+      toast.success("Kommentar gelöscht");
+    } catch (error) {
+      console.error("deleteFeedback failed", error);
+      toast.error("Fehler beim Löschen");
+    } finally { setSavingId(null); }
+  };
+
+  const loadCustomerUploads = async (projectId: string) => {
+    const { data } = await supabase.from("customer_uploads").select("*").eq("project_id", projectId).order("created_at", { ascending: false });
+    setCustomerUploads(data || []);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !session?.id || !selectedAssignment) return;
+    const projectId = selectedAssignment.project_id;
+    setUploadingFile(true);
+    try {
+      const path = `customer-uploads/${projectId}/${crypto.randomUUID()}/${file.name}`;
+      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { upsert: true });
+      if (uploadError) throw uploadError;
+      const { error: dbError } = await supabase.from("customer_uploads").insert({
+        project_id: projectId, customer_id: session.id, file_name: file.name, storage_path: path,
+      });
+      if (dbError) throw dbError;
+      toast.success("Datei hochgeladen");
+      loadCustomerUploads(projectId);
+    } catch (err: any) {
+      toast.error("Upload fehlgeschlagen: " + err.message);
+    } finally { setUploadingFile(false); e.target.value = ""; }
+  };
+
+  const deleteUpload = async (upload: any) => {
+    try {
+      await supabase.storage.from("project-files").remove([upload.storage_path]);
+      await supabase.from("customer_uploads").delete().eq("id", upload.id);
+      toast.success("Datei gelöscht");
+      loadCustomerUploads(upload.project_id);
+    } catch { toast.error("Fehler beim Löschen"); }
+  };
+
   const toggleApproval = async (locationId: string, approved: boolean) => {
     if (!selectedAssignment || selectedAssignment.direct) return;
     setApprovals(prev => ({ ...prev, [locationId]: approved }));
