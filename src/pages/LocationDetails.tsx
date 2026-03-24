@@ -239,10 +239,6 @@ const LocationDetails = () => {
                 </div>
               ) : (
                 <>
-                  <div className="space-y-2">
-                    <Label htmlFor="locationName">Standortbezeichnung (optional)</Label>
-                    <Input id="locationName" placeholder="z.B. Wohnzimmer, Erdgeschoss" value={locationName} onChange={(e) => setLocationName(e.target.value)} />
-                  </div>
                   {fieldConfigs.map(renderField)}
                 </>
               )}
