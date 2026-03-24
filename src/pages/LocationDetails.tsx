@@ -61,6 +61,7 @@ const LocationDetails = () => {
         const project = await indexedDBStorage.getProject(projectId);
         if (!project) { navigate("/"); return; }
         const loc = project.locations.find(l => l.id === locationId);
+        if (!loc) { navigate(`/projects/${projectId}`); return; }
         const vals: Record<string, string> = {};
         if (loc.locationName) vals["locationName"] = loc.locationName;
         setPreviewImage(loc.imageData);
