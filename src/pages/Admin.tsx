@@ -55,6 +55,8 @@ const Admin = () => {
   const [assignProjectId, setAssignProjectId] = useState("");
   const [newAdminPassword, setNewAdminPassword] = useState("");
   const [savingAdminPassword, setSavingAdminPassword] = useState(false);
+  const [projectPrefix, setProjectPrefix] = useState("");
+  const [savingPrefix, setSavingPrefix] = useState(false);
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [newFieldLabel, setNewFieldLabel] = useState("");
   const [newFieldType, setNewFieldType] = useState<FieldConfig["field_type"]>("text");
