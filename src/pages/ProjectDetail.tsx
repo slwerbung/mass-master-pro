@@ -30,6 +30,7 @@ const ProjectDetail = () => {
   const [isOnlineOnly, setIsOnlineOnly] = useState(false);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<any[]>([]);
+  const [customerUploads, setCustomerUploads] = useState<any[]>([]);
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
