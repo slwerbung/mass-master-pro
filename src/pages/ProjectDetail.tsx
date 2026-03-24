@@ -80,6 +80,17 @@ const ProjectDetail = () => {
           return;
         }
 
+        // Check employee access for online-only projects
+        const currentSession = getSession();
+        if (currentSession?.role === "employee") {
+          const { data: projRow } = await supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle();
+          if (projRow?.employee_id && projRow.employee_id !== currentSession.id) {
+            toast.error("Kein Zugriff auf dieses Projekt");
+            navigate("/projects");
+            return;
+          }
+        }
+
         setProject(hydratedProject);
         setIsOnlineOnly(true);
       } catch (error) {
