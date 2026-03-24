@@ -22,7 +22,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { adminToken, employeeToken, action, ...params } = body;
 
-    const publicActions = ["sync_projects"];
+    const publicActions = ["sync_projects", "get_project_prefix"];
     if (!publicActions.includes(action)) {
       const payload = adminToken ? await verifySessionToken(adminToken, getSessionSecret()) : null;
       if (!payload || payload.role !== "admin" || payload.userId !== "admin") {
@@ -231,6 +231,18 @@ Deno.serve(async (req) => {
           .order("updated_at", { ascending: false });
         if (error) return json({ error: error.message }, 500);
         return json({ projects: data });
+      }
+
+      // ---- PROJECT PREFIX ----
+      case "get_project_prefix": {
+        const { data } = await supabase.from("app_config").select("value").eq("key", "project_prefix").maybeSingle();
+        return json({ prefix: data?.value || "WER-" });
+      }
+      case "set_project_prefix": {
+        const prefix = String(params.prefix ?? "").trim();
+        const { error } = await supabase.from("app_config").upsert({ key: "project_prefix", value: prefix });
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
       }
 
       default:

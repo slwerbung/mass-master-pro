@@ -213,6 +213,28 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
+      case "delete_feedback": {
+        const { data: assignment } = await supabase
+          .from("customer_project_assignments")
+          .select("id")
+          .eq("id", params.assignmentId)
+          .eq("customer_id", customerId)
+          .single();
+
+        if (!assignment) return json({ error: "No access" }, 403);
+
+        const { error } = await supabase
+          .from("location_feedback")
+          .delete()
+          .eq("id", params.feedbackId)
+          .eq("location_id", params.locationId)
+          .eq("author_customer_id", customerId)
+          .eq("status", "open");
+
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

@@ -55,6 +55,8 @@ const Admin = () => {
   const [assignProjectId, setAssignProjectId] = useState("");
   const [newAdminPassword, setNewAdminPassword] = useState("");
   const [savingAdminPassword, setSavingAdminPassword] = useState(false);
+  const [projectPrefix, setProjectPrefix] = useState("");
+  const [savingPrefix, setSavingPrefix] = useState(false);
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [newFieldLabel, setNewFieldLabel] = useState("");
   const [newFieldType, setNewFieldType] = useState<FieldConfig["field_type"]>("text");
@@ -86,7 +88,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); }
+    if (adminToken) { loadAll(); loadFields(); loadPrefix(); }
   }, [adminToken]);
 
   const loadAll = useCallback(async () => {
@@ -110,6 +112,23 @@ const Admin = () => {
       toast.success("Admin-Passwort gespeichert");
     } catch (e: any) { toast.error(e.message || "Fehler beim Speichern"); }
     setSavingAdminPassword(false);
+  };
+
+  const loadPrefix = async () => {
+    try {
+      const data = await invoke("get_project_prefix");
+      setProjectPrefix(data.prefix || "WER-");
+    } catch { setProjectPrefix("WER-"); }
+  };
+
+  const savePrefix = async () => {
+    setSavingPrefix(true);
+    try {
+      await invoke("set_project_prefix", { prefix: projectPrefix });
+      toast.success("Präfix gespeichert");
+    } catch (e: any) { toast.error(e.message || "Fehler"); }
+    setSavingPrefix(false);
+  };
   };
 
   const loadFields = async () => {
@@ -342,6 +361,17 @@ const Admin = () => {
                 <div className="flex gap-2">
                   <Input type="password" placeholder="Neues Admin-Passwort" value={newAdminPassword} onChange={(e) => setNewAdminPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveAdminPassword()} />
                   <Button onClick={saveAdminPassword} disabled={!newAdminPassword.trim() || savingAdminPassword}>Speichern</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Projekt-Präfix</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Dieses Präfix wird automatisch vor jede neue Projektnummer gesetzt.</p>
+                <div className="flex gap-2">
+                  <Input placeholder="z.B. WER-" value={projectPrefix} onChange={(e) => setProjectPrefix(e.target.value)} />
+                  <Button onClick={savePrefix} disabled={savingPrefix}>Speichern</Button>
                 </div>
               </CardContent>
             </Card>

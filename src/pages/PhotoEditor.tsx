@@ -2,13 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage } from "fabric";
-import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2 } from "lucide-react";
+import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2, RectangleHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { createMeasurementGroup } from "@/lib/measurement";
+import { createAreaMeasurementGroup } from "@/lib/areaMeasurement";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import MeasurementInputDialog from "@/components/MeasurementInputDialog";
+import AreaMeasurementDialog from "@/components/AreaMeasurementDialog";
 
-type Tool = "select" | "draw" | "text" | "measure";
+type Tool = "select" | "draw" | "text" | "measure" | "area";
 
 const PhotoEditor = () => {
   const { projectId, locationId, detailId } = useParams();
@@ -21,6 +23,9 @@ const PhotoEditor = () => {
   const [measureStart, setMeasureStart] = useState<{ x: number; y: number } | null>(null);
   const [measureEnd, setMeasureEnd] = useState<{ x: number; y: number } | null>(null);
   const [showMeasureDialog, setShowMeasureDialog] = useState(false);
+  const [areaStart, setAreaStart] = useState<{ x: number; y: number } | null>(null);
+  const [areaEnd, setAreaEnd] = useState<{ x: number; y: number } | null>(null);
+  const [showAreaDialog, setShowAreaDialog] = useState(false);
   const [canvasHistory, setCanvasHistory] = useState<string[]>([]);
   const [historyStep, setHistoryStep] = useState(-1);
   const historyRef = useRef<string[]>([]);
@@ -32,15 +37,11 @@ const PhotoEditor = () => {
   const isReEdit = !!locationId;
   const isDetailReEdit = !!detailId;
 
-
   const pushHistoryState = useCallback((canvas: FabricCanvas) => {
     if (isRestoringHistoryRef.current) return;
-
     const json = JSON.stringify(canvas.toJSON());
     const nextHistory = historyRef.current.slice(0, historyStepRef.current + 1);
-
     if (nextHistory[nextHistory.length - 1] === json) return;
-
     nextHistory.push(json);
     historyRef.current = nextHistory;
     historyStepRef.current = nextHistory.length - 1;
@@ -50,11 +51,9 @@ const PhotoEditor = () => {
 
   const restoreHistoryStep = useCallback((step: number) => {
     if (!fabricCanvas || !historyRef.current[step]) return;
-
     isRestoringHistoryRef.current = true;
     historyStepRef.current = step;
     setHistoryStep(step);
-
     fabricCanvas.loadFromJSON(historyRef.current[step]).then(() => {
       fabricCanvas.renderAll();
       isRestoringHistoryRef.current = false;
@@ -64,7 +63,6 @@ const PhotoEditor = () => {
     });
   }, [fabricCanvas]);
 
-  // Load image from IndexedDB for re-edit mode
   useEffect(() => {
     if (!isReEdit || imageDataState) return;
     const loadImage = async () => {
@@ -73,56 +71,40 @@ const PhotoEditor = () => {
         if (isDetailReEdit && locationId) {
           const details = await indexedDBStorage.getDetailImagesByLocation(locationId);
           const detail = details.find(d => d.id === detailId);
-          if (detail) {
-            setImageDataState(detail.imageData);
-          } else {
-            toast.error("Detailbild nicht gefunden");
-            navigate(`/projects/${projectId}`);
-          }
+          if (detail) setImageDataState(detail.imageData);
+          else { toast.error("Detailbild nicht gefunden"); navigate(`/projects/${projectId}`); }
         } else if (locationId && projectId) {
           const project = await indexedDBStorage.getProject(projectId);
           const loc = project?.locations.find(l => l.id === locationId);
-          if (loc) {
-            setImageDataState(loc.imageData);
-          } else {
-            toast.error("Standort nicht gefunden");
-            navigate(`/projects/${projectId}`);
-          }
+          if (loc) setImageDataState(loc.imageData);
+          else { toast.error("Standort nicht gefunden"); navigate(`/projects/${projectId}`); }
         }
       } catch (e) {
         console.error("Error loading image:", e);
         toast.error("Fehler beim Laden");
         navigate(`/projects/${projectId}`);
-      } finally {
-        setLoading(false);
-      }
+      } finally { setLoading(false); }
     };
     loadImage();
   }, [isReEdit, isDetailReEdit, locationId, detailId, projectId, navigate, imageDataState]);
 
   useEffect(() => {
     if (!imageDataState || !canvasRef.current) return;
-
     const headerHeight = window.innerWidth < 768 ? 100 : 80;
     const padding = window.innerWidth < 768 ? 8 : 32;
     const availableHeight = window.innerHeight - headerHeight - padding;
     const availableWidth = window.innerWidth - padding;
 
     const canvas = new FabricCanvas(canvasRef.current, {
-      width: availableWidth,
-      height: availableHeight,
-      backgroundColor: "#ffffff",
+      width: availableWidth, height: availableHeight, backgroundColor: "#ffffff",
     });
 
     const img = new Image();
-
     const brush = new PencilBrush(canvas);
-    brush.color = "#ef4444";
-    brush.width = 3;
+    brush.color = "#ef4444"; brush.width = 3;
     canvas.freeDrawingBrush = brush;
 
     const saveHist = () => pushHistoryState(canvas);
-
     canvas.on("object:added", saveHist);
     canvas.on("object:modified", saveHist);
     canvas.on("object:removed", saveHist);
@@ -131,8 +113,7 @@ const PhotoEditor = () => {
     img.onload = () => {
       const scale = Math.min(canvas.width! / img.width, canvas.height! / img.height);
       const fabricImage = new FabricImage(img, {
-        scaleX: scale, scaleY: scale,
-        originX: "center", originY: "center",
+        scaleX: scale, scaleY: scale, originX: "center", originY: "center",
         left: canvas.width! / 2, top: canvas.height! / 2,
       });
       canvas.backgroundImage = fabricImage;
@@ -146,30 +127,18 @@ const PhotoEditor = () => {
       canvas.off("object:modified", saveHist);
       canvas.off("object:removed", saveHist);
       canvas.dispose();
-      historyRef.current = [];
-      historyStepRef.current = -1;
-      setCanvasHistory([]);
-      setHistoryStep(-1);
+      historyRef.current = []; historyStepRef.current = -1;
+      setCanvasHistory([]); setHistoryStep(-1);
     };
   }, [imageDataState]);
 
-  const handleUndo = () => {
-    if (historyStepRef.current <= 0) return;
-    restoreHistoryStep(historyStepRef.current - 1);
-  };
-
-  const handleRedo = () => {
-    if (historyStepRef.current >= historyRef.current.length - 1) return;
-    restoreHistoryStep(historyStepRef.current + 1);
-  };
+  const handleUndo = () => { if (historyStepRef.current <= 0) return; restoreHistoryStep(historyStepRef.current - 1); };
+  const handleRedo = () => { if (historyStepRef.current >= historyRef.current.length - 1) return; restoreHistoryStep(historyStepRef.current + 1); };
 
   const handleDelete = () => {
     if (!fabricCanvas) return;
     const activeObjects = fabricCanvas.getActiveObjects();
-    if (activeObjects.length === 0) {
-      toast.error("Kein Objekt ausgewählt");
-      return;
-    }
+    if (activeObjects.length === 0) { toast.error("Kein Objekt ausgewählt"); return; }
     activeObjects.forEach((obj) => fabricCanvas.remove(obj));
     fabricCanvas.discardActiveObject();
     fabricCanvas.renderAll();
@@ -180,7 +149,6 @@ const PhotoEditor = () => {
     if (!fabricCanvas) return;
     fabricCanvas.isDrawingMode = activeTool === "draw";
     fabricCanvas.selection = activeTool === "select";
-
     if (activeTool === "text") {
       const text = new IText("Text eingeben", {
         left: 100, top: 100, fill: "#ef4444", fontSize: 24, fontFamily: "Arial",
@@ -193,41 +161,64 @@ const PhotoEditor = () => {
   }, [activeTool, fabricCanvas]);
 
   const handleCanvasClick = (e: any) => {
-    if (activeTool !== "measure" || !fabricCanvas) return;
+    if (!fabricCanvas) return;
     const p = e?.scenePoint || e?.absolutePointer || e?.pointer;
     if (!p) return;
     const pointer = { x: p.x, y: p.y };
 
-    if (!measureStart) {
-      setMeasureStart({ x: pointer.x, y: pointer.y });
-    } else {
-      setMeasureEnd({ x: pointer.x, y: pointer.y });
-      setShowMeasureDialog(true);
+    if (activeTool === "measure") {
+      if (!measureStart) {
+        setMeasureStart(pointer);
+      } else {
+        setMeasureEnd(pointer);
+        setShowMeasureDialog(true);
+      }
+    } else if (activeTool === "area") {
+      if (!areaStart) {
+        setAreaStart(pointer);
+      } else {
+        setAreaEnd(pointer);
+        setShowAreaDialog(true);
+      }
     }
   };
 
   const handleMeasureConfirm = (value: string) => {
     if (!fabricCanvas || !measureStart || !measureEnd) return;
-    const group = createMeasurementGroup(
-      measureStart.x, measureStart.y, measureEnd.x, measureEnd.y,
-      `${value} mm`, "#ef4444"
-    );
+    const group = createMeasurementGroup(measureStart.x, measureStart.y, measureEnd.x, measureEnd.y, `${value} mm`, "#ef4444");
     fabricCanvas.add(group);
     fabricCanvas.setActiveObject(group);
     fabricCanvas.renderAll();
     setTimeout(() => fabricCanvas.renderAll(), 50);
-
-    setShowMeasureDialog(false);
-    setMeasureStart(null);
-    setMeasureEnd(null);
-    setActiveTool("select");
+    setShowMeasureDialog(false); setMeasureStart(null); setMeasureEnd(null); setActiveTool("select");
   };
 
   const handleMeasureCancel = () => {
-    setShowMeasureDialog(false);
-    setMeasureStart(null);
-    setMeasureEnd(null);
-    setActiveTool("select");
+    setShowMeasureDialog(false); setMeasureStart(null); setMeasureEnd(null); setActiveTool("select");
+  };
+
+  const getNextAreaIndex = () => {
+    if (!fabricCanvas) return 1;
+    let max = 0;
+    fabricCanvas.getObjects().forEach((obj: any) => {
+      if (obj.data?.type === "area" && obj.data.index > max) max = obj.data.index;
+    });
+    return max + 1;
+  };
+
+  const handleAreaConfirm = (widthMm: number, heightMm: number) => {
+    if (!fabricCanvas || !areaStart || !areaEnd) return;
+    const index = getNextAreaIndex();
+    const group = createAreaMeasurementGroup(areaStart.x, areaStart.y, areaEnd.x, areaEnd.y, widthMm, heightMm, index, "#3b82f6");
+    fabricCanvas.add(group);
+    fabricCanvas.setActiveObject(group);
+    fabricCanvas.renderAll();
+    setTimeout(() => fabricCanvas.renderAll(), 50);
+    setShowAreaDialog(false); setAreaStart(null); setAreaEnd(null); setActiveTool("select");
+  };
+
+  const handleAreaCancel = () => {
+    setShowAreaDialog(false); setAreaStart(null); setAreaEnd(null); setActiveTool("select");
   };
 
   useEffect(() => {
@@ -235,7 +226,7 @@ const PhotoEditor = () => {
       fabricCanvas.on("mouse:down", handleCanvasClick);
       return () => { fabricCanvas.off("mouse:down", handleCanvasClick); };
     }
-  }, [fabricCanvas, activeTool, measureStart]);
+  }, [fabricCanvas, activeTool, measureStart, areaStart]);
 
   const handleNext = async () => {
     if (!fabricCanvas) return;
@@ -244,6 +235,18 @@ const PhotoEditor = () => {
     setTimeout(async () => {
       const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 2 });
 
+      // Extract area measurements from canvas objects
+      const areaMeasurements: { index: number; widthMm: number; heightMm: number }[] = [];
+      fabricCanvas.getObjects().forEach((obj: any) => {
+        if (obj.data?.type === "area") {
+          areaMeasurements.push({
+            index: obj.data.index,
+            widthMm: obj.data.widthMm,
+            heightMm: obj.data.heightMm,
+          });
+        }
+      });
+
       if (isReEdit && projectId) {
         try {
           if (isDetailReEdit && detailId) {
@@ -251,6 +254,10 @@ const PhotoEditor = () => {
             toast.success("Detailbild aktualisiert");
           } else if (locationId) {
             await indexedDBStorage.updateLocationImage(projectId, locationId, dataUrl);
+            // Save area measurements
+            if (areaMeasurements.length > 0) {
+              await indexedDBStorage.updateLocationMetadata(projectId, locationId, { areaMeasurements });
+            }
             toast.success("Bild aktualisiert");
           }
           navigate(`/projects/${projectId}`);
@@ -263,31 +270,19 @@ const PhotoEditor = () => {
         const locationIdParam = searchParams.get("locationId");
         const floorPlanParam = searchParams.get("floorPlan");
         let query = "";
-        if (detailParam === "true" && locationIdParam) {
-          query = `?detail=true&locationId=${locationIdParam}`;
-        } else if (floorPlanParam && locationIdParam) {
-          query = `?floorPlan=${floorPlanParam}&locationId=${locationIdParam}`;
-        }
+        if (detailParam === "true" && locationIdParam) query = `?detail=true&locationId=${locationIdParam}`;
+        else if (floorPlanParam && locationIdParam) query = `?floorPlan=${floorPlanParam}&locationId=${locationIdParam}`;
         navigate(`/projects/${projectId}/location-details${query}`, {
-          state: { imageData: dataUrl, originalImageData: imageDataState },
+          state: { imageData: dataUrl, originalImageData: imageDataState, areaMeasurements },
         });
       }
     }, 200);
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground">Bild wird geladen...</div>
-      </div>
-    );
-  }
+  if (loading) return <div className="min-h-screen bg-background flex items-center justify-center"><div className="text-muted-foreground">Bild wird geladen...</div></div>;
 
   if (!imageDataState) {
-    if (!isReEdit) {
-      toast.error("Kein Bild gefunden");
-      navigate(`/projects/${projectId}`);
-    }
+    if (!isReEdit) { toast.error("Kein Bild gefunden"); navigate(`/projects/${projectId}`); }
     return null;
   }
 
@@ -298,8 +293,7 @@ const PhotoEditor = () => {
           <Button variant="ghost" size="sm" onClick={() => navigate(`/projects/${projectId}`)} className="shrink-0">
             <ArrowLeft className="h-4 w-4" />
           </Button>
-
-          <div className="flex gap-1 justify-center flex-1">
+          <div className="flex gap-1 justify-center flex-1 flex-wrap">
             <Button variant={activeTool === "select" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("select")} className="px-2">
               <span className="text-xs">Ausw.</span>
             </Button>
@@ -309,8 +303,11 @@ const PhotoEditor = () => {
             <Button variant={activeTool === "text" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("text")} className="px-2">
               <Type className="h-4 w-4" />
             </Button>
-            <Button variant={activeTool === "measure" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("measure")} className="px-2">
+            <Button variant={activeTool === "measure" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("measure")} className="px-2" title="Linie bemaßen">
               <Ruler className="h-4 w-4" />
+            </Button>
+            <Button variant={activeTool === "area" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("area")} className="px-2" title="Fläche bemaßen">
+              <RectangleHorizontal className="h-4 w-4" />
             </Button>
             <Button variant="outline" size="sm" onClick={handleUndo} disabled={historyStep <= 0} className="px-2">
               <Undo className="h-4 w-4" />
@@ -322,7 +319,6 @@ const PhotoEditor = () => {
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
-
           <Button onClick={handleNext} size="sm" className="shrink-0">
             <Check className="h-4 w-4" />
           </Button>
@@ -338,12 +334,14 @@ const PhotoEditor = () => {
           Zweiten Punkt wählen
         </div>
       )}
+      {areaStart && !showAreaDialog && (
+        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-3 py-2 rounded-lg shadow-lg text-xs text-center z-50">
+          Gegenüberliegende Ecke wählen
+        </div>
+      )}
 
-      <MeasurementInputDialog
-        open={showMeasureDialog}
-        onConfirm={handleMeasureConfirm}
-        onCancel={handleMeasureCancel}
-      />
+      <MeasurementInputDialog open={showMeasureDialog} onConfirm={handleMeasureConfirm} onCancel={handleMeasureCancel} />
+      <AreaMeasurementDialog open={showAreaDialog} onConfirm={handleAreaConfirm} onCancel={handleAreaCancel} />
     </div>
   );
 };

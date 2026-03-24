@@ -136,6 +136,48 @@ export type Database = {
           },
         ]
       }
+      customer_uploads: {
+        Row: {
+          created_at: string
+          customer_id: string
+          file_name: string
+          id: string
+          project_id: string
+          storage_path: string
+        }
+        Insert: {
+          created_at?: string
+          customer_id: string
+          file_name: string
+          id?: string
+          project_id: string
+          storage_path: string
+        }
+        Update: {
+          created_at?: string
+          customer_id?: string
+          file_name?: string
+          id?: string
+          project_id?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_uploads_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customer_uploads_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customers: {
         Row: {
           created_at: string

@@ -350,12 +350,12 @@ export const indexedDBStorage = {
     await db.delete('detail-image-blobs', createDetailBlobId(detailImageId, 'original'));
   },
 
-  async updateLocationMetadata(projectId: string, locationId: string, data: { locationName?: string; comment?: string; system?: string; label?: string; locationType?: string; customFields?: Record<string, string>; guestInfo?: string }): Promise<void> {
+  async updateLocationMetadata(projectId: string, locationId: string, data: { locationName?: string; comment?: string; system?: string; label?: string; locationType?: string; customFields?: Record<string, string>; guestInfo?: string; areaMeasurements?: { index: number; widthMm: number; heightMm: number }[] }): Promise<void> {
     const db = await getDB();
     const record = await db.get('locations', locationId);
     if (!record) return;
     
-    await db.put('locations', {
+    const updates: any = {
       ...record,
       locationName: data.locationName,
       comment: data.comment,
@@ -364,7 +364,11 @@ export const indexedDBStorage = {
       locationType: data.locationType,
       customFields: data.customFields ? JSON.stringify(data.customFields) : undefined,
       guestInfo: data.guestInfo,
-    });
+    };
+    if (data.areaMeasurements !== undefined) {
+      updates.areaMeasurements = JSON.stringify(data.areaMeasurements);
+    }
+    await db.put('locations', updates);
 
     const project = await db.get('projects', projectId);
     if (project) {

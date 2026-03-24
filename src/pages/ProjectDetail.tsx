@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map } from "lucide-react";
+import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map, FileText, ExternalLink } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
@@ -30,6 +30,7 @@ const ProjectDetail = () => {
   const [isOnlineOnly, setIsOnlineOnly] = useState(false);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<any[]>([]);
+  const [customerUploads, setCustomerUploads] = useState<any[]>([]);
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -39,6 +40,13 @@ const ProjectDetail = () => {
       setFieldConfigs(mergeWithDefaultLocationFields((data || []) as any[]));
     };
     loadFieldConfigs();
+
+    // Load customer uploads
+    if (projectId) {
+      supabase.from("customer_uploads").select("*").eq("project_id", projectId).order("created_at", { ascending: false }).then(({ data }) => {
+        setCustomerUploads(data || []);
+      });
+    }
 
     const loadProject = async () => {
       if (!projectId) return;
@@ -211,6 +219,24 @@ const ProjectDetail = () => {
               <Map className="h-8 w-8 text-primary shrink-0" />
               <div className="flex-1"><h3 className="font-semibold">Grundrisse</h3><p className="text-sm text-muted-foreground">{project.floorPlans && project.floorPlans.length > 0 ? `${project.floorPlans.length} Grundriss(e) – Tippen zum Öffnen` : "Noch keine Grundrisse – Tippen zum Hochladen"}</p></div>
               <ArrowLeft className="h-4 w-4 text-muted-foreground rotate-180" />
+            </CardContent>
+          </Card>
+        )}
+
+        {customerUploads.length > 0 && (
+          <Card>
+            <CardContent className="p-4 space-y-2">
+              <p className="text-sm font-medium flex items-center gap-2"><FileText className="h-4 w-4 text-primary" /> Kundendateien</p>
+              {customerUploads.map((upload: any) => (
+                <div key={upload.id} className="flex items-center justify-between gap-2 p-2 rounded border bg-muted/30">
+                  <span className="text-sm truncate">{upload.file_name}</span>
+                  <Button size="sm" variant="outline" asChild>
+                    <a href={supabase.storage.from("project-files").getPublicUrl(upload.storage_path).data.publicUrl} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="h-3 w-3 mr-1" /> Öffnen
+                    </a>
+                  </Button>
+                </div>
+              ))}
             </CardContent>
           </Card>
         )}

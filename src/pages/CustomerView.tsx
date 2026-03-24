@@ -5,7 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check } from "lucide-react";
+import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check, Trash2, Upload, Download } from "lucide-react";
+import { format } from "date-fns";
+import { de } from "date-fns/locale";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
@@ -63,6 +65,8 @@ const CustomerView = () => {
   const [loading, setLoading] = useState(true);
   const [approvals, setApprovals] = useState<Record<string, boolean>>({});
   const [savingApprovals, setSavingApprovals] = useState(false);
+  const [customerUploads, setCustomerUploads] = useState<any[]>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
 
   useEffect(() => {
     if (!session || session.role !== "customer") { navigate("/"); return; }
@@ -259,6 +263,7 @@ const CustomerView = () => {
 
     setSelectedAssignment(assignment);
     setLoading(true);
+    loadCustomerUploads(assignment.project_id);
     try {
       const { data: locs, error } = await supabase
         .from("locations")
@@ -464,6 +469,61 @@ const CustomerView = () => {
     setDraftFeedback((prev) => ({ ...prev, [locationId]: feedback.message }));
   };
 
+  const deleteFeedback = async (locationId: string, feedbackId: string) => {
+    if (feedbackId.startsWith(LEGACY_FEEDBACK_PREFIX)) return;
+    setSavingId(locationId);
+    try {
+      if (isDirectGuestMode && guestToken) {
+        // Guest mode: use guest-data function or direct delete
+        await supabase.from("location_feedback").delete().eq("id", feedbackId);
+      } else {
+        const { data, error } = await supabase.functions.invoke("customer-data", {
+          body: { action: "delete_feedback", customerId: session?.id, assignmentId: selectedAssignment?.id, locationId, feedbackId },
+        });
+        if (error || data?.error) throw error || new Error(data?.error);
+      }
+      await reloadFeedbacks([locationId]);
+      toast.success("Kommentar gelöscht");
+    } catch (error) {
+      console.error("deleteFeedback failed", error);
+      toast.error("Fehler beim Löschen");
+    } finally { setSavingId(null); }
+  };
+
+  const loadCustomerUploads = async (projectId: string) => {
+    const { data } = await supabase.from("customer_uploads").select("*").eq("project_id", projectId).order("created_at", { ascending: false });
+    setCustomerUploads(data || []);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !session?.id || !selectedAssignment) return;
+    const projectId = selectedAssignment.project_id;
+    setUploadingFile(true);
+    try {
+      const path = `customer-uploads/${projectId}/${crypto.randomUUID()}/${file.name}`;
+      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { upsert: true });
+      if (uploadError) throw uploadError;
+      const { error: dbError } = await supabase.from("customer_uploads").insert({
+        project_id: projectId, customer_id: session.id, file_name: file.name, storage_path: path,
+      });
+      if (dbError) throw dbError;
+      toast.success("Datei hochgeladen");
+      loadCustomerUploads(projectId);
+    } catch (err: any) {
+      toast.error("Upload fehlgeschlagen: " + err.message);
+    } finally { setUploadingFile(false); e.target.value = ""; }
+  };
+
+  const deleteUpload = async (upload: any) => {
+    try {
+      await supabase.storage.from("project-files").remove([upload.storage_path]);
+      await supabase.from("customer_uploads").delete().eq("id", upload.id);
+      toast.success("Datei gelöscht");
+      loadCustomerUploads(upload.project_id);
+    } catch { toast.error("Fehler beim Löschen"); }
+  };
+
   const toggleApproval = async (locationId: string, approved: boolean) => {
     if (!selectedAssignment || selectedAssignment.direct) return;
     setApprovals(prev => ({ ...prev, [locationId]: approved }));
@@ -620,14 +680,26 @@ const CustomerView = () => {
                             {locationFeedback.map((entry) => (
                               <div key={entry.id} className="rounded-lg border p-3 bg-muted/20 space-y-1">
                                 <div className="flex items-center justify-between gap-2">
-                                  <p className="text-sm font-medium">{entry.author_name}</p>
+                                  <div>
+                                    <p className="text-sm font-medium">{entry.author_name}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {entry.created_at && new Date(entry.created_at).getTime() > 0
+                                        ? format(new Date(entry.created_at), "dd.MM.yyyy, HH:mm", { locale: de })
+                                        : ""}
+                                    </p>
+                                  </div>
                                   <span className={`text-xs px-2 py-0.5 rounded ${entry.status === "done" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{entry.status === "done" ? "Umgesetzt" : "Offen"}</span>
                                 </div>
                                 <p className="text-sm whitespace-pre-wrap">{entry.message}</p>
                                 {(entry.author_customer_id === session?.id || (!entry.author_customer_id && entry.author_name === session?.name)) && entry.status === "open" && (
-                                  <Button variant="ghost" size="sm" className="px-0" onClick={() => startEditFeedback(loc.id, entry)}>
-                                    <Pencil className="h-4 w-4 mr-1" /> Bearbeiten
-                                  </Button>
+                                  <div className="flex gap-2">
+                                    <Button variant="ghost" size="sm" className="px-0" onClick={() => startEditFeedback(loc.id, entry)}>
+                                      <Pencil className="h-4 w-4 mr-1" /> Bearbeiten
+                                    </Button>
+                                    <Button variant="ghost" size="sm" className="px-0 text-destructive" onClick={() => deleteFeedback(loc.id, entry.id)}>
+                                      <Trash2 className="h-4 w-4 mr-1" /> Löschen
+                                    </Button>
+                                  </div>
                                 )}
                               </div>
                             ))}
@@ -649,6 +721,47 @@ const CustomerView = () => {
                 );
               })}
             </div>
+
+            {/* Customer File Upload */}
+            {!isDirectGuestMode && isRealCustomerId(session?.id) && (
+              <Card>
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">Dateien hochladen</p>
+                    <label className="cursor-pointer">
+                      <input type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg,.svg,.ai,.eps" onChange={handleFileUpload} disabled={uploadingFile} />
+                      <Button size="sm" variant="outline" asChild disabled={uploadingFile}>
+                        <span><Upload className="h-4 w-4 mr-1" />{uploadingFile ? "Lädt..." : "Datei hochladen"}</span>
+                      </Button>
+                    </label>
+                  </div>
+                  {customerUploads.length > 0 && (
+                    <div className="space-y-2">
+                      {customerUploads.map((upload) => (
+                        <div key={upload.id} className="flex items-center justify-between gap-2 p-2 rounded border bg-background">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className="h-4 w-4 text-primary shrink-0" />
+                            <span className="text-sm truncate">{upload.file_name}</span>
+                          </div>
+                          <div className="flex gap-1">
+                            <Button size="sm" variant="ghost" asChild>
+                              <a href={supabase.storage.from("project-files").getPublicUrl(upload.storage_path).data.publicUrl} target="_blank" rel="noopener noreferrer">
+                                <Download className="h-3 w-3" />
+                              </a>
+                            </Button>
+                            {upload.customer_id === session?.id && (
+                              <Button size="sm" variant="ghost" onClick={() => deleteUpload(upload)}>
+                                <Trash2 className="h-3 w-3 text-destructive" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </>
         )}
       </div>

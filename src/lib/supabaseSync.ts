@@ -270,7 +270,7 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
   await supabase.from('projects').upsert({
     id: project.id,
     project_number: project.projectNumber,
-    user_id: session?.role === 'employee' ? session.id : (project.locations?.[0] ? project.id : project.id),
+    user_id: session?.role === 'employee' ? session.id : project.id,
     employee_id: session?.role === 'employee' ? session.id : null,
     created_at: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),
     updated_at: syncTimestamp,
