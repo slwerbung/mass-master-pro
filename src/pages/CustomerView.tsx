@@ -263,6 +263,7 @@ const CustomerView = () => {
 
     setSelectedAssignment(assignment);
     setLoading(true);
+    loadCustomerUploads(assignment.project_id);
     try {
       const { data: locs, error } = await supabase
         .from("locations")
