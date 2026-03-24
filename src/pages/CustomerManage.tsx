@@ -196,6 +196,9 @@ const CustomerManage = () => {
                     <span className="font-medium">{(a.customers as any)?.name}</span>{" → "}
                     <span className="font-medium">Projekt {a.projectNumber}</span>
                   </span>
+                  <Button size="sm" variant="ghost" onClick={() => deleteAssignment(a.id)} title="Zuweisung löschen">
+                    <Trash2 className="h-3 w-3 text-destructive" />
+                  </Button>
                 </div>
               ))}
               {assignments.length === 0 && <p className="text-muted-foreground text-sm text-center py-2">Noch keine Zuweisungen</p>}
