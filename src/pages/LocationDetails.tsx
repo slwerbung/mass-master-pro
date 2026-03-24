@@ -61,11 +61,10 @@ const LocationDetails = () => {
         const project = await indexedDBStorage.getProject(projectId);
         if (!project) { navigate("/"); return; }
         const loc = project.locations.find(l => l.id === locationId);
-        if (!loc) { navigate(`/projects/${projectId}`); return; }
+        const vals: Record<string, string> = {};
         if (loc.locationName) vals["locationName"] = loc.locationName;
         setPreviewImage(loc.imageData);
         // Load field values - map old static fields + custom fields
-        const vals: Record<string, string> = {};
         if (loc.system) vals["system"] = loc.system;
         if (loc.label) vals["label"] = loc.label;
         if (loc.locationType) vals["locationType"] = loc.locationType;
