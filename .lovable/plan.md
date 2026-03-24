@@ -1,95 +1,38 @@
 
 
-## Plan: Individuelles Mitarbeiter-Passwortmodell und Projekttrennung
+## Problem
 
-### Zusammenfassung
+Der Fehler in der Konsole ist:
 
-Das Projekt verwendet aktuell ein **globales Mitarbeiter-Passwort** (über `app_config`). Dieses wird ersetzt durch **individuelle Passwörter pro Mitarbeiter** (über `employees.password_hash`). Zusätzlich wird die Admin-Passwort-Verwaltung in die Einstellungen verschoben und Projekte werden pro Mitarbeiter abgesichert.
+```
+VersionError: The operation failed because the stored database is a higher version than the version requested.
+```
 
----
+Das bedeutet: Im Browser des Nutzers existiert eine IndexedDB mit einer **höheren Versionsnummer** als die aktuell im Code angeforderte Version 3. Das passiert, wenn zwischenzeitlich eine Code-Version mit Version 4+ deployt war und dann wieder auf Version 3 zurückgefallen ist.
 
-### 1. Backend: `validate-employee` Edge Function
+IndexedDB erlaubt kein Downgrade — wenn die gespeicherte DB Version 4 hat, aber der Code Version 3 anfordert, schlägt `openDB()` mit `VersionError` fehl. Dadurch können keine Projekte geladen werden.
 
-- Globale Passwort-Prüfung gegen `app_config` komplett entfernen
-- Stattdessen `employees.password_hash` des ausgewählten Mitarbeiters lesen
-- Wenn `password_hash` null/leer: Login ohne Passwort (kein Passwort gesetzt)
-- Wenn `password_hash` vorhanden: Passwort mit bcrypt vergleichen
-- Kein Fallback auf `employee_password` / `employee_password_hash` aus `app_config`
+**Wichtig**: Die Daten sind nicht verloren. Sie liegen weiterhin in der lokalen IndexedDB und in der Cloud. Nur der Zugriff scheitert am Versionskonflikt.
 
-### 2. Backend: `admin-manage` Edge Function
+## Lösung
 
-Neue Actions hinzufügen:
+In `src/lib/indexedDBStorage.ts` die `getDB()`-Funktion mit einem Fallback erweitern:
 
-- **`set_employee_password`**: Bekommt `employeeId` + `password`, hasht mit bcrypt, speichert in `employees.password_hash`
-- **`delete_employee_password`**: Setzt `employees.password_hash` auf `null` für gegebenen Mitarbeiter
-- **`set_admin_password`**: Bekommt `password`, hasht mit bcrypt, speichert als Secret `ADMIN_PASSWORD` in `app_config` (key: `admin_password_hash`)
-- **`get_security_settings`**: Anpassen, damit es nicht mehr den globalen `employee_password`-Status zurückgibt, sondern ggf. den Admin-Passwort-Status
+1. Wenn `openDB()` mit `VersionError` fehlschlägt, die IndexedDB löschen und neu erstellen
+2. Danach werden die Projekte automatisch aus der Cloud neu geladen (der bestehende Sync-Mechanismus in `Projects.tsx` holt Projekte aus der Cloud)
+3. Alternativ: Die `DB_VERSION` auf 4 hochsetzen (sicherer, weil keine Daten verloren gehen)
 
-Bestehende `create_employee`-Action erweitern: optionalen `password`-Parameter annehmen, bei Angabe bcrypt-Hash in `employees.password_hash` speichern.
+**Empfehlung**: `DB_VERSION` von 3 auf 4 hochsetzen. Das ist die sicherere Variante, weil:
+- Ein Upgrade von 3→4 ist ein No-Op (kein neuer Object Store nötig)
+- Ein Upgrade von einer noch höheren Version (falls existent) wird weiterhin durch einen `catch`-Block abgefangen, der die DB löscht und neu erstellt
 
-Bestehende `list_employees`-Action: `password_hash`-Spalte **nicht** im Klartext zurückgeben, sondern nur einen Boolean `hasPassword: !!emp.password_hash` pro Mitarbeiter.
+### Betroffene Datei
 
-### 3. Frontend: `Auth.tsx` (Mitarbeiter-Login)
+- `src/lib/indexedDBStorage.ts` — `DB_VERSION` auf 4 setzen + `VersionError`-Fallback in `getDB()`
 
-- Referenzen auf `storedEmployeePassword` (globales PW aus `app_config`) entfernen
-- Nach Mitarbeiter-Auswahl: `validate-employee` aufrufen
-  - Wenn `requiresPassword: true`: Passwort-Dialog zeigen
-  - Wenn `valid: true` ohne Passwort: direkt einloggen
-- Fallback-Logik gegen `app_config` entfernen
+### Was sich nicht ändert
 
-### 4. Frontend: `Admin.tsx` — Mitarbeiterverwaltung
-
-- Beim Anlegen eines Mitarbeiters: optionales Passwortfeld anzeigen
-- In der Mitarbeiterliste pro Eintrag anzeigen:
-  - Badge "Passwort gesetzt" oder "Kein Passwort"
-  - Buttons: "Passwort setzen/ändern" und "Passwort löschen"
-- Passwort setzen: Dialog mit Eingabefeld, ruft `set_employee_password` auf
-- Passwort löschen: Bestätigungsdialog, ruft `delete_employee_password` auf
-
-### 5. Frontend: `Admin.tsx` — Einstellungen-Tab
-
-- "Mitarbeiter-Passwort" Karte ersetzen durch "Admin-Passwort" Karte
-- Neues Admin-Passwort eingeben und über `set_admin_password` speichern
-- Globale Mitarbeiter-Passwort-Logik komplett entfernen
-
-### 6. Backend: `validate-admin` Edge Function
-
-- Prüfen ob bereits `admin_password_hash` in `app_config` existiert
-- Wenn ja: bcrypt-Vergleich gegen den Hash
-- Fallback auf das bestehende `ADMIN_PASSWORD`-Secret beibehalten
-
-### 7. Projekttrennung pro Mitarbeiter
-
-**Bereits implementiert** in `Projects.tsx` (Zeile 39): `session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery`
-
-**Noch zu ergänzen** in `ProjectDetail.tsx`:
-- Nach dem Laden des Projekts prüfen: Wenn Session-Rolle `employee`, dann `employee_id` des Projekts gegen `session.id` vergleichen
-- Bei Mismatch: Zugriff verweigern, zurück zu `/projects` navigieren
-- Admin darf weiterhin alle Projekte öffnen
-
-### 8. Datenbank
-
-- `employees.password_hash` existiert bereits — keine Migration nötig
-- Keine neuen Tabellen oder Spalten erforderlich
-
----
-
-### Betroffene Dateien
-
-| Datei | Änderung |
-|---|---|
-| `supabase/functions/validate-employee/index.ts` | Individuelles PW-Modell |
-| `supabase/functions/admin-manage/index.ts` | Neue Actions, `list_employees` anpassen |
-| `supabase/functions/validate-admin/index.ts` | Hash-basierte Admin-PW-Prüfung |
-| `src/pages/Auth.tsx` | Globales PW entfernen, individuelles Modell |
-| `src/pages/Admin.tsx` | MA-Passwort-Verwaltung pro MA, Admin-PW in Settings |
-| `src/pages/ProjectDetail.tsx` | Zugriffsprüfung pro Mitarbeiter |
-
-### Was nicht geändert wird
-
-- Kundenansicht, Kundenkommentare, Direktlinks
-- `location_feedback`, `customer_visible`, `floor_plans`
-- Grundriss-Funktionalität
-- Gast-Zugriff
-- Datenbank-Schema (keine Migration nötig)
+- Keine UI-Änderungen
+- Keine Backend-Änderungen
+- Keine Dependency-Änderungen
 
