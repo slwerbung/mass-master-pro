@@ -59,8 +59,12 @@ const Projects = () => {
       });
 
       // Also add local-only projects not yet in Supabase
+      // For employees, only show local projects that are in the filtered cloud list
+      const supabaseIds = new Set(supabaseProjects.map(sp => sp.id));
       for (const lp of localProjects) {
-        if (!supabaseProjects.find(sp => sp.id === lp.id)) {
+        if (!supabaseIds.has(lp.id)) {
+          // If employee, skip local projects not in their cloud list
+          if (session?.role === "employee") continue;
           merged.push({
             id: lp.id,
             projectNumber: lp.projectNumber,

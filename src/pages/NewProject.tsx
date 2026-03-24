@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,15 +16,26 @@ const NewProject = () => {
   const [projectNumber, setProjectNumber] = useState("");
   const [projectType, setProjectType] = useState<'aufmass' | 'aufmass_mit_plan'>('aufmass');
   const [isCreating, setIsCreating] = useState(false);
+  const [prefix, setPrefix] = useState("WER-");
   const navigate = useNavigate();
+
+  useEffect(() => {
+    // Load configurable prefix
+    supabase.functions.invoke("admin-manage", {
+      body: { action: "get_project_prefix" },
+    }).then(({ data }) => {
+      if (data?.prefix) setPrefix(data.prefix);
+    }).catch(() => {});
+  }, []);
 
   const handleCreate = async () => {
     if (!projectNumber.trim()) { toast.error("Bitte eine Projektnummer eingeben"); return; }
     setIsCreating(true);
     try {
-      const fullProjectNumber = `WER-${projectNumber.trim()}`;
+      const fullProjectNumber = `${prefix}${projectNumber.trim()}`;
       const session = getSession();
       const projectId = crypto.randomUUID();
+      const employeeId = session?.role === "employee" ? session.id : null;
       const newProject: Project = {
         id: projectId,
         projectNumber: fullProjectNumber,
@@ -37,13 +48,13 @@ const NewProject = () => {
       // Save locally
       await indexedDBStorage.saveProject(newProject);
 
-      // Sync to Supabase directly (RLS disabled for projects)
+      // Sync to Supabase
       try {
         await supabase.from("projects").upsert({
           id: projectId,
           project_number: fullProjectNumber,
-          user_id: session?.id || "employee",
-          employee_id: session?.role === "employee" ? session.id : null,
+          user_id: employeeId || projectId,
+          employee_id: employeeId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }, { onConflict: "id" });
@@ -77,7 +88,7 @@ const NewProject = () => {
             <div className="space-y-2">
               <Label htmlFor="projectNumber">Projektnummer</Label>
               <div className="flex items-center gap-2">
-                <span className="text-lg font-semibold text-muted-foreground px-3 py-2 bg-muted rounded-md">WER-</span>
+                <span className="text-lg font-semibold text-muted-foreground px-3 py-2 bg-muted rounded-md">{prefix}</span>
                 <Input id="projectNumber" type="text" placeholder="2024-001" value={projectNumber}
                   onChange={(e) => setProjectNumber(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}

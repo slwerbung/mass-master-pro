@@ -6,6 +6,12 @@ export interface Measurement {
   value: string; // in mm
 }
 
+export interface AreaMeasurement {
+  index: number;
+  widthMm: number;
+  heightMm: number;
+}
+
 export interface DetailImage {
   id: string;
   imageData: string;      // bearbeitetes Bild
@@ -39,6 +45,7 @@ export interface Location {
   customFields?: Record<string, string>;
   guestInfo?: string;
   feedbacks?: LocationFeedback[];
+  areaMeasurements?: AreaMeasurement[];
   createdAt: Date;
 }
 
