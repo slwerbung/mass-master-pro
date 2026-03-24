@@ -114,6 +114,23 @@ const Admin = () => {
     setSavingAdminPassword(false);
   };
 
+  const loadPrefix = async () => {
+    try {
+      const data = await invoke("get_project_prefix");
+      setProjectPrefix(data.prefix || "WER-");
+    } catch { setProjectPrefix("WER-"); }
+  };
+
+  const savePrefix = async () => {
+    setSavingPrefix(true);
+    try {
+      await invoke("set_project_prefix", { prefix: projectPrefix });
+      toast.success("Präfix gespeichert");
+    } catch (e: any) { toast.error(e.message || "Fehler"); }
+    setSavingPrefix(false);
+  };
+  };
+
   const loadFields = async () => {
     try {
       const data = await invoke("list_fields");
