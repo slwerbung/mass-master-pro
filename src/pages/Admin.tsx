@@ -88,7 +88,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); }
+    if (adminToken) { loadAll(); loadFields(); loadPrefix(); }
   }, [adminToken]);
 
   const loadAll = useCallback(async () => {
