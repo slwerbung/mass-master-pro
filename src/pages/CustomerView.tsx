@@ -701,7 +701,7 @@ const CustomerView = () => {
                                   </div>
                                 )}
                               </div>
-                            ))
+                            ))}
                           </div>
                         )}
                         <Textarea
