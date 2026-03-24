@@ -23,6 +23,8 @@ interface FieldConfig {
   field_options: string | null;
   sort_order: number;
   is_active: boolean;
+  applies_to: string;
+  is_required: boolean;
 }
 
 const LocationDetails = () => {
@@ -46,6 +48,16 @@ const LocationDetails = () => {
   // Dynamic fields
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>([]);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  const [projectType, setProjectType] = useState<string | undefined>(undefined);
+
+  // Load project type
+  useEffect(() => {
+    if (projectId) {
+      indexedDBStorage.getProject(projectId).then(proj => {
+        if (proj) setProjectType(proj.projectType);
+      });
+    }
+  }, [projectId]);
 
   // Load field configs from Supabase
   useEffect(() => {
@@ -53,6 +65,13 @@ const LocationDetails = () => {
       if (data) setFieldConfigs(data as FieldConfig[]);
     });
   }, []);
+
+  // Filter fields by project type
+  const filteredFields = fieldConfigs.filter(f => {
+    if (!f.applies_to || f.applies_to === "all") return true;
+    if (!projectType) return true; // show all if unknown
+    return f.applies_to === projectType;
+  });
 
   // Load existing location data in edit mode
   useEffect(() => {
@@ -65,12 +84,10 @@ const LocationDetails = () => {
         const vals: Record<string, string> = {};
         if (loc.locationName) vals["locationName"] = loc.locationName;
         setPreviewImage(loc.imageData);
-        // Load field values - map old static fields + custom fields
         if (loc.system) vals["system"] = loc.system;
         if (loc.label) vals["label"] = loc.label;
         if (loc.locationType) vals["locationType"] = loc.locationType;
         if (loc.comment) vals["comment"] = loc.comment;
-        // custom fields stored in loc as any
         if (loc.customFields) Object.assign(vals, loc.customFields);
         setFieldValues(vals);
         setIsLoaded(true);
@@ -97,8 +114,25 @@ const LocationDetails = () => {
     setFieldValues(prev => ({ ...prev, [key]: value }));
   };
 
+  const validateRequiredFields = (): boolean => {
+    const missing = filteredFields.filter(f => {
+      if (!f.is_required) return false;
+      const val = fieldValues[f.field_key]?.trim();
+      return !val || val === "";
+    });
+    if (missing.length > 0) {
+      toast.error(`Bitte fülle alle Pflichtfelder aus: ${missing.map(f => f.field_label).join(", ")}`);
+      return false;
+    }
+    return true;
+  };
+
   const handleSave = async () => {
     if (!projectId) { toast.error("Fehler beim Speichern"); return; }
+
+    // Validate required fields for location saves (not detail images)
+    if (!isDetailImage && !isDetailEditMode && !validateRequiredFields()) return;
+
     setIsSaving(true);
     try {
       if (isDetailEditMode && detailId) {
@@ -151,7 +185,6 @@ const LocationDetails = () => {
           originalImageData: compressedOriginalImageData,
           createdAt: new Date(),
         };
-        // Store custom fields
         const customFields: Record<string, string> = {};
         Object.entries(fieldValues).forEach(([k, v]) => { if (k.startsWith("custom_")) customFields[k] = v; });
         if (Object.keys(customFields).length > 0) newLocation.customFields = customFields;
@@ -179,18 +212,19 @@ const LocationDetails = () => {
 
   const renderField = (field: FieldConfig) => {
     const value = fieldValues[field.field_key] || "";
+    const requiredMark = field.is_required ? " *" : " (optional)";
     switch (field.field_type) {
       case "text":
         return (
           <div key={field.id} className="space-y-2">
-            <Label htmlFor={field.field_key}>{field.field_label} (optional)</Label>
+            <Label htmlFor={field.field_key}>{field.field_label}{requiredMark}</Label>
             <Input id={field.field_key} placeholder={field.field_label} value={value} onChange={(e) => setFieldValue(field.field_key, e.target.value)} />
           </div>
         );
       case "textarea":
         return (
           <div key={field.id} className="space-y-2">
-            <Label htmlFor={field.field_key}>{field.field_label} (optional)</Label>
+            <Label htmlFor={field.field_key}>{field.field_label}{requiredMark}</Label>
             <Textarea id={field.field_key} placeholder={field.field_label} value={value} onChange={(e) => setFieldValue(field.field_key, e.target.value)} rows={3} />
           </div>
         );
@@ -198,7 +232,7 @@ const LocationDetails = () => {
         const options: string[] = field.field_options ? JSON.parse(field.field_options) : [];
         return (
           <div key={field.id} className="space-y-2">
-            <Label htmlFor={field.field_key}>{field.field_label} (optional)</Label>
+            <Label htmlFor={field.field_key}>{field.field_label}{requiredMark}</Label>
             <Select value={value} onValueChange={(v) => setFieldValue(field.field_key, v)}>
               <SelectTrigger id={field.field_key}><SelectValue placeholder={`${field.field_label} auswählen...`} /></SelectTrigger>
               <SelectContent>{options.map(opt => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}</SelectContent>
@@ -210,7 +244,7 @@ const LocationDetails = () => {
         return (
           <div key={field.id} className="flex items-center gap-3 py-1">
             <Checkbox id={field.field_key} checked={value === "true"} onCheckedChange={(checked) => setFieldValue(field.field_key, checked ? "true" : "false")} />
-            <Label htmlFor={field.field_key} className="cursor-pointer">{field.field_label}</Label>
+            <Label htmlFor={field.field_key} className="cursor-pointer">{field.field_label}{field.is_required ? " *" : ""}</Label>
           </div>
         );
       default:
@@ -238,7 +272,7 @@ const LocationDetails = () => {
                 </div>
               ) : (
                 <>
-                  {fieldConfigs.map(renderField)}
+                  {filteredFields.map(renderField)}
                 </>
               )}
             </div>

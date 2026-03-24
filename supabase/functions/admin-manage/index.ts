@@ -91,6 +91,8 @@ Deno.serve(async (req) => {
           sort_order: params.sortOrder ?? 1,
           is_active: true,
           customer_visible: true,
+          applies_to: params.appliesTo || "all",
+          is_required: params.isRequired ?? false,
         });
         if (error) return json({ error: error.message }, 400);
         return json({ success: true });

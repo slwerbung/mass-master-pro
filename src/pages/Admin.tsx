@@ -12,6 +12,7 @@ import { getSession, clearSession } from "@/lib/session";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -30,7 +31,15 @@ interface FieldConfig {
   sort_order: number;
   is_active: boolean;
   customer_visible: boolean;
+  applies_to: string;
+  is_required: boolean;
 }
+
+const APPLIES_TO_LABELS: Record<string, string> = {
+  all: "Alle",
+  aufmass: "Nur Aufmaß",
+  aufmass_mit_plan: "Nur Aufmaß mit Plan",
+};
 
 const Admin = () => {
   const navigate = useNavigate();
@@ -50,11 +59,15 @@ const Admin = () => {
   const [newFieldLabel, setNewFieldLabel] = useState("");
   const [newFieldType, setNewFieldType] = useState<FieldConfig["field_type"]>("text");
   const [newFieldOptions, setNewFieldOptions] = useState("");
+  const [newFieldAppliesTo, setNewFieldAppliesTo] = useState("all");
+  const [newFieldRequired, setNewFieldRequired] = useState(false);
   const [savingField, setSavingField] = useState(false);
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
   const [editFieldLabel, setEditFieldLabel] = useState("");
   const [editFieldType, setEditFieldType] = useState<FieldConfig["field_type"]>("text");
   const [editFieldOptions, setEditFieldOptions] = useState("");
+  const [editFieldAppliesTo, setEditFieldAppliesTo] = useState("all");
+  const [editFieldRequired, setEditFieldRequired] = useState(false);
   // Employee password dialog
   const [passwordDialogEmployee, setPasswordDialogEmployee] = useState<any | null>(null);
   const [dialogPassword, setDialogPassword] = useState("");
@@ -113,7 +126,7 @@ const Admin = () => {
     if (!newFieldLabel.trim()) return;
     setSavingField(true);
     const fieldKey = `custom_${Date.now()}`;
-    const maxOrder = fields.length > 0 ? Math.max(...fields.map(f => f.sort_order)) + 1 : 1;
+    const maxOrder = fields.length > 0 ? Math.max(...fields.map(f => f.sort_order)) + 1 : 0;
     try {
       await invoke("create_field", {
         fieldKey,
@@ -122,8 +135,12 @@ const Admin = () => {
         fieldOptions: newFieldType === "dropdown" && newFieldOptions.trim()
           ? newFieldOptions.split(",").map(s => s.trim()).filter(Boolean) : null,
         sortOrder: maxOrder,
+        appliesTo: newFieldAppliesTo,
+        isRequired: newFieldRequired,
       });
-      setNewFieldLabel(""); setNewFieldOptions(""); setNewFieldType("text"); toast.success("Feld erstellt"); loadFields();
+      setNewFieldLabel(""); setNewFieldOptions(""); setNewFieldType("text");
+      setNewFieldAppliesTo("all"); setNewFieldRequired(false);
+      toast.success("Feld erstellt"); loadFields();
     } catch (e: any) { toast.error(e.message || "Fehler beim Erstellen"); }
     setSavingField(false);
   };
@@ -142,13 +159,18 @@ const Admin = () => {
     setEditingFieldId(field.id);
     setEditFieldLabel(field.field_label);
     setEditFieldType(field.field_type);
+    setEditFieldAppliesTo(field.applies_to || "all");
+    setEditFieldRequired(field.is_required ?? false);
     try {
       const parsed = field.field_options ? JSON.parse(field.field_options) : [];
       setEditFieldOptions(Array.isArray(parsed) ? parsed.join(", ") : "");
     } catch { setEditFieldOptions(""); }
   };
 
-  const cancelEditField = () => { setEditingFieldId(null); setEditFieldLabel(""); setEditFieldType("text"); setEditFieldOptions(""); };
+  const cancelEditField = () => {
+    setEditingFieldId(null); setEditFieldLabel(""); setEditFieldType("text");
+    setEditFieldOptions(""); setEditFieldAppliesTo("all"); setEditFieldRequired(false);
+  };
 
   const saveFieldEdit = async (field: FieldConfig) => {
     const changes: any = {
@@ -156,6 +178,8 @@ const Admin = () => {
       field_type: editFieldType,
       field_options: editFieldType === "dropdown" && editFieldOptions.trim()
         ? JSON.stringify(editFieldOptions.split(",").map(s => s.trim()).filter(Boolean)) : null,
+      applies_to: editFieldAppliesTo,
+      is_required: editFieldRequired,
     };
     try { await invoke("update_field", { fieldId: field.id, changes }); } catch {}
     cancelEditField(); loadFields(); toast.success("Feld aktualisiert");
@@ -167,16 +191,18 @@ const Admin = () => {
   };
 
   const moveField = async (id: string, direction: "up" | "down") => {
-    const idx = fields.findIndex(f => f.id === id);
+    const sorted = [...fields];
+    const idx = sorted.findIndex(f => f.id === id);
     if (direction === "up" && idx === 0) return;
-    if (direction === "down" && idx === fields.length - 1) return;
+    if (direction === "down" && idx === sorted.length - 1) return;
     const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-    const current = fields[idx]; const swap = fields[swapIdx];
+    // Swap in array
+    [sorted[idx], sorted[swapIdx]] = [sorted[swapIdx], sorted[idx]];
+    // Reassign sequential sort_order values
     try {
-      await Promise.all([
-        invoke("update_field", { fieldId: current.id, changes: { sort_order: swap.sort_order } }),
-        invoke("update_field", { fieldId: swap.id, changes: { sort_order: current.sort_order } }),
-      ]);
+      await Promise.all(
+        sorted.map((f, i) => invoke("update_field", { fieldId: f.id, changes: { sort_order: i } }))
+      );
     } catch {}
     loadFields();
   };
@@ -350,12 +376,33 @@ const Admin = () => {
                                 </Select>
                                 {editFieldType === "dropdown" ? <Input value={editFieldOptions} onChange={(e) => setEditFieldOptions(e.target.value)} placeholder="Optionen, kommagetrennt" /> : <div />}
                               </div>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <div className="space-y-1">
+                                  <Label className="text-xs">Gilt für</Label>
+                                  <Select value={editFieldAppliesTo} onValueChange={setEditFieldAppliesTo}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="all">Alle</SelectItem>
+                                      <SelectItem value="aufmass">Nur Aufmaß</SelectItem>
+                                      <SelectItem value="aufmass_mit_plan">Nur Aufmaß mit Plan</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="flex items-center gap-2 pt-5">
+                                  <Checkbox id={`edit-required-${field.id}`} checked={editFieldRequired} onCheckedChange={(c) => setEditFieldRequired(!!c)} />
+                                  <Label htmlFor={`edit-required-${field.id}`} className="text-sm cursor-pointer">Pflichtfeld</Label>
+                                </div>
+                              </div>
                             </div>
                           ) : (
                             <>
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-medium text-sm">{field.field_label}</span>
                                 <Badge variant="outline" className="text-xs">{fieldTypeLabel(field.field_type)}</Badge>
+                                {field.is_required && <Badge variant="default" className="text-xs">Pflichtfeld</Badge>}
+                                {field.applies_to && field.applies_to !== "all" && (
+                                  <Badge variant="secondary" className="text-xs">{APPLIES_TO_LABELS[field.applies_to] || field.applies_to}</Badge>
+                                )}
                                 {!field.is_active && <Badge variant="secondary" className="text-xs">Intern ausgeblendet</Badge>}
                                 {!field.customer_visible && <Badge variant="secondary" className="text-xs">Für Kunden ausgeblendet</Badge>}
                               </div>
@@ -415,6 +462,23 @@ const Admin = () => {
                   {newFieldType === "dropdown" && (
                     <div className="space-y-1"><Label className="text-xs">Optionen (kommagetrennt)</Label><Input placeholder="z.B. Klein, Mittel, Groß" value={newFieldOptions} onChange={(e) => setNewFieldOptions(e.target.value)} /></div>
                   )}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Gilt für</Label>
+                      <Select value={newFieldAppliesTo} onValueChange={setNewFieldAppliesTo}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Alle</SelectItem>
+                          <SelectItem value="aufmass">Nur Aufmaß</SelectItem>
+                          <SelectItem value="aufmass_mit_plan">Nur Aufmaß mit Plan</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2 pt-5">
+                      <Checkbox id="new-field-required" checked={newFieldRequired} onCheckedChange={(c) => setNewFieldRequired(!!c)} />
+                      <Label htmlFor="new-field-required" className="text-sm cursor-pointer">Pflichtfeld</Label>
+                    </div>
+                  </div>
                   <Button onClick={addField} disabled={!newFieldLabel.trim() || savingField} size="sm"><Plus className="h-4 w-4 mr-1" /> Feld hinzufügen</Button>
                 </div>
               </CardContent>
