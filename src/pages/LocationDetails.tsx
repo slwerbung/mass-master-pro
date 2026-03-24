@@ -188,6 +188,9 @@ const LocationDetails = () => {
         const customFields: Record<string, string> = {};
         Object.entries(fieldValues).forEach(([k, v]) => { if (k.startsWith("custom_")) customFields[k] = v; });
         if (Object.keys(customFields).length > 0) newLocation.customFields = customFields;
+        if (stateAreaMeasurements && stateAreaMeasurements.length > 0) {
+          newLocation.areaMeasurements = stateAreaMeasurements;
+        }
         project.locations.push(newLocation);
         await indexedDBStorage.saveProject(project);
         const syncResult = await syncProjectToSupabase(projectId);
