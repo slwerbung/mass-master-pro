@@ -41,6 +41,13 @@ const ProjectDetail = () => {
     };
     loadFieldConfigs();
 
+    // Load customer uploads
+    if (projectId) {
+      supabase.from("customer_uploads").select("*").eq("project_id", projectId).order("created_at", { ascending: false }).then(({ data }) => {
+        setCustomerUploads(data || []);
+      });
+    }
+
     const loadProject = async () => {
       if (!projectId) return;
       try {
