@@ -96,6 +96,13 @@ const CustomerManage = () => {
     loadData();
   };
 
+  const deleteAssignment = async (id: string) => {
+    const { error } = await supabase.from("customer_project_assignments").delete().eq("id", id);
+    if (error) { toast.error("Fehler beim Löschen"); return; }
+    toast.success("Zuweisung gelöscht");
+    loadData();
+  };
+
   const copyLink = async (id: string) => {
     await navigator.clipboard.writeText(customerLoginUrl);
     setCopiedId(id);
