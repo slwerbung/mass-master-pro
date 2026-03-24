@@ -1,4 +1,4 @@
-import { openDB, DBSchema, IDBPDatabase } from 'idb';
+import { openDB, deleteDB, DBSchema, IDBPDatabase } from 'idb';
 import { Project, Location, DetailImage, FloorPlan } from '@/types/project';
 
 interface AufmassDBSchema extends DBSchema {
