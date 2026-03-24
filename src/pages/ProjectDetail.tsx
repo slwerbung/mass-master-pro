@@ -58,12 +58,15 @@ const ProjectDetail = () => {
         }
 
         if (localProject) {
-          // Check employee access
+          // Check employee access via remote project data
           const currentSession = getSession();
-          if (currentSession?.role === "employee" && localProject.employeeId && localProject.employeeId !== currentSession.id) {
-            toast.error("Kein Zugriff auf dieses Projekt");
-            navigate("/projects");
-            return;
+          if (currentSession?.role === "employee") {
+            const { data: projRow } = await supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle();
+            if (projRow?.employee_id && projRow.employee_id !== currentSession.id) {
+              toast.error("Kein Zugriff auf dieses Projekt");
+              navigate("/projects");
+              return;
+            }
           }
           setProject(localProject);
           setIsLoading(false);
