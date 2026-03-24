@@ -33,7 +33,7 @@ const Auth = () => {
 
   useEffect(() => {
     if (mode === "employee") {
-      supabase.from("employees").select("id, name").order("name").then(({ data }) => setEmployees(data || []));
+      supabase.from("employees_public" as any).select("id, name").order("name").then(({ data }: any) => setEmployees(data || []));
     } else if (mode === "customer") {
       supabase.from("customers").select("id, name").order("name").then(({ data }) => setCustomers(data || []));
     }
