@@ -233,6 +233,18 @@ Deno.serve(async (req) => {
         return json({ projects: data });
       }
 
+      // ---- PROJECT PREFIX ----
+      case "get_project_prefix": {
+        const { data } = await supabase.from("app_config").select("value").eq("key", "project_prefix").maybeSingle();
+        return json({ prefix: data?.value || "WER-" });
+      }
+      case "set_project_prefix": {
+        const prefix = String(params.prefix ?? "").trim();
+        const { error } = await supabase.from("app_config").upsert({ key: "project_prefix", value: prefix });
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
