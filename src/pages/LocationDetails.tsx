@@ -38,7 +38,7 @@ const LocationDetails = () => {
 
   const { imageData: stateImageData, originalImageData: stateOriginalImageData } = location.state || {};
 
-  const [locationName, setLocationName] = useState("");
+  const locationName = fieldValues["locationName"] || "";
   const [caption, setCaption] = useState("");
   const [previewImage, setPreviewImage] = useState<string | null>(stateImageData || null);
   const [isSaving, setIsSaving] = useState(false);
