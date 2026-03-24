@@ -106,7 +106,7 @@ const LocationDetails = () => {
         navigate(`/projects/${projectId}`);
       } else if (isEditMode && locationId) {
         await indexedDBStorage.updateLocationMetadata(projectId, locationId, {
-          locationName: locationName.trim() || undefined,
+          locationName: fieldValues["locationName"]?.trim() || undefined,
           comment: fieldValues["comment"]?.trim() || undefined,
           system: fieldValues["system"]?.trim() || undefined,
           label: fieldValues["label"]?.trim() || undefined,
