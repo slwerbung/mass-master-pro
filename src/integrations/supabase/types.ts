@@ -337,6 +337,7 @@ export type Database = {
       }
       location_field_config: {
         Row: {
+          applies_to: string
           created_at: string
           customer_visible: boolean
           field_key: string
@@ -345,9 +346,11 @@ export type Database = {
           field_type: string
           id: string
           is_active: boolean
+          is_required: boolean
           sort_order: number
         }
         Insert: {
+          applies_to?: string
           created_at?: string
           customer_visible?: boolean
           field_key: string
@@ -356,9 +359,11 @@ export type Database = {
           field_type: string
           id?: string
           is_active?: boolean
+          is_required?: boolean
           sort_order?: number
         }
         Update: {
+          applies_to?: string
           created_at?: string
           customer_visible?: boolean
           field_key?: string
@@ -367,6 +372,7 @@ export type Database = {
           field_type?: string
           id?: string
           is_active?: boolean
+          is_required?: boolean
           sort_order?: number
         }
         Relationships: []
