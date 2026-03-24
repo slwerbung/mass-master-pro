@@ -78,7 +78,7 @@ const CustomerManage = () => {
       await supabase.from("projects").upsert({
         id: proj.id,
         project_number: proj.projectNumber,
-        user_id: session?.id || "employee",
+        user_id: session?.role === "employee" ? session.id : proj.id,
         employee_id: session?.role === "employee" ? session.id : null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
