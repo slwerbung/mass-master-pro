@@ -42,20 +42,41 @@ Deno.serve(async (req) => {
     );
 
     switch (action) {
+      // ---- SECURITY SETTINGS ----
       case "get_security_settings": {
-        const { data: hashConfig } = await supabase.from("app_config").select("value").eq("key", "employee_password_hash").maybeSingle();
-        const { data: legacyConfig } = await supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle();
-        return json({ employeePasswordConfigured: !!(hashConfig?.value || legacyConfig?.value) });
+        const { data: hashConfig } = await supabase.from("app_config").select("value").eq("key", "admin_password_hash").maybeSingle();
+        return json({ adminPasswordConfigured: !!hashConfig?.value });
       }
-      case "set_employee_password": {
+
+      // ---- ADMIN PASSWORD ----
+      case "set_admin_password": {
         const password = String(params.password || "").trim();
         if (!password) return json({ error: "Missing password" }, 400);
         const passwordHash = await hash(password);
-        const { error } = await supabase.from("app_config").upsert({ key: "employee_password_hash", value: passwordHash });
+        const { error } = await supabase.from("app_config").upsert({ key: "admin_password_hash", value: passwordHash });
         if (error) return json({ error: error.message }, 500);
-        await supabase.from("app_config").delete().eq("key", "employee_password");
         return json({ success: true });
       }
+
+      // ---- EMPLOYEE PASSWORD (individual) ----
+      case "set_employee_password": {
+        const password = String(params.password || "").trim();
+        const employeeId = params.employeeId;
+        if (!password || !employeeId) return json({ error: "Missing password or employeeId" }, 400);
+        const passwordHash = await hash(password);
+        const { error } = await supabase.from("employees").update({ password_hash: passwordHash }).eq("id", employeeId);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+      case "delete_employee_password": {
+        const employeeId = params.employeeId;
+        if (!employeeId) return json({ error: "Missing employeeId" }, 400);
+        const { error } = await supabase.from("employees").update({ password_hash: null }).eq("id", employeeId);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
+      // ---- FIELDS ----
       case "list_fields": {
         const { data, error } = await supabase.from("location_field_config").select("*").order("sort_order");
         if (error) return json({ error: error.message }, 500);
@@ -85,7 +106,7 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
-      // ---- SYNC PROJECTS (called by employees, no admin pw needed) ----
+      // ---- SYNC PROJECTS ----
       case "sync_projects": {
         const projects = params.projects as Array<{
           id: string;
@@ -112,12 +133,23 @@ Deno.serve(async (req) => {
       case "list_employees": {
         const { data, error } = await supabase.from("employees").select("*").order("name");
         if (error) return json({ error: error.message }, 500);
-        return json({ employees: data });
+        // Don't expose password_hash, return hasPassword boolean instead
+        const employees = (data || []).map(emp => ({
+          id: emp.id,
+          name: emp.name,
+          created_at: emp.created_at,
+          hasPassword: !!emp.password_hash,
+        }));
+        return json({ employees });
       }
       case "create_employee": {
-        const { data, error } = await supabase.from("employees").insert({ name: params.name }).select().single();
+        const insertData: any = { name: params.name };
+        if (params.password && String(params.password).trim()) {
+          insertData.password_hash = await hash(String(params.password).trim());
+        }
+        const { data, error } = await supabase.from("employees").insert(insertData).select().single();
         if (error) return json({ error: error.message }, 400);
-        return json({ employee: data });
+        return json({ employee: { id: data.id, name: data.name, created_at: data.created_at, hasPassword: !!data.password_hash } });
       }
       case "delete_employee": {
         const { error } = await supabase.from("employees").delete().eq("id", params.employeeId);

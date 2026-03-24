@@ -18,7 +18,6 @@ const Auth = () => {
   const [employeePassword, setEmployeePassword] = useState("");
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<{ id: string; name: string } | null>(null);
-  const [storedEmployeePassword, setStoredEmployeePassword] = useState<string | null>(null);
   const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -35,9 +34,6 @@ const Auth = () => {
   useEffect(() => {
     if (mode === "employee") {
       supabase.from("employees").select("id, name").order("name").then(({ data }) => setEmployees(data || []));
-      supabase.from("app_config").select("value").eq("key", "employee_password").maybeSingle().then(({ data }) => {
-        setStoredEmployeePassword(data?.value || null);
-      });
     } else if (mode === "customer") {
       supabase.from("customers").select("id, name").order("name").then(({ data }) => setCustomers(data || []));
     }
@@ -54,11 +50,6 @@ const Auth = () => {
         setSession({ role: "admin", id: "admin", name: "Admin", authToken: data.token, expiresAt: data.expiresAt });
         toast.success("Als Admin angemeldet");
         navigate("/admin");
-      } else {
-        setSession({ role: "admin", id: "admin", name: "Admin" });
-        localStorage.setItem("admin_pw", adminPassword);
-        toast.success("Als Admin angemeldet");
-        navigate("/admin");
       }
     } catch { toast.error("Verbindungsfehler"); }
     setLoading(false);
@@ -68,27 +59,18 @@ const Auth = () => {
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("validate-employee", { body: { employeeId: emp.id } });
-      if (!error && data?.requiresPassword) {
+      if (error) { toast.error("Verbindungsfehler"); setLoading(false); return; }
+      if (data?.requiresPassword) {
         setSelectedEmployee(emp);
-      } else if (!error && data?.valid && data?.token) {
+      } else if (data?.valid && data?.token) {
         setSession({ role: "employee", id: emp.id, name: emp.name, authToken: data.token, expiresAt: data.expiresAt });
         toast.success(`Angemeldet als ${emp.name}`);
         navigate("/projects");
-      } else if (storedEmployeePassword) {
-        setSelectedEmployee(emp);
       } else {
-        setSession({ role: "employee", id: emp.id, name: emp.name });
-        toast.success(`Angemeldet als ${emp.name}`);
-        navigate("/projects");
+        toast.error("Login fehlgeschlagen");
       }
     } catch {
-      if (storedEmployeePassword) {
-        setSelectedEmployee(emp);
-      } else {
-        setSession({ role: "employee", id: emp.id, name: emp.name });
-        toast.success(`Angemeldet als ${emp.name}`);
-        navigate("/projects");
-      }
+      toast.error("Verbindungsfehler");
     } finally {
       setLoading(false);
     }
@@ -99,12 +81,9 @@ const Auth = () => {
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("validate-employee", { body: { employeeId: selectedEmployee.id, password: employeePassword } });
-      if (!error && data?.valid && data?.token) {
+      if (error) { toast.error("Verbindungsfehler"); }
+      else if (data?.valid && data?.token) {
         setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name, authToken: data.token, expiresAt: data.expiresAt });
-        toast.success(`Angemeldet als ${selectedEmployee.name}`);
-        navigate("/projects");
-      } else if (storedEmployeePassword && employeePassword === storedEmployeePassword) {
-        setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name });
         toast.success(`Angemeldet als ${selectedEmployee.name}`);
         navigate("/projects");
       } else {
@@ -112,13 +91,7 @@ const Auth = () => {
         setEmployeePassword("");
       }
     } catch {
-      if (storedEmployeePassword && employeePassword === storedEmployeePassword) {
-        setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name });
-        toast.success(`Angemeldet als ${selectedEmployee.name}`);
-        navigate("/projects");
-      } else {
-        toast.error("Verbindungsfehler");
-      }
+      toast.error("Verbindungsfehler");
     } finally {
       setLoading(false);
     }
@@ -183,7 +156,7 @@ const Auth = () => {
                   <Label>Mitarbeiter auswählen</Label>
                   <div className="grid gap-2 max-h-64 overflow-y-auto">
                     {employees.map((emp) => (
-                      <Button key={emp.id} variant="outline" className="w-full justify-start" onClick={() => handleEmployeeSelect(emp)}>
+                      <Button key={emp.id} variant="outline" className="w-full justify-start" onClick={() => handleEmployeeSelect(emp)} disabled={loading}>
                         <User className="h-4 w-4 mr-2" />{emp.name}
                       </Button>
                     ))}
@@ -195,10 +168,10 @@ const Auth = () => {
 
           {mode === "employee" && selectedEmployee && (
             <div className="space-y-4">
-              <Button variant="ghost" size="sm" onClick={() => setSelectedEmployee(null)}><ArrowLeft className="h-4 w-4 mr-1" /> Zurück</Button>
+              <Button variant="ghost" size="sm" onClick={() => { setSelectedEmployee(null); setEmployeePassword(""); }}><ArrowLeft className="h-4 w-4 mr-1" /> Zurück</Button>
               <p className="text-sm text-muted-foreground">Anmelden als <strong>{selectedEmployee.name}</strong></p>
               <div className="space-y-2">
-                <Label htmlFor="emp-pw">Mitarbeiter-Passwort</Label>
+                <Label htmlFor="emp-pw">Passwort</Label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input id="emp-pw" type="password" className="pl-9" value={employeePassword}

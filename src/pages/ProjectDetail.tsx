@@ -6,6 +6,7 @@ import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map } f
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
+import { getSession } from "@/lib/session";
 import { deleteDetailImageFromSupabase, deleteProjectFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, syncProjectToSupabase } from "@/lib/supabaseSync";
 import {
   AlertDialog,
