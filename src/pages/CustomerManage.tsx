@@ -40,13 +40,13 @@ const CustomerManage = () => {
       // Load assignments from Supabase
       const { data: assignData } = await supabase
         .from("customer_project_assignments")
-        .select("id, customer_id, project_id, customers(name)")
+        .select("id, customer_id, project_id, customers(name), projects(project_number)")
         .order("created_at");
       
       // Enrich assignments with local project info
       const enriched = (assignData || []).map((a: any) => {
         const proj = localProjects.find(p => p.id === a.project_id);
-        return { ...a, projectNumber: proj?.projectNumber || a.project_id.slice(0, 8) };
+        return { ...a, projectNumber: proj?.projectNumber || (a as any).projects?.project_number || a.project_id.slice(0, 8) };
       });
       setAssignments(enriched);
     } catch {
