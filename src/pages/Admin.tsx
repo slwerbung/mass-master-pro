@@ -12,7 +12,7 @@ import { getSession, clearSession } from "@/lib/session";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -102,10 +102,10 @@ const Admin = () => {
   const loadFields = async () => {
     try {
       const data = await invoke("list_fields");
-      setFields(mergeWithDefaultLocationFields((data.fields || []) as FieldConfig[]) as FieldConfig[]);
+      setFields((data.fields || []) as FieldConfig[]);
     } catch {
-      const { data } = await (supabase as any).from("location_field_config").select("*").order("sort_order");
-      setFields(mergeWithDefaultLocationFields((data || []) as FieldConfig[]) as FieldConfig[]);
+      const { data } = await supabase.from("location_field_config").select("*").order("sort_order");
+      setFields((data || []) as FieldConfig[]);
     }
   };
 

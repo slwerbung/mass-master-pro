@@ -38,7 +38,6 @@ const LocationDetails = () => {
 
   const { imageData: stateImageData, originalImageData: stateOriginalImageData } = location.state || {};
 
-  const [locationName, setLocationName] = useState("");
   const [caption, setCaption] = useState("");
   const [previewImage, setPreviewImage] = useState<string | null>(stateImageData || null);
   const [isSaving, setIsSaving] = useState(false);
@@ -63,10 +62,10 @@ const LocationDetails = () => {
         if (!project) { navigate("/"); return; }
         const loc = project.locations.find(l => l.id === locationId);
         if (!loc) { navigate(`/projects/${projectId}`); return; }
-        setLocationName(loc.locationName || "");
+        const vals: Record<string, string> = {};
+        if (loc.locationName) vals["locationName"] = loc.locationName;
         setPreviewImage(loc.imageData);
         // Load field values - map old static fields + custom fields
-        const vals: Record<string, string> = {};
         if (loc.system) vals["system"] = loc.system;
         if (loc.label) vals["label"] = loc.label;
         if (loc.locationType) vals["locationType"] = loc.locationType;
@@ -108,7 +107,7 @@ const LocationDetails = () => {
         navigate(`/projects/${projectId}`);
       } else if (isEditMode && locationId) {
         await indexedDBStorage.updateLocationMetadata(projectId, locationId, {
-          locationName: locationName.trim() || undefined,
+          locationName: fieldValues["locationName"]?.trim() || undefined,
           comment: fieldValues["comment"]?.trim() || undefined,
           system: fieldValues["system"]?.trim() || undefined,
           label: fieldValues["label"]?.trim() || undefined,
@@ -143,7 +142,7 @@ const LocationDetails = () => {
         const newLocation: Location = {
           id: presetLocationId || crypto.randomUUID(),
           locationNumber: fullLocationNumber,
-          locationName: locationName.trim() || undefined,
+          locationName: fieldValues["locationName"]?.trim() || undefined,
           comment: fieldValues["comment"]?.trim() || undefined,
           system: fieldValues["system"]?.trim() || undefined,
           label: fieldValues["label"]?.trim() || undefined,
@@ -239,10 +238,6 @@ const LocationDetails = () => {
                 </div>
               ) : (
                 <>
-                  <div className="space-y-2">
-                    <Label htmlFor="locationName">Standortbezeichnung (optional)</Label>
-                    <Input id="locationName" placeholder="z.B. Wohnzimmer, Erdgeschoss" value={locationName} onChange={(e) => setLocationName(e.target.value)} />
-                  </div>
                   {fieldConfigs.map(renderField)}
                 </>
               )}
