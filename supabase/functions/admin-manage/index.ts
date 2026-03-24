@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
       case "set_admin_password": {
         const password = String(params.password || "").trim();
         if (!password) return json({ error: "Missing password" }, 400);
-        const passwordHash = await hash(password);
+        const passwordHash = bcrypt.hashSync(password, 10);
         const { error } = await supabase.from("app_config").upsert({ key: "admin_password_hash", value: passwordHash });
         if (error) return json({ error: error.message }, 500);
         return json({ success: true });
@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
         const password = String(params.password || "").trim();
         const employeeId = params.employeeId;
         if (!password || !employeeId) return json({ error: "Missing password or employeeId" }, 400);
-        const passwordHash = await hash(password);
+        const passwordHash = bcrypt.hashSync(password, 10);
         const { error } = await supabase.from("employees").update({ password_hash: passwordHash }).eq("id", employeeId);
         if (error) return json({ error: error.message }, 500);
         return json({ success: true });
@@ -145,7 +145,7 @@ Deno.serve(async (req) => {
       case "create_employee": {
         const insertData: any = { name: params.name };
         if (params.password && String(params.password).trim()) {
-          insertData.password_hash = await hash(String(params.password).trim());
+          insertData.password_hash = bcrypt.hashSync(String(params.password).trim(), 10);
         }
         const { data, error } = await supabase.from("employees").insert(insertData).select().single();
         if (error) return json({ error: error.message }, 400);

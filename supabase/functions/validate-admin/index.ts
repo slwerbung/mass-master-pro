@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
 
     let valid = false;
     if (hashConfig?.value) {
-      valid = await compare(password, hashConfig.value);
+      valid = bcrypt.compareSync(password, hashConfig.value);
     } else {
       // Fallback to ADMIN_PASSWORD secret (plaintext comparison)
       const adminPassword = Deno.env.get("ADMIN_PASSWORD");

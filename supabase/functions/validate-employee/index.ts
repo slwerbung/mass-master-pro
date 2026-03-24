@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
     // Individual password model: check employee's own password_hash
     if (employee.password_hash) {
       if (!password) return json({ valid: false, requiresPassword: true });
-      const valid = await compare(password, employee.password_hash);
+      const valid = bcrypt.compareSync(password, employee.password_hash);
       if (!valid) return json({ valid: false });
     }
     // No password_hash = no password required, login directly
