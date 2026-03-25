@@ -35,7 +35,7 @@ const Projects = () => {
     try {
       await indexedDBStorage.migrateFromLocalStorage();
 
-      const projectQuery = supabase.from("projects").select("id, project_number, updated_at, employee_id").order("updated_at", { ascending: false });
+      const projectQuery = supabase.from("projects").select("id, project_number, created_at, employee_id").order("created_at", { ascending: false });
       const scopedQuery = session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery;
 
       const [supabaseResult, locationRows, localProjects] = await Promise.all([
