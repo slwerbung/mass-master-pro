@@ -31,39 +31,43 @@ const Projects = () => {
     loadProjects();
   }, []);
 
-  const loadProjects = async () => {
+  const loadProjects = async (syncAfter = true) => {
     try {
       await indexedDBStorage.migrateFromLocalStorage();
 
       const projectQuery = supabase.from("projects").select("id, project_number, updated_at, employee_id").order("updated_at", { ascending: false });
       const scopedQuery = session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery;
 
-      const [supabaseResult, localProjects] = await Promise.all([
+      const [supabaseResult, locationRows, localProjects] = await Promise.all([
         scopedQuery,
+        supabase.from("locations").select("project_id"),
         indexedDBStorage.getProjects(),
       ]);
+
+      // Build location count map from DB
+      const dbCountMap = new Map<string, number>();
+      for (const row of locationRows.data || []) {
+        dbCountMap.set(row.project_id, (dbCountMap.get(row.project_id) || 0) + 1);
+      }
 
       const localMap = new Map(localProjects.map(p => [p.id, p]));
       const supabaseProjects = supabaseResult.data || [];
 
-      // Merge: Supabase is source of truth for list, local has location details
       const merged: ProjectListItem[] = supabaseProjects.map(sp => {
         const local = localMap.get(sp.id);
         return {
           id: sp.id,
           projectNumber: sp.project_number,
           updatedAt: new Date(sp.updated_at),
-          locationCount: local?.locations?.length || 0,
+          locationCount: local ? (local.locations?.length || 0) : (dbCountMap.get(sp.id) || 0),
           isLocal: !!local,
         };
       });
 
       // Also add local-only projects not yet in Supabase
-      // For employees, only show local projects that are in the filtered cloud list
       const supabaseIds = new Set(supabaseProjects.map(sp => sp.id));
       for (const lp of localProjects) {
         if (!supabaseIds.has(lp.id)) {
-          // If employee, skip local projects not in their cloud list
           if (session?.role === "employee") continue;
           merged.push({
             id: lp.id,
@@ -78,8 +82,11 @@ const Projects = () => {
       merged.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
       setProjects(merged);
 
-      // Sync local projects to Supabase in background
-      syncAllToSupabase();
+      // Background sync, then reload once
+      if (syncAfter && !syncDoneRef.current) {
+        syncDoneRef.current = true;
+        syncAllToSupabase().then(() => loadProjects(false)).catch(() => {});
+      }
     } catch (error) {
       console.error("Error loading projects:", error);
       toast.error("Fehler beim Laden der Projekte");
