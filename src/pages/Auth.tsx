@@ -9,6 +9,17 @@ import { Shield, User, Users, ArrowLeft, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { setSession, getSession } from "@/lib/session";
 
+const SESSION_CACHE_KEY = "session_validation_cache";
+function setLoginCache(role: string, token: string, userId: string) {
+  try {
+    sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
+      key: `${role}:${token}:${userId}`,
+      ts: Date.now(),
+      valid: true,
+    }));
+  } catch {}
+}
+
 type LoginMode = "select" | "admin" | "employee" | "customer";
 
 const Auth = () => {
