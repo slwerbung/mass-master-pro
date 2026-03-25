@@ -25,6 +25,7 @@ const Projects = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const navigate = useNavigate();
   const session = getSession();
+  const syncDoneRef = useRef(false);
 
   useEffect(() => {
     loadProjects();
