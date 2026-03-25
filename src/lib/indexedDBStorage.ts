@@ -173,6 +173,30 @@ function createDetailBlobId(detailImageId: string, type: 'annotated' | 'original
 }
 
 export const indexedDBStorage = {
+  // Lightweight: returns only metadata + location count, NO images loaded
+  async getProjectsSummary(): Promise<{ id: string; projectNumber: string; createdAt: Date; locationCount: number }[]> {
+    const db = await getDB();
+    const records = await db.getAll('projects');
+    const result = [];
+    for (const r of records) {
+      const keys = await db.getAllKeysFromIndex('locations', 'by-project', r.id);
+      result.push({
+        id: r.id,
+        projectNumber: r.projectNumber,
+        createdAt: new Date(r.createdAt),
+        locationCount: keys.length,
+      });
+    }
+    return result;
+  },
+
+  // Returns just project IDs for sync without loading any data
+  async getProjectIds(): Promise<string[]> {
+    const db = await getDB();
+    const keys = await db.getAllKeys('projects');
+    return keys as string[];
+  },
+
   async getProjects(): Promise<Project[]> {
     const db = await getDB();
     const projectRecords = await db.getAll('projects');
