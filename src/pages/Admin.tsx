@@ -129,7 +129,6 @@ const Admin = () => {
     } catch (e: any) { toast.error(e.message || "Fehler"); }
     setSavingPrefix(false);
   };
-  };
 
   const loadFields = async () => {
     try {
