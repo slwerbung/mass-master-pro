@@ -543,6 +543,7 @@ export type Database = {
           guest_password: string | null
           id: string
           project_number: string
+          project_type: string | null
           updated_at: string
           user_id: string
         }
@@ -552,6 +553,7 @@ export type Database = {
           guest_password?: string | null
           id?: string
           project_number: string
+          project_type?: string | null
           updated_at?: string
           user_id: string
         }
@@ -561,6 +563,7 @@ export type Database = {
           guest_password?: string | null
           id?: string
           project_number?: string
+          project_type?: string | null
           updated_at?: string
           user_id?: string
         }

@@ -146,7 +146,7 @@ export async function getProjectRemoteTimestamp(projectId: string): Promise<Date
 }
 
 export async function hydrateProjectFromSupabase(projectId: string): Promise<Project | null> {
-  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, created_at, updated_at").eq("id", projectId).single();
+  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, project_type, created_at, updated_at").eq("id", projectId).single();
   if (projectError || !projectRow) return null;
 
   const { data: locationRows, error: locationError } = await supabase
@@ -232,6 +232,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
   const hydratedProject: Project = {
     id: projectRow.id,
     projectNumber: projectRow.project_number,
+    projectType: (projectRow as any).project_type === 'aufmass_mit_plan' ? 'aufmass_mit_plan' : 'aufmass',
     locations,
     floorPlans,
     createdAt: new Date(projectRow.created_at),
@@ -297,11 +298,12 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
   await supabase.from('projects').upsert({
     id: project.id,
     project_number: project.projectNumber,
+    project_type: project.projectType || 'aufmass',
     user_id: userId,
     employee_id: employeeId,
     created_at: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),
     updated_at: syncTimestamp,
-  }, { onConflict: 'id' });
+  } as any, { onConflict: 'id' });
 
   if (project.locations?.length) {
     await supabase.from('locations').upsert(buildLocationRows(project), { onConflict: 'id' });
