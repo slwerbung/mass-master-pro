@@ -1,29 +1,28 @@
 
 
-## Native Kamera-App statt eigener Kameraansicht nutzen
-
-### Idee
-
-Statt die Kamera selbst über `getUserMedia` zu steuern, kann man einfach ein `<input type="file" accept="image/*" capture="environment">` verwenden. Das öffnet automatisch die native Kamera-App des Smartphones — mit allen Funktionen wie Autofokus, HDR, Zoom, Blitz etc. Nach der Aufnahme wird das Foto direkt an die App zurückgegeben.
-
-### Vorteile
-- Alle Kamera-Features des Geräts verfügbar (Fokus, Zoom, Blitz, HDR)
-- Kein eigener Kamera-Code nötig — weniger Fehlerquellen
-- Funktioniert zuverlässig auf iOS und Android
-- Nutzer kann auch aus der Galerie wählen
-
-### Umsetzung
-
-**`src/pages/Camera.tsx`** komplett vereinfachen:
-- Die gesamte `getUserMedia`-Logik, Video-Stream, Canvas-Capture entfernen
-- Stattdessen beim Laden der Seite automatisch einen versteckten `<input type="file" accept="image/*" capture="environment">` triggern
-- Wenn der Nutzer ein Foto macht, wird es als Base64 gelesen und direkt zum Editor navigiert (wie bisher bei `confirmPhoto`)
-- Wenn der Nutzer abbricht, zurück zur vorherigen Seite navigieren
-- Optional: Vorschau des Fotos mit "OK" / "Neu"-Buttons beibehalten, oder direkt weiterleiten
+## Flächenaufmaß optimieren (aktualisierter Plan)
 
 ### Änderungen
 
-| Datei | Was |
+**1. Labels innerhalb der Fläche, entlang der Kanten** (`src/lib/areaMeasurement.ts`)
+
+Statt die Labels außerhalb des Rechtecks zu positionieren, werden sie **innerhalb** platziert — so kommen sich benachbarte Flächen nicht in die Quere:
+
+- **Breite-Label**: Zentriert auf der oberen Kante, leicht nach innen versetzt, horizontal ausgerichtet (wie beim Linien-Aufmaß mit dynamischer Schriftgröße)
+- **Höhe-Label**: Zentriert auf der linken Kante, leicht nach innen versetzt, 90° gedreht, Text läuft parallel zur Kante
+- **Index-Badge** (`F 1`, `F 2`): Bleibt in der oberen linken Ecke innerhalb des Rechtecks
+- **m²-Label entfernen**: Wird nur noch in der Zusammenfassung angezeigt, nicht auf dem Canvas
+
+Schriftgröße und Padding skalieren dynamisch basierend auf der Kantenlänge (gleiche Logik wie `createMeasurementGroup`).
+
+**2. Genauigkeit der Platzierung** (`src/pages/PhotoEditor.tsx`)
+
+Pointer-Koordinaten via `fabricCanvas.getScenePoint(e.e)` als primäre Quelle nutzen statt `e?.scenePoint || e?.absolutePointer` — liefert exakte Canvas-Koordinaten unabhängig von Zoom/Pan.
+
+### Betroffene Dateien
+
+| Datei | Änderung |
 |---|---|
-| `src/pages/Camera.tsx` | `getUserMedia`/Video/Canvas entfernen; durch `<input capture="environment">` ersetzen, der beim Mount automatisch öffnet |
+| `src/lib/areaMeasurement.ts` | Labels innerhalb der Fläche entlang Kanten positionieren, Höhe-Label 90° rotiert, m²-Label entfernen |
+| `src/pages/PhotoEditor.tsx` | `getScenePoint(e.e)` für präzisere Koordinaten |
 
