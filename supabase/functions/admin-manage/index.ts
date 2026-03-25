@@ -236,7 +236,7 @@ Deno.serve(async (req) => {
       // ---- PROJECT PREFIX ----
       case "get_project_prefix": {
         const { data } = await supabase.from("app_config").select("value").eq("key", "project_prefix").maybeSingle();
-        return json({ prefix: data?.value || "WER-" });
+        return json({ prefix: data?.value ?? "WER-" });
       }
       case "set_project_prefix": {
         const prefix = String(params.prefix ?? "").trim();
