@@ -270,12 +270,12 @@ const Admin = () => {
           <Button variant="outline" onClick={handleLogout}><LogOut className="h-4 w-4 mr-1" /> Abmelden</Button>
         </div>
         <Tabs defaultValue="employees">
-          <TabsList className="grid w-full grid-cols-5">
-            <TabsTrigger value="employees">Mitarbeiter</TabsTrigger>
-            <TabsTrigger value="customers">Kunden</TabsTrigger>
-            <TabsTrigger value="assignments">Zuweisungen</TabsTrigger>
-            <TabsTrigger value="projects">Projekte</TabsTrigger>
-            <TabsTrigger value="settings">Einstellungen</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-5 h-auto">
+            <TabsTrigger value="employees" className="text-xs sm:text-sm">Mitarbeiter</TabsTrigger>
+            <TabsTrigger value="customers" className="text-xs sm:text-sm">Kunden</TabsTrigger>
+            <TabsTrigger value="assignments" className="text-xs sm:text-sm">Zuweisungen</TabsTrigger>
+            <TabsTrigger value="projects" className="text-xs sm:text-sm">Projekte</TabsTrigger>
+            <TabsTrigger value="settings" className="text-xs sm:text-sm">Einstellungen</TabsTrigger>
           </TabsList>
 
           <TabsContent value="employees" className="space-y-4 mt-4">
