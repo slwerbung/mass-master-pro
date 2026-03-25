@@ -435,6 +435,7 @@ export const indexedDBStorage = {
         locationType: location.locationType,
         customFields: location.customFields ? JSON.stringify(location.customFields) : undefined,
         guestInfo: location.guestInfo,
+        areaMeasurements: location.areaMeasurements ? JSON.stringify(location.areaMeasurements) : undefined,
         createdAt: location.createdAt.toISOString(),
       });
       
