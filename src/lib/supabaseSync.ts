@@ -232,18 +232,24 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
 }
 
 function buildLocationRows(project: Project) {
-  return project.locations.map((l) => ({
-    id: l.id,
-    project_id: project.id,
-    location_number: l.locationNumber,
-    location_name: l.locationName || null,
-    comment: l.comment || null,
-    system: l.system || null,
-    label: l.label || null,
-    location_type: l.locationType || null,
-    custom_fields: l.customFields || {},
-    created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
-  }));
+  return project.locations.map((l) => {
+    const customFields: Record<string, any> = { ...(l.customFields || {}) };
+    if (l.areaMeasurements && l.areaMeasurements.length > 0) {
+      customFields.__areaMeasurements = l.areaMeasurements;
+    }
+    return {
+      id: l.id,
+      project_id: project.id,
+      location_number: l.locationNumber,
+      location_name: l.locationName || null,
+      comment: l.comment || null,
+      system: l.system || null,
+      label: l.label || null,
+      location_type: l.locationType || null,
+      custom_fields: customFields,
+      created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
+    };
+  });
 }
 
 async function removeDeletedLocationsFromSupabase(project: Project) {

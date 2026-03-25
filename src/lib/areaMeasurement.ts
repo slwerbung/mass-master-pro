@@ -16,8 +16,12 @@ export function createAreaMeasurementGroup(
   const h = Math.abs(y2 - y1);
   const areaSqM = (widthMm * heightMm) / 1_000_000;
 
+  // All child positions relative to group center (0,0)
+  const cx = w / 2;
+  const cy = h / 2;
+
   const rect = new Rect({
-    left, top, width: w, height: h,
+    left: -cx, top: -cy, width: w, height: h,
     fill: `${color}20`,
     stroke: color,
     strokeWidth: 2,
@@ -30,7 +34,7 @@ export function createAreaMeasurementGroup(
 
   // Width label on top
   const widthLabel = new IText(`${widthMm} mm`, {
-    left: left + w / 2, top: top - fontSize - 6,
+    left: 0, top: -cy - fontSize - 6,
     originX: "center", originY: "top",
     fill: color, fontSize, fontFamily: "Arial", fontWeight: "bold",
     backgroundColor: "rgba(255,255,255,0.9)", padding,
@@ -39,7 +43,7 @@ export function createAreaMeasurementGroup(
 
   // Height label on left
   const heightLabel = new IText(`${heightMm} mm`, {
-    left: left - 6, top: top + h / 2,
+    left: -cx - 6, top: 0,
     originX: "right", originY: "center",
     fill: color, fontSize, fontFamily: "Arial", fontWeight: "bold",
     backgroundColor: "rgba(255,255,255,0.9)", padding,
@@ -48,7 +52,7 @@ export function createAreaMeasurementGroup(
 
   // Area label in center
   const areaLabel = new IText(`${areaSqM.toFixed(2)} m²`, {
-    left: left + w / 2, top: top + h / 2,
+    left: 0, top: 0,
     originX: "center", originY: "center",
     fill: color, fontSize: fontSize * 1.1, fontFamily: "Arial", fontWeight: "bold",
     backgroundColor: "rgba(255,255,255,0.9)", padding,
@@ -57,7 +61,7 @@ export function createAreaMeasurementGroup(
 
   // Index label top-left
   const indexLabel = new IText(`F ${index}`, {
-    left: left + 4, top: top + 4,
+    left: -cx + 4, top: -cy + 4,
     originX: "left", originY: "top",
     fill: "#ffffff", fontSize: fontSize * 0.9, fontFamily: "Arial", fontWeight: "bold",
     backgroundColor: color, padding: 3,
@@ -65,6 +69,10 @@ export function createAreaMeasurementGroup(
   });
 
   const group = new Group([rect, widthLabel, heightLabel, areaLabel, indexLabel], {
+    left: left + cx,
+    top: top + cy,
+    originX: "center",
+    originY: "center",
     selectable: true,
     subTargetCheck: false,
     objectCaching: true,

@@ -11,8 +11,18 @@ export function createMeasurementGroup(
   const strokeWidth = 3;
   const capLength = 14;
 
+  // Calculate center for relative positioning
+  const centerX = (x1 + x2) / 2;
+  const centerY = (y1 + y2) / 2;
+
+  // Relative coordinates
+  const rx1 = x1 - centerX;
+  const ry1 = y1 - centerY;
+  const rx2 = x2 - centerX;
+  const ry2 = y2 - centerY;
+
   // main measurement line
-  const line = new Line([x1, y1, x2, y2], {
+  const line = new Line([rx1, ry1, rx2, ry2], {
     stroke: color,
     strokeWidth,
     strokeLineCap: "round",
@@ -28,19 +38,16 @@ export function createMeasurementGroup(
   const half = capLength / 2;
 
   // end caps
-  const cap1 = new Line([x1 - px * half, y1 - py * half, x1 + px * half, y1 + py * half], {
+  const cap1 = new Line([rx1 - px * half, ry1 - py * half, rx1 + px * half, ry1 + py * half], {
     stroke: color,
     strokeWidth,
     selectable: false,
   });
-  const cap2 = new Line([x2 - px * half, y2 - py * half, x2 + px * half, y2 + py * half], {
+  const cap2 = new Line([rx2 - px * half, ry2 - py * half, rx2 + px * half, ry2 + py * half], {
     stroke: color,
     strokeWidth,
     selectable: false,
   });
-
-  const midX = (x1 + x2) / 2;
-  const midY = (y1 + y2) / 2;
 
   // Calculate angle in degrees
   let angle = Math.atan2(dy, dx) * (180 / Math.PI);
@@ -60,8 +67,8 @@ export function createMeasurementGroup(
   const offsetY = sign * py * textOffset;
 
   const text = new IText(label, {
-    left: midX + offsetX,
-    top: midY + offsetY,
+    left: offsetX,
+    top: offsetY,
     originX: "center",
     originY: "top",
     angle: angle,
@@ -76,6 +83,10 @@ export function createMeasurementGroup(
   });
 
   const group = new Group([line, cap1, cap2, text], {
+    left: centerX,
+    top: centerY,
+    originX: "center",
+    originY: "center",
     selectable: true,
     subTargetCheck: false,
     objectCaching: true,

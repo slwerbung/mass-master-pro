@@ -27,6 +27,32 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
+const SESSION_CACHE_KEY = "session_validation_cache";
+const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function getCachedValidation(role: string, token: string, userId: string): boolean | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+    if (!raw) return null;
+    const cache = JSON.parse(raw);
+    const key = `${role}:${token}:${userId}`;
+    if (cache.key === key && Date.now() - cache.ts < SESSION_CACHE_TTL) {
+      return cache.valid;
+    }
+  } catch {}
+  return null;
+}
+
+function setCachedValidation(role: string, token: string, userId: string, valid: boolean) {
+  try {
+    sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
+      key: `${role}:${token}:${userId}`,
+      ts: Date.now(),
+      valid,
+    }));
+  } catch {}
+}
+
 const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; children: React.ReactNode }) => {
   const session = getSession();
   const [validated, setValidated] = useState<boolean | null>(null);
@@ -50,12 +76,19 @@ const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; childre
         if (mounted) setValidated(true);
         return;
       }
+      // Check cache first
+      const cached = getCachedValidation(session.role, session.authToken, session.id);
+      if (cached !== null) {
+        if (mounted) setValidated(cached);
+        return;
+      }
       const { data, error } = await supabase.functions.invoke("validate-session", {
         body: { role: session.role, token: session.authToken, userId: session.id },
       });
       if (mounted) {
-        if (error) setValidated(true);
-        else setValidated(!!data?.valid);
+        const isValid = error ? true : !!data?.valid;
+        setCachedValidation(session.role, session.authToken, session.id, isValid);
+        setValidated(isValid);
       }
     };
     run();

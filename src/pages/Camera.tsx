@@ -29,7 +29,7 @@ const Camera = () => {
   const startCamera = async () => {
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: 1920, height: 1080 },
+        video: { facingMode: "environment" },
       });
       setStream(mediaStream);
       if (videoRef.current) {
@@ -102,7 +102,7 @@ const Camera = () => {
   };
 
   return (
-    <div className="app-screen bg-foreground flex flex-col overflow-hidden">
+    <div className="w-screen h-[100dvh] bg-foreground flex flex-col overflow-hidden">
       <div className="flex-1 relative flex items-center justify-center min-h-0">
         {!capturedImage ? (
           cameraError ? (
