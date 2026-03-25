@@ -59,6 +59,7 @@ const Auth = () => {
         toast.error(data?.error || "Falsches Passwort");
       } else if (data?.token) {
         setSession({ role: "admin", id: "admin", name: "Admin", authToken: data.token, expiresAt: data.expiresAt });
+        setLoginCache("admin", data.token, "admin");
         toast.success("Als Admin angemeldet");
         navigate("/admin");
       }
