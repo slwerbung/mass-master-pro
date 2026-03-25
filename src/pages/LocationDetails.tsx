@@ -49,6 +49,7 @@ const LocationDetails = () => {
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>([]);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [projectType, setProjectType] = useState<string | undefined>(undefined);
+  const [existingAreaMeasurements, setExistingAreaMeasurements] = useState<AreaMeasurement[]>([]);
 
   // Load project type
   useEffect(() => {
