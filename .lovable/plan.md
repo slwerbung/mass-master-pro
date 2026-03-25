@@ -1,28 +1,28 @@
 
 
-## Flächenaufmaß optimieren (aktualisierter Plan)
+## Kamera/Hochladen-Auswahl beim Standort platzieren
 
-### Änderungen
+### Problem
+Nach dem Platzieren eines Markers auf dem Grundriss wird direkt zur Camera-Seite navigiert, die automatisch die native Kamera öffnet. Der Nutzer sieht kurz "Kamera wird geöffnet…" mit einem schlecht sichtbaren Button. Es fehlt die Wahl zwischen Kamera und Datei-Upload.
 
-**1. Labels innerhalb der Fläche, entlang der Kanten** (`src/lib/areaMeasurement.ts`)
+### Lösung
 
-Statt die Labels außerhalb des Rechtecks zu positionieren, werden sie **innerhalb** platziert — so kommen sich benachbarte Flächen nicht in die Quere:
+**Zwei Änderungen:**
 
-- **Breite-Label**: Zentriert auf der oberen Kante, leicht nach innen versetzt, horizontal ausgerichtet (wie beim Linien-Aufmaß mit dynamischer Schriftgröße)
-- **Höhe-Label**: Zentriert auf der linken Kante, leicht nach innen versetzt, 90° gedreht, Text läuft parallel zur Kante
-- **Index-Badge** (`F 1`, `F 2`): Bleibt in der oberen linken Ecke innerhalb des Rechtecks
-- **m²-Label entfernen**: Wird nur noch in der Zusammenfassung angezeigt, nicht auf dem Canvas
+**1. `src/pages/FloorPlanView.tsx`** — Nach Marker-Platzierung nicht mehr direkt zu `/camera` navigieren, sondern ein Dialog/Modal anzeigen mit zwei Buttons:
+- **"Kamera"** → navigiert zu `/camera` (wie bisher, öffnet native Kamera)
+- **"Hochladen"** → navigiert zu `/camera` mit einem Query-Parameter `?mode=upload` (oder öffnet direkt einen File-Picker)
 
-Schriftgröße und Padding skalieren dynamisch basierend auf der Kantenlänge (gleiche Logik wie `createMeasurementGroup`).
+State hinzufügen: `pendingLocationId` und `showCaptureDialog`. Nach Marker-Platzierung Dialog zeigen statt sofort zu navigieren.
 
-**2. Genauigkeit der Platzierung** (`src/pages/PhotoEditor.tsx`)
-
-Pointer-Koordinaten via `fabricCanvas.getScenePoint(e.e)` als primäre Quelle nutzen statt `e?.scenePoint || e?.absolutePointer` — liefert exakte Canvas-Koordinaten unabhängig von Zoom/Pan.
+**2. `src/pages/Camera.tsx`** — Den `mode=upload` Query-Parameter auswerten:
+- `mode=upload`: File-Input **ohne** `capture="environment"` öffnen (zeigt nur Datei-Auswahl/Galerie)
+- Standard (kein mode oder `mode=camera`): File-Input **mit** `capture="environment"` wie bisher (öffnet native Kamera)
 
 ### Betroffene Dateien
 
 | Datei | Änderung |
 |---|---|
-| `src/lib/areaMeasurement.ts` | Labels innerhalb der Fläche entlang Kanten positionieren, Höhe-Label 90° rotiert, m²-Label entfernen |
-| `src/pages/PhotoEditor.tsx` | `getScenePoint(e.e)` für präzisere Koordinaten |
+| `src/pages/FloorPlanView.tsx` | Dialog mit "Kamera" / "Hochladen" nach Marker-Platzierung |
+| `src/pages/Camera.tsx` | `mode` Query-Param auswerten, `capture` Attribut bedingt setzen |
 
