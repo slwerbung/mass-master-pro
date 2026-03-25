@@ -20,8 +20,14 @@ const NewProject = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
+    const session = getSession();
+    const tokenBody: Record<string, string> = { action: "get_project_prefix" };
+    if (session?.authToken) {
+      if (session.role === "admin") tokenBody.adminToken = session.authToken;
+      else tokenBody.employeeToken = session.authToken;
+    }
     supabase.functions.invoke("admin-manage", {
-      body: { action: "get_project_prefix" },
+      body: tokenBody,
     }).then(({ data }) => {
       if (data?.prefix !== undefined) setPrefix(data.prefix);
     }).catch(() => {});
