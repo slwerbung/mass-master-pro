@@ -232,6 +232,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
   const hydratedProject: Project = {
     id: projectRow.id,
     projectNumber: projectRow.project_number,
+    projectType: (projectRow as any).project_type === 'aufmass_mit_plan' ? 'aufmass_mit_plan' : 'aufmass',
     locations,
     floorPlans,
     createdAt: new Date(projectRow.created_at),
