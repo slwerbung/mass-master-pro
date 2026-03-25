@@ -2,7 +2,12 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw } from "lucide-react";
+import { Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw, Trash2, CheckSquare, X } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
@@ -11,18 +16,25 @@ import { StorageIndicator } from "@/components/StorageIndicator";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
+import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
+
 interface ProjectListItem {
   id: string;
   projectNumber: string;
   createdAt: Date;
   locationCount: number;
-  isLocal: boolean; // has local data (images etc.)
+  isLocal: boolean;
 }
 
 const Projects = () => {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
+  const [isDeleting, setIsDeleting] = useState(false);
   const navigate = useNavigate();
   const session = getSession();
   const syncDoneRef = useRef(false);
@@ -44,7 +56,6 @@ const Projects = () => {
         indexedDBStorage.getProjectsSummary(),
       ]);
 
-      // Build location count map from DB
       const dbCountMap = new Map<string, number>();
       for (const row of locationRows.data || []) {
         dbCountMap.set(row.project_id, (dbCountMap.get(row.project_id) || 0) + 1);
@@ -64,7 +75,6 @@ const Projects = () => {
         };
       });
 
-      // Also add local-only projects not yet in Supabase
       const supabaseIds = new Set(supabaseProjects.map(sp => sp.id));
       for (const lp of localSummary) {
         if (!supabaseIds.has(lp.id)) {
@@ -82,7 +92,6 @@ const Projects = () => {
       merged.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       setProjects(merged);
 
-      // Background sync, then reload once — decouple from UI render
       if (syncAfter && !syncDoneRef.current) {
         syncDoneRef.current = true;
         setTimeout(() => {
@@ -112,6 +121,45 @@ const Projects = () => {
 
   const handleLogout = () => { clearSession(); navigate("/"); };
 
+  // --- Delete logic ---
+  const confirmDelete = (ids: string[]) => {
+    setPendingDeleteIds(ids);
+    setDeleteDialogOpen(true);
+  };
+
+  const executeDelete = async () => {
+    setIsDeleting(true);
+    try {
+      for (const id of pendingDeleteIds) {
+        try { await deleteProjectFromSupabase(id); } catch (e) { console.warn("Remote delete failed for", id, e); }
+        try { await indexedDBStorage.deleteProject(id); } catch (e) { console.warn("Local delete failed for", id, e); }
+      }
+      toast.success(pendingDeleteIds.length === 1 ? "Projekt gelöscht" : `${pendingDeleteIds.length} Projekte gelöscht`);
+      setSelectionMode(false);
+      setSelectedIds(new Set());
+      setPendingDeleteIds([]);
+      await loadProjects(false);
+    } catch (e: any) {
+      toast.error("Fehler beim Löschen: " + e.message);
+    } finally {
+      setIsDeleting(false);
+      setDeleteDialogOpen(false);
+    }
+  };
+
+  const toggleSelection = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -119,6 +167,8 @@ const Projects = () => {
       </div>
     );
   }
+
+  const deleteCount = pendingDeleteIds.length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -130,20 +180,47 @@ const Projects = () => {
               {session?.name ? `Angemeldet als ${session.name}` : "Projekte verwalten"}
             </p>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            <Button size="lg" onClick={() => navigate("/projects/new")} className="flex-1 sm:flex-none">
-              <Plus className="mr-2 h-5 w-5" /> Neues Projekt
-            </Button>
-            <Button size="lg" variant="outline" onClick={() => navigate("/projects/customers")} title="Kunden verwalten">
-              <Users className="h-5 w-5" />
-            </Button>
-            <Button size="lg" variant="outline" onClick={syncToSupabase} disabled={isSyncing} title="Synchronisieren">
-              <RefreshCw className={`h-5 w-5 ${isSyncing ? "animate-spin" : ""}`} />
-            </Button>
-            <Button size="lg" variant="ghost" onClick={handleLogout}>
-              <LogOut className="h-5 w-5" />
-            </Button>
-          </div>
+
+          {selectionMode ? (
+            <div className="flex gap-2 items-center flex-wrap">
+              <span className="text-sm font-medium text-foreground">
+                {selectedIds.size} ausgewählt
+              </span>
+              <Button
+                size="lg"
+                variant="destructive"
+                disabled={selectedIds.size === 0 || isDeleting}
+                onClick={() => confirmDelete(Array.from(selectedIds))}
+              >
+                <Trash2 className="mr-2 h-5 w-5" />
+                Löschen
+              </Button>
+              <Button size="lg" variant="outline" onClick={exitSelectionMode}>
+                <X className="mr-2 h-5 w-5" />
+                Abbrechen
+              </Button>
+            </div>
+          ) : (
+            <div className="flex gap-2 flex-wrap">
+              <Button size="lg" onClick={() => navigate("/projects/new")} className="flex-1 sm:flex-none">
+                <Plus className="mr-2 h-5 w-5" /> Neues Projekt
+              </Button>
+              {projects.length > 0 && (
+                <Button size="lg" variant="outline" onClick={() => setSelectionMode(true)} title="Mehrfachauswahl">
+                  <CheckSquare className="h-5 w-5" />
+                </Button>
+              )}
+              <Button size="lg" variant="outline" onClick={() => navigate("/projects/customers")} title="Kunden verwalten">
+                <Users className="h-5 w-5" />
+              </Button>
+              <Button size="lg" variant="outline" onClick={syncToSupabase} disabled={isSyncing} title="Synchronisieren">
+                <RefreshCw className={`h-5 w-5 ${isSyncing ? "animate-spin" : ""}`} />
+              </Button>
+              <Button size="lg" variant="ghost" onClick={handleLogout}>
+                <LogOut className="h-5 w-5" />
+              </Button>
+            </div>
+          )}
         </div>
 
         <StorageIndicator />
@@ -163,17 +240,45 @@ const Projects = () => {
             {projects.map((project) => (
               <Card
                 key={project.id}
-                className="cursor-pointer hover:shadow-md transition-shadow"
-                onClick={() => navigate(`/projects/${project.id}`)}
+                className={`cursor-pointer hover:shadow-md transition-shadow ${
+                  selectionMode && selectedIds.has(project.id) ? "ring-2 ring-primary" : ""
+                }`}
+                onClick={() => {
+                  if (selectionMode) {
+                    toggleSelection(project.id);
+                  } else {
+                    navigate(`/projects/${project.id}`);
+                  }
+                }}
               >
                 <CardHeader className="p-4 pb-2">
                   <CardTitle className="text-lg flex items-center gap-2">
+                    {selectionMode && (
+                      <Checkbox
+                        checked={selectedIds.has(project.id)}
+                        onCheckedChange={() => toggleSelection(project.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="mr-1"
+                      />
+                    )}
                     <FolderOpen className="h-5 w-5 text-primary" />
-                    {project.projectNumber}
+                    <span className="truncate">{project.projectNumber}</span>
                     {!project.isLocal && (
-                      <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded ml-auto">
+                      <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded ml-auto shrink-0">
                         Nur online
                       </span>
+                    )}
+                    {!selectionMode && (
+                      <button
+                        className="ml-auto shrink-0 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                        title="Projekt löschen"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          confirmDelete([project.id]);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     )}
                   </CardTitle>
                   <CardDescription className="flex items-center gap-1 text-xs">
@@ -191,6 +296,31 @@ const Projects = () => {
           </div>
         )}
       </div>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {deleteCount === 1 ? "Projekt löschen?" : `${deleteCount} Projekte löschen?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteCount === 1
+                ? "Das Projekt und alle zugehörigen Standorte, Bilder und Daten werden unwiderruflich gelöscht."
+                : `${deleteCount} Projekte und alle zugehörigen Standorte, Bilder und Daten werden unwiderruflich gelöscht.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={executeDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "Wird gelöscht..." : "Endgültig löschen"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
