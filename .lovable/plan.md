@@ -1,44 +1,48 @@
 
 
-## Fix: Kamera reagiert nicht auf Orientierungswechsel
+## Projekt löschen direkt aus der Projektübersicht + Mehrfachauswahl
 
-### Ursache
+### Funktionsumfang
 
-Das Problem ist, dass der Kamera-Stream nur einmal beim Mount gestartet wird (`useEffect([], [])`). Wenn das Smartphone gedreht wird, bleibt der bestehende Video-Stream in seiner ursprünglichen Auflösung/Orientierung — das `<video>`-Element passt sich zwar in der Größe an, aber der Stream selbst liefert weiterhin das alte Seitenverhältnis.
+1. **Einzelnes Projekt löschen**: Trash-Icon auf jeder Projekt-Card, mit Bestätigungs-Dialog
+2. **Mehrfachauswahl-Modus**: Button in der Header-Leiste aktiviert Checkboxen auf den Cards. Ausgewählte Projekte können gesammelt gelöscht werden.
+3. **Löschung vollständig**: Lokal (IndexedDB via `deleteProject()`) UND remote (Supabase: Locations, Images, Detail-Images, Floor-Plans, Feedback, Approvals, PDFs, Assignments, dann Projekt selbst)
 
-### Lösung
+### Änderungen
 
-**`src/pages/Camera.tsx`** — 2 Änderungen:
+**`src/pages/Projects.tsx`** — Hauptdatei
 
-1. **Orientierungswechsel erkennen und Stream neu starten**: Einen `orientationchange`-Listener (+ `resize` als Fallback) hinzufügen, der den aktuellen Stream stoppt und `startCamera()` erneut aufruft. Damit fordert der Browser einen neuen Stream mit der korrekten Orientierung an.
+- State: `selectionMode` (boolean), `selectedIds` (Set)
+- **Header**: Neuer "Auswählen"-Toggle-Button. Im Auswahlmodus: "X ausgewählt" + "Löschen"-Button (rot) + "Abbrechen"
+- **Projekt-Cards**: Im Auswahlmodus Checkbox statt Navigation-Click. Im Normalmodus Trash-Icon-Button (mit `e.stopPropagation()`)
+- **Bestätigungs-Dialog** (AlertDialog): Sowohl für Einzel- als auch Mehrfachlöschung. Text passt sich an ("1 Projekt" vs. "3 Projekte")
+- **`deleteProjects(ids)`-Funktion**: 
+  - Für jede ID: Supabase-Cascade-Delete (locations → location_images, detail_images, location_feedback, location_approvals, location_pdfs, floor_plans → project)
+  - Lokal: `indexedDBStorage.deleteProject(id)`
+  - Danach `loadProjects(false)` aufrufen
 
-2. **Stream-Referenz per `useRef` statt `useState`**: Der `stopCamera()` in der Cleanup-Funktion hat eine stale Closure auf `stream`. Umstellung auf `useRef` stellt sicher, dass der aktuelle Stream zuverlässig gestoppt wird — auch bei schnellen Orientierungswechseln.
+### UI-Verhalten
 
-```typescript
-// Orientierungswechsel-Handler
-useEffect(() => {
-  const handleOrientationChange = () => {
-    if (!capturedImage) {
-      stopCamera();
-      setTimeout(() => startCamera(), 300);
-    }
-  };
-  
-  screen.orientation?.addEventListener("change", handleOrientationChange);
-  window.addEventListener("orientationchange", handleOrientationChange);
-  
-  return () => {
-    screen.orientation?.removeEventListener("change", handleOrientationChange);
-    window.removeEventListener("orientationchange", handleOrientationChange);
-  };
-}, [capturedImage]);
+```text
+Normal-Modus:
+┌─────────────────────────────┐
+│ 📂 Projekt-2025-001    [🗑] │
+│ Erstellt am 15. Mar 2025    │
+│ 3 Standorte                 │
+└─────────────────────────────┘
+
+Auswahl-Modus:
+┌─────────────────────────────┐
+│ ☑ 📂 Projekt-2025-001      │
+│ Erstellt am 15. Mar 2025    │
+│ 3 Standorte                 │
+└─────────────────────────────┘
+Header: [3 ausgewählt] [Löschen] [Abbrechen]
 ```
-
-Das `setTimeout(300ms)` gibt dem Browser Zeit, die neue Viewport-Geometrie zu berechnen, bevor ein neuer Stream angefordert wird.
 
 ### Betroffene Datei
 
 | Datei | Änderung |
 |---|---|
-| `src/pages/Camera.tsx` | Stream-Ref + Orientierungs-Listener |
+| `src/pages/Projects.tsx` | Selection-Mode, Delete-Logik, AlertDialog, Trash-Icons |
 
