@@ -79,7 +79,7 @@ const Projects = () => {
         }
       }
 
-      merged.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      merged.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       setProjects(merged);
 
       // Background sync, then reload once
