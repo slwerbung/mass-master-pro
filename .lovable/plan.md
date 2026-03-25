@@ -1,28 +1,29 @@
 
 
-## Kamera/Hochladen-Auswahl beim Standort platzieren
+## Logikfehler: Projekttyp geht beim Neuladen verloren
 
 ### Problem
-Nach dem Platzieren eines Markers auf dem Grundriss wird direkt zur Camera-Seite navigiert, die automatisch die native Kamera öffnet. Der Nutzer sieht kurz "Kamera wird geöffnet…" mit einem schlecht sichtbaren Button. Es fehlt die Wahl zwischen Kamera und Datei-Upload.
+Der `projectType` wird nur lokal in IndexedDB gespeichert, aber nie in die Datenbank synchronisiert. Wenn das Projekt aus der Cloud geladen wird (`hydrateProjectFromSupabase`), fehlt der Typ — das Projekt wird als normales "Aufmaß" behandelt.
 
 ### Lösung
 
-**Zwei Änderungen:**
+**1. Datenbank-Migration** — Neue Spalte `project_type` in der `projects`-Tabelle:
+```sql
+ALTER TABLE projects ADD COLUMN project_type text DEFAULT 'aufmass';
+```
 
-**1. `src/pages/FloorPlanView.tsx`** — Nach Marker-Platzierung nicht mehr direkt zu `/camera` navigieren, sondern ein Dialog/Modal anzeigen mit zwei Buttons:
-- **"Kamera"** → navigiert zu `/camera` (wie bisher, öffnet native Kamera)
-- **"Hochladen"** → navigiert zu `/camera` mit einem Query-Parameter `?mode=upload` (oder öffnet direkt einen File-Picker)
+**2. `src/lib/supabaseSync.ts`**
+- `hydrateProjectFromSupabase`: `project_type` aus der DB lesen und ins Project-Objekt übernehmen
+- `syncProjectToSupabase`: `project_type` beim Upsert mitsenden
 
-State hinzufügen: `pendingLocationId` und `showCaptureDialog`. Nach Marker-Platzierung Dialog zeigen statt sofort zu navigieren.
-
-**2. `src/pages/Camera.tsx`** — Den `mode=upload` Query-Parameter auswerten:
-- `mode=upload`: File-Input **ohne** `capture="environment"` öffnen (zeigt nur Datei-Auswahl/Galerie)
-- Standard (kein mode oder `mode=camera`): File-Input **mit** `capture="environment"` wie bisher (öffnet native Kamera)
+**3. `src/pages/NewProject.tsx`**
+- Beim Erstellen den `project_type` auch in den Supabase-Upsert aufnehmen (aktuell fehlt er dort)
 
 ### Betroffene Dateien
 
 | Datei | Änderung |
 |---|---|
-| `src/pages/FloorPlanView.tsx` | Dialog mit "Kamera" / "Hochladen" nach Marker-Platzierung |
-| `src/pages/Camera.tsx` | `mode` Query-Param auswerten, `capture` Attribut bedingt setzen |
+| Migration | `project_type` Spalte hinzufügen |
+| `src/lib/supabaseSync.ts` | Typ lesen und schreiben |
+| `src/pages/NewProject.tsx` | Typ beim DB-Insert mitsenden |
 
