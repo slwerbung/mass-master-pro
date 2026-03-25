@@ -76,6 +76,8 @@ const Auth = () => {
       if (data?.requiresPassword) {
         setSelectedEmployee(emp);
       } else if (data?.valid && data?.token) {
+        const prev = getSession();
+        if (prev?.id !== emp.id) await indexedDBStorage.clearAll();
         setSession({ role: "employee", id: emp.id, name: emp.name, authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("employee", data.token, emp.id);
         toast.success(`Angemeldet als ${emp.name}`);
