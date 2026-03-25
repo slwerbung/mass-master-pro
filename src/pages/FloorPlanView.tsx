@@ -55,7 +55,8 @@ const FloorPlanView = () => {
     const syncResult = await syncProjectToSupabase(projectId);
     if (syncResult === 'remote-won') { toast.warning('Neuere Online-Version übernommen'); await loadProject(); return; }
     setPlacingMarker(false);
-    navigate(`/projects/${projectId}/camera?floorPlan=${activeFloorPlan.id}&locationId=${locationId}`);
+    setPendingLocationId(locationId);
+    setShowCaptureDialog(true);
   };
 
   const handleMarkerClick = (marker: FloorPlanMarker, e: React.MouseEvent) => {
