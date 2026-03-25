@@ -147,7 +147,7 @@ const Camera = () => {
           <img
             src={capturedImage}
             alt="Captured"
-            className="w-full h-full object-contain"
+            className="max-w-full max-h-full w-auto h-auto object-contain"
           />
         )}
         <canvas ref={canvasRef} className="hidden" />
