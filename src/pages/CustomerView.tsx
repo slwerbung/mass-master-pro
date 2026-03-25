@@ -332,47 +332,6 @@ const CustomerView = () => {
     setFeedbacks((prev) => ({ ...prev, ...feedbackMap }));
   };
 
-            {/* Customer File Upload */}
-            {!isDirectGuestMode && isRealCustomerId(session?.id) && (
-              <Card>
-                <CardContent className="p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">Dateien hochladen</p>
-                    <label className="cursor-pointer">
-                      <input type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg,.svg,.ai,.eps" onChange={handleFileUpload} disabled={uploadingFile} />
-                      <Button size="sm" variant="outline" asChild disabled={uploadingFile}>
-                        <span><Upload className="h-4 w-4 mr-1" />{uploadingFile ? "Lädt..." : "Datei hochladen"}</span>
-                      </Button>
-                    </label>
-                  </div>
-                  {customerUploads.length > 0 && (
-                    <div className="space-y-2">
-                      {customerUploads.map((upload) => (
-                        <div key={upload.id} className="flex items-center justify-between gap-2 p-2 rounded border bg-background">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <FileText className="h-4 w-4 text-primary shrink-0" />
-                            <span className="text-sm truncate">{upload.file_name}</span>
-                          </div>
-                          <div className="flex gap-1">
-                            <Button size="sm" variant="ghost" asChild>
-                              <a href={supabase.storage.from("project-files").getPublicUrl(upload.storage_path).data.publicUrl} target="_blank" rel="noopener noreferrer">
-                                <Download className="h-3 w-3" />
-                              </a>
-                            </Button>
-                            {upload.customer_id === session?.id && (
-                              <Button size="sm" variant="ghost" onClick={() => deleteUpload(upload)}>
-                                <Trash2 className="h-3 w-3 text-destructive" />
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-
   useEffect(() => {
     const locationIds = locations.map((loc) => loc.id);
     if (locationIds.length === 0) return;
