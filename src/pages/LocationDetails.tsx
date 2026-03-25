@@ -91,6 +91,7 @@ const LocationDetails = () => {
         if (loc.comment) vals["comment"] = loc.comment;
         if (loc.customFields) Object.assign(vals, loc.customFields);
         setFieldValues(vals);
+        if (loc.areaMeasurements) setExistingAreaMeasurements(loc.areaMeasurements);
         setIsLoaded(true);
       };
       loadLocation();
