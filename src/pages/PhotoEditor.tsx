@@ -33,6 +33,7 @@ const PhotoEditor = () => {
   const isRestoringHistoryRef = useRef(false);
   const [imageDataState, setImageDataState] = useState<string | null>(location.state?.imageData || null);
   const [loading, setLoading] = useState(false);
+  const [savedMaxAreaIndex, setSavedMaxAreaIndex] = useState(0);
 
   const isReEdit = !!locationId;
   const isDetailReEdit = !!detailId;
