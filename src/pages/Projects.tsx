@@ -14,7 +14,7 @@ import { syncAllToSupabase } from "@/lib/supabaseSync";
 interface ProjectListItem {
   id: string;
   projectNumber: string;
-  updatedAt: Date;
+  createdAt: Date;
   locationCount: number;
   isLocal: boolean; // has local data (images etc.)
 }
