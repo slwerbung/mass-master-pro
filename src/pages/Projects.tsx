@@ -72,7 +72,7 @@ const Projects = () => {
           merged.push({
             id: lp.id,
             projectNumber: lp.projectNumber,
-            updatedAt: lp.updatedAt,
+            createdAt: lp.createdAt,
             locationCount: lp.locations?.length || 0,
             isLocal: true,
           });
