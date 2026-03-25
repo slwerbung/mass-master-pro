@@ -12,6 +12,7 @@ const Camera = () => {
   const detailLocationId = searchParams.get("locationId");
   const floorPlanId = searchParams.get("floorPlan");
   const presetLocationId = searchParams.get("locationId");
+  const mode = searchParams.get("mode"); // "upload" or default (camera)
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const hasTriggered = useRef(false);
