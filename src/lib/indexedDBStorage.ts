@@ -665,9 +665,8 @@ export const indexedDBStorage = {
       return false;
     }
   },
-};
 
-async clearAll(): Promise<void> {
+  async clearAll(): Promise<void> {
     try {
       const db = await getDB();
       const storeNames: (keyof AufmassDBSchema)[] = ['projects', 'locations', 'images', 'detail-images', 'detail-image-blobs', 'floor-plans', 'floor-plan-images'];
