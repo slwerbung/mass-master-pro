@@ -26,6 +26,7 @@ interface AufmassDBSchema extends DBSchema {
       locationType?: string;
       customFields?: string;
       guestInfo?: string;
+      areaMeasurements?: string;
       createdAt: string;
     };
     indexes: { 'by-project': string };
@@ -277,6 +278,7 @@ export const indexedDBStorage = {
         locationType: record.locationType,
         customFields: record.customFields ? JSON.parse(record.customFields) : undefined,
         guestInfo: record.guestInfo,
+        areaMeasurements: (record as any).areaMeasurements ? JSON.parse((record as any).areaMeasurements) : undefined,
         imageData,
         originalImageData,
         detailImages,
@@ -434,6 +436,7 @@ export const indexedDBStorage = {
         locationType: location.locationType,
         customFields: location.customFields ? JSON.stringify(location.customFields) : undefined,
         guestInfo: location.guestInfo,
+        areaMeasurements: location.areaMeasurements ? JSON.stringify(location.areaMeasurements) : undefined,
         createdAt: location.createdAt.toISOString(),
       });
       
