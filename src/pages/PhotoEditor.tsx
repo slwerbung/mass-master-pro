@@ -33,6 +33,7 @@ const PhotoEditor = () => {
   const isRestoringHistoryRef = useRef(false);
   const [imageDataState, setImageDataState] = useState<string | null>(location.state?.imageData || null);
   const [loading, setLoading] = useState(false);
+  const [savedMaxAreaIndex, setSavedMaxAreaIndex] = useState(0);
 
   const isReEdit = !!locationId;
   const isDetailReEdit = !!detailId;
@@ -197,12 +198,27 @@ const PhotoEditor = () => {
     setShowMeasureDialog(false); setMeasureStart(null); setMeasureEnd(null); setActiveTool("select");
   };
 
+  // Load existing area measurement max index for re-edit
+  useEffect(() => {
+    if (isReEdit && projectId && locationId) {
+      indexedDBStorage.getProject(projectId).then(proj => {
+        if (!proj) return;
+        const loc = proj.locations.find(l => l.id === locationId);
+        if (loc?.areaMeasurements && loc.areaMeasurements.length > 0) {
+          const max = Math.max(...loc.areaMeasurements.map(m => m.index));
+          setSavedMaxAreaIndex(max);
+        }
+      });
+    }
+  }, [isReEdit, projectId, locationId]);
+
   const getNextAreaIndex = () => {
-    if (!fabricCanvas) return 1;
-    let max = 0;
-    fabricCanvas.getObjects().forEach((obj: any) => {
-      if (obj.data?.type === "area" && obj.data.index > max) max = obj.data.index;
-    });
+    let max = savedMaxAreaIndex;
+    if (fabricCanvas) {
+      fabricCanvas.getObjects().forEach((obj: any) => {
+        if (obj.data?.type === "area" && obj.data.index > max) max = obj.data.index;
+      });
+    }
     return max + 1;
   };
 
@@ -254,9 +270,13 @@ const PhotoEditor = () => {
             toast.success("Detailbild aktualisiert");
           } else if (locationId) {
             await indexedDBStorage.updateLocationImage(projectId, locationId, dataUrl);
-            // Save area measurements
-            if (areaMeasurements.length > 0) {
-              await indexedDBStorage.updateLocationMetadata(projectId, locationId, { areaMeasurements });
+            // Merge new area measurements with existing
+            const project = await indexedDBStorage.getProject(projectId);
+            const existingLoc = project?.locations.find(l => l.id === locationId);
+            const existingMeasurements = existingLoc?.areaMeasurements || [];
+            const mergedMeasurements = [...existingMeasurements, ...areaMeasurements];
+            if (mergedMeasurements.length > 0) {
+              await indexedDBStorage.updateLocationMetadata(projectId, locationId, { areaMeasurements: mergedMeasurements });
             }
             toast.success("Bild aktualisiert");
           }

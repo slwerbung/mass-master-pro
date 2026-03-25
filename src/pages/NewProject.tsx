@@ -20,11 +20,10 @@ const NewProject = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Load configurable prefix
     supabase.functions.invoke("admin-manage", {
       body: { action: "get_project_prefix" },
     }).then(({ data }) => {
-      if (data?.prefix) setPrefix(data.prefix);
+      if (data?.prefix !== undefined) setPrefix(data.prefix);
     }).catch(() => {});
   }, []);
 
@@ -32,7 +31,7 @@ const NewProject = () => {
     if (!projectNumber.trim()) { toast.error("Bitte eine Projektnummer eingeben"); return; }
     setIsCreating(true);
     try {
-      const fullProjectNumber = `${prefix}${projectNumber.trim()}`;
+      const fullProjectNumber = prefix ? `${prefix}${projectNumber.trim()}` : projectNumber.trim();
       const session = getSession();
       const projectId = crypto.randomUUID();
       const employeeId = session?.role === "employee" ? session.id : null;

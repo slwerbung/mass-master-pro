@@ -470,14 +470,19 @@ const CustomerView = () => {
 
   const deleteFeedback = async (locationId: string, feedbackId: string) => {
     if (feedbackId.startsWith(LEGACY_FEEDBACK_PREFIX)) return;
+    // Resolve assignmentId — fallback to first matching assignment if selectedAssignment not set
+    const assignmentId = selectedAssignment?.id || assignments.find(a => a.project_id === directProjectId)?.id;
+    if (!assignmentId && !isDirectGuestMode) {
+      toast.error("Keine Zuordnung gefunden");
+      return;
+    }
     setSavingId(locationId);
     try {
       if (isDirectGuestMode && guestToken) {
-        // Guest mode: use guest-data function or direct delete
         await supabase.from("location_feedback").delete().eq("id", feedbackId);
       } else {
         const { data, error } = await supabase.functions.invoke("customer-data", {
-          body: { action: "delete_feedback", customerId: session?.id, assignmentId: selectedAssignment?.id, locationId, feedbackId },
+          body: { action: "delete_feedback", customerId: session?.id, assignmentId, locationId, feedbackId },
         });
         if (error || data?.error) throw error || new Error(data?.error);
       }

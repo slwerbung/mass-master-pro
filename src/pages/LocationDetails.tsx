@@ -9,7 +9,7 @@ import { ArrowLeft, Check } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { Location } from "@/types/project";
+import { Location, AreaMeasurement } from "@/types/project";
 import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
 import { supabase } from "@/integrations/supabase/client";
@@ -49,6 +49,7 @@ const LocationDetails = () => {
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>([]);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [projectType, setProjectType] = useState<string | undefined>(undefined);
+  const [existingAreaMeasurements, setExistingAreaMeasurements] = useState<AreaMeasurement[]>([]);
 
   // Load project type
   useEffect(() => {
@@ -90,6 +91,7 @@ const LocationDetails = () => {
         if (loc.comment) vals["comment"] = loc.comment;
         if (loc.customFields) Object.assign(vals, loc.customFields);
         setFieldValues(vals);
+        if (loc.areaMeasurements) setExistingAreaMeasurements(loc.areaMeasurements);
         setIsLoaded(true);
       };
       loadLocation();
@@ -188,8 +190,10 @@ const LocationDetails = () => {
         const customFields: Record<string, string> = {};
         Object.entries(fieldValues).forEach(([k, v]) => { if (k.startsWith("custom_")) customFields[k] = v; });
         if (Object.keys(customFields).length > 0) newLocation.customFields = customFields;
-        if (stateAreaMeasurements && stateAreaMeasurements.length > 0) {
-          newLocation.areaMeasurements = stateAreaMeasurements;
+        // Merge new area measurements with existing ones
+        const allAreaMeasurements = [...existingAreaMeasurements, ...(stateAreaMeasurements || [])];
+        if (allAreaMeasurements.length > 0) {
+          newLocation.areaMeasurements = allAreaMeasurements;
         }
         project.locations.push(newLocation);
         await indexedDBStorage.saveProject(project);
@@ -267,6 +271,28 @@ const LocationDetails = () => {
                 <img src={previewImage} alt="Bild" className="w-full h-full object-contain" />
               </div>
             )}
+            {/* Area Measurements Summary */}
+            {(() => {
+              const allMeasurements = [...existingAreaMeasurements, ...(stateAreaMeasurements || [])];
+              if (allMeasurements.length === 0) return null;
+              const totalM2 = allMeasurements.reduce((sum, m) => sum + (m.widthMm * m.heightMm) / 1_000_000, 0);
+              return (
+                <div className="bg-muted/50 rounded-lg p-3 space-y-1 text-sm">
+                  <p className="font-medium text-foreground">Flächenaufmaß</p>
+                  {allMeasurements.map((m) => {
+                    const m2 = (m.widthMm * m.heightMm) / 1_000_000;
+                    return (
+                      <p key={m.index} className="text-muted-foreground">
+                        F {m.index}: {m.widthMm} × {m.heightMm} mm ({m2.toFixed(2)} m²)
+                      </p>
+                    );
+                  })}
+                  <p className="font-semibold text-foreground border-t border-border pt-1 mt-1">
+                    Gesamt: {totalM2.toFixed(2)} m²
+                  </p>
+                </div>
+              );
+            })()}
             <div className="space-y-4">
               {isDetailImage || isDetailEditMode ? (
                 <div className="space-y-2">
