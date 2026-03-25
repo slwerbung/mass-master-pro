@@ -260,7 +260,7 @@ const ProjectDetail = () => {
               <Button size="lg" variant="outline" className="flex-1 h-12 md:h-11" onClick={() => navigate(`/projects/${projectId}/camera`)}><Camera className="mr-1 md:mr-2 h-5 w-5" /><span className="text-sm md:text-base">Kamera</span></Button>
             </>
           )}
-          <Button size="lg" variant="outline" onClick={() => navigate(`/projects/${projectId}/export`)} className="h-12 md:h-11 px-3 md:px-4"><Download className="mr-1 h-5 w-5" /><span className="hidden sm:inline text-sm md:text-base">Export</span></Button>
+          <Button size="lg" variant="outline" onClick={() => navigate(`/projects/${projectId}/export`)} className="flex-1 h-12 md:h-11"><Download className="mr-1 md:mr-2 h-5 w-5" /><span className="text-sm md:text-base">Export</span></Button>
         </div>
       </div>
     </div>
