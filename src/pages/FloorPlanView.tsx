@@ -17,6 +17,8 @@ const FloorPlanView = () => {
   const [activeFloorPlanId, setActiveFloorPlanId] = useState<string>("");
   const [placingMarker, setPlacingMarker] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showCaptureDialog, setShowCaptureDialog] = useState(false);
+  const [pendingLocationId, setPendingLocationId] = useState<string | null>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
 
   const loadProject = useCallback(async () => {
