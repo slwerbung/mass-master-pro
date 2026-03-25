@@ -14,7 +14,7 @@ import { syncAllToSupabase } from "@/lib/supabaseSync";
 interface ProjectListItem {
   id: string;
   projectNumber: string;
-  updatedAt: Date;
+  createdAt: Date;
   locationCount: number;
   isLocal: boolean; // has local data (images etc.)
 }
@@ -35,7 +35,7 @@ const Projects = () => {
     try {
       await indexedDBStorage.migrateFromLocalStorage();
 
-      const projectQuery = supabase.from("projects").select("id, project_number, updated_at, employee_id").order("updated_at", { ascending: false });
+      const projectQuery = supabase.from("projects").select("id, project_number, created_at, employee_id").order("created_at", { ascending: false });
       const scopedQuery = session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery;
 
       const [supabaseResult, locationRows, localProjects] = await Promise.all([
@@ -58,7 +58,7 @@ const Projects = () => {
         return {
           id: sp.id,
           projectNumber: sp.project_number,
-          updatedAt: new Date(sp.updated_at),
+          createdAt: new Date(sp.created_at),
           locationCount: local ? (local.locations?.length || 0) : (dbCountMap.get(sp.id) || 0),
           isLocal: !!local,
         };
@@ -72,14 +72,14 @@ const Projects = () => {
           merged.push({
             id: lp.id,
             projectNumber: lp.projectNumber,
-            updatedAt: lp.updatedAt,
+            createdAt: lp.createdAt,
             locationCount: lp.locations?.length || 0,
             isLocal: true,
           });
         }
       }
 
-      merged.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      merged.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       setProjects(merged);
 
       // Background sync, then reload once
@@ -176,7 +176,7 @@ const Projects = () => {
                   </CardTitle>
                   <CardDescription className="flex items-center gap-1 text-xs">
                     <Calendar className="h-3 w-3" />
-                    {format(project.updatedAt, "dd. MMM yyyy", { locale: de })}
+                    Erstellt am {format(project.createdAt, "dd. MMM yyyy", { locale: de })}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-4 pt-0">
