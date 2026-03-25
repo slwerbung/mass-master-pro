@@ -34,7 +34,7 @@ const NewProject = () => {
   }, []);
 
   const handleCreate = async () => {
-    if (!projectNumber.trim()) { toast.error("Bitte eine Projektnummer eingeben"); return; }
+    if (!projectNumber.trim()) { toast.error("Bitte eine Projektnummer / Projektname eingeben"); return; }
     setIsCreating(true);
     try {
       const fullProjectNumber = prefix ? `${prefix}${projectNumber.trim()}` : projectNumber.trim();
@@ -87,11 +87,11 @@ const NewProject = () => {
         <Card>
           <CardHeader className="p-4 md:p-6">
             <CardTitle className="text-xl md:text-2xl">Neues Projekt erstellen</CardTitle>
-            <CardDescription className="text-sm md:text-base">Gib eine Projektnummer ein und wähle den Projekttyp</CardDescription>
+            <CardDescription className="text-sm md:text-base">Gib eine Projektnummer / Projektname ein und wähle den Projekttyp</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 md:space-y-6 p-4 md:p-6">
             <div className="space-y-2">
-              <Label htmlFor="projectNumber">Projektnummer</Label>
+              <Label htmlFor="projectNumber">Projektnummer / Projektname</Label>
               <div className="flex items-center gap-2">
                 <span className="text-lg font-semibold text-muted-foreground px-3 py-2 bg-muted rounded-md">{prefix}</span>
                 <Input id="projectNumber" type="text" placeholder="2024-001" value={projectNumber}

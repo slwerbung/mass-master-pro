@@ -46,7 +46,7 @@ const PDFExportOptionsUI = ({ options, onChange }: Props) => {
   };
 
   const items: { key: keyof PDFExportOptions; label: string; group: string }[] = [
-    { key: "includeProjectHeader", label: "Projektnummer", group: "Allgemein" },
+    { key: "includeProjectHeader", label: "Projektnummer / Projektname", group: "Allgemein" },
     { key: "includeLocationNumber", label: "Standortnummer", group: "Allgemein" },
     { key: "includeLocationName", label: "Standortname", group: "Allgemein" },
     { key: "includeSystem", label: "System", group: "Allgemein" },
