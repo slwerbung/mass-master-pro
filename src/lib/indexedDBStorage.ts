@@ -667,6 +667,20 @@ export const indexedDBStorage = {
   },
 };
 
+async clearAll(): Promise<void> {
+    try {
+      const db = await getDB();
+      const storeNames: (keyof AufmassDBSchema)[] = ['projects', 'locations', 'images', 'detail-images', 'detail-image-blobs', 'floor-plans', 'floor-plan-images'];
+      const tx = db.transaction(storeNames, 'readwrite');
+      await Promise.all(storeNames.map(s => tx.objectStore(s).clear()));
+      await tx.done;
+      console.log('IndexedDB cleared');
+    } catch (e) {
+      console.warn('Failed to clear IndexedDB', e);
+    }
+  },
+};
+
 // Format bytes to human readable
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 Bytes';

@@ -76,16 +76,17 @@ const Projects = () => {
       });
 
       const supabaseIds = new Set(supabaseProjects.map(sp => sp.id));
-      for (const lp of localSummary) {
-        if (!supabaseIds.has(lp.id)) {
-          if (session?.role === "employee") continue;
-          merged.push({
-            id: lp.id,
-            projectNumber: lp.projectNumber,
-            createdAt: lp.createdAt,
-            locationCount: lp.locationCount,
-            isLocal: true,
-          });
+      if (session?.role !== "employee") {
+        for (const lp of localSummary) {
+          if (!supabaseIds.has(lp.id)) {
+            merged.push({
+              id: lp.id,
+              projectNumber: lp.projectNumber,
+              createdAt: lp.createdAt,
+              locationCount: lp.locationCount,
+              isLocal: true,
+            });
+          }
         }
       }
 

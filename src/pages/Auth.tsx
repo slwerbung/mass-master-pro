@@ -99,6 +99,8 @@ const Auth = () => {
       const { data, error } = await supabase.functions.invoke("validate-employee", { body: { employeeId: selectedEmployee.id, password: employeePassword } });
       if (error) { toast.error("Verbindungsfehler"); }
       else if (data?.valid && data?.token) {
+        const prev = getSession();
+        if (prev?.id !== selectedEmployee.id) await indexedDBStorage.clearAll();
         setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name, authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("employee", data.token, selectedEmployee.id);
         toast.success(`Angemeldet als ${selectedEmployee.name}`);
