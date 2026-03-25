@@ -9,7 +9,7 @@ import { ArrowLeft, Check } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { Location } from "@/types/project";
+import { Location, AreaMeasurement } from "@/types/project";
 import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
 import { supabase } from "@/integrations/supabase/client";
