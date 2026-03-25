@@ -1,40 +1,18 @@
 
 
-## Fix: Stabile Projektliste mit korrekten Standortzahlen
+## Fix: Erstelldatum statt Sync-Datum anzeigen
 
-### Probleme
-
-1. **Standortzahl = 0 bei nicht-lokalen Projekten**: Zeile 56 liest `local?.locations?.length || 0`. Wenn ein Projekt nur in der Cloud existiert (nicht in IndexedDB), ist `local` undefined und die Zahl ist immer 0.
-2. **Projekte erscheinen/verschwinden**: Nach dem initialen Render läuft `syncAllToSupabase()` im Hintergrund (Zeile 81). Der Sync kann lokale Daten überschreiben (`remote-won`), aber die UI wird danach nicht aktualisiert. Beim nächsten Laden sieht die Liste anders aus.
+### Problem
+Die Projektkarten zeigen `updated_at` an (Zeile 61, 179), das bei jedem Sync überschrieben wird. Dadurch steht dort immer das letzte Sync-Datum statt dem tatsächlichen Erstelldatum.
 
 ### Lösung
 
-**Eine Datei: `src/pages/Projects.tsx`**
+**`src/pages/Projects.tsx`** — 3 kleine Änderungen:
 
-**1. Location-Counts aus der Datenbank laden**
-- Parallel zum bestehenden Projekt-Query einen zweiten Query ausführen:
-  ```sql
-  SELECT project_id, COUNT(*) FROM locations GROUP BY project_id
-  ```
-  (via `supabase.from("locations").select("project_id")` und clientseitig gruppieren, da Supabase JS kein GROUP BY hat)
-- Beim Merge: `locationCount` = lokale Zahl wenn vorhanden, sonst DB-Count
-- So zeigen auch "Nur online"-Projekte korrekte Zahlen
+1. **`ProjectListItem` Interface**: `updatedAt` umbenennen zu `createdAt` (oder neues Feld hinzufügen)
+2. **Query anpassen** (Zeile 38): `created_at` statt `updated_at` aus Supabase laden — Query wird zu `select("id, project_number, created_at, employee_id")`
+3. **Merge-Logik** (Zeile 61): `createdAt: new Date(sp.created_at)` statt `updated_at`
+4. **Anzeige** (Zeile 179): `project.createdAt` anzeigen, Label ggf. auf "Erstellt am" anpassen
 
-**2. Nach Background-Sync die Liste neu laden**
-- Ein `skipSync`-Flag einführen (z.B. via useRef)
-- In `loadProjects()`: Sync nur ausführen wenn `skipSync` nicht gesetzt
-- Nach dem Sync: `skipSync = true` setzen, dann `loadProjects()` erneut aufrufen
-- So aktualisiert sich die UI nach jedem Sync-Durchlauf, ohne Endlosschleife
-
-### Ablauf
-
-```text
-loadProjects(syncAfter = true):
-  1. Projekte aus Supabase laden
-  2. Location-Counts aus Supabase laden (parallel)
-  3. Lokale Projekte aus IndexedDB laden (parallel)
-  4. Merge: locationCount = lokal ?? DB-Count
-  5. Rendern
-  6. Wenn syncAfter: await syncAllToSupabase() → loadProjects(syncAfter = false)
-```
+Die Sortierung kann wahlweise nach `created_at` (chronologisch) oder weiterhin nach `updated_at` (zuletzt bearbeitet oben) erfolgen — je nach Wunsch.
 
