@@ -251,16 +251,16 @@ const ProjectDetail = () => {
       <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
 
       <div className="fixed bottom-0 left-0 right-0 bg-card border-t shadow-lg p-3 md:p-4 safe-area-bottom">
-        <div className="container max-w-4xl mx-auto flex gap-2 md:gap-3">
+        <div className="container max-w-4xl mx-auto flex gap-1.5 md:gap-3">
           {isPlanProject ? (
-            <Button size="lg" className="flex-1 h-12 md:h-11" onClick={() => navigate(`/projects/${projectId}/floor-plans`)}><Map className="mr-2 h-5 w-5" />Grundrisse</Button>
+            <Button size="lg" className="flex-1 h-12 md:h-11" onClick={() => navigate(`/projects/${projectId}/floor-plans`)}><Map className="mr-1 h-4 w-4 md:mr-2 md:h-5 md:w-5" /><span className="text-xs md:text-base">Grundrisse</span></Button>
           ) : (
             <>
-              <Button size="lg" variant="outline" className="flex-1 h-12 md:h-11" onClick={() => fileInputRef.current?.click()}><ImagePlus className="mr-1 md:mr-2 h-5 w-5" /><span className="text-sm md:text-base">Bild hochladen</span></Button>
-              <Button size="lg" variant="outline" className="flex-1 h-12 md:h-11" onClick={() => navigate(`/projects/${projectId}/camera`)}><Camera className="mr-1 md:mr-2 h-5 w-5" /><span className="text-sm md:text-base">Kamera</span></Button>
+              <Button size="lg" variant="outline" className="flex-1 h-12 md:h-11 px-2 md:px-4" onClick={() => fileInputRef.current?.click()}><ImagePlus className="mr-1 h-4 w-4 md:h-5 md:w-5 shrink-0" /><span className="text-xs md:text-base">Hochladen</span></Button>
+              <Button size="lg" variant="outline" className="flex-1 h-12 md:h-11 px-2 md:px-4" onClick={() => navigate(`/projects/${projectId}/camera`)}><Camera className="mr-1 h-4 w-4 md:h-5 md:w-5 shrink-0" /><span className="text-xs md:text-base">Kamera</span></Button>
             </>
           )}
-          <Button size="lg" variant="outline" onClick={() => navigate(`/projects/${projectId}/export`)} className="flex-1 h-12 md:h-11"><Download className="mr-1 md:mr-2 h-5 w-5" /><span className="text-sm md:text-base">Export</span></Button>
+          <Button size="lg" variant="outline" onClick={() => navigate(`/projects/${projectId}/export`)} className="flex-1 h-12 md:h-11 px-2 md:px-4"><Download className="mr-1 h-4 w-4 md:h-5 md:w-5 shrink-0" /><span className="text-xs md:text-base">Export</span></Button>
         </div>
       </div>
     </div>
