@@ -16,7 +16,7 @@ const NewProject = () => {
   const [projectNumber, setProjectNumber] = useState("");
   const [projectType, setProjectType] = useState<'aufmass' | 'aufmass_mit_plan'>('aufmass');
   const [isCreating, setIsCreating] = useState(false);
-  const [prefix, setPrefix] = useState("WER-");
+  const [prefix, setPrefix] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
