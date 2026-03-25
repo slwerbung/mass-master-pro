@@ -16,7 +16,7 @@ const NewProject = () => {
   const [projectNumber, setProjectNumber] = useState("");
   const [projectType, setProjectType] = useState<'aufmass' | 'aufmass_mit_plan'>('aufmass');
   const [isCreating, setIsCreating] = useState(false);
-  const [prefix, setPrefix] = useState("WER-");
+  const [prefix, setPrefix] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -93,7 +93,7 @@ const NewProject = () => {
             <div className="space-y-2">
               <Label htmlFor="projectNumber">Projektnummer / Projektname</Label>
               <div className="flex items-center gap-2">
-                <span className="text-lg font-semibold text-muted-foreground px-3 py-2 bg-muted rounded-md">{prefix}</span>
+                {prefix && <span className="text-lg font-semibold text-muted-foreground px-3 py-2 bg-muted rounded-md">{prefix}</span>}
                 <Input id="projectNumber" type="text" placeholder="2024-001" value={projectNumber}
                   onChange={(e) => setProjectNumber(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}

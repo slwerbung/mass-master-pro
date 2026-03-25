@@ -117,8 +117,8 @@ const Admin = () => {
   const loadPrefix = async () => {
     try {
       const data = await invoke("get_project_prefix");
-      setProjectPrefix(data.prefix || "WER-");
-    } catch { setProjectPrefix("WER-"); }
+      setProjectPrefix(data.prefix ?? "WER-");
+    } catch { setProjectPrefix(""); }
   };
 
   const savePrefix = async () => {
@@ -371,7 +371,17 @@ const Admin = () => {
                 <div className="flex gap-2">
                   <Input placeholder="z.B. WER-" value={projectPrefix} onChange={(e) => setProjectPrefix(e.target.value)} />
                   <Button onClick={savePrefix} disabled={savingPrefix}>Speichern</Button>
+                  <Button variant="destructive" disabled={savingPrefix || projectPrefix === ""} onClick={async () => {
+                    setSavingPrefix(true);
+                    try {
+                      await invoke("set_project_prefix", { prefix: "" });
+                      setProjectPrefix("");
+                      toast.success("Präfix gelöscht");
+                    } catch (e: any) { toast.error(e.message || "Fehler"); }
+                    setSavingPrefix(false);
+                  }}>Löschen</Button>
                 </div>
+                <p className="text-xs text-muted-foreground">Leer lassen oder löschen für keinen Präfix.</p>
               </CardContent>
             </Card>
 
