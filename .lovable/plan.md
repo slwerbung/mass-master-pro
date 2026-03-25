@@ -1,48 +1,29 @@
 
 
-## Projekt löschen direkt aus der Projektübersicht + Mehrfachauswahl
+## Fix: Mitarbeiter sieht Projekte anderer Mitarbeiter
 
-### Funktionsumfang
+### Ursache
 
-1. **Einzelnes Projekt löschen**: Trash-Icon auf jeder Projekt-Card, mit Bestätigungs-Dialog
-2. **Mehrfachauswahl-Modus**: Button in der Header-Leiste aktiviert Checkboxen auf den Cards. Ausgewählte Projekte können gesammelt gelöscht werden.
-3. **Löschung vollständig**: Lokal (IndexedDB via `deleteProject()`) UND remote (Supabase: Locations, Images, Detail-Images, Floor-Plans, Feedback, Approvals, PDFs, Assignments, dann Projekt selbst)
+Die Filterung geschieht aktuell **nur client-seitig** (`eq("employee_id", session.id)`). Es gibt keine serverseitige Absicherung — die RLS-Policy auf `projects` erlaubt `anon` uneingeschränkten SELECT (`USING (true)`). Wenn z.B. zwei Mitarbeiter dasselbe Gerät nutzen oder der Client-Filter durch einen Edge-Case nicht greift, werden alle Projekte angezeigt.
+
+### Lösung
+
+Zweistufige Absicherung:
+
+1. **Client-seitig** (bereits vorhanden, verifiziert): `eq("employee_id", session.id)` — funktioniert korrekt
+
+2. **IndexedDB-Bereinigung beim Login**: Beim Mitarbeiter-Login die lokale IndexedDB leeren, damit keine Projekte eines vorherigen Mitarbeiters auf demselben Gerät übrig bleiben. Das ist vermutlich die Hauptursache — wenn Mitarbeiter A sich auf einem Gerät anmeldet, sind lokal noch Projekte von Mitarbeiter B in IndexedDB gespeichert, und diese werden in die Merge-Logik einbezogen.
 
 ### Änderungen
 
-**`src/pages/Projects.tsx`** — Hauptdatei
-
-- State: `selectionMode` (boolean), `selectedIds` (Set)
-- **Header**: Neuer "Auswählen"-Toggle-Button. Im Auswahlmodus: "X ausgewählt" + "Löschen"-Button (rot) + "Abbrechen"
-- **Projekt-Cards**: Im Auswahlmodus Checkbox statt Navigation-Click. Im Normalmodus Trash-Icon-Button (mit `e.stopPropagation()`)
-- **Bestätigungs-Dialog** (AlertDialog): Sowohl für Einzel- als auch Mehrfachlöschung. Text passt sich an ("1 Projekt" vs. "3 Projekte")
-- **`deleteProjects(ids)`-Funktion**: 
-  - Für jede ID: Supabase-Cascade-Delete (locations → location_images, detail_images, location_feedback, location_approvals, location_pdfs, floor_plans → project)
-  - Lokal: `indexedDBStorage.deleteProject(id)`
-  - Danach `loadProjects(false)` aufrufen
-
-### UI-Verhalten
-
-```text
-Normal-Modus:
-┌─────────────────────────────┐
-│ 📂 Projekt-2025-001    [🗑] │
-│ Erstellt am 15. Mar 2025    │
-│ 3 Standorte                 │
-└─────────────────────────────┘
-
-Auswahl-Modus:
-┌─────────────────────────────┐
-│ ☑ 📂 Projekt-2025-001      │
-│ Erstellt am 15. Mar 2025    │
-│ 3 Standorte                 │
-└─────────────────────────────┘
-Header: [3 ausgewählt] [Löschen] [Abbrechen]
-```
-
-### Betroffene Datei
-
 | Datei | Änderung |
 |---|---|
-| `src/pages/Projects.tsx` | Selection-Mode, Delete-Logik, AlertDialog, Trash-Icons |
+| `src/pages/Auth.tsx` | Beim Mitarbeiter-Login: IndexedDB leeren, wenn sich der Mitarbeiter-ID ändert (vorherige Session war ein anderer Mitarbeiter) |
+| `src/pages/Projects.tsx` | Lokale Projekte für Mitarbeiter komplett ausblenden — nur Supabase-Ergebnisse anzeigen (die bereits gefiltert sind) |
+
+### Detail
+
+**`src/pages/Projects.tsx`**: In der Merge-Logik (Zeile 67-90) für Mitarbeiter auch die lokalen Projekte, die in der Supabase-Antwort enthalten sind, nicht aus IndexedDB anreichern — stattdessen nur reine Supabase-Daten verwenden. Lokale Projekte (die noch nicht synchronisiert sind) des aktuellen Mitarbeiters weiterhin anzeigen, aber dafür prüfen ob die `employeeId` im lokalen Datensatz übereinstimmt.
+
+**`src/pages/Auth.tsx`**: Beim erfolgreichen Mitarbeiter-Login prüfen, ob die vorherige Session einen anderen Mitarbeiter hatte. Falls ja, `indexedDBStorage.clearAll()` aufrufen, um Altdaten zu entfernen.
 
