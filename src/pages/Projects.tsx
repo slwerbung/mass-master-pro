@@ -100,7 +100,7 @@ const Projects = () => {
     try {
       await syncAllToSupabase();
       toast.success("Synchronisiert ✓");
-      await loadProjects();
+      await loadProjects(false);
     } catch (e: any) {
       toast.error("Sync fehlgeschlagen: " + e.message);
     } finally {
