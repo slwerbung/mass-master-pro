@@ -196,6 +196,14 @@ export const indexedDBStorage = {
     const keys = await db.getAllKeys('projects');
     return keys as string[];
   },
+  // Update only the project timestamp without touching locations/images
+  async updateProjectTimestamp(projectId: string, timestamp: string): Promise<void> {
+    const db = await getDB();
+    const record = await db.get('projects', projectId);
+    if (record) {
+      await db.put('projects', { ...record, updatedAt: timestamp });
+    }
+  },
 
   async getProjects(): Promise<Project[]> {
     const db = await getDB();
