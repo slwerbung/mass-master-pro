@@ -32,14 +32,6 @@ import {
   TEXT_MUTED,
 } from "@/lib/pdfHelpers";
 
-const getImageDimensions = (dataURI: string): Promise<{ width: number; height: number }> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.width, height: img.height });
-    img.onerror = () => resolve({ width: 800, height: 600 });
-    img.src = dataURI;
-  });
-};
 
 const Export = () => {
   const { projectId } = useParams();
