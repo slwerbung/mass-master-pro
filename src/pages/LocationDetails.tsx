@@ -271,6 +271,28 @@ const LocationDetails = () => {
                 <img src={previewImage} alt="Bild" className="w-full h-full object-contain" />
               </div>
             )}
+            {/* Area Measurements Summary */}
+            {(() => {
+              const allMeasurements = [...existingAreaMeasurements, ...(stateAreaMeasurements || [])];
+              if (allMeasurements.length === 0) return null;
+              const totalM2 = allMeasurements.reduce((sum, m) => sum + (m.widthMm * m.heightMm) / 1_000_000, 0);
+              return (
+                <div className="bg-muted/50 rounded-lg p-3 space-y-1 text-sm">
+                  <p className="font-medium text-foreground">Flächenaufmaß</p>
+                  {allMeasurements.map((m) => {
+                    const m2 = (m.widthMm * m.heightMm) / 1_000_000;
+                    return (
+                      <p key={m.index} className="text-muted-foreground">
+                        F {m.index}: {m.widthMm} × {m.heightMm} mm ({m2.toFixed(2)} m²)
+                      </p>
+                    );
+                  })}
+                  <p className="font-semibold text-foreground border-t border-border pt-1 mt-1">
+                    Gesamt: {totalM2.toFixed(2)} m²
+                  </p>
+                </div>
+              );
+            })()}
             <div className="space-y-4">
               {isDetailImage || isDetailEditMode ? (
                 <div className="space-y-2">

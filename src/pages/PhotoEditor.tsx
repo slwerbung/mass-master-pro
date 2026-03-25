@@ -271,9 +271,13 @@ const PhotoEditor = () => {
             toast.success("Detailbild aktualisiert");
           } else if (locationId) {
             await indexedDBStorage.updateLocationImage(projectId, locationId, dataUrl);
-            // Save area measurements
-            if (areaMeasurements.length > 0) {
-              await indexedDBStorage.updateLocationMetadata(projectId, locationId, { areaMeasurements });
+            // Merge new area measurements with existing
+            const project = await indexedDBStorage.getProject(projectId);
+            const existingLoc = project?.locations.find(l => l.id === locationId);
+            const existingMeasurements = existingLoc?.areaMeasurements || [];
+            const mergedMeasurements = [...existingMeasurements, ...areaMeasurements];
+            if (mergedMeasurements.length > 0) {
+              await indexedDBStorage.updateLocationMetadata(projectId, locationId, { areaMeasurements: mergedMeasurements });
             }
             toast.success("Bild aktualisiert");
           }

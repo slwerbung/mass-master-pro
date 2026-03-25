@@ -31,7 +31,7 @@ const NewProject = () => {
     if (!projectNumber.trim()) { toast.error("Bitte eine Projektnummer eingeben"); return; }
     setIsCreating(true);
     try {
-      const fullProjectNumber = `${prefix}${projectNumber.trim()}`;
+      const fullProjectNumber = prefix ? `${prefix}${projectNumber.trim()}` : projectNumber.trim();
       const session = getSession();
       const projectId = crypto.randomUUID();
       const employeeId = session?.role === "employee" ? session.id : null;

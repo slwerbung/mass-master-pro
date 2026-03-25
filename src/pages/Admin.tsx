@@ -81,7 +81,7 @@ const Admin = () => {
     const { data, error } = await supabase.functions.invoke("admin-manage", {
       body: { adminToken, action, ...params },
     });
-    if (error) throw new Error("Network error");
+    if (error) throw new Error(data?.error || error.message || "Netzwerkfehler");
     if (data?.error) throw new Error(data.error);
     return data;
   }, [adminToken]);
