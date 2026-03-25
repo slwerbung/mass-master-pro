@@ -190,8 +190,10 @@ const LocationDetails = () => {
         const customFields: Record<string, string> = {};
         Object.entries(fieldValues).forEach(([k, v]) => { if (k.startsWith("custom_")) customFields[k] = v; });
         if (Object.keys(customFields).length > 0) newLocation.customFields = customFields;
-        if (stateAreaMeasurements && stateAreaMeasurements.length > 0) {
-          newLocation.areaMeasurements = stateAreaMeasurements;
+        // Merge new area measurements with existing ones
+        const allAreaMeasurements = [...existingAreaMeasurements, ...(stateAreaMeasurements || [])];
+        if (allAreaMeasurements.length > 0) {
+          newLocation.areaMeasurements = allAreaMeasurements;
         }
         project.locations.push(newLocation);
         await indexedDBStorage.saveProject(project);
