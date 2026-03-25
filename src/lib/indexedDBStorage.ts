@@ -277,6 +277,7 @@ export const indexedDBStorage = {
         locationType: record.locationType,
         customFields: record.customFields ? JSON.parse(record.customFields) : undefined,
         guestInfo: record.guestInfo,
+        areaMeasurements: (record as any).areaMeasurements ? JSON.parse((record as any).areaMeasurements) : undefined,
         imageData,
         originalImageData,
         detailImages,
