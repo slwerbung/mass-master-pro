@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Plus, MapPin, List, Upload, Trash2, RefreshCw } from "lucide-react";
+import { ArrowLeft, Plus, MapPin, List, Upload, Trash2, RefreshCw, Camera } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { deleteFloorPlanFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, syncProjectToSupabase } from "@/lib/supabaseSync";
 import { Project, FloorPlanMarker } from "@/types/project";
@@ -16,6 +17,8 @@ const FloorPlanView = () => {
   const [activeFloorPlanId, setActiveFloorPlanId] = useState<string>("");
   const [placingMarker, setPlacingMarker] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showCaptureDialog, setShowCaptureDialog] = useState(false);
+  const [pendingLocationId, setPendingLocationId] = useState<string | null>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
 
   const loadProject = useCallback(async () => {
@@ -52,7 +55,8 @@ const FloorPlanView = () => {
     const syncResult = await syncProjectToSupabase(projectId);
     if (syncResult === 'remote-won') { toast.warning('Neuere Online-Version übernommen'); await loadProject(); return; }
     setPlacingMarker(false);
-    navigate(`/projects/${projectId}/camera?floorPlan=${activeFloorPlan.id}&locationId=${locationId}`);
+    setPendingLocationId(locationId);
+    setShowCaptureDialog(true);
   };
 
   const handleMarkerClick = (marker: FloorPlanMarker, e: React.MouseEvent) => {
@@ -134,6 +138,22 @@ const FloorPlanView = () => {
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 bg-card border-t shadow-lg p-3 md:p-4 safe-area-bottom"><div className="container max-w-4xl mx-auto flex gap-2 md:gap-3"><Button size="lg" className="flex-1 h-12 md:h-11" onClick={() => setPlacingMarker(true)} disabled={placingMarker}><MapPin className="mr-1 md:mr-2 h-5 w-5" /><span className="text-sm md:text-base">Standort platzieren</span></Button><Button size="lg" variant="outline" onClick={() => navigate(`/projects/${projectId}`)} className="h-12 md:h-11 px-3 md:px-4"><List className="mr-1 h-5 w-5" /><span className="hidden sm:inline text-sm md:text-base">Liste</span></Button></div></div>
+
+      <Dialog open={showCaptureDialog} onOpenChange={setShowCaptureDialog}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle>Bild erfassen</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <Button size="lg" className="h-14 text-base" onClick={() => { setShowCaptureDialog(false); navigate(`/projects/${projectId}/camera?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`); }}>
+              <Camera className="h-5 w-5 mr-2" />Kamera
+            </Button>
+            <Button size="lg" variant="outline" className="h-14 text-base" onClick={() => { setShowCaptureDialog(false); navigate(`/projects/${projectId}/camera?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}&mode=upload`); }}>
+              <Upload className="h-5 w-5 mr-2" />Hochladen
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
