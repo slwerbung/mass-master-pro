@@ -15,6 +15,22 @@ import {
   isIOSDevice 
 } from "@/lib/exportUtils";
 import PDFExportOptionsUI, { PDFExportOptions, defaultPDFOptions } from "@/components/PDFExportOptions";
+import {
+  getImageDimensions,
+  drawPageHeader,
+  drawPageFooter,
+  drawCoverPage,
+  drawMetadataBox,
+  drawImageWithBorder,
+  drawCommentBlock,
+  drawBackLink,
+  MARGIN,
+  CONTENT_WIDTH,
+  PAGE_HEIGHT,
+  BLUE,
+  TEXT_PRIMARY,
+  TEXT_MUTED,
+} from "@/lib/pdfHelpers";
 
 const getImageDimensions = (dataURI: string): Promise<{ width: number; height: number }> => {
   return new Promise((resolve) => {
