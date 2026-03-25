@@ -26,6 +26,7 @@ interface AufmassDBSchema extends DBSchema {
       locationType?: string;
       customFields?: string;
       guestInfo?: string;
+      areaMeasurements?: string;
       createdAt: string;
     };
     indexes: { 'by-project': string };
