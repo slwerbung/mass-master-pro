@@ -298,11 +298,12 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
   await supabase.from('projects').upsert({
     id: project.id,
     project_number: project.projectNumber,
+    project_type: project.projectType || 'aufmass',
     user_id: userId,
     employee_id: employeeId,
     created_at: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),
     updated_at: syncTimestamp,
-  }, { onConflict: 'id' });
+  } as any, { onConflict: 'id' });
 
   if (project.locations?.length) {
     await supabase.from('locations').upsert(buildLocationRows(project), { onConflict: 'id' });

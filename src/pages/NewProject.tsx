@@ -58,11 +58,12 @@ const NewProject = () => {
         await supabase.from("projects").upsert({
           id: projectId,
           project_number: fullProjectNumber,
+          project_type: projectType,
           user_id: employeeId || projectId,
           employee_id: employeeId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        }, { onConflict: "id" });
+        } as any, { onConflict: "id" });
       } catch (e) {
         console.warn("Supabase sync failed (non-fatal):", e);
       }
