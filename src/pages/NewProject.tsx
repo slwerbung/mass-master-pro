@@ -20,11 +20,10 @@ const NewProject = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Load configurable prefix
     supabase.functions.invoke("admin-manage", {
       body: { action: "get_project_prefix" },
     }).then(({ data }) => {
-      if (data?.prefix) setPrefix(data.prefix);
+      if (data?.prefix !== undefined) setPrefix(data.prefix);
     }).catch(() => {});
   }, []);
 
