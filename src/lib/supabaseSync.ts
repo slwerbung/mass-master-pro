@@ -309,23 +309,8 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
 
   await removeDeletedLocationsFromSupabase(project);
   await syncFloorPlans(project.id, project.floorPlans);
-  // Only update the project timestamp in IndexedDB, don't re-save the entire project
-  const db = await (await import('./indexedDBStorage')).indexedDBStorage;
-  // Use a lightweight timestamp update via the raw DB
-  try {
-    const { openDB } = await import('idb');
-    // Access the existing DB instance through indexedDBStorage internals
-    // Simpler: just update via saveProject but only metadata
-    const projectRecord = { 
-      id: project.id, 
-      projectNumber: project.projectNumber,
-      projectType: project.projectType,
-      createdAt: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),
-      updatedAt: syncTimestamp 
-    };
-    // We need direct DB access - use a minimal approach
-    project.updatedAt = new Date(syncTimestamp);
-  } catch {}
+  // Only update timestamp, don't re-save all images
+  await indexedDBStorage.updateProjectTimestamp(project.id, syncTimestamp);
   return 'uploaded';
 }
 
