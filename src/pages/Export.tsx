@@ -145,59 +145,59 @@ const Export = () => {
         format: "a4",
       });
 
-      const pageWidth = 210;
-      const margin = 20;
-      const contentWidth = pageWidth - 2 * margin;
-      const pageHeight = 297;
-      const maxContentHeight = pageHeight - 2 * margin; // 257mm
+      const maxContentHeight = PAGE_HEIGHT - 2 * MARGIN;
+      const headerOffset = 16; // space below header line
 
-      let isFirstPage = true;
-      // Seitennummern-Map aufbauen: locationId → Seitennummer
+      // --- Page counting for internal links ---
       const locationPageMap: Record<string, number> = {};
-      const floorPlanPageMap: Record<string, number> = {}; // floorPlanId → Seitennummer
-      let pageCounter = 1;
+      const floorPlanPageMap: Record<string, number> = {};
+      let pageCounter = 2; // page 1 = cover
 
-      // Grundrisse zählen
       if (project.projectType === 'aufmass_mit_plan' && project.floorPlans && project.floorPlans.length > 0) {
         for (const fp of project.floorPlans) {
           floorPlanPageMap[fp.id] = pageCounter++;
         }
       }
-      // Standortseiten zählen (je Standort eine Seite, plus evtl. Detailseiten)
       for (const location of project.locations) {
         locationPageMap[location.id] = pageCounter++;
         if (pdfOptions.includeDetailImages && location.detailImages && location.detailImages.length > 0) {
-          pageCounter++; // Detailseite
+          pageCounter++;
         }
       }
+      const totalPages = pageCounter - 1;
 
-      // Floor plan pages for "Aufmaß mit Plan" projects
+      const dateStr = new Date().toLocaleDateString("de-DE");
+
+      // ===== COVER PAGE =====
+      drawCoverPage(pdf, project.projectNumber, project.locations.length, project.projectType);
+      drawPageFooter(pdf, dateStr, 1, totalPages);
+
+      // ===== FLOOR PLAN PAGES =====
       if (project.projectType === 'aufmass_mit_plan' && project.floorPlans && project.floorPlans.length > 0) {
         for (const floorPlan of project.floorPlans) {
-          if (!isFirstPage) pdf.addPage();
-          isFirstPage = false;
+          pdf.addPage();
+          const currentPage = floorPlanPageMap[floorPlan.id];
+          drawPageHeader(pdf, project.projectNumber);
+          drawPageFooter(pdf, dateStr, currentPage, totalPages);
 
-          let y = margin;
+          let y = MARGIN + headerOffset;
+
           pdf.setFontSize(14);
           pdf.setFont("helvetica", "bold");
-          pdf.text(`Grundriss: ${floorPlan.name}`, margin, y + 5);
-          y += 12;
+          pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
+          pdf.text(`Grundriss: ${floorPlan.name}`, MARGIN, y);
+          y += 8;
 
-          // Render floor plan image with markers
           const fpDims = await getImageDimensions(floorPlan.imageData);
-          const fpMaxH = pageHeight - y - margin - 10;
-          const fpRatio = Math.min(contentWidth / fpDims.width, fpMaxH / fpDims.height);
+          const fpMaxH = PAGE_HEIGHT - y - MARGIN - 20;
+          const fpRatio = Math.min(CONTENT_WIDTH / fpDims.width, fpMaxH / fpDims.height);
           const fpW = fpDims.width * fpRatio;
           const fpH = fpDims.height * fpRatio;
-          const fpX = margin + (contentWidth - fpW) / 2;
+          const fpX = MARGIN + (CONTENT_WIDTH - fpW) / 2;
 
-          try {
-            pdf.addImage(floorPlan.imageData, "PNG", fpX, y, fpW, fpH);
-          } catch (e) {
-            console.error("Error adding floor plan image:", e);
-          }
+          drawImageWithBorder(pdf, floorPlan.imageData, fpX, y, fpW, fpH);
 
-          // Draw markers on the floor plan – klickbar verlinkt zur Standortseite
+          // Draw markers
           for (const marker of floorPlan.markers) {
             const loc = project.locations.find(l => l.id === marker.locationId);
             if (!loc) continue;
@@ -206,202 +206,151 @@ const Export = () => {
             const parts = loc.locationNumber.split("-");
             const shortNum = parts[parts.length - 1] || loc.locationNumber;
 
-            // Klickbarer Link zum Standort
             const targetPage = locationPageMap[loc.id];
             if (targetPage) {
               pdf.link(mx - 4, my - 4, 8, 8, { pageNumber: targetPage });
             }
 
-            // Draw marker circle
-            pdf.setFillColor(59, 130, 246);
+            pdf.setFillColor(BLUE.r, BLUE.g, BLUE.b);
             pdf.circle(mx, my, 2.5, 'F');
             pdf.setFontSize(6);
             pdf.setFont("helvetica", "bold");
             pdf.setTextColor(255, 255, 255);
             pdf.text(shortNum, mx, my + 0.8, { align: "center" });
-            pdf.setTextColor(0, 0, 0);
           }
         }
       }
 
+      // ===== LOCATION PAGES =====
       for (const location of project.locations) {
-        if (!isFirstPage) {
-          pdf.addPage();
-        }
-        isFirstPage = false;
+        pdf.addPage();
+        const currentPage = locationPageMap[location.id];
+        drawPageHeader(pdf, project.projectNumber);
+        drawPageFooter(pdf, dateStr, currentPage, totalPages);
 
-        let y = margin;
+        let y = MARGIN + headerOffset;
 
-        // "Zurück zum Grundriss"-Link wenn Projekt mit Plan
+        // Back link to floor plan
         if (project.projectType === 'aufmass_mit_plan' && project.floorPlans && project.floorPlans.length > 0) {
-          // Finde den Grundriss der diesen Standort als Marker hat
           const parentFloorPlan = project.floorPlans.find(fp =>
             fp.markers.some(m => m.locationId === location.id)
           );
           if (parentFloorPlan) {
             const fpPage = floorPlanPageMap[parentFloorPlan.id];
             if (fpPage) {
-              pdf.setFontSize(9);
-              pdf.setFont("helvetica", "normal");
-              pdf.setTextColor(59, 130, 246);
-              pdf.textWithLink(`← Zurück zum Grundriss: ${parentFloorPlan.name}`, margin, y + 4, { pageNumber: fpPage });
-              pdf.setTextColor(0, 0, 0);
-              y += 10;
+              y = drawBackLink(pdf, `← Grundriss: ${parentFloorPlan.name}`, y, fpPage);
             }
           }
         }
 
-        // Header
-        if (pdfOptions.includeProjectHeader) {
+        // Location title
+        if (pdfOptions.includeLocationNumber) {
           pdf.setFontSize(16);
           pdf.setFont("helvetica", "bold");
-          pdf.text(`Projekt ${project.projectNumber}`, margin, y + 5);
+          pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
+          const title = location.locationName
+            ? `Standort ${location.locationNumber} — ${location.locationName}`
+            : `Standort ${location.locationNumber}`;
+          pdf.text(title, MARGIN, y + 2);
           y += 10;
         }
 
-        if (pdfOptions.includeLocationNumber) {
-          pdf.setFontSize(12);
-          pdf.setFont("helvetica", "normal");
-          pdf.text(`Standort ${location.locationNumber}`, margin, y + 5);
-          y += 7;
-        }
-
-        if (pdfOptions.includeLocationName && location.locationName) {
-          pdf.setFontSize(11);
-          pdf.setFont("helvetica", "normal");
-          pdf.text(location.locationName, margin, y + 5);
-          y += 7;
-        }
-
+        // Metadata box
+        const metaRows: { label: string; value: string }[] = [];
         if (pdfOptions.includeSystem && location.system) {
-          pdf.setFontSize(10);
-          pdf.setFont("helvetica", "normal");
-          pdf.text(`System: ${location.system}`, margin, y + 5);
-          y += 7;
+          metaRows.push({ label: "System", value: location.system });
         }
-
         if (pdfOptions.includeLocationType && location.locationType) {
-          pdf.setFontSize(10);
-          pdf.setFont("helvetica", "normal");
-          pdf.text(`Art: ${location.locationType}`, margin, y + 5);
-          y += 7;
+          metaRows.push({ label: "Art", value: location.locationType });
         }
-
         if (pdfOptions.includeLabel && location.label) {
-          pdf.setFontSize(10);
-          pdf.setFont("helvetica", "normal");
-          const splitLabel = pdf.splitTextToSize(`Beschriftung: ${location.label}`, contentWidth);
-          pdf.text(splitLabel, margin, y + 5);
-          y += 5 + splitLabel.length * 4;
-        }
-
-        // Calculate space used by non-image elements
-        let bottomContentHeight = 0;
-        if (pdfOptions.includeComment && location.comment) {
-          bottomContentHeight += 15; // estimate for comment
+          metaRows.push({ label: "Beschriftung", value: location.label });
         }
         if (pdfOptions.includeCreatedDate) {
-          bottomContentHeight += 10;
+          metaRows.push({ label: "Erstellt", value: new Date(location.createdAt).toLocaleDateString("de-DE") });
         }
 
-        const headerHeight = y - margin;
-        const spacing = 8;
-        const availableForImages = maxContentHeight - headerHeight - bottomContentHeight - spacing;
+        if (metaRows.length > 0) {
+          y = drawMetadataBox(pdf, metaRows, y);
+        }
 
-        // Determine which images to include
+        // Calculate available space for images
+        let bottomContentHeight = 0;
+        if (pdfOptions.includeComment && location.comment) {
+          bottomContentHeight += 20;
+        }
+
+        const usedHeight = y - MARGIN;
+        const availableForImages = maxContentHeight - usedHeight - bottomContentHeight - 5;
+
         const showAnnotated = pdfOptions.includeAnnotatedImage;
         const showOriginal = pdfOptions.includeOriginalImage;
         const imageCount = (showAnnotated ? 1 : 0) + (showOriginal ? 1 : 0);
 
         if (imageCount > 0) {
           const maxHeightPerImage = imageCount === 2
-            ? (availableForImages - 5) / 2 // 5mm gap between images
+            ? (availableForImages - 5) / 2
             : availableForImages;
 
           y += 3;
 
-          const addImageProportional = async (dataURI: string) => {
+          const addImage = async (dataURI: string) => {
             const dims = await getImageDimensions(dataURI);
-            const ratio = Math.min(contentWidth / dims.width, maxHeightPerImage / dims.height);
+            const ratio = Math.min(CONTENT_WIDTH / dims.width, maxHeightPerImage / dims.height);
             const w = dims.width * ratio;
             const h = dims.height * ratio;
-            const x = margin + (contentWidth - w) / 2; // center
-            try {
-              pdf.addImage(dataURI, "PNG", x, y, w, h);
-            } catch (e) {
-              console.error("Error adding image:", e);
-            }
+            const x = MARGIN + (CONTENT_WIDTH - w) / 2;
+            drawImageWithBorder(pdf, dataURI, x, y, w, h);
             y += h + 5;
           };
 
-          if (showAnnotated) {
-            await addImageProportional(location.imageData);
-          }
-          if (showOriginal) {
-            await addImageProportional(location.originalImageData);
-          }
+          if (showAnnotated) await addImage(location.imageData);
+          if (showOriginal) await addImage(location.originalImageData);
         }
 
-        // Comment
+        // Comment block
         if (pdfOptions.includeComment && location.comment) {
-          pdf.setFontSize(10);
-          pdf.setFont("helvetica", "normal");
-          pdf.setTextColor(0, 0, 0);
-          pdf.text("Kommentar:", margin, y);
-          const splitComment = pdf.splitTextToSize(location.comment, contentWidth);
-          pdf.text(splitComment, margin, y + 5);
-          y += 5 + splitComment.length * 4;
+          y = drawCommentBlock(pdf, location.comment, y);
         }
 
         // Detail images on follow-up pages
         if (pdfOptions.includeDetailImages && location.detailImages && location.detailImages.length > 0) {
           pdf.addPage();
-          let dy = margin;
+          drawPageHeader(pdf, project.projectNumber);
+          let dy = MARGIN + headerOffset;
 
           pdf.setFontSize(11);
           pdf.setFont("helvetica", "bold");
-          pdf.text(`Detailbilder – Standort ${location.locationNumber}`, margin, dy + 5);
-          dy += 12;
+          pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
+          pdf.text(`Detailbilder – Standort ${location.locationNumber}`, MARGIN, dy);
+          dy += 10;
 
           for (const detail of location.detailImages) {
             const dims = await getImageDimensions(detail.imageData);
-            const maxH = 80; // max height per detail image in mm
-            const ratio = Math.min(contentWidth / dims.width, maxH / dims.height);
+            const maxH = 80;
+            const ratio = Math.min(CONTENT_WIDTH / dims.width, maxH / dims.height);
             const w = dims.width * ratio;
             const h = dims.height * ratio;
 
-            // Check if we need a new page
-            if (dy + h + 10 > pageHeight - margin) {
+            if (dy + h + 10 > PAGE_HEIGHT - MARGIN) {
               pdf.addPage();
-              dy = margin;
+              drawPageHeader(pdf, project.projectNumber);
+              dy = MARGIN + headerOffset;
             }
 
-            const x = margin + (contentWidth - w) / 2;
-            try {
-              pdf.addImage(detail.imageData, "PNG", x, dy, w, h);
-            } catch (e) {
-              console.error("Error adding detail image:", e);
-            }
+            const x = MARGIN + (CONTENT_WIDTH - w) / 2;
+            drawImageWithBorder(pdf, detail.imageData, x, dy, w, h);
             dy += h + 2;
 
             if (detail.caption) {
               pdf.setFontSize(8);
               pdf.setFont("helvetica", "italic");
-              pdf.text(detail.caption, margin, dy + 3);
+              pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
+              pdf.text(detail.caption, MARGIN, dy + 3);
               dy += 7;
             }
             dy += 3;
           }
-        }
-        if (pdfOptions.includeCreatedDate) {
-          pdf.setFontSize(8);
-          pdf.setTextColor(128, 128, 128);
-          pdf.text(
-            `Erstellt am ${new Date(location.createdAt).toLocaleDateString("de-DE")}`,
-            margin,
-            pageHeight - margin
-          );
-          pdf.setTextColor(0, 0, 0);
         }
       }
 
