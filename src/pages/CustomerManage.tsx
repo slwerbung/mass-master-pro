@@ -75,11 +75,15 @@ const CustomerManage = () => {
     // First ensure project exists in Supabase directly (RLS disabled)
     const proj = projects.find(p => p.id === assignProjectId);
     if (proj) {
+      // Check if project already exists remotely to preserve existing owner
+      const { data: existingProj } = await supabase.from("projects").select("employee_id, user_id").eq("id", proj.id).maybeSingle();
+      const employeeId = existingProj?.employee_id ?? (session?.role === "employee" ? session.id : null);
+      const userId = existingProj?.user_id ?? (session?.role === "employee" ? session.id : proj.id);
       await supabase.from("projects").upsert({
         id: proj.id,
         project_number: proj.projectNumber,
-        user_id: session?.role === "employee" ? session.id : proj.id,
-        employee_id: session?.role === "employee" ? session.id : null,
+        user_id: userId,
+        employee_id: employeeId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }, { onConflict: "id" });
