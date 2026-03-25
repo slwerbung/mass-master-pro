@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Shield, User, Users, ArrowLeft, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { setSession, getSession } from "@/lib/session";
+import { indexedDBStorage } from "@/lib/indexedDBStorage";
 
 const SESSION_CACHE_KEY = "session_validation_cache";
 function setLoginCache(role: string, token: string, userId: string) {
@@ -75,6 +76,8 @@ const Auth = () => {
       if (data?.requiresPassword) {
         setSelectedEmployee(emp);
       } else if (data?.valid && data?.token) {
+        const prev = getSession();
+        if (prev?.id !== emp.id) await indexedDBStorage.clearAll();
         setSession({ role: "employee", id: emp.id, name: emp.name, authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("employee", data.token, emp.id);
         toast.success(`Angemeldet als ${emp.name}`);
@@ -96,6 +99,8 @@ const Auth = () => {
       const { data, error } = await supabase.functions.invoke("validate-employee", { body: { employeeId: selectedEmployee.id, password: employeePassword } });
       if (error) { toast.error("Verbindungsfehler"); }
       else if (data?.valid && data?.token) {
+        const prev = getSession();
+        if (prev?.id !== selectedEmployee.id) await indexedDBStorage.clearAll();
         setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name, authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("employee", data.token, selectedEmployee.id);
         toast.success(`Angemeldet als ${selectedEmployee.name}`);
