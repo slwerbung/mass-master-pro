@@ -270,22 +270,22 @@ const Admin = () => {
           <Button variant="outline" onClick={handleLogout}><LogOut className="h-4 w-4 mr-1" /> Abmelden</Button>
         </div>
         <Tabs defaultValue="employees">
-          <TabsList className="grid w-full grid-cols-5">
-            <TabsTrigger value="employees">Mitarbeiter</TabsTrigger>
-            <TabsTrigger value="customers">Kunden</TabsTrigger>
-            <TabsTrigger value="assignments">Zuweisungen</TabsTrigger>
-            <TabsTrigger value="projects">Projekte</TabsTrigger>
-            <TabsTrigger value="settings">Einstellungen</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-5 h-auto">
+            <TabsTrigger value="employees" className="text-xs sm:text-sm">Mitarbeiter</TabsTrigger>
+            <TabsTrigger value="customers" className="text-xs sm:text-sm">Kunden</TabsTrigger>
+            <TabsTrigger value="assignments" className="text-xs sm:text-sm">Zuweisungen</TabsTrigger>
+            <TabsTrigger value="projects" className="text-xs sm:text-sm">Projekte</TabsTrigger>
+            <TabsTrigger value="settings" className="text-xs sm:text-sm">Einstellungen</TabsTrigger>
           </TabsList>
 
           <TabsContent value="employees" className="space-y-4 mt-4">
             <Card><CardHeader><CardTitle className="text-lg flex items-center gap-2"><User className="h-5 w-5" /> Mitarbeiter verwalten</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <div className="flex gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
                     <Input placeholder="Name des Mitarbeiters" value={newEmployeeName} onChange={(e) => setNewEmployeeName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEmployee()} />
-                    <Input type="password" placeholder="Passwort (optional)" value={newEmployeePasswordInput} onChange={(e) => setNewEmployeePasswordInput(e.target.value)} className="max-w-[180px]" />
-                    <Button onClick={addEmployee} disabled={!newEmployeeName.trim()}><Plus className="h-4 w-4 mr-1" /> Hinzufügen</Button>
+                    <Input type="password" placeholder="Passwort (optional)" value={newEmployeePasswordInput} onChange={(e) => setNewEmployeePasswordInput(e.target.value)} className="sm:max-w-[180px]" />
+                    <Button onClick={addEmployee} disabled={!newEmployeeName.trim()} className="w-full sm:w-auto"><Plus className="h-4 w-4 mr-1" /> Hinzufügen</Button>
                   </div>
                 </div>
                 <div className="space-y-2">

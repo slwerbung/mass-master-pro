@@ -197,6 +197,10 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
 
   const locations = (locationRows || []).map((row) => {
     const images = imageMap.get(row.id) || {};
+    const rawCustom = row.custom_fields && typeof row.custom_fields === 'object' ? row.custom_fields as Record<string, any> : {};
+    const areaMeasurements = Array.isArray(rawCustom.__areaMeasurements) ? rawCustom.__areaMeasurements : undefined;
+    const cleanCustom = { ...rawCustom };
+    delete cleanCustom.__areaMeasurements;
     return {
       id: row.id,
       locationNumber: row.location_number,
@@ -205,12 +209,13 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
       system: row.system || undefined,
       label: row.label || undefined,
       locationType: row.location_type || undefined,
-      customFields: row.custom_fields && typeof row.custom_fields === 'object' ? row.custom_fields as Record<string, string> : undefined,
+      customFields: Object.keys(cleanCustom).length > 0 ? cleanCustom as Record<string, string> : undefined,
       guestInfo: row.guest_info || undefined,
       imageData: images.annotated || images.original || "",
       originalImageData: images.original || images.annotated || "",
       createdAt: new Date(row.created_at),
       detailImages: detailImageMap.get(row.id) || [],
+      areaMeasurements,
     };
   });
 
@@ -227,18 +232,24 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
 }
 
 function buildLocationRows(project: Project) {
-  return project.locations.map((l) => ({
-    id: l.id,
-    project_id: project.id,
-    location_number: l.locationNumber,
-    location_name: l.locationName || null,
-    comment: l.comment || null,
-    system: l.system || null,
-    label: l.label || null,
-    location_type: l.locationType || null,
-    custom_fields: l.customFields || {},
-    created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
-  }));
+  return project.locations.map((l) => {
+    const customFields: Record<string, any> = { ...(l.customFields || {}) };
+    if (l.areaMeasurements && l.areaMeasurements.length > 0) {
+      customFields.__areaMeasurements = l.areaMeasurements;
+    }
+    return {
+      id: l.id,
+      project_id: project.id,
+      location_number: l.locationNumber,
+      location_name: l.locationName || null,
+      comment: l.comment || null,
+      system: l.system || null,
+      label: l.label || null,
+      location_type: l.locationType || null,
+      custom_fields: customFields,
+      created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
+    };
+  });
 }
 
 async function removeDeletedLocationsFromSupabase(project: Project) {
