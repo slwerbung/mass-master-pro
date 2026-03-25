@@ -332,8 +332,8 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
 export async function syncAllToSupabase(): Promise<void> {
   startSync();
   try {
-    const projects = await indexedDBStorage.getProjects();
-    for (const project of projects) await syncProjectInternal(project.id);
+    const projectIds = await indexedDBStorage.getProjectIds();
+    for (const id of projectIds) await syncProjectInternal(id);
     finishSyncSuccess();
   } catch (e) {
     finishSyncError(e);

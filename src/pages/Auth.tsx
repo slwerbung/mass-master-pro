@@ -97,6 +97,7 @@ const Auth = () => {
       if (error) { toast.error("Verbindungsfehler"); }
       else if (data?.valid && data?.token) {
         setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name, authToken: data.token, expiresAt: data.expiresAt });
+        setLoginCache("employee", data.token, selectedEmployee.id);
         toast.success(`Angemeldet als ${selectedEmployee.name}`);
         navigate("/projects");
       } else {

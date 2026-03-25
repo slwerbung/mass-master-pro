@@ -38,10 +38,10 @@ const Projects = () => {
       const projectQuery = supabase.from("projects").select("id, project_number, created_at, employee_id").order("created_at", { ascending: false });
       const scopedQuery = session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery;
 
-      const [supabaseResult, locationRows, localProjects] = await Promise.all([
+      const [supabaseResult, locationRows, localSummary] = await Promise.all([
         scopedQuery,
         supabase.from("locations").select("project_id"),
-        indexedDBStorage.getProjects(),
+        indexedDBStorage.getProjectsSummary(),
       ]);
 
       // Build location count map from DB
@@ -50,7 +50,7 @@ const Projects = () => {
         dbCountMap.set(row.project_id, (dbCountMap.get(row.project_id) || 0) + 1);
       }
 
-      const localMap = new Map(localProjects.map(p => [p.id, p]));
+      const localMap = new Map(localSummary.map(p => [p.id, p]));
       const supabaseProjects = supabaseResult.data || [];
 
       const merged: ProjectListItem[] = supabaseProjects.map(sp => {
@@ -59,21 +59,21 @@ const Projects = () => {
           id: sp.id,
           projectNumber: sp.project_number,
           createdAt: new Date(sp.created_at),
-          locationCount: local ? (local.locations?.length || 0) : (dbCountMap.get(sp.id) || 0),
+          locationCount: local ? local.locationCount : (dbCountMap.get(sp.id) || 0),
           isLocal: !!local,
         };
       });
 
       // Also add local-only projects not yet in Supabase
       const supabaseIds = new Set(supabaseProjects.map(sp => sp.id));
-      for (const lp of localProjects) {
+      for (const lp of localSummary) {
         if (!supabaseIds.has(lp.id)) {
           if (session?.role === "employee") continue;
           merged.push({
             id: lp.id,
             projectNumber: lp.projectNumber,
             createdAt: lp.createdAt,
-            locationCount: lp.locations?.length || 0,
+            locationCount: lp.locationCount,
             isLocal: true,
           });
         }
@@ -82,10 +82,12 @@ const Projects = () => {
       merged.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       setProjects(merged);
 
-      // Background sync, then reload once
+      // Background sync, then reload once — decouple from UI render
       if (syncAfter && !syncDoneRef.current) {
         syncDoneRef.current = true;
-        syncAllToSupabase().then(() => loadProjects(false)).catch(() => {});
+        setTimeout(() => {
+          syncAllToSupabase().then(() => loadProjects(false)).catch(() => {});
+        }, 100);
       }
     } catch (error) {
       console.error("Error loading projects:", error);
