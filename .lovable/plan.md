@@ -1,29 +1,29 @@
 
 
-## Fix: Mitarbeiter sieht Projekte anderer Mitarbeiter
+## Fix: Projektzuordnung wird beim Sync überschrieben
 
 ### Ursache
 
-Die Filterung geschieht aktuell **nur client-seitig** (`eq("employee_id", session.id)`). Es gibt keine serverseitige Absicherung — die RLS-Policy auf `projects` erlaubt `anon` uneingeschränkten SELECT (`USING (true)`). Wenn z.B. zwei Mitarbeiter dasselbe Gerät nutzen oder der Client-Filter durch einen Edge-Case nicht greift, werden alle Projekte angezeigt.
+In `syncProjectInternal()` (supabaseSync.ts, Zeile 296-297) wird bei jedem Sync `employee_id` blind auf den aktuell eingeloggten Mitarbeiter gesetzt. Wenn also Gerg sich einloggt und ein Sync läuft, werden alle lokal vorhandenen Projekte Gerg zugeordnet — egal wer sie erstellt hat. Dasselbe Problem existiert in `CustomerManage.tsx` (Zeile 78-82).
 
 ### Lösung
 
-Zweistufige Absicherung:
+**1. Sync-Bug fixen** (`src/lib/supabaseSync.ts`)
+- In `syncProjectInternal()`: Vor dem Upsert den bestehenden `employee_id` aus der Datenbank lesen. Wenn bereits ein Owner existiert, diesen beibehalten statt mit der aktuellen Session zu überschreiben. Nur bei neuen Projekten (kein Remote-Eintrag) den aktuellen Mitarbeiter setzen.
 
-1. **Client-seitig** (bereits vorhanden, verifiziert): `eq("employee_id", session.id)` — funktioniert korrekt
+**2. CustomerManage-Bug fixen** (`src/pages/CustomerManage.tsx`)
+- Beim Upsert in `addAssignment()`: Ebenfalls den bestehenden Owner nicht überschreiben. Stattdessen nur `id` und `project_number` upserten, ohne `employee_id`/`user_id` zu ändern.
 
-2. **IndexedDB-Bereinigung beim Login**: Beim Mitarbeiter-Login die lokale IndexedDB leeren, damit keine Projekte eines vorherigen Mitarbeiters auf demselben Gerät übrig bleiben. Das ist vermutlich die Hauptursache — wenn Mitarbeiter A sich auf einem Gerät anmeldet, sind lokal noch Projekte von Mitarbeiter B in IndexedDB gespeichert, und diese werden in die Merge-Logik einbezogen.
+**3. Datenbereinigung**
+- Die 6 Projekte, die fälschlicherweise Gerg (2d70acc0) zugeordnet sind, werden Layer (fa5dcbdf) zugeordnet:
+  - WER-1712, WER-1707, WER-1616, WER-1558, WER-1234, WER-1612
+- WER-1684 bleibt bei Langner (755afadb) — das ist korrekt.
 
-### Änderungen
+### Betroffene Dateien
 
 | Datei | Änderung |
 |---|---|
-| `src/pages/Auth.tsx` | Beim Mitarbeiter-Login: IndexedDB leeren, wenn sich der Mitarbeiter-ID ändert (vorherige Session war ein anderer Mitarbeiter) |
-| `src/pages/Projects.tsx` | Lokale Projekte für Mitarbeiter komplett ausblenden — nur Supabase-Ergebnisse anzeigen (die bereits gefiltert sind) |
-
-### Detail
-
-**`src/pages/Projects.tsx`**: In der Merge-Logik (Zeile 67-90) für Mitarbeiter auch die lokalen Projekte, die in der Supabase-Antwort enthalten sind, nicht aus IndexedDB anreichern — stattdessen nur reine Supabase-Daten verwenden. Lokale Projekte (die noch nicht synchronisiert sind) des aktuellen Mitarbeiters weiterhin anzeigen, aber dafür prüfen ob die `employeeId` im lokalen Datensatz übereinstimmt.
-
-**`src/pages/Auth.tsx`**: Beim erfolgreichen Mitarbeiter-Login prüfen, ob die vorherige Session einen anderen Mitarbeiter hatte. Falls ja, `indexedDBStorage.clearAll()` aufrufen, um Altdaten zu entfernen.
+| `src/lib/supabaseSync.ts` | `employee_id` nicht mehr blind überschreiben |
+| `src/pages/CustomerManage.tsx` | Upsert ohne Owner-Überschreibung |
+| Datenbank (UPDATE) | 6 Projekte von Gerg → Layer umschreiben |
 
