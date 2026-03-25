@@ -31,6 +31,16 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
   }
 }
 
+async function uploadBlobToStorage(path: string, blob: Blob): Promise<string | null> {
+  try {
+    const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
+    if (error) return null;
+    return path;
+  } catch {
+    return null;
+  }
+}
+
 async function removeStoragePaths(paths: (string | null | undefined)[]) {
   const uniquePaths = [...new Set(paths.filter(Boolean) as string[])];
   if (uniquePaths.length === 0) return;
