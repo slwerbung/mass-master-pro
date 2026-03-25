@@ -34,7 +34,7 @@ const NewProject = () => {
   }, []);
 
   const handleCreate = async () => {
-    if (!projectNumber.trim()) { toast.error("Bitte eine Projektnummer eingeben"); return; }
+    if (!projectNumber.trim()) { toast.error("Bitte eine Projektnummer / Projektname eingeben"); return; }
     setIsCreating(true);
     try {
       const fullProjectNumber = prefix ? `${prefix}${projectNumber.trim()}` : projectNumber.trim();
