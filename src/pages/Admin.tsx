@@ -117,8 +117,8 @@ const Admin = () => {
   const loadPrefix = async () => {
     try {
       const data = await invoke("get_project_prefix");
-      setProjectPrefix(data.prefix || "WER-");
-    } catch { setProjectPrefix("WER-"); }
+      setProjectPrefix(data.prefix ?? "WER-");
+    } catch { setProjectPrefix(""); }
   };
 
   const savePrefix = async () => {
