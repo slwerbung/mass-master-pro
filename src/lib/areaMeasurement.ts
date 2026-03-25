@@ -14,7 +14,6 @@ export function createAreaMeasurementGroup(
   const top = Math.min(y1, y2);
   const w = Math.abs(x2 - x1);
   const h = Math.abs(y2 - y1);
-  const areaSqM = (widthMm * heightMm) / 1_000_000;
 
   // All child positions relative to group center (0,0)
   const cx = w / 2;
@@ -29,46 +28,67 @@ export function createAreaMeasurementGroup(
     selectable: false,
   });
 
-  const fontSize = Math.max(10, Math.min(18, Math.min(w, h) * 0.15));
-  const padding = Math.max(2, Math.round(fontSize * 0.2));
+  // Dynamic font size based on edge length (same logic as line measurement)
+  const widthFontSize = Math.max(10, Math.min(22, w * 0.18));
+  const heightFontSize = Math.max(10, Math.min(22, h * 0.18));
+  const widthPadding = Math.max(2, Math.round(widthFontSize * 0.18));
+  const heightPadding = Math.max(2, Math.round(heightFontSize * 0.18));
 
-  // Width label on top
+  // Inset from edge
+  const widthInset = Math.max(8, Math.min(20, h * 0.12));
+  const heightInset = Math.max(8, Math.min(20, w * 0.12));
+
+  // Width label: centered on top edge, inside, horizontal
   const widthLabel = new IText(`${widthMm} mm`, {
-    left: 0, top: -cy - fontSize - 6,
-    originX: "center", originY: "top",
-    fill: color, fontSize, fontFamily: "Arial", fontWeight: "bold",
-    backgroundColor: "rgba(255,255,255,0.9)", padding,
-    selectable: false, editable: false,
+    left: 0,
+    top: -cy + widthInset,
+    originX: "center",
+    originY: "top",
+    fill: color,
+    fontSize: widthFontSize,
+    fontFamily: "Arial",
+    fontWeight: "bold",
+    backgroundColor: "rgba(255,255,255,0.9)",
+    padding: widthPadding,
+    selectable: false,
+    editable: false,
   });
 
-  // Height label on left
+  // Height label: centered on left edge, inside, rotated 90° (text runs along edge)
   const heightLabel = new IText(`${heightMm} mm`, {
-    left: -cx - 6, top: 0,
-    originX: "right", originY: "center",
-    fill: color, fontSize, fontFamily: "Arial", fontWeight: "bold",
-    backgroundColor: "rgba(255,255,255,0.9)", padding,
-    selectable: false, editable: false,
+    left: -cx + heightInset,
+    top: 0,
+    originX: "center",
+    originY: "top",
+    angle: 90,
+    fill: color,
+    fontSize: heightFontSize,
+    fontFamily: "Arial",
+    fontWeight: "bold",
+    backgroundColor: "rgba(255,255,255,0.9)",
+    padding: heightPadding,
+    selectable: false,
+    editable: false,
   });
 
-  // Area label in center
-  const areaLabel = new IText(`${areaSqM.toFixed(2)} m²`, {
-    left: 0, top: 0,
-    originX: "center", originY: "center",
-    fill: color, fontSize: fontSize * 1.1, fontFamily: "Arial", fontWeight: "bold",
-    backgroundColor: "rgba(255,255,255,0.9)", padding,
-    selectable: false, editable: false,
-  });
-
-  // Index label top-left
+  // Index label top-left inside
+  const idxFontSize = Math.max(10, Math.min(16, Math.min(w, h) * 0.12));
   const indexLabel = new IText(`F ${index}`, {
-    left: -cx + 4, top: -cy + 4,
-    originX: "left", originY: "top",
-    fill: "#ffffff", fontSize: fontSize * 0.9, fontFamily: "Arial", fontWeight: "bold",
-    backgroundColor: color, padding: 3,
-    selectable: false, editable: false,
+    left: -cx + 4,
+    top: -cy + 4,
+    originX: "left",
+    originY: "top",
+    fill: "#ffffff",
+    fontSize: idxFontSize,
+    fontFamily: "Arial",
+    fontWeight: "bold",
+    backgroundColor: color,
+    padding: 3,
+    selectable: false,
+    editable: false,
   });
 
-  const group = new Group([rect, widthLabel, heightLabel, areaLabel, indexLabel], {
+  const group = new Group([rect, widthLabel, heightLabel, indexLabel], {
     left: left + cx,
     top: top + cy,
     originX: "center",
