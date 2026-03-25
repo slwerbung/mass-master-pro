@@ -198,8 +198,6 @@ const PhotoEditor = () => {
     setShowMeasureDialog(false); setMeasureStart(null); setMeasureEnd(null); setActiveTool("select");
   };
 
-  const [savedMaxAreaIndex, setSavedMaxAreaIndex] = useState(0);
-
   // Load existing area measurement max index for re-edit
   useEffect(() => {
     if (isReEdit && projectId && locationId) {
