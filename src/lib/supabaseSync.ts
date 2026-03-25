@@ -146,7 +146,7 @@ export async function getProjectRemoteTimestamp(projectId: string): Promise<Date
 }
 
 export async function hydrateProjectFromSupabase(projectId: string): Promise<Project | null> {
-  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, created_at, updated_at").eq("id", projectId).single();
+  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, project_type, created_at, updated_at").eq("id", projectId).single();
   if (projectError || !projectRow) return null;
 
   const { data: locationRows, error: locationError } = await supabase
