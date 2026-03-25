@@ -367,7 +367,7 @@ const Admin = () => {
             <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Projekt-Präfix</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">Dieses Präfix wird automatisch vor jede neue Projektnummer gesetzt.</p>
+                <p className="text-sm text-muted-foreground">Dieses Präfix wird automatisch vor jede neue Projektnummer / Projektname gesetzt.</p>
                 <div className="flex gap-2">
                   <Input placeholder="z.B. WER-" value={projectPrefix} onChange={(e) => setProjectPrefix(e.target.value)} />
                   <Button onClick={savePrefix} disabled={savingPrefix}>Speichern</Button>

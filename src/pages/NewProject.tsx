@@ -91,7 +91,7 @@ const NewProject = () => {
           </CardHeader>
           <CardContent className="space-y-4 md:space-y-6 p-4 md:p-6">
             <div className="space-y-2">
-              <Label htmlFor="projectNumber">Projektnummer</Label>
+              <Label htmlFor="projectNumber">Projektnummer / Projektname</Label>
               <div className="flex items-center gap-2">
                 <span className="text-lg font-semibold text-muted-foreground px-3 py-2 bg-muted rounded-md">{prefix}</span>
                 <Input id="projectNumber" type="text" placeholder="2024-001" value={projectNumber}
