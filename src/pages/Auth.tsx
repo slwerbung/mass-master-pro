@@ -76,6 +76,7 @@ const Auth = () => {
         setSelectedEmployee(emp);
       } else if (data?.valid && data?.token) {
         setSession({ role: "employee", id: emp.id, name: emp.name, authToken: data.token, expiresAt: data.expiresAt });
+        setLoginCache("employee", data.token, emp.id);
         toast.success(`Angemeldet als ${emp.name}`);
         navigate("/projects");
       } else {
