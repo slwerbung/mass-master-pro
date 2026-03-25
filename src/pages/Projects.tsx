@@ -205,11 +205,7 @@ const Projects = () => {
               <Button size="lg" onClick={() => navigate("/projects/new")} className="flex-1 sm:flex-none">
                 <Plus className="mr-2 h-5 w-5" /> Neues Projekt
               </Button>
-              {projects.length > 0 && (
-                <Button size="lg" variant="outline" onClick={() => setSelectionMode(true)} title="Mehrfachauswahl">
-                  <CheckSquare className="h-5 w-5" />
-                </Button>
-              )}
+              
               <Button size="lg" variant="outline" onClick={() => navigate("/projects/customers")} title="Kunden verwalten">
                 <Users className="h-5 w-5" />
               </Button>
@@ -224,6 +220,15 @@ const Projects = () => {
         </div>
 
         <StorageIndicator />
+
+        {projects.length > 0 && !selectionMode && (
+          <div className="flex justify-end">
+            <Button size="sm" variant="outline" onClick={() => setSelectionMode(true)}>
+              <CheckSquare className="mr-2 h-4 w-4" />
+              Auswählen
+            </Button>
+          </div>
+        )}
 
         {projects.length === 0 ? (
           <Card className="text-center py-12">
