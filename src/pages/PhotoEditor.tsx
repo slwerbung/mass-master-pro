@@ -163,9 +163,18 @@ const PhotoEditor = () => {
 
   const handleCanvasClick = (e: any) => {
     if (!fabricCanvas) return;
-    const p = e?.scenePoint || e?.absolutePointer || e?.pointer;
-    if (!p) return;
-    const pointer = { x: p.x, y: p.y };
+    let pointer: { x: number; y: number } | null = null;
+    if (fabricCanvas && e?.e) {
+      try {
+        const sp = fabricCanvas.getScenePoint(e.e);
+        pointer = { x: sp.x, y: sp.y };
+      } catch {}
+    }
+    if (!pointer) {
+      const p = e?.scenePoint || e?.absolutePointer || e?.pointer;
+      if (!p) return;
+      pointer = { x: p.x, y: p.y };
+    }
 
     if (activeTool === "measure") {
       if (!measureStart) {
