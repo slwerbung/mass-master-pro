@@ -1,29 +1,20 @@
 
 
-## Fix: Projektzuordnung wird beim Sync überschrieben
+## Fix: Bildvorschau verzieht Proportionen beim Orientierungswechsel
 
-### Ursache
+### Problem
 
-In `syncProjectInternal()` (supabaseSync.ts, Zeile 296-297) wird bei jedem Sync `employee_id` blind auf den aktuell eingeloggten Mitarbeiter gesetzt. Wenn also Gerg sich einloggt und ein Sync läuft, werden alle lokal vorhandenen Projekte Gerg zugeordnet — egal wer sie erstellt hat. Dasselbe Problem existiert in `CustomerManage.tsx` (Zeile 78-82).
+Das `<img>`-Element für das aufgenommene Foto nutzt `w-full h-full object-contain` innerhalb eines Flex-Containers. Wenn das Gerät nach der Aufnahme im Querformat ins Hochformat gedreht wird, ändert sich der Container, aber das Bild behält seine natürlichen Proportionen nicht korrekt bei — der Container zwingt es in die falsche Dimension.
 
 ### Lösung
 
-**1. Sync-Bug fixen** (`src/lib/supabaseSync.ts`)
-- In `syncProjectInternal()`: Vor dem Upsert den bestehenden `employee_id` aus der Datenbank lesen. Wenn bereits ein Owner existiert, diesen beibehalten statt mit der aktuellen Session zu überschreiben. Nur bei neuen Projekten (kein Remote-Eintrag) den aktuellen Mitarbeiter setzen.
+Das `<img>`-Tag braucht explizite Constraints, damit `object-contain` korrekt wirkt:
+- `max-w-full` und `max-h-full` statt `w-full h-full` verwenden
+- Zusätzlich `w-auto h-auto` setzen, damit das Bild seine natürlichen Proportionen behält und sich nur innerhalb des verfügbaren Platzes skaliert
 
-**2. CustomerManage-Bug fixen** (`src/pages/CustomerManage.tsx`)
-- Beim Upsert in `addAssignment()`: Ebenfalls den bestehenden Owner nicht überschreiben. Stattdessen nur `id` und `project_number` upserten, ohne `employee_id`/`user_id` zu ändern.
-
-**3. Datenbereinigung**
-- Die 6 Projekte, die fälschlicherweise Gerg (2d70acc0) zugeordnet sind, werden Layer (fa5dcbdf) zugeordnet:
-  - WER-1712, WER-1707, WER-1616, WER-1558, WER-1234, WER-1612
-- WER-1684 bleibt bei Langner (755afadb) — das ist korrekt.
-
-### Betroffene Dateien
+### Änderung
 
 | Datei | Änderung |
 |---|---|
-| `src/lib/supabaseSync.ts` | `employee_id` nicht mehr blind überschreiben |
-| `src/pages/CustomerManage.tsx` | Upsert ohne Owner-Überschreibung |
-| Datenbank (UPDATE) | 6 Projekte von Gerg → Layer umschreiben |
+| `src/pages/Camera.tsx` (Zeile 148) | `className` von `w-full h-full object-contain` auf `max-w-full max-h-full w-auto h-auto object-contain` ändern |
 
