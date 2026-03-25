@@ -1,31 +1,44 @@
 
 
-## Fix: Flächenmaß-Daten gehen nach dem Speichern verloren
+## Fix: Kamera reagiert nicht auf Orientierungswechsel
 
 ### Ursache
 
-`areaMeasurements` wird an zwei Stellen in `indexedDBStorage.ts` nicht berücksichtigt:
+Das Problem ist, dass der Kamera-Stream nur einmal beim Mount gestartet wird (`useEffect([], [])`). Wenn das Smartphone gedreht wird, bleibt der bestehende Video-Stream in seiner ursprünglichen Auflösung/Orientierung — das `<video>`-Element passt sich zwar in der Größe an, aber der Stream selbst liefert weiterhin das alte Seitenverhältnis.
 
-1. **`saveProject()`** (Zeile 426-438): Speichert die Location-Records **ohne** `areaMeasurements` — das Feld geht beim Schreiben verloren
-2. **`getLocationsByProject()`** (Zeile 270-284): Liest `areaMeasurements` **nicht** aus dem Record zurück — selbst wenn es gespeichert wäre, würde es nicht angezeigt
+### Lösung
 
-### Lösung: 2 Stellen in einer Datei
+**`src/pages/Camera.tsx`** — 2 Änderungen:
 
-**`src/lib/indexedDBStorage.ts`**:
+1. **Orientierungswechsel erkennen und Stream neu starten**: Einen `orientationchange`-Listener (+ `resize` als Fallback) hinzufügen, der den aktuellen Stream stoppt und `startCamera()` erneut aufruft. Damit fordert der Browser einen neuen Stream mit der korrekten Orientierung an.
 
-1. In `saveProject()` (Zeile 426-438): `areaMeasurements` mitspeichern:
+2. **Stream-Referenz per `useRef` statt `useState`**: Der `stopCamera()` in der Cleanup-Funktion hat eine stale Closure auf `stream`. Umstellung auf `useRef` stellt sicher, dass der aktuelle Stream zuverlässig gestoppt wird — auch bei schnellen Orientierungswechseln.
+
 ```typescript
-areaMeasurements: location.areaMeasurements ? JSON.stringify(location.areaMeasurements) : undefined,
+// Orientierungswechsel-Handler
+useEffect(() => {
+  const handleOrientationChange = () => {
+    if (!capturedImage) {
+      stopCamera();
+      setTimeout(() => startCamera(), 300);
+    }
+  };
+  
+  screen.orientation?.addEventListener("change", handleOrientationChange);
+  window.addEventListener("orientationchange", handleOrientationChange);
+  
+  return () => {
+    screen.orientation?.removeEventListener("change", handleOrientationChange);
+    window.removeEventListener("orientationchange", handleOrientationChange);
+  };
+}, [capturedImage]);
 ```
 
-2. In `getLocationsByProject()` (Zeile 270-284): `areaMeasurements` aus dem Record lesen:
-```typescript
-areaMeasurements: record.areaMeasurements ? JSON.parse(record.areaMeasurements) : undefined,
-```
+Das `setTimeout(300ms)` gibt dem Browser Zeit, die neue Viewport-Geometrie zu berechnen, bevor ein neuer Stream angefordert wird.
 
 ### Betroffene Datei
 
 | Datei | Änderung |
 |---|---|
-| `src/lib/indexedDBStorage.ts` | 2 Zeilen ergänzen |
+| `src/pages/Camera.tsx` | Stream-Ref + Orientierungs-Listener |
 
