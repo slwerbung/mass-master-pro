@@ -221,6 +221,15 @@ const Projects = () => {
 
         <StorageIndicator />
 
+        {projects.length > 0 && !selectionMode && (
+          <div className="flex justify-end">
+            <Button size="sm" variant="outline" onClick={() => setSelectionMode(true)}>
+              <CheckSquare className="mr-2 h-4 w-4" />
+              Auswählen
+            </Button>
+          </div>
+        )}
+
         {projects.length === 0 ? (
           <Card className="text-center py-12">
             <CardContent>
