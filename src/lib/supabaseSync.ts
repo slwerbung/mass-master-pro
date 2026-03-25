@@ -31,6 +31,16 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
   }
 }
 
+async function uploadBlobToStorage(path: string, blob: Blob): Promise<string | null> {
+  try {
+    const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
+    if (error) return null;
+    return path;
+  } catch {
+    return null;
+  }
+}
+
 async function removeStoragePaths(paths: (string | null | undefined)[]) {
   const uniquePaths = [...new Set(paths.filter(Boolean) as string[])];
   if (uniquePaths.length === 0) return;
@@ -270,6 +280,8 @@ async function removeDeletedLocationsFromSupabase(project: Project) {
 
 async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'remote-won' | 'skipped'> {
   const session = getSession();
+  // Use lightweight getProject — but we need locations for sync.
+  // Instead of loading full project (with base64 images), read raw records directly.
   const project = await indexedDBStorage.getProject(projectId);
   if (!project) return 'skipped';
   const remoteUpdatedAt = await getProjectRemoteTimestamp(projectId);
@@ -297,16 +309,16 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
 
   await removeDeletedLocationsFromSupabase(project);
   await syncFloorPlans(project.id, project.floorPlans);
-  project.updatedAt = new Date(syncTimestamp);
-  await indexedDBStorage.saveProject(project);
+  // Only update timestamp, don't re-save all images
+  await indexedDBStorage.updateProjectTimestamp(project.id, syncTimestamp);
   return 'uploaded';
 }
 
 export async function syncAllToSupabase(): Promise<void> {
   startSync();
   try {
-    const projects = await indexedDBStorage.getProjects();
-    for (const project of projects) await syncProjectInternal(project.id);
+    const projectIds = await indexedDBStorage.getProjectIds();
+    for (const id of projectIds) await syncProjectInternal(id);
     finishSyncSuccess();
   } catch (e) {
     finishSyncError(e);
