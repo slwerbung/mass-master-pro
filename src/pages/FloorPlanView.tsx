@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Plus, MapPin, List, Upload, Trash2, RefreshCw } from "lucide-react";
+import { ArrowLeft, Plus, MapPin, List, Upload, Trash2, RefreshCw, Camera } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { deleteFloorPlanFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, syncProjectToSupabase } from "@/lib/supabaseSync";
 import { Project, FloorPlanMarker } from "@/types/project";

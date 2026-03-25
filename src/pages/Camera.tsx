@@ -71,7 +71,7 @@ const Camera = () => {
         ref={fileInputRef}
         type="file"
         accept="image/*"
-        capture="environment"
+        {...(mode !== "upload" ? { capture: "environment" as const } : {})}
         onChange={handleFileChange}
         className="hidden"
       />
