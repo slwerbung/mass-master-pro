@@ -58,7 +58,7 @@ const Projects = () => {
         return {
           id: sp.id,
           projectNumber: sp.project_number,
-          updatedAt: new Date(sp.updated_at),
+          createdAt: new Date(sp.created_at),
           locationCount: local ? (local.locations?.length || 0) : (dbCountMap.get(sp.id) || 0),
           isLocal: !!local,
         };
