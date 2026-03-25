@@ -87,7 +87,7 @@ const NewProject = () => {
         <Card>
           <CardHeader className="p-4 md:p-6">
             <CardTitle className="text-xl md:text-2xl">Neues Projekt erstellen</CardTitle>
-            <CardDescription className="text-sm md:text-base">Gib eine Projektnummer ein und wähle den Projekttyp</CardDescription>
+            <CardDescription className="text-sm md:text-base">Gib eine Projektnummer / Projektname ein und wähle den Projekttyp</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 md:space-y-6 p-4 md:p-6">
             <div className="space-y-2">
