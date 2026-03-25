@@ -290,11 +290,15 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
     return 'remote-won';
   }
   const syncTimestamp = new Date().toISOString();
+  // Check if project already exists remotely to preserve existing employee_id
+  const { data: existingProject } = await supabase.from('projects').select('employee_id, user_id').eq('id', project.id).maybeSingle();
+  const employeeId = existingProject?.employee_id ?? (session?.role === 'employee' ? session.id : null);
+  const userId = existingProject?.user_id ?? (session?.role === 'employee' ? session.id : project.id);
   await supabase.from('projects').upsert({
     id: project.id,
     project_number: project.projectNumber,
-    user_id: session?.role === 'employee' ? session.id : project.id,
-    employee_id: session?.role === 'employee' ? session.id : null,
+    user_id: userId,
+    employee_id: employeeId,
     created_at: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),
     updated_at: syncTimestamp,
   }, { onConflict: 'id' });
