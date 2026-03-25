@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Shield, User, Users, ArrowLeft, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { setSession, getSession } from "@/lib/session";
+import { indexedDBStorage } from "@/lib/indexedDBStorage";
 
 const SESSION_CACHE_KEY = "session_validation_cache";
 function setLoginCache(role: string, token: string, userId: string) {
