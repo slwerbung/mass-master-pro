@@ -1,20 +1,29 @@
 
 
-## Fix: Bildvorschau verzieht Proportionen beim Orientierungswechsel
+## Native Kamera-App statt eigener Kameraansicht nutzen
 
-### Problem
+### Idee
 
-Das `<img>`-Element für das aufgenommene Foto nutzt `w-full h-full object-contain` innerhalb eines Flex-Containers. Wenn das Gerät nach der Aufnahme im Querformat ins Hochformat gedreht wird, ändert sich der Container, aber das Bild behält seine natürlichen Proportionen nicht korrekt bei — der Container zwingt es in die falsche Dimension.
+Statt die Kamera selbst über `getUserMedia` zu steuern, kann man einfach ein `<input type="file" accept="image/*" capture="environment">` verwenden. Das öffnet automatisch die native Kamera-App des Smartphones — mit allen Funktionen wie Autofokus, HDR, Zoom, Blitz etc. Nach der Aufnahme wird das Foto direkt an die App zurückgegeben.
 
-### Lösung
+### Vorteile
+- Alle Kamera-Features des Geräts verfügbar (Fokus, Zoom, Blitz, HDR)
+- Kein eigener Kamera-Code nötig — weniger Fehlerquellen
+- Funktioniert zuverlässig auf iOS und Android
+- Nutzer kann auch aus der Galerie wählen
 
-Das `<img>`-Tag braucht explizite Constraints, damit `object-contain` korrekt wirkt:
-- `max-w-full` und `max-h-full` statt `w-full h-full` verwenden
-- Zusätzlich `w-auto h-auto` setzen, damit das Bild seine natürlichen Proportionen behält und sich nur innerhalb des verfügbaren Platzes skaliert
+### Umsetzung
 
-### Änderung
+**`src/pages/Camera.tsx`** komplett vereinfachen:
+- Die gesamte `getUserMedia`-Logik, Video-Stream, Canvas-Capture entfernen
+- Stattdessen beim Laden der Seite automatisch einen versteckten `<input type="file" accept="image/*" capture="environment">` triggern
+- Wenn der Nutzer ein Foto macht, wird es als Base64 gelesen und direkt zum Editor navigiert (wie bisher bei `confirmPhoto`)
+- Wenn der Nutzer abbricht, zurück zur vorherigen Seite navigieren
+- Optional: Vorschau des Fotos mit "OK" / "Neu"-Buttons beibehalten, oder direkt weiterleiten
 
-| Datei | Änderung |
+### Änderungen
+
+| Datei | Was |
 |---|---|
-| `src/pages/Camera.tsx` (Zeile 148) | `className` von `w-full h-full object-contain` auf `max-w-full max-h-full w-auto h-auto object-contain` ändern |
+| `src/pages/Camera.tsx` | `getUserMedia`/Video/Canvas entfernen; durch `<input capture="environment">` ersetzen, der beim Mount automatisch öffnet |
 
