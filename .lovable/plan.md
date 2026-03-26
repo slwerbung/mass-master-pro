@@ -1,58 +1,44 @@
 
 
-## PDF-Layout Redesign — Professioneller Aufmaß-Bericht
+## 3 Fixes: Kamera-Streaming Desktop, Flächen-Platzierung, Labels parallel
 
-### Aktueller Zustand
-Das PDF ist rein funktional: schwarzer Text in verschiedenen Größen, Bilder zentriert, keine visuelle Struktur. Kein Firmenbranding, keine Trennlinien, keine farblichen Akzente.
+### 1. Desktop-Kamera: WebRTC-Streaming wiederherstellen
 
-### Vorgeschlagenes neues Layout
+**`src/pages/Camera.tsx`** — Hybride Lösung:
 
-**Deckblatt (neue erste Seite):**
-- Projektnummer groß und zentriert
-- Datum, Anzahl Standorte
-- Horizontale Linie als Akzent in der Primärfarbe (Blau)
+- **Geräteerkennung**: `const isMobile = navigator.maxTouchPoints > 0`
+- **Desktop** (`!isMobile && mode !== "upload"`): WebRTC-Stream via `getUserMedia({ video: { facingMode: "environment" } })` in ein `<video>`-Element. Ein Auslöser-Button macht einen Canvas-Snapshot (`canvas.toDataURL("image/jpeg", 0.85)`), der dann als `capturedImage` gesetzt wird. Stream-Cleanup im `useEffect` return.
+- **Mobile**: Bestehendes `<input capture="environment">` bleibt unverändert.
+- **Upload-Modus**: Immer `<input>` ohne `capture` (wie bisher).
 
-**Grundriss-Seiten (unveränderte Logik, besseres Styling):**
-- Seitenkopf mit blauer Akzentlinie
-- Seitennummer unten rechts
+### 2. Flächen-Platzierung: Offset-Bug fixen
 
-**Standort-Seiten (Hauptänderung):**
-- **Seitenkopf**: Dünne blaue Linie oben, Projektnummer rechts oben als Referenz
-- **Metadaten-Block**: Grau hinterlegter Kasten mit allen Infos (Standortnummer, Name, System, Art, Beschriftung) in einem sauberen 2-Spalten-Raster statt untereinander
-- **Bild(er)**: Mit dünnem Rahmen (1pt grauer Border)
-- **Kommentar**: In einem leicht eingerückten Block mit vertikaler Akzentlinie links
-- **Footer**: Erstelldatum links, Seitennummer rechts, getrennt durch eine dünne Linie
+**`src/lib/areaMeasurement.ts`** — Gruppe ohne `left/top` im Konstruktor erstellen, Position danach setzen:
 
-**Detailbild-Seiten:**
-- Gleicher Seitenkopf/Footer
-- Bilder mit Beschriftung in einheitlichem Layout
+```typescript
+const group = new Group([rect, widthLabel, heightLabel, indexLabel], {
+  originX: "center",
+  originY: "center",
+  selectable: true,
+  subTargetCheck: false,
+  objectCaching: true,
+});
+group.set({ left: left + cx, top: top + cy });
+group.setCoords();
+```
 
-### Technische Umsetzung
+### 3. Labels parallel zu den Kanten, nie über die Fläche hinaus
 
-Alles in **einer Datei**: `src/pages/Export.tsx` — die `exportAsPDF`-Funktion wird refactored.
+**`src/lib/areaMeasurement.ts`** — Beide Labels parallel zu ihrer jeweiligen gestrichelten Kante:
 
-Neue Helper-Funktionen innerhalb der Datei:
-- `drawPageHeader(pdf, projectNumber, pageNum, totalPages)` — blaue Linie + Projektnummer
-- `drawPageFooter(pdf, date, pageNum, totalPages)` — Linie + Seitennummer
-- `drawMetadataBox(pdf, location, y, options)` — grauer Kasten mit 2-Spalten-Layout
-- `drawImageWithBorder(pdf, dataURI, x, y, w, h)` — Bild mit Rahmen
-- `drawCommentBlock(pdf, comment, y)` — Kommentar mit Akzentlinie
-
-Farben aus dem Design-System:
-- Primär-Blau: RGB(37, 99, 235) — für Akzentlinien und Marker
-- Grau: RGB(243, 244, 246) — für Metadaten-Hintergrund
-- Text: RGB(31, 41, 55) — für Haupttext
-- Muted: RGB(107, 114, 128) — für sekundären Text
+- **Breitenlabel** (horizontal, parallel zur oberen Kante): Bleibt `angle: 0`. Schriftgröße begrenzen, sodass Textbreite ≤ `w - 2*padding`. Formel: `fontSize = Math.min(calculatedSize, w * 0.8 / textLength)` als Sicherheitsgrenze.
+- **Höhenlabel** (vertikal, parallel zur linken Kante): `angle: -90`, `originX: "center"`, `originY: "center"`. Schriftgröße begrenzen, sodass Textbreite (nach Rotation = Texthöhe auf dem Canvas) ≤ `h - 2*padding`. Gleiche Begrenzungslogik.
+- Position innerhalb der Fläche: Breitenlabel leicht unter der oberen Kante, Höhenlabel leicht rechts der linken Kante — beides mit Inset.
 
 ### Betroffene Dateien
 
 | Datei | Änderung |
 |---|---|
-| `src/pages/Export.tsx` | `exportAsPDF` komplett überarbeiten mit neuen Helper-Funktionen |
-
-### Was sich NICHT ändert
-- Export-Optionen (Checkboxen) bleiben gleich
-- ZIP-Export bleibt unverändert
-- Einzelbild-Downloads bleiben unverändert
-- Reihenfolge der Seiten (Grundrisse → Standorte → Details) bleibt gleich
+| `src/pages/Camera.tsx` | WebRTC-Streaming für Desktop, Input für Mobile |
+| `src/lib/areaMeasurement.ts` | Gruppen-Position nach Konstruktor setzen; Labels parallel mit Größenbegrenzung |
 
