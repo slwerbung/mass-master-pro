@@ -292,10 +292,13 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
     return 'remote-won';
   }
   const syncTimestamp = new Date().toISOString();
-  // Check if project already exists remotely to preserve existing employee_id
+  // Preserve the real project owner.
+  // Important: do NOT auto-assign the currently logged-in employee to legacy/unowned
+  // projects during sync, otherwise a single employee can accidentally 'take over'
+  // many projects just by opening the app.
   const { data: existingProject } = await supabase.from('projects').select('employee_id, user_id').eq('id', project.id).maybeSingle();
-  const employeeId = project.employeeId ?? existingProject?.employee_id ?? (session?.role === 'employee' ? session.id : null);
-  const userId = existingProject?.user_id ?? (session?.role === 'employee' ? session.id : project.id);
+  const employeeId = project.employeeId ?? existingProject?.employee_id ?? null;
+  const userId = existingProject?.user_id ?? (employeeId || project.id);
   await supabase.from('projects').upsert({
     id: project.id,
     project_number: project.projectNumber,
