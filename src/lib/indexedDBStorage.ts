@@ -1,5 +1,6 @@
 import { openDB, deleteDB, DBSchema, IDBPDatabase } from 'idb';
 import { Project, Location, DetailImage, FloorPlan } from '@/types/project';
+import { getSession } from '@/lib/session';
 
 interface AufmassDBSchema extends DBSchema {
   projects: {
@@ -8,6 +9,7 @@ interface AufmassDBSchema extends DBSchema {
       id: string;
       projectNumber: string;
       projectType?: 'aufmass' | 'aufmass_mit_plan';
+      employeeId?: string | null;
       createdAt: string;
       updatedAt: string;
     };
@@ -85,13 +87,13 @@ interface AufmassDBSchema extends DBSchema {
 }
 
 const DB_NAME = 'aufmass-db';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let dbInstance: IDBPDatabase<AufmassDBSchema> | null = null;
 
 function createDB() {
   return openDB<AufmassDBSchema>(DB_NAME, DB_VERSION, {
-    upgrade(db, oldVersion) {
+    upgrade(db, oldVersion, _newVersion, transaction) {
       if (oldVersion < 1) {
         const projectStore = db.createObjectStore('projects', { keyPath: 'id' });
         projectStore.createIndex('by-updated', 'updatedAt');
@@ -116,7 +118,13 @@ function createDB() {
         const floorPlanImageStore = db.createObjectStore('floor-plan-images', { keyPath: 'id' });
         floorPlanImageStore.createIndex('by-floor-plan', 'floorPlanId');
       }
-      // Version 4: no schema changes, bump to fix VersionError downgrades
+      if (oldVersion < 5 && db.objectStoreNames.contains('projects')) {
+        const store = transaction.objectStore('projects');
+        // employeeId is stored as a plain value, no extra index needed.
+        if (!store.indexNames.contains('by-updated')) {
+          store.createIndex('by-updated', 'updatedAt');
+        }
+      }
     },
   });
 }
@@ -173,6 +181,18 @@ function createDetailBlobId(detailImageId: string, type: 'annotated' | 'original
   return `${detailImageId}_${type}`;
 }
 
+
+function getScopedEmployeeId() {
+  const session = getSession();
+  return session?.role === 'employee' ? session.id : null;
+}
+
+function canAccessProjectRecord(record: { employeeId?: string | null }) {
+  const scopedEmployeeId = getScopedEmployeeId();
+  if (!scopedEmployeeId) return true;
+  return !!record.employeeId && record.employeeId === scopedEmployeeId;
+}
+
 export const indexedDBStorage = {
   // Lightweight: returns only metadata + location count, NO images loaded
   async getProjectsSummary(): Promise<{ id: string; projectNumber: string; createdAt: Date; locationCount: number }[]> {
@@ -180,6 +200,7 @@ export const indexedDBStorage = {
     const records = await db.getAll('projects');
     const result = [];
     for (const r of records) {
+      if (!canAccessProjectRecord(r)) continue;
       const keys = await db.getAllKeysFromIndex('locations', 'by-project', r.id);
       result.push({
         id: r.id,
@@ -213,12 +234,14 @@ export const indexedDBStorage = {
     const projects: Project[] = [];
     
     for (const record of projectRecords) {
+      if (!canAccessProjectRecord(record)) continue;
       const locations = await this.getLocationsByProject(record.id);
       const floorPlans = await this.getFloorPlansByProject(record.id);
       projects.push({
         id: record.id,
         projectNumber: record.projectNumber,
         projectType: record.projectType,
+        employeeId: record.employeeId ?? null,
         createdAt: new Date(record.createdAt),
         updatedAt: new Date(record.updatedAt),
         locations,
@@ -233,7 +256,7 @@ export const indexedDBStorage = {
     const db = await getDB();
     const record = await db.get('projects', id);
     
-    if (!record) return null;
+    if (!record || !canAccessProjectRecord(record)) return null;
     
     const locations = await this.getLocationsByProject(id);
     const floorPlans = await this.getFloorPlansByProject(id);
@@ -242,6 +265,7 @@ export const indexedDBStorage = {
       id: record.id,
       projectNumber: record.projectNumber,
       projectType: record.projectType,
+      employeeId: record.employeeId ?? null,
       createdAt: new Date(record.createdAt),
       updatedAt: new Date(record.updatedAt),
       locations,
@@ -417,6 +441,7 @@ export const indexedDBStorage = {
       id: project.id,
       projectNumber: project.projectNumber,
       projectType: project.projectType,
+      employeeId: project.employeeId ?? null,
       createdAt: project.createdAt.toISOString(),
       updatedAt: new Date().toISOString(),
     });

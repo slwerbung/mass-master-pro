@@ -45,6 +45,7 @@ const NewProject = () => {
         id: projectId,
         projectNumber: fullProjectNumber,
         projectType,
+        employeeId,
         locations: [],
         createdAt: new Date(),
         updatedAt: new Date(),

@@ -9,7 +9,7 @@ import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check, Trash2, U
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { toast } from "sonner";
-import { getSession, clearSession } from "@/lib/session";
+import { getSession, clearSession, setSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import LocationInfoFields from "@/components/LocationInfoFields";
 
@@ -147,14 +147,17 @@ const CustomerView = () => {
   };
 
   const ensureDirectProjectAssignment = async (projectId: string) => {
-    if (!session?.name || !isRealCustomerId(session?.id)) return false;
+    if (!session?.name) return null;
     try {
       const { data, error } = await supabase.functions.invoke("ensure-customer-assignment", {
         body: { projectId, customerName: session.name },
       });
-      return !error && !!data?.success;
+      if (error || !data?.success || !data?.customer?.id) return null;
+      const upgradedSession = { role: "customer" as const, id: data.customer.id, name: data.customer.name || session.name };
+      setSession(upgradedSession);
+      return upgradedSession;
     } catch {
-      return false;
+      return null;
     }
   };
 
@@ -173,10 +176,11 @@ const CustomerView = () => {
       if (assignmentResult?.error) throw assignmentResult.error;
       let loadedAssignments = assignmentResult?.data || [];
 
-      if (directProjectId && isRealCustomerId(session?.id) && !loadedAssignments.some((a: any) => a.project_id === directProjectId)) {
-        const ensured = await ensureDirectProjectAssignment(directProjectId);
-        if (ensured) {
-          const refreshed = await supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", session!.id);
+      if (directProjectId && !loadedAssignments.some((a: any) => a.project_id === directProjectId) && session?.name) {
+        const ensuredSession = await ensureDirectProjectAssignment(directProjectId);
+        const customerIdForReload = ensuredSession?.id || (isRealCustomerId(session?.id) ? session!.id : null);
+        if (customerIdForReload) {
+          const refreshed = await supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", customerIdForReload);
           loadedAssignments = refreshed.data || loadedAssignments;
         }
       }
@@ -220,6 +224,11 @@ const CustomerView = () => {
       setLocations(locs);
       setImages([...(imgs || []), ...((pdfs || []).map((p: any) => ({ ...p, image_type: "pdf" })))]);
       setApprovals({});
+      if (session?.id && isRealCustomerId(session.id)) {
+        await loadCustomerUploads(projectId);
+      } else {
+        setCustomerUploads([]);
+      }
 
       if (locationIds.length > 0) {
         const feedbackMap: Record<string, FeedbackItem[]> = {};
@@ -624,7 +633,7 @@ const CustomerView = () => {
             )}
 
             {/* Customer File Upload */}
-            {!isDirectGuestMode && isRealCustomerId(session?.id) && (
+            {isRealCustomerId(session?.id) && (
               <Card>
                 <CardContent className="p-4 space-y-3">
                   <div className="flex items-center justify-between">

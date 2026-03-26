@@ -146,7 +146,7 @@ export async function getProjectRemoteTimestamp(projectId: string): Promise<Date
 }
 
 export async function hydrateProjectFromSupabase(projectId: string): Promise<Project | null> {
-  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, project_type, created_at, updated_at").eq("id", projectId).single();
+  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, project_type, employee_id, created_at, updated_at").eq("id", projectId).single();
   if (projectError || !projectRow) return null;
 
   const { data: locationRows, error: locationError } = await supabase
@@ -233,6 +233,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     id: projectRow.id,
     projectNumber: projectRow.project_number,
     projectType: (projectRow as any).project_type === 'aufmass_mit_plan' ? 'aufmass_mit_plan' : 'aufmass',
+    employeeId: (projectRow as any).employee_id || null,
     locations,
     floorPlans,
     createdAt: new Date(projectRow.created_at),
@@ -293,7 +294,7 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
   const syncTimestamp = new Date().toISOString();
   // Check if project already exists remotely to preserve existing employee_id
   const { data: existingProject } = await supabase.from('projects').select('employee_id, user_id').eq('id', project.id).maybeSingle();
-  const employeeId = existingProject?.employee_id ?? (session?.role === 'employee' ? session.id : null);
+  const employeeId = project.employeeId ?? existingProject?.employee_id ?? (session?.role === 'employee' ? session.id : null);
   const userId = existingProject?.user_id ?? (session?.role === 'employee' ? session.id : project.id);
   await supabase.from('projects').upsert({
     id: project.id,
