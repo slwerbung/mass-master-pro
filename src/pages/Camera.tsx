@@ -1,7 +1,7 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { X, Check, ImagePlus } from "lucide-react";
+import { X, Check, ImagePlus, Camera as CameraIcon } from "lucide-react";
 import { toast } from "sonner";
 
 const Camera = () => {
@@ -13,16 +13,81 @@ const Camera = () => {
   const floorPlanId = searchParams.get("floorPlan");
   const presetLocationId = searchParams.get("locationId");
   const mode = searchParams.get("mode"); // "upload" or default (camera)
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const hasTriggered = useRef(false);
 
+  // Detect desktop vs mobile
   useEffect(() => {
-    if (!hasTriggered.current) {
-      hasTriggered.current = true;
-      setTimeout(() => fileInputRef.current?.click(), 100);
+    const isMobile = navigator.maxTouchPoints > 0;
+    setIsDesktop(!isMobile);
+  }, []);
+
+  // Start webcam stream on desktop
+  const startStream = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        setStreaming(true);
+      }
+    } catch (err) {
+      console.error("Webcam error:", err);
+      toast.error("Kamera konnte nicht geöffnet werden");
+      // Fallback to file input
+      fileInputRef.current?.click();
     }
   }, []);
+
+  const stopStream = useCallback(() => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    setStreaming(false);
+  }, []);
+
+  // Initialize: desktop → start webcam, mobile → trigger file input
+  useEffect(() => {
+    if (hasTriggered.current) return;
+    hasTriggered.current = true;
+
+    if (mode === "upload") {
+      setTimeout(() => fileInputRef.current?.click(), 100);
+    } else if (isDesktop) {
+      // Wait a tick for video element to mount
+      setTimeout(() => startStream(), 100);
+    } else {
+      setTimeout(() => fileInputRef.current?.click(), 100);
+    }
+  }, [isDesktop, mode, startStream]);
+
+  // Cleanup stream on unmount
+  useEffect(() => {
+    return () => stopStream();
+  }, [stopStream]);
+
+  const takeSnapshot = () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    setCapturedImage(dataUrl);
+    stopStream();
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -41,6 +106,7 @@ const Camera = () => {
   };
 
   const goBack = () => {
+    stopStream();
     if (floorPlanId) {
       navigate(`/projects/${projectId}/floor-plans`);
     } else {
@@ -51,11 +117,16 @@ const Camera = () => {
   const retake = () => {
     setCapturedImage(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    setTimeout(() => fileInputRef.current?.click(), 100);
+    if (isDesktop && mode !== "upload") {
+      setTimeout(() => startStream(), 100);
+    } else {
+      setTimeout(() => fileInputRef.current?.click(), 100);
+    }
   };
 
   const confirm = () => {
     if (!capturedImage) return;
+    stopStream();
     let query = "";
     if (isDetail && detailLocationId) {
       query = `?detail=true&locationId=${detailLocationId}`;
@@ -67,11 +138,12 @@ const Camera = () => {
 
   return (
     <div className="w-screen h-[100dvh] bg-foreground flex flex-col overflow-hidden">
+      {/* Hidden file input for mobile / upload mode */}
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
-        {...(mode !== "upload" ? { capture: "environment" as const } : {})}
+        {...(!isDesktop && mode !== "upload" ? { capture: "environment" as const } : {})}
         onChange={handleFileChange}
         className="hidden"
       />
@@ -83,6 +155,30 @@ const Camera = () => {
             alt="Aufgenommen"
             className="max-w-full max-h-full w-auto h-auto object-contain"
           />
+        ) : isDesktop && mode !== "upload" ? (
+          <div className="relative w-full h-full flex items-center justify-center">
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="max-w-full max-h-full w-auto h-auto object-contain"
+            />
+            {streaming && (
+              <Button
+                size="lg"
+                onClick={takeSnapshot}
+                className="absolute bottom-6 left-1/2 -translate-x-1/2 rounded-full w-16 h-16 bg-white hover:bg-white/90 border-4 border-background/30"
+              >
+                <CameraIcon className="h-7 w-7 text-foreground" />
+              </Button>
+            )}
+            {!streaming && (
+              <div className="text-center p-6">
+                <p className="text-background/60 mb-4">Kamera wird geöffnet…</p>
+              </div>
+            )}
+          </div>
         ) : (
           <div className="text-center p-6">
             <p className="text-background/60 mb-4">Kamera wird geöffnet…</p>
