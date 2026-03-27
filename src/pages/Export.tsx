@@ -288,7 +288,7 @@ const Export = () => {
 
       for (const location of sortedLocations) {
         pdf.addPage();
-        drawLocationPage({
+        await drawLocationPage({
           pdf,
           project,
           location,
@@ -305,7 +305,7 @@ const Export = () => {
 
         if (!customerOnly && location.detailImages && location.detailImages.length > 0) {
           pdf.addPage();
-          drawDetailImagesPage({
+          await drawDetailImagesPage({
             pdf,
             projectNumber: project.projectNumber,
             location,
