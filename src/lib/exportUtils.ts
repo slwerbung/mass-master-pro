@@ -55,44 +55,42 @@ export const dataURItoBlob = (dataURI: string): Blob => {
  */
 export const downloadBlob = async (blob: Blob, filename: string): Promise<boolean> => {
   try {
-    // Create object URL
-    const url = URL.createObjectURL(blob);
-
-    // Create anchor element
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    
-    // For iOS Safari, we need special handling
+    // For iOS Safari, object URLs for PDFs are unreliable and often open as a black page.
+    // Prefer the native share sheet, then fall back to a data URL preview.
     if (isIOSDevice() && isSafari()) {
-      // Try to use the Web Share API if available
       if (navigator.share && navigator.canShare) {
-        const file = new File([blob], filename, { type: blob.type });
+        const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
         const shareData = { files: [file] };
-        
+
         if (navigator.canShare(shareData)) {
           try {
             await navigator.share(shareData);
-            URL.revokeObjectURL(url);
             return true;
           } catch (shareError) {
-            // User cancelled or share failed, fall through to download
-            console.log('Share cancelled, trying download');
+            console.log('Share cancelled or failed, falling back to data URL preview');
           }
         }
       }
-      
-      // Fallback: Open in new tab for iOS Safari
-      // User can long-press to save
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
+
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const opened = window.open(dataUrl, '_blank');
+      return !!opened;
     }
 
-    // Append, click, and remove
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+
     document.body.appendChild(link);
     link.click();
-    
-    // Clean up after a short delay
+
     setTimeout(() => {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
