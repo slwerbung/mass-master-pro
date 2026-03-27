@@ -116,6 +116,7 @@ const CustomerView = () => {
 
   const getSelectedProjectId = () => selectedAssignment?.project_id || directProjectId || null;
   const isDirectGuestMode = !!selectedAssignment?.direct || (!!directProjectId && !assignments.some((a) => a.project_id === directProjectId));
+  const isLimitedGuestMode = isDirectGuestMode && !isRealCustomerId(session?.id);
 
   const saveLegacyFeedback = async (locationId: string, message: string) => {
     const projectId = getSelectedProjectId();
@@ -200,7 +201,7 @@ const CustomerView = () => {
       id: `${DIRECT_ASSIGNMENT_ID_PREFIX}${projectId}`,
       project_id: projectId,
       projects: { id: projectId, project_number: guestProjectNumber || "Direktlink" },
-      direct: true,
+      direct: !isRealCustomerId(session?.id),
     });
     setLoading(true);
     try {
@@ -361,7 +362,7 @@ const CustomerView = () => {
   };
 
   const triggerNotification = async (changeType: "approval" | "comment") => {
-    if (!selectedAssignment || selectedAssignment.direct) return;
+    if (!selectedAssignment || isLimitedGuestMode) return;
     try {
       await supabase.functions.invoke("send-notification", {
         body: {
@@ -385,7 +386,7 @@ const CustomerView = () => {
       const isLegacyEdit = !!editId && editId.startsWith(LEGACY_FEEDBACK_PREFIX);
       let savedEntry: FeedbackItem | null = null;
 
-      if (isDirectGuestMode && guestToken) {
+      if (isLimitedGuestMode && guestToken) {
         const { data, error } = await supabase.functions.invoke("update-guest-info", {
           body: {
             projectId: getSelectedProjectId(),
@@ -478,7 +479,7 @@ const CustomerView = () => {
     }
     setSavingId(locationId);
     try {
-      if (isDirectGuestMode && guestToken) {
+      if (isLimitedGuestMode && guestToken) {
         await supabase.from("location_feedback").delete().eq("id", feedbackId);
       } else {
         const { data, error } = await supabase.functions.invoke("customer-data", {
@@ -529,7 +530,7 @@ const CustomerView = () => {
   };
 
   const toggleApproval = async (locationId: string, approved: boolean) => {
-    if (!selectedAssignment || selectedAssignment.direct) return;
+    if (!selectedAssignment || isLimitedGuestMode) return;
     setApprovals(prev => ({ ...prev, [locationId]: approved }));
     await supabase.from("location_approvals").upsert({
       location_id: locationId, assignment_id: selectedAssignment.id,
@@ -539,7 +540,7 @@ const CustomerView = () => {
   };
 
   const approveAll = async (approved: boolean) => {
-    if (!selectedAssignment || selectedAssignment.direct) return;
+    if (!selectedAssignment || isLimitedGuestMode) return;
     setSavingApprovals(true);
     const newApprovals: Record<string, boolean> = {};
     locations.forEach(l => { newApprovals[l.id] = approved; });
@@ -554,8 +555,8 @@ const CustomerView = () => {
     setSavingApprovals(false);
   };
 
-  const allApproved = !isDirectGuestMode && locations.length > 0 && locations.every(l => approvals[l.id]);
-  const someApproved = !isDirectGuestMode && locations.some(l => approvals[l.id]);
+  const allApproved = !isLimitedGuestMode && locations.length > 0 && locations.every(l => approvals[l.id]);
+  const someApproved = !isLimitedGuestMode && locations.some(l => approvals[l.id]);
   const handleLogout = () => { clearSession(); navigate("/"); };
 
   if (loading && !selectedAssignment) {
@@ -600,7 +601,7 @@ const CustomerView = () => {
           <p className="text-center text-muted-foreground py-12">Keine Standorte vorhanden.</p>
         ) : (
           <>
-            {!isDirectGuestMode && (
+            {!isLimitedGuestMode && (
               <Card className="border-primary/30 bg-primary/5">
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between gap-4">
@@ -624,7 +625,7 @@ const CustomerView = () => {
             )}
 
             {/* Customer File Upload */}
-            {!isDirectGuestMode && isRealCustomerId(session?.id) && (
+            {isRealCustomerId(session?.id) && (
               <Card>
                 <CardContent className="p-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -680,7 +681,7 @@ const CustomerView = () => {
                             {loc.location_name && <span className="font-normal text-muted-foreground ml-2">· {loc.location_name}</span>}
                           </CardTitle>
                         </div>
-                        {!isDirectGuestMode && (
+                        {!isLimitedGuestMode && (
                           <Button size="sm" variant={isApproved ? "outline" : "default"} onClick={() => toggleApproval(loc.id, !isApproved)}>
                             <Check className="h-4 w-4 mr-1" /> {isApproved ? "Freigabe zurücknehmen" : "Freigeben"}
                           </Button>

@@ -413,85 +413,88 @@ const Admin = () => {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm text-muted-foreground">Logik: Jedes Projekt hat genau einen Hauptzuständigen. Zusätzlich können weitere Mitarbeiter Zugriff erhalten. So bleibt es übersichtlich und mehrere Mitarbeiter können trotzdem mitarbeiten.</p>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="space-y-1 md:col-span-2">
-                    <Label className="text-xs">Projekt</Label>
-                    <Select value={selectedProjectAccessId} onValueChange={handleProjectSelect}>
-                      <SelectTrigger><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
-                      <SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.project_number}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Hauptzuständig</Label>
-                    <div className="flex gap-2">
-                      <Select value={selectedProjectOwnerId} onValueChange={setSelectedProjectOwnerId} disabled={!selectedProjectAccessId}>
-                        <SelectTrigger><SelectValue placeholder="Mitarbeiter wählen" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Nicht zugeordnet</SelectItem>
-                          {employees.map((emp) => <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <Button onClick={saveProjectOwner} disabled={!selectedProjectAccessId}>Speichern</Button>
-                    </div>
-                  </div>
-                </div>
-
-                {selectedProject && (
-                  <div className="space-y-4 rounded-lg border p-4">
-                    <div>
-                      <p className="font-medium">{selectedProject.project_number}</p>
-                      <p className="text-sm text-muted-foreground">Hauptzuständig: {selectedProject.employees?.name || 'Nicht zugeordnet'}</p>
-                    </div>
-
-                    <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Zusätzlichen Mitarbeiter zuordnen</Label>
-                        <Select value={selectedAdditionalEmployeeId} onValueChange={setSelectedAdditionalEmployeeId}>
-                          <SelectTrigger><SelectValue placeholder="Mitarbeiter wählen" /></SelectTrigger>
-                          <SelectContent>
-                            {employees
-                              .filter((emp) => emp.id !== selectedProject.employee_id && !selectedProjectAssignments.some((assignment) => assignment.employee_id === emp.id))
-                              .map((emp) => <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex items-end">
-                        <Button onClick={addProjectEmployeeAssignment} disabled={!selectedAdditionalEmployeeId}>
-                          <Plus className="h-4 w-4 mr-1" /> Hinzufügen
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Zusätzliche Mitarbeiter</p>
-                      {selectedProjectAssignments.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">Keine zusätzlichen Mitarbeiter zugeordnet.</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {selectedProjectAssignments.map((assignment) => (
-                            <div key={assignment.id} className="flex items-center justify-between rounded-lg bg-muted p-2 text-sm">
-                              <span>{assignment.employees?.name || assignment.employee_id}</span>
-                              <Button variant="ghost" size="sm" onClick={() => removeProjectEmployeeAssignment(assignment.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
                 <div className="space-y-2">
                   {projects.map((project) => {
-                    const extraCount = projectEmployeeAssignments.filter((assignment) => assignment.project_id === project.id).length;
+                    const extraAssignments = projectEmployeeAssignments.filter((assignment) => assignment.project_id === project.id);
+                    const isSelected = selectedProjectAccessId === project.id;
                     return (
-                      <div key={project.id} className="flex items-center justify-between rounded-lg bg-muted p-3">
-                        <div>
-                          <div className="font-medium">{project.project_number}</div>
-                          <div className="text-sm text-muted-foreground">
-                            Hauptzuständig: {project.employees?.name || 'Nicht zugeordnet'}
-                            {extraCount > 0 && <span className="ml-2">· {extraCount} weitere Mitarbeiter</span>}
+                      <div key={project.id} className="rounded-lg border bg-muted/40 p-3 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-medium">{project.project_number}</div>
+                            <div className="text-sm text-muted-foreground">
+                              Hauptzuständig: {project.employees?.name || 'Nicht zugeordnet'}
+                              {extraAssignments.length > 0 && <span className="ml-2">· {extraAssignments.length} weitere Mitarbeiter</span>}
+                            </div>
                           </div>
+                          <Button variant={isSelected ? "secondary" : "outline"} size="sm" onClick={() => {
+                            if (isSelected) {
+                              setSelectedProjectAccessId("");
+                              setSelectedProjectOwnerId("");
+                              setSelectedAdditionalEmployeeId("");
+                              setSelectedProjectAssignments([]);
+                            } else {
+                              handleProjectSelect(project.id);
+                            }
+                          }}>
+                            {isSelected ? 'Schließen' : 'Zuweisung bearbeiten'}
+                          </Button>
                         </div>
+
+                        {isSelected && (
+                          <div className="space-y-4 rounded-lg border bg-background p-4">
+                            <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                              <div className="space-y-1">
+                                <Label className="text-xs">Hauptzuständig</Label>
+                                <Select value={selectedProjectOwnerId} onValueChange={setSelectedProjectOwnerId}>
+                                  <SelectTrigger><SelectValue placeholder="Mitarbeiter wählen" /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">Nicht zugeordnet</SelectItem>
+                                    {employees.map((emp) => <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="flex items-end">
+                                <Button onClick={saveProjectOwner}>Speichern</Button>
+                              </div>
+                            </div>
+
+                            <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                              <div className="space-y-1">
+                                <Label className="text-xs">Zusätzlichen Mitarbeiter zuordnen</Label>
+                                <Select value={selectedAdditionalEmployeeId} onValueChange={setSelectedAdditionalEmployeeId}>
+                                  <SelectTrigger><SelectValue placeholder="Mitarbeiter wählen" /></SelectTrigger>
+                                  <SelectContent>
+                                    {employees
+                                      .filter((emp) => emp.id !== project.employee_id && !selectedProjectAssignments.some((assignment) => assignment.employee_id === emp.id))
+                                      .map((emp) => <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="flex items-end">
+                                <Button onClick={addProjectEmployeeAssignment} disabled={!selectedAdditionalEmployeeId}>
+                                  <Plus className="h-4 w-4 mr-1" /> Hinzufügen
+                                </Button>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Zusätzliche Mitarbeiter</p>
+                              {selectedProjectAssignments.length === 0 ? (
+                                <p className="text-sm text-muted-foreground">Keine zusätzlichen Mitarbeiter zugeordnet.</p>
+                              ) : (
+                                <div className="space-y-2">
+                                  {selectedProjectAssignments.map((assignment) => (
+                                    <div key={assignment.id} className="flex items-center justify-between rounded-lg bg-muted p-2 text-sm">
+                                      <span>{assignment.employees?.name || assignment.employee_id}</span>
+                                      <Button variant="ghost" size="sm" onClick={() => removeProjectEmployeeAssignment(assignment.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

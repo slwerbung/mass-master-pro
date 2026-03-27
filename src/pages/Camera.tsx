@@ -89,6 +89,17 @@ const Camera = () => {
     stopStream();
   };
 
+  const navigateToEditor = (imageData: string) => {
+    stopStream();
+    let query = "";
+    if (isDetail && detailLocationId) {
+      query = `?detail=true&locationId=${detailLocationId}`;
+    } else if (floorPlanId && presetLocationId) {
+      query = `?floorPlan=${floorPlanId}&locationId=${presetLocationId}`;
+    }
+    navigate(`/projects/${projectId}/editor${query}`, { state: { imageData } });
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) {
@@ -100,7 +111,15 @@ const Camera = () => {
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => setCapturedImage(reader.result as string);
+    reader.onload = () => {
+      const imageData = reader.result as string;
+      const shouldSkipConfirmation = !isDesktop && mode !== "upload";
+      if (shouldSkipConfirmation) {
+        navigateToEditor(imageData);
+        return;
+      }
+      setCapturedImage(imageData);
+    };
     reader.onerror = () => toast.error("Fehler beim Laden des Bildes");
     reader.readAsDataURL(file);
   };
@@ -126,14 +145,7 @@ const Camera = () => {
 
   const confirm = () => {
     if (!capturedImage) return;
-    stopStream();
-    let query = "";
-    if (isDetail && detailLocationId) {
-      query = `?detail=true&locationId=${detailLocationId}`;
-    } else if (floorPlanId && presetLocationId) {
-      query = `?floorPlan=${floorPlanId}&locationId=${presetLocationId}`;
-    }
-    navigate(`/projects/${projectId}/editor${query}`, { state: { imageData: capturedImage } });
+    navigateToEditor(capturedImage);
   };
 
   return (
