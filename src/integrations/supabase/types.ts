@@ -536,6 +536,49 @@ export type Database = {
           },
         ]
       }
+      project_employee_assignments: {
+        Row: {
+          created_at: string
+          employee_id: string
+          id: string
+          project_id: string
+        }
+        Insert: {
+          created_at?: string
+          employee_id: string
+          id?: string
+          project_id: string
+        }
+        Update: {
+          created_at?: string
+          employee_id?: string
+          id?: string
+          project_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_employee_assignments_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_employee_assignments_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees_public"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_employee_assignments_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       projects: {
         Row: {
           created_at: string
@@ -583,6 +626,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      projects_backup_before_employee_cleanup: {
+        Row: {
+          created_at: string | null
+          employee_id: string | null
+          guest_password: string | null
+          id: string | null
+          project_number: string | null
+          project_type: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          employee_id?: string | null
+          guest_password?: string | null
+          id?: string | null
+          project_number?: string | null
+          project_type?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          employee_id?: string | null
+          guest_password?: string | null
+          id?: string | null
+          project_number?: string | null
+          project_type?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
       }
     }
     Views: {
