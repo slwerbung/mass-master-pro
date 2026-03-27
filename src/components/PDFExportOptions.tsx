@@ -1,36 +1,16 @@
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
-import { Settings, ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { FileText, Shield, Users } from "lucide-react";
+
+export type PDFExportMode = "internal" | "customer";
 
 export interface PDFExportOptions {
-  includeProjectHeader: boolean;
-  includeLocationNumber: boolean;
-  includeLocationName: boolean;
-  includeSystem: boolean;
-  includeLabel: boolean;
-  includeLocationType: boolean;
-  includeAnnotatedImage: boolean;
-  includeOriginalImage: boolean;
-  includeDetailImages: boolean;
-  includeComment: boolean;
-  includeCreatedDate: boolean;
+  mode: PDFExportMode;
 }
 
 export const defaultPDFOptions: PDFExportOptions = {
-  includeProjectHeader: true,
-  includeLocationNumber: true,
-  includeLocationName: true,
-  includeSystem: true,
-  includeLabel: true,
-  includeLocationType: true,
-  includeAnnotatedImage: true,
-  includeOriginalImage: false,
-  includeDetailImages: false,
-  includeComment: true,
-  includeCreatedDate: true,
+  mode: "internal",
 };
 
 interface Props {
@@ -38,64 +18,62 @@ interface Props {
   onChange: (options: PDFExportOptions) => void;
 }
 
+const MODE_COPY: Record<PDFExportMode, { title: string; description: string; icon: typeof Shield }> = {
+  internal: {
+    title: "Interner Export",
+    description: "Zeigt die interne Ansicht mit allen aktiven Feldern, Detailbildern und internen Inhalten.",
+    icon: Shield,
+  },
+  customer: {
+    title: "Kunden-Export",
+    description: "Zeigt die Kundenansicht. Sichtbare Inhalte richten sich nach den Einstellungen im Admin-Menü.",
+    icon: Users,
+  },
+};
+
 const PDFExportOptionsUI = ({ options, onChange }: Props) => {
-  const [open, setOpen] = useState(true);
-
-  const toggle = (key: keyof PDFExportOptions) => {
-    onChange({ ...options, [key]: !options[key] });
-  };
-
-  const items: { key: keyof PDFExportOptions; label: string; group: string }[] = [
-    { key: "includeProjectHeader", label: "Projektnummer / Projektname", group: "Allgemein" },
-    { key: "includeLocationNumber", label: "Standortnummer", group: "Allgemein" },
-    { key: "includeLocationName", label: "Standortname", group: "Allgemein" },
-    { key: "includeSystem", label: "System", group: "Allgemein" },
-    { key: "includeLabel", label: "Beschriftung", group: "Allgemein" },
-    { key: "includeLocationType", label: "Art", group: "Allgemein" },
-    { key: "includeCreatedDate", label: "Erstellungsdatum", group: "Allgemein" },
-    { key: "includeAnnotatedImage", label: "Bemaßtes Bild", group: "Bilder" },
-    { key: "includeOriginalImage", label: "Originalbild (unbearbeitet)", group: "Bilder" },
-    { key: "includeDetailImages", label: "Detailbilder", group: "Bilder" },
-    { key: "includeComment", label: "Kommentar", group: "Inhalt" },
-  ];
-
-  const groups = ["Allgemein", "Bilder", "Inhalt"];
+  const setMode = (mode: PDFExportMode) => onChange({ ...options, mode });
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger asChild>
-        <Button variant="ghost" size="sm" className="w-full justify-between mb-2">
-          <span className="flex items-center gap-2">
-            <Settings className="h-4 w-4" />
-            Export-Optionen anpassen
-          </span>
-          <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
-        </Button>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-4 pb-4">
-        {groups.map((group) => (
-          <div key={group} className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              {group}
-            </p>
-            {items
-              .filter((item) => item.group === group)
-              .map((item) => (
-                <div key={item.key} className="flex items-center gap-2">
-                  <Checkbox
-                    id={item.key}
-                    checked={options[item.key]}
-                    onCheckedChange={() => toggle(item.key)}
-                  />
-                  <Label htmlFor={item.key} className="text-sm cursor-pointer">
-                    {item.label}
-                  </Label>
+    <div className="space-y-3">
+      <div className="rounded-lg border bg-muted/20 p-3">
+        <div className="flex items-center gap-2 mb-1">
+          <FileText className="h-4 w-4 text-primary" />
+          <p className="text-sm font-medium">Exportansicht</p>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Du wählst nur noch zwischen <strong>Intern</strong> und <strong>Kunde</strong>. Welche Felder im Kunden-Export sichtbar sind, wird im Admin-Menü gesteuert.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {(["internal", "customer"] as PDFExportMode[]).map((mode) => {
+          const active = options.mode === mode;
+          const Icon = MODE_COPY[mode].icon;
+          return (
+            <Card key={mode} className={active ? "border-primary ring-1 ring-primary/30" : "border-border"}>
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className={`rounded-lg p-2 ${active ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="font-medium">{MODE_COPY[mode].title}</p>
+                      <p className="text-sm text-muted-foreground">{MODE_COPY[mode].description}</p>
+                    </div>
+                  </div>
+                  {active && <Badge>Aktiv</Badge>}
                 </div>
-              ))}
-          </div>
-        ))}
-      </CollapsibleContent>
-    </Collapsible>
+                <Button variant={active ? "default" : "outline"} className="w-full" onClick={() => setMode(mode)}>
+                  {active ? "Ausgewählt" : "Auswählen"}
+                </Button>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
   );
 };
 
