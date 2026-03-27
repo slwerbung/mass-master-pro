@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage } from "fabric";
+import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage, Point } from "fabric";
 import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2, RectangleHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { createMeasurementGroup } from "@/lib/measurement";
@@ -34,6 +34,8 @@ const PhotoEditor = () => {
   const [imageDataState, setImageDataState] = useState<string | null>(location.state?.imageData || null);
   const [loading, setLoading] = useState(false);
   const [savedMaxAreaIndex, setSavedMaxAreaIndex] = useState(0);
+  const pinchStateRef = useRef<{ initialDistance: number; initialZoom: number; isPinching: boolean }>({ initialDistance: 0, initialZoom: 1, isPinching: false });
+  const suppressTapUntilRef = useRef(0);
 
   const isReEdit = !!locationId;
   const isDetailReEdit = !!detailId;
@@ -163,6 +165,7 @@ const PhotoEditor = () => {
 
   const handleCanvasClick = (e: any) => {
     if (!fabricCanvas) return;
+    if (Date.now() < suppressTapUntilRef.current || pinchStateRef.current.isPinching) return;
     let pointer: { x: number; y: number } | null = null;
     if (fabricCanvas && e?.e) {
       try {
@@ -252,6 +255,72 @@ const PhotoEditor = () => {
       return () => { fabricCanvas.off("mouse:down", handleCanvasClick); };
     }
   }, [fabricCanvas, activeTool, measureStart, areaStart]);
+
+
+  useEffect(() => {
+    if (!fabricCanvas) return;
+
+    const target = fabricCanvas.upperCanvasEl;
+    if (!target) return;
+
+    target.style.touchAction = "none";
+    if (fabricCanvas.lowerCanvasEl) fabricCanvas.lowerCanvasEl.style.touchAction = "none";
+
+    const getDistance = (touches: TouchList) => {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    const getMidpoint = (touches: TouchList) => ({
+      x: (touches[0].clientX + touches[1].clientX) / 2,
+      y: (touches[0].clientY + touches[1].clientY) / 2,
+    });
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 2) return;
+      event.preventDefault();
+      pinchStateRef.current = {
+        initialDistance: getDistance(event.touches),
+        initialZoom: fabricCanvas.getZoom(),
+        isPinching: true,
+      };
+      suppressTapUntilRef.current = Date.now() + 250;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || !pinchStateRef.current.isPinching) return;
+      event.preventDefault();
+      const currentDistance = getDistance(event.touches);
+      const scale = currentDistance / Math.max(pinchStateRef.current.initialDistance, 1);
+      const nextZoom = Math.max(0.4, Math.min(5, pinchStateRef.current.initialZoom * scale));
+      const midpoint = getMidpoint(event.touches);
+      const rect = target.getBoundingClientRect();
+      const point = new Point(midpoint.x - rect.left, midpoint.y - rect.top);
+      fabricCanvas.zoomToPoint(point, nextZoom);
+      fabricCanvas.requestRenderAll();
+      suppressTapUntilRef.current = Date.now() + 250;
+    };
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      if (event.touches.length < 2 && pinchStateRef.current.isPinching) {
+        pinchStateRef.current.isPinching = false;
+        suppressTapUntilRef.current = Date.now() + 250;
+      }
+    };
+
+    target.addEventListener("touchstart", handleTouchStart, { passive: false });
+    target.addEventListener("touchmove", handleTouchMove, { passive: false });
+    target.addEventListener("touchend", handleTouchEnd, { passive: false });
+    target.addEventListener("touchcancel", handleTouchEnd, { passive: false });
+
+    return () => {
+      target.removeEventListener("touchstart", handleTouchStart);
+      target.removeEventListener("touchmove", handleTouchMove);
+      target.removeEventListener("touchend", handleTouchEnd);
+      target.removeEventListener("touchcancel", handleTouchEnd);
+    };
+  }, [fabricCanvas]);
 
   const handleNext = async () => {
     if (!fabricCanvas) return;
