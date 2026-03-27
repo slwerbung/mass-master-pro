@@ -1,4 +1,5 @@
 import { Project } from "@/types/project";
+import { parseStoredDate } from "@/lib/dateUtils";
 
 const STORAGE_KEY = "aufmass_projects";
 

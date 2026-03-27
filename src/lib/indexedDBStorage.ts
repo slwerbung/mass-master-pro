@@ -1,6 +1,7 @@
 import { openDB, deleteDB, DBSchema, IDBPDatabase } from 'idb';
 import { Project, Location, DetailImage, FloorPlan } from '@/types/project';
 import type { Session } from '@/lib/session';
+import { parseStoredDate } from '@/lib/dateUtils';
 
 interface AufmassDBSchema extends DBSchema {
   projects: {
