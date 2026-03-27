@@ -1,6 +1,6 @@
 import { openDB, deleteDB, DBSchema, IDBPDatabase } from 'idb';
 import { Project, Location, DetailImage, FloorPlan } from '@/types/project';
-import { getSession } from '@/lib/session';
+import type { Session } from '@/lib/session';
 
 interface AufmassDBSchema extends DBSchema {
   projects: {
@@ -10,10 +10,11 @@ interface AufmassDBSchema extends DBSchema {
       projectNumber: string;
       projectType?: 'aufmass' | 'aufmass_mit_plan';
       employeeId?: string | null;
+      accessEmployeeIds?: string[];
       createdAt: string;
       updatedAt: string;
     };
-    indexes: { 'by-updated': string };
+    indexes: { 'by-updated': string; 'by-access-employee': string };
   };
   locations: {
     key: string;
@@ -118,11 +119,10 @@ function createDB() {
         const floorPlanImageStore = db.createObjectStore('floor-plan-images', { keyPath: 'id' });
         floorPlanImageStore.createIndex('by-floor-plan', 'floorPlanId');
       }
-      if (oldVersion < 5 && db.objectStoreNames.contains('projects')) {
-        const store = transaction.objectStore('projects');
-        // employeeId is stored as a plain value, no extra index needed.
-        if (!store.indexNames.contains('by-updated')) {
-          store.createIndex('by-updated', 'updatedAt');
+      if (oldVersion < 5) {
+        const projectStore = oldVersion < 1 ? transaction.objectStore('projects') : transaction.objectStore('projects');
+        if (!projectStore.indexNames.contains('by-access-employee')) {
+          projectStore.createIndex('by-access-employee', 'accessEmployeeIds', { multiEntry: true });
         }
       }
     },
@@ -181,26 +181,32 @@ function createDetailBlobId(detailImageId: string, type: 'annotated' | 'original
   return `${detailImageId}_${type}`;
 }
 
-
-function getScopedEmployeeId() {
-  const session = getSession();
-  return session?.role === 'employee' ? session.id : null;
+function canAccessProjectRecord(record: { accessEmployeeIds?: string[]; employeeId?: string | null }, session?: Session | null): boolean {
+  if (!session || session.role === 'admin') return true;
+  if (session.role !== 'employee') return true;
+  const accessIds = Array.isArray(record.accessEmployeeIds) ? record.accessEmployeeIds : [];
+  if (accessIds.length > 0) return accessIds.includes(session.id);
+  return !!record.employeeId && record.employeeId === session.id;
 }
 
-function canAccessProjectRecord(record: { employeeId?: string | null }) {
-  const scopedEmployeeId = getScopedEmployeeId();
-  if (!scopedEmployeeId) return true;
-  return !!record.employeeId && record.employeeId === scopedEmployeeId;
+function normaliseAccessEmployeeIds(employeeId?: string | null, assignedEmployeeIds?: string[]) {
+  const ids = new Set<string>();
+  if (employeeId) ids.add(employeeId);
+  for (const id of assignedEmployeeIds || []) {
+    if (id) ids.add(id);
+  }
+  return Array.from(ids);
 }
 
 export const indexedDBStorage = {
   // Lightweight: returns only metadata + location count, NO images loaded
-  async getProjectsSummary(): Promise<{ id: string; projectNumber: string; createdAt: Date; locationCount: number }[]> {
+  async getProjectsSummary(session?: Session | null): Promise<{ id: string; projectNumber: string; createdAt: Date; locationCount: number }[]> {
     const db = await getDB();
-    const records = await db.getAll('projects');
+    const records = session?.role === 'employee'
+      ? await db.getAllFromIndex('projects', 'by-access-employee', session.id)
+      : await db.getAll('projects');
     const result = [];
     for (const r of records) {
-      if (!canAccessProjectRecord(r)) continue;
       const keys = await db.getAllKeysFromIndex('locations', 'by-project', r.id);
       result.push({
         id: r.id,
@@ -213,8 +219,12 @@ export const indexedDBStorage = {
   },
 
   // Returns just project IDs for sync without loading any data
-  async getProjectIds(): Promise<string[]> {
+  async getProjectIds(session?: Session | null): Promise<string[]> {
     const db = await getDB();
+    if (session?.role === 'employee') {
+      const records = await db.getAllFromIndex('projects', 'by-access-employee', session.id);
+      return records.map((record) => record.id);
+    }
     const keys = await db.getAllKeys('projects');
     return keys as string[];
   },
@@ -227,14 +237,15 @@ export const indexedDBStorage = {
     }
   },
 
-  async getProjects(): Promise<Project[]> {
+  async getProjects(session?: Session | null): Promise<Project[]> {
     const db = await getDB();
-    const projectRecords = await db.getAll('projects');
+    const projectRecords = session?.role === 'employee'
+      ? await db.getAllFromIndex('projects', 'by-access-employee', session.id)
+      : await db.getAll('projects');
     
     const projects: Project[] = [];
     
     for (const record of projectRecords) {
-      if (!canAccessProjectRecord(record)) continue;
       const locations = await this.getLocationsByProject(record.id);
       const floorPlans = await this.getFloorPlansByProject(record.id);
       projects.push({
@@ -242,6 +253,7 @@ export const indexedDBStorage = {
         projectNumber: record.projectNumber,
         projectType: record.projectType,
         employeeId: record.employeeId ?? null,
+        accessEmployeeIds: Array.isArray(record.accessEmployeeIds) ? record.accessEmployeeIds : normaliseAccessEmployeeIds(record.employeeId),
         createdAt: new Date(record.createdAt),
         updatedAt: new Date(record.updatedAt),
         locations,
@@ -252,11 +264,11 @@ export const indexedDBStorage = {
     return projects;
   },
 
-  async getProject(id: string): Promise<Project | null> {
+  async getProject(id: string, session?: Session | null): Promise<Project | null> {
     const db = await getDB();
     const record = await db.get('projects', id);
     
-    if (!record || !canAccessProjectRecord(record)) return null;
+    if (!record || !canAccessProjectRecord(record, session)) return null;
     
     const locations = await this.getLocationsByProject(id);
     const floorPlans = await this.getFloorPlansByProject(id);
@@ -266,6 +278,7 @@ export const indexedDBStorage = {
       projectNumber: record.projectNumber,
       projectType: record.projectType,
       employeeId: record.employeeId ?? null,
+      accessEmployeeIds: Array.isArray(record.accessEmployeeIds) ? record.accessEmployeeIds : normaliseAccessEmployeeIds(record.employeeId),
       createdAt: new Date(record.createdAt),
       updatedAt: new Date(record.updatedAt),
       locations,
@@ -442,6 +455,7 @@ export const indexedDBStorage = {
       projectNumber: project.projectNumber,
       projectType: project.projectType,
       employeeId: project.employeeId ?? null,
+      accessEmployeeIds: normaliseAccessEmployeeIds(project.employeeId, project.accessEmployeeIds),
       createdAt: project.createdAt.toISOString(),
       updatedAt: new Date().toISOString(),
     });

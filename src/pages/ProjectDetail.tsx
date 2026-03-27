@@ -51,7 +51,8 @@ const ProjectDetail = () => {
     const loadProject = async () => {
       if (!projectId) return;
       try {
-        const localProject = await indexedDBStorage.getProject(projectId);
+        const currentSession = getSession();
+        const localProject = await indexedDBStorage.getProject(projectId, currentSession);
         const remoteUpdatedAt = await getProjectRemoteTimestamp(projectId);
 
         if (localProject && remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000) {
@@ -66,15 +67,13 @@ const ProjectDetail = () => {
         }
 
         if (localProject) {
-          const currentSession = getSession();
           if (currentSession?.role === "employee") {
-            if (localProject.employeeId && localProject.employeeId !== currentSession.id) {
-              toast.error("Kein Zugriff auf dieses Projekt");
-              navigate("/projects");
-              return;
-            }
-            const { data: projRow } = await supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle();
-            if (projRow?.employee_id && projRow.employee_id !== currentSession.id) {
+            const [{ data: projRow }, { data: assignmentRows }] = await Promise.all([
+              supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle(),
+              (supabase as any).from('project_employee_assignments').select('employee_id').eq('project_id', projectId).eq('employee_id', currentSession.id),
+            ]);
+            const hasAssignment = Array.isArray(assignmentRows) && assignmentRows.length > 0;
+            if (projRow?.employee_id && projRow.employee_id !== currentSession.id && !hasAssignment) {
               toast.error("Kein Zugriff auf dieses Projekt");
               navigate("/projects");
               return;
@@ -93,10 +92,13 @@ const ProjectDetail = () => {
         }
 
         // Check employee access for online-only projects
-        const currentSession = getSession();
         if (currentSession?.role === "employee") {
-          const { data: projRow } = await supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle();
-          if (projRow?.employee_id && projRow.employee_id !== currentSession.id) {
+          const [{ data: projRow }, { data: assignmentRows }] = await Promise.all([
+            supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle(),
+            (supabase as any).from('project_employee_assignments').select('employee_id').eq('project_id', projectId).eq('employee_id', currentSession.id),
+          ]);
+          const hasAssignment = Array.isArray(assignmentRows) && assignmentRows.length > 0;
+          if (projRow?.employee_id && projRow.employee_id !== currentSession.id && !hasAssignment) {
             toast.error("Kein Zugriff auf dieses Projekt");
             navigate("/projects");
             return;
@@ -151,7 +153,7 @@ const ProjectDetail = () => {
       await deleteDetailImageFromSupabase(detailImageId);
       if (projectId) {
         const syncResult = await syncProjectToSupabase(projectId);
-        const reloaded = await indexedDBStorage.getProject(projectId);
+        const reloaded = await indexedDBStorage.getProject(projectId, getSession());
         if (reloaded) setProject(reloaded);
         if (syncResult === 'remote-won') {
           toast.warning("Stand wurde aktualisiert: neuere Online-Version übernommen");

@@ -199,6 +199,48 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
+      // ---- PROJECT EMPLOYEE ACCESS ----
+      case "list_project_employee_assignments": {
+        const { data, error } = await (supabase as any)
+          .from('project_employee_assignments')
+          .select('id, project_id, employee_id, created_at, employees(name), projects(project_number, employee_id)')
+          .order('created_at');
+        if (error) return json({ error: error.message }, 500);
+        return json({ assignments: data || [] });
+      }
+      case "create_project_employee_assignment": {
+        const projectId = params.projectId;
+        const employeeId = params.employeeId;
+        if (!projectId || !employeeId) return json({ error: 'Missing projectId or employeeId' }, 400);
+        const { data: project } = await supabase.from('projects').select('employee_id').eq('id', projectId).maybeSingle();
+        if (project?.employee_id === employeeId) return json({ success: true, skipped: true });
+        const { data, error } = await (supabase as any)
+          .from('project_employee_assignments')
+          .insert({ project_id: projectId, employee_id: employeeId })
+          .select()
+          .single();
+        if (error && !String(error.message || '').includes('duplicate')) return json({ error: error.message }, 400);
+        return json({ success: true, assignment: data || null });
+      }
+      case "delete_project_employee_assignment": {
+        const assignmentId = params.assignmentId;
+        if (!assignmentId) return json({ error: 'Missing assignmentId' }, 400);
+        const { error } = await (supabase as any).from('project_employee_assignments').delete().eq('id', assignmentId);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+      case "set_project_employee_owner": {
+        const projectId = params.projectId;
+        const employeeId = params.employeeId || null;
+        if (!projectId) return json({ error: 'Missing projectId' }, 400);
+        const { error } = await supabase.from('projects').update({ employee_id: employeeId }).eq('id', projectId);
+        if (error) return json({ error: error.message }, 500);
+        if (employeeId) {
+          await (supabase as any).from('project_employee_assignments').delete().eq('project_id', projectId).eq('employee_id', employeeId);
+        }
+        return json({ success: true });
+      }
+
       // ---- PERMISSIONS ----
       case "list_permissions": {
         const { data, error } = await supabase

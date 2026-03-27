@@ -33,9 +33,31 @@ const CustomerManage = () => {
       const { data: custData } = await supabase.from("customers").select("id, name").order("name");
       setCustomers(custData || []);
 
-      // Load projects from IndexedDB (local storage)
-      const localProjects = await indexedDBStorage.getProjects();
-      setProjects(localProjects.map(p => ({ id: p.id, projectNumber: p.projectNumber })));
+      // Load projects from Supabase + local cache (scoped to current employee/admin)
+      const localProjects = await indexedDBStorage.getProjects(session);
+      let remoteProjects: { id: string; projectNumber: string }[] = [];
+      if (session?.role === 'employee') {
+        const [{ data: ownedProjects }, { data: extraAssignments }] = await Promise.all([
+          supabase.from('projects').select('id, project_number').eq('employee_id', session.id),
+          (supabase as any).from('project_employee_assignments').select('project_id').eq('employee_id', session.id),
+        ]);
+        const assignedIds = Array.from(new Set(((extraAssignments || []) as any[]).map((row) => row.project_id).filter(Boolean)));
+        let assignedProjects: any[] = [];
+        if (assignedIds.length > 0) {
+          const { data } = await supabase.from('projects').select('id, project_number').in('id', assignedIds);
+          assignedProjects = data || [];
+        }
+        remoteProjects = [...(ownedProjects || []), ...assignedProjects].map((project: any) => ({ id: project.id, projectNumber: project.project_number }));
+      } else {
+        const { data } = await supabase.from('projects').select('id, project_number').order('project_number');
+        remoteProjects = (data || []).map((project: any) => ({ id: project.id, projectNumber: project.project_number }));
+      }
+      const mergedProjects = new Map<string, { id: string; projectNumber: string }>();
+      for (const project of remoteProjects) mergedProjects.set(project.id, project);
+      for (const project of localProjects.map((p) => ({ id: p.id, projectNumber: p.projectNumber }))) {
+        if (!mergedProjects.has(project.id)) mergedProjects.set(project.id, project);
+      }
+      setProjects(Array.from(mergedProjects.values()).sort((a, b) => a.projectNumber.localeCompare(b.projectNumber, 'de')));
 
       // Load assignments from Supabase
       const { data: assignData } = await supabase

@@ -48,13 +48,30 @@ const Projects = () => {
       await indexedDBStorage.migrateFromLocalStorage();
 
       const projectQuery = supabase.from("projects").select("id, project_number, created_at, employee_id").order("created_at", { ascending: false });
-      const scopedQuery = session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery;
 
-      const [supabaseResult, locationRows, localSummary] = await Promise.all([
-        scopedQuery,
+      const [ownedResult, assignedResult, locationRows, localSummary] = await Promise.all([
+        session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery,
+        session?.role === "employee"
+          ? (supabase as any).from('project_employee_assignments').select('project_id').eq('employee_id', session.id)
+          : Promise.resolve({ data: [] }),
         supabase.from("locations").select("project_id"),
-        indexedDBStorage.getProjectsSummary(),
+        indexedDBStorage.getProjectsSummary(session),
       ]);
+
+      let supabaseProjects = ownedResult.data || [];
+      if (session?.role === 'employee') {
+        const assignedIds = Array.from(new Set(((assignedResult as any)?.data || []).map((row: any) => row.project_id).filter(Boolean)));
+        if (assignedIds.length > 0) {
+          const { data: assignedProjects } = await supabase
+            .from('projects')
+            .select('id, project_number, created_at, employee_id')
+            .in('id', assignedIds)
+            .order('created_at', { ascending: false });
+          const mergedRemote = new Map<string, any>();
+          for (const proj of [...supabaseProjects, ...(assignedProjects || [])]) mergedRemote.set(proj.id, proj);
+          supabaseProjects = Array.from(mergedRemote.values());
+        }
+      }
 
       const dbCountMap = new Map<string, number>();
       for (const row of locationRows.data || []) {
@@ -62,7 +79,6 @@ const Projects = () => {
       }
 
       const localMap = new Map(localSummary.map(p => [p.id, p]));
-      const supabaseProjects = supabaseResult.data || [];
 
       const merged: ProjectListItem[] = supabaseProjects.map(sp => {
         const local = localMap.get(sp.id);

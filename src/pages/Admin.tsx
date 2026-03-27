@@ -48,12 +48,16 @@ const Admin = () => {
   const [customers, setCustomers] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [projectEmployeeAssignments, setProjectEmployeeAssignments] = useState<any[]>([]);
   const [newEmployeeName, setNewEmployeeName] = useState("");
   const [newEmployeePasswordInput, setNewEmployeePasswordInput] = useState("");
   const [newCustomerName, setNewCustomerName] = useState("");
   const [assignCustomerId, setAssignCustomerId] = useState("");
   const [assignProjectId, setAssignProjectId] = useState("");
   const [newAdminPassword, setNewAdminPassword] = useState("");
+  const [selectedProjectAccessId, setSelectedProjectAccessId] = useState("");
+  const [selectedProjectOwnerId, setSelectedProjectOwnerId] = useState("__none__");
+  const [selectedAdditionalEmployeeId, setSelectedAdditionalEmployeeId] = useState("");
   const [savingAdminPassword, setSavingAdminPassword] = useState(false);
   const [projectPrefix, setProjectPrefix] = useState("");
   const [savingPrefix, setSavingPrefix] = useState(false);
@@ -91,15 +95,24 @@ const Admin = () => {
     if (adminToken) { loadAll(); loadFields(); loadPrefix(); }
   }, [adminToken]);
 
+  useEffect(() => {
+    if (!selectedProjectAccessId) return;
+    const project = projects.find((entry) => entry.id === selectedProjectAccessId);
+    if (project) {
+      setSelectedProjectOwnerId(project.employee_id || '__none__');
+    }
+  }, [selectedProjectAccessId, projects]);
+
   const loadAll = useCallback(async () => {
     try {
-      const [empRes, custRes, projRes, assignRes] = await Promise.all([
-        invoke("list_employees"), invoke("list_customers"), invoke("list_projects"), invoke("list_assignments"),
+      const [empRes, custRes, projRes, assignRes, projectEmpAssignRes] = await Promise.all([
+        invoke("list_employees"), invoke("list_customers"), invoke("list_projects"), invoke("list_assignments"), invoke("list_project_employee_assignments"),
       ]);
       setEmployees(empRes.employees || []);
       setCustomers(custRes.customers || []);
       setProjects(projRes.projects || []);
       setAssignments(assignRes.assignments || []);
+      setProjectEmployeeAssignments(projectEmpAssignRes.assignments || []);
     } catch (e: any) { toast.error(e.message || "Fehler beim Laden"); }
   }, [invoke]);
 
@@ -262,6 +275,52 @@ const Admin = () => {
     } catch (e: any) { toast.error(e.message || "Fehler"); }
   };
 
+  const selectedProject = projects.find((project) => project.id === selectedProjectAccessId) || null;
+  const selectedProjectAssignments = projectEmployeeAssignments.filter((assignment) => assignment.project_id === selectedProjectAccessId);
+
+  const handleProjectSelect = (projectId: string) => {
+    setSelectedProjectAccessId(projectId);
+    const project = projects.find((entry) => entry.id === projectId);
+    setSelectedProjectOwnerId(project?.employee_id || '__none__');
+    setSelectedAdditionalEmployeeId('');
+  };
+
+  const saveProjectOwner = async () => {
+    if (!selectedProjectAccessId) return;
+    try {
+      await invoke('set_project_employee_owner', {
+        projectId: selectedProjectAccessId,
+        employeeId: selectedProjectOwnerId === '__none__' ? null : selectedProjectOwnerId,
+      });
+      toast.success('Hauptzuständigkeit gespeichert');
+      loadAll();
+    } catch (e: any) {
+      toast.error(e.message || 'Fehler');
+    }
+  };
+
+  const addProjectEmployeeAssignment = async () => {
+    if (!selectedProjectAccessId || !selectedAdditionalEmployeeId) return;
+    try {
+      await invoke('create_project_employee_assignment', { projectId: selectedProjectAccessId, employeeId: selectedAdditionalEmployeeId });
+      toast.success('Zusätzlicher Mitarbeiter zugeordnet');
+      setSelectedAdditionalEmployeeId('');
+      loadAll();
+    } catch (e: any) {
+      toast.error(e.message || 'Fehler');
+    }
+  };
+
+  const removeProjectEmployeeAssignment = async (assignmentId: string) => {
+    try {
+      await invoke('delete_project_employee_assignment', { assignmentId });
+      toast.success('Zusätzliche Zuordnung entfernt');
+      loadAll();
+    } catch (e: any) {
+      toast.error(e.message || 'Fehler');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-6">
@@ -348,8 +407,98 @@ const Admin = () => {
           </TabsContent>
 
           <TabsContent value="projects" className="space-y-4 mt-4">
-            <Card><CardHeader><CardTitle className="text-lg flex items-center gap-2"><FolderOpen className="h-5 w-5" /> Alle Projekte</CardTitle></CardHeader>
-              <CardContent><div className="space-y-2">{projects.map((p) => (<div key={p.id} className="flex items-center justify-between p-3 bg-muted rounded-lg"><div><span className="font-medium">{p.project_number}</span>{p.employees?.name && <span className="text-sm text-muted-foreground ml-2">· {p.employees.name}</span>}</div></div>))}{projects.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Projekte</p>}</div></CardContent></Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2"><FolderOpen className="h-5 w-5" /> Projekt-Zuständigkeiten</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Logik: Jedes Projekt hat genau einen Hauptzuständigen. Zusätzlich können weitere Mitarbeiter Zugriff erhalten. So bleibt es übersichtlich und mehrere Mitarbeiter können trotzdem mitarbeiten.</p>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-1 md:col-span-2">
+                    <Label className="text-xs">Projekt</Label>
+                    <Select value={selectedProjectAccessId} onValueChange={handleProjectSelect}>
+                      <SelectTrigger><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
+                      <SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.project_number}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Hauptzuständig</Label>
+                    <div className="flex gap-2">
+                      <Select value={selectedProjectOwnerId} onValueChange={setSelectedProjectOwnerId} disabled={!selectedProjectAccessId}>
+                        <SelectTrigger><SelectValue placeholder="Mitarbeiter wählen" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Nicht zugeordnet</SelectItem>
+                          {employees.map((emp) => <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <Button onClick={saveProjectOwner} disabled={!selectedProjectAccessId}>Speichern</Button>
+                    </div>
+                  </div>
+                </div>
+
+                {selectedProject && (
+                  <div className="space-y-4 rounded-lg border p-4">
+                    <div>
+                      <p className="font-medium">{selectedProject.project_number}</p>
+                      <p className="text-sm text-muted-foreground">Hauptzuständig: {selectedProject.employees?.name || 'Nicht zugeordnet'}</p>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Zusätzlichen Mitarbeiter zuordnen</Label>
+                        <Select value={selectedAdditionalEmployeeId} onValueChange={setSelectedAdditionalEmployeeId}>
+                          <SelectTrigger><SelectValue placeholder="Mitarbeiter wählen" /></SelectTrigger>
+                          <SelectContent>
+                            {employees
+                              .filter((emp) => emp.id !== selectedProject.employee_id && !selectedProjectAssignments.some((assignment) => assignment.employee_id === emp.id))
+                              .map((emp) => <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-end">
+                        <Button onClick={addProjectEmployeeAssignment} disabled={!selectedAdditionalEmployeeId}>
+                          <Plus className="h-4 w-4 mr-1" /> Hinzufügen
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Zusätzliche Mitarbeiter</p>
+                      {selectedProjectAssignments.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">Keine zusätzlichen Mitarbeiter zugeordnet.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {selectedProjectAssignments.map((assignment) => (
+                            <div key={assignment.id} className="flex items-center justify-between rounded-lg bg-muted p-2 text-sm">
+                              <span>{assignment.employees?.name || assignment.employee_id}</span>
+                              <Button variant="ghost" size="sm" onClick={() => removeProjectEmployeeAssignment(assignment.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  {projects.map((project) => {
+                    const extraCount = projectEmployeeAssignments.filter((assignment) => assignment.project_id === project.id).length;
+                    return (
+                      <div key={project.id} className="flex items-center justify-between rounded-lg bg-muted p-3">
+                        <div>
+                          <div className="font-medium">{project.project_number}</div>
+                          <div className="text-sm text-muted-foreground">
+                            Hauptzuständig: {project.employees?.name || 'Nicht zugeordnet'}
+                            {extraCount > 0 && <span className="ml-2">· {extraCount} weitere Mitarbeiter</span>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {projects.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Projekte</p>}
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-4 mt-4">

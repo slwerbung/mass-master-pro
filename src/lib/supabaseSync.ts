@@ -191,6 +191,11 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     }
   }
 
+  const { data: assignmentRows } = await (supabase as any)
+    .from('project_employee_assignments')
+    .select('employee_id')
+    .eq('project_id', projectId);
+
   const { data: floorPlanRows } = await (supabase as any).from("floor_plans").select("id, name, storage_path, markers, page_index, created_at").eq("project_id", projectId).order("page_index");
   const floorPlans: FloorPlan[] = [];
   for (const row of floorPlanRows || []) {
@@ -234,6 +239,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     projectNumber: projectRow.project_number,
     projectType: (projectRow as any).project_type === 'aufmass_mit_plan' ? 'aufmass_mit_plan' : 'aufmass',
     employeeId: (projectRow as any).employee_id || null,
+    accessEmployeeIds: Array.from(new Set([((projectRow as any).employee_id || null), ...((assignmentRows || []).map((row: any) => row.employee_id))].filter(Boolean))),
     locations,
     floorPlans,
     createdAt: new Date(projectRow.created_at),
@@ -284,7 +290,7 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
   const session = getSession();
   // Use lightweight getProject — but we need locations for sync.
   // Instead of loading full project (with base64 images), read raw records directly.
-  const project = await indexedDBStorage.getProject(projectId);
+  const project = await indexedDBStorage.getProject(projectId, session);
   if (!project) return 'skipped';
   const remoteUpdatedAt = await getProjectRemoteTimestamp(projectId);
   if (remoteUpdatedAt && remoteUpdatedAt.getTime() > project.updatedAt.getTime() + 1000) {
@@ -292,13 +298,10 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
     return 'remote-won';
   }
   const syncTimestamp = new Date().toISOString();
-  // Preserve the real project owner.
-  // Important: do NOT auto-assign the currently logged-in employee to legacy/unowned
-  // projects during sync, otherwise a single employee can accidentally 'take over'
-  // many projects just by opening the app.
+  // Check if project already exists remotely to preserve existing employee_id
   const { data: existingProject } = await supabase.from('projects').select('employee_id, user_id').eq('id', project.id).maybeSingle();
-  const employeeId = project.employeeId ?? existingProject?.employee_id ?? null;
-  const userId = existingProject?.user_id ?? (employeeId || project.id);
+  const employeeId = existingProject?.employee_id ?? project.employeeId ?? (session?.role === 'employee' ? session.id : null);
+  const userId = existingProject?.user_id ?? (project.employeeId || (session?.role === 'employee' ? session.id : project.id));
   await supabase.from('projects').upsert({
     id: project.id,
     project_number: project.projectNumber,
@@ -327,7 +330,7 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
 export async function syncAllToSupabase(): Promise<void> {
   startSync();
   try {
-    const projectIds = await indexedDBStorage.getProjectIds();
+    const projectIds = await indexedDBStorage.getProjectIds(getSession());
     for (const id of projectIds) await syncProjectInternal(id);
     finishSyncSuccess();
   } catch (e) {

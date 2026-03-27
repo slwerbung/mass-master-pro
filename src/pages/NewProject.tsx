@@ -46,6 +46,7 @@ const NewProject = () => {
         projectNumber: fullProjectNumber,
         projectType,
         employeeId,
+        accessEmployeeIds: employeeId ? [employeeId] : [],
         locations: [],
         createdAt: new Date(),
         updatedAt: new Date(),
