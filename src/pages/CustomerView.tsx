@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import LocationInfoFields from "@/components/LocationInfoFields";
+import { naturalLocationSortDesc } from "@/lib/locationSorting";
 
 interface FieldConfig {
   id?: string;
@@ -88,6 +89,7 @@ const CustomerView = () => {
   }, [assignments, directProjectId, selectedAssignment, guestToken]);
 
   const visibleFields = useMemo(() => mergeWithDefaultLocationFields(fields).filter((f) => f.is_active && f.customer_visible), [fields]);
+  const sortedLocations = useMemo(() => [...locations].sort((a, b) => naturalLocationSortDesc(a.location_number, b.location_number)), [locations]);
 
   const parseLegacyFeedback = (loc: any): FeedbackItem[] => {
     const raw = String(loc?.guest_info || "").trim();
@@ -666,7 +668,7 @@ const CustomerView = () => {
             )}
 
             <div className="space-y-4">
-              {locations.map((loc) => {
+              {sortedLocations.map((loc) => {
                 const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
                 const pdfEntries = images.filter((i: any) => i.location_id === loc.id && i.image_type === "pdf");
                 const locationFeedback = feedbacks[loc.id] || [];
@@ -680,6 +682,7 @@ const CustomerView = () => {
                             Standort {loc.location_number}
                             {loc.location_name && <span className="font-normal text-muted-foreground ml-2">· {loc.location_name}</span>}
                           </CardTitle>
+                          <p className="text-xs text-muted-foreground mt-1">Erstellt am {loc.created_at ? format(new Date(loc.created_at), "dd.MM.yyyy, HH:mm", { locale: de }) : "-"}</p>
                         </div>
                         {!isLimitedGuestMode && (
                           <Button size="sm" variant={isApproved ? "outline" : "default"} onClick={() => toggleApproval(loc.id, !isApproved)}>

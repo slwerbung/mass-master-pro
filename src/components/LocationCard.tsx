@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check } from "lucide-react";
 import { Location } from "@/types/project";
+import { format } from "date-fns";
+import { de } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import LocationInfoFields from "@/components/LocationInfoFields";
@@ -174,6 +176,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           <div className="space-y-1 flex-1 min-w-0">
             <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
             {location.locationName && <p className="text-sm text-foreground truncate">{location.locationName}</p>}
+            <p className="text-xs text-muted-foreground">Erstellt am {format(location.createdAt, "dd.MM.yyyy, HH:mm", { locale: de })}</p>
             {location.areaMeasurements && location.areaMeasurements.length > 0 && (
               <div className="mt-1 p-2 rounded bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 space-y-1">
                 <p className="text-xs font-medium text-blue-700 dark:text-blue-300">Flächen</p>

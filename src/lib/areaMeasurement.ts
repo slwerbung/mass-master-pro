@@ -1,5 +1,65 @@
 import { Group, Rect, IText, Line } from "fabric";
 
+function createParallelLabel(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  label: string,
+  color: string,
+  side: "above" | "left",
+) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const centerX = (x1 + x2) / 2;
+  const centerY = (y1 + y2) / 2;
+
+  const px = -dy / len;
+  const py = dx / len;
+
+  let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+  if (angle > 90) angle -= 180;
+  if (angle < -90) angle += 180;
+
+  const fontSize = Math.max(10, Math.min(22, len * 0.18));
+  const distance = Math.max(8, Math.min(18, len * 0.10));
+  const padding = Math.max(2, Math.round(fontSize * 0.18));
+
+  // For horizontal width guide, move label upward.
+  // For vertical height guide, move label left.
+  let offsetSign = 1;
+  if (side === "above") {
+    offsetSign = py < 0 ? 1 : -1;
+  } else if (side === "left") {
+    offsetSign = px < 0 ? 1 : -1;
+  }
+
+  let labelAngle = angle;
+  // Ensure vertical label reads bottom-to-top, i.e. "nach oben laufend".
+  if (side === "left") {
+    labelAngle = 90;
+  }
+
+  const labelObj = new IText(label, {
+    left: centerX + px * distance * offsetSign,
+    top: centerY + py * distance * offsetSign,
+    originX: "center",
+    originY: "center",
+    angle: labelAngle,
+    fill: color,
+    fontSize,
+    fontFamily: "Arial",
+    fontWeight: "bold",
+    backgroundColor: "rgba(255,255,255,0.9)",
+    padding,
+    selectable: false,
+    editable: false,
+  });
+
+  return labelObj;
+}
+
 export function createAreaMeasurementGroup(
   x1: number,
   y1: number,
@@ -19,7 +79,10 @@ export function createAreaMeasurementGroup(
   const cy = h / 2;
 
   const rect = new Rect({
-    left: -cx, top: -cy, width: w, height: h,
+    left: -cx,
+    top: -cy,
+    width: w,
+    height: h,
     fill: `${color}20`,
     stroke: color,
     strokeWidth: 2,
@@ -27,18 +90,25 @@ export function createAreaMeasurementGroup(
     selectable: false,
   });
 
-  // Inner dashed guide lines so the labels run parallel INSIDE the drawn area
   const topGuideInset = Math.max(12, Math.min(26, h * 0.16));
   const leftGuideInset = Math.max(12, Math.min(26, w * 0.16));
   const guideEndPadding = Math.max(10, Math.min(20, Math.min(w, h) * 0.10));
   const topGuideY = -cy + topGuideInset;
   const leftGuideX = -cx + leftGuideInset;
 
+  const widthLineStartX = -cx + guideEndPadding;
+  const widthLineEndX = cx - guideEndPadding;
+  const widthLineY = topGuideY;
+
+  const heightLineX = leftGuideX;
+  const heightLineStartY = -cy + guideEndPadding;
+  const heightLineEndY = cy - guideEndPadding;
+
   const topGuide = new Line([
-    -cx + guideEndPadding,
-    topGuideY,
-    cx - guideEndPadding,
-    topGuideY,
+    widthLineStartX,
+    widthLineY,
+    widthLineEndX,
+    widthLineY,
   ], {
     stroke: color,
     strokeWidth: 1.5,
@@ -48,10 +118,10 @@ export function createAreaMeasurementGroup(
   });
 
   const leftGuide = new Line([
-    leftGuideX,
-    -cy + guideEndPadding,
-    leftGuideX,
-    cy - guideEndPadding,
+    heightLineX,
+    heightLineStartY,
+    heightLineX,
+    heightLineEndY,
   ], {
     stroke: color,
     strokeWidth: 1.5,
@@ -60,63 +130,26 @@ export function createAreaMeasurementGroup(
     selectable: false,
   });
 
-  // --- Width label (horizontal, above the inner horizontal guide, inside) ---
-  const widthText = `${widthMm} mm`;
-  const widthCharCount = widthText.length;
-  let widthFontSize = Math.max(10, Math.min(22, w * 0.18));
-  const maxWidthTextPx = w * 0.78;
-  const estimatedWidthPx = widthFontSize * 0.6 * widthCharCount;
-  if (estimatedWidthPx > maxWidthTextPx) {
-    widthFontSize = Math.max(8, maxWidthTextPx / (0.6 * widthCharCount));
-  }
-  const widthPadding = Math.max(2, Math.round(widthFontSize * 0.18));
-  const widthLabelY = (-cy + topGuideY) / 2;
+  const widthLabel = createParallelLabel(
+    widthLineStartX,
+    widthLineY,
+    widthLineEndX,
+    widthLineY,
+    `${widthMm} mm`,
+    color,
+    "above",
+  );
 
-  const widthLabel = new IText(widthText, {
-    left: 0,
-    top: widthLabelY,
-    originX: "center",
-    originY: "center",
-    angle: 0,
-    fill: color,
-    fontSize: widthFontSize,
-    fontFamily: "Arial",
-    fontWeight: "bold",
-    backgroundColor: "rgba(255,255,255,0.9)",
-    padding: widthPadding,
-    selectable: false,
-    editable: false,
-  });
+  const heightLabel = createParallelLabel(
+    heightLineX,
+    heightLineStartY,
+    heightLineX,
+    heightLineEndY,
+    `${heightMm} mm`,
+    color,
+    "left",
+  );
 
-  // --- Height label (vertical, left of the inner vertical guide, inside) ---
-  const heightText = `${heightMm} mm`;
-  const heightCharCount = heightText.length;
-  let heightFontSize = Math.max(10, Math.min(22, h * 0.18));
-  const maxHeightTextPx = h * 0.78;
-  const estimatedHeightPx = heightFontSize * 0.6 * heightCharCount;
-  if (estimatedHeightPx > maxHeightTextPx) {
-    heightFontSize = Math.max(8, maxHeightTextPx / (0.6 * heightCharCount));
-  }
-  const heightPadding = Math.max(2, Math.round(heightFontSize * 0.18));
-  const heightLabelX = (-cx + leftGuideX) / 2;
-
-  const heightLabel = new IText(heightText, {
-    left: heightLabelX,
-    top: 0,
-    originX: "center",
-    originY: "center",
-    angle: -90,
-    fill: color,
-    fontSize: heightFontSize,
-    fontFamily: "Arial",
-    fontWeight: "bold",
-    backgroundColor: "rgba(255,255,255,0.9)",
-    padding: heightPadding,
-    selectable: false,
-    editable: false,
-  });
-
-  // Index label top-left inside
   const idxFontSize = Math.max(10, Math.min(16, Math.min(w, h) * 0.12));
   const indexLabel = new IText(`F ${index}`, {
     left: -cx + 4,
@@ -133,7 +166,6 @@ export function createAreaMeasurementGroup(
     editable: false,
   });
 
-  // Create group WITHOUT left/top, set position after to avoid Fabric v7 offset bug
   const group = new Group([rect, topGuide, leftGuide, widthLabel, heightLabel, indexLabel], {
     originX: "center",
     originY: "center",

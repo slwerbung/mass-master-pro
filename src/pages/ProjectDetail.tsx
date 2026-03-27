@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,6 +22,9 @@ import {
 import LocationCard from "@/components/LocationCard";
 import { supabase } from "@/integrations/supabase/client";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+import { naturalLocationSortDesc } from "@/lib/locationSorting";
+import { format } from "date-fns";
+import { de } from "date-fns/locale";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
@@ -183,6 +186,7 @@ const ProjectDetail = () => {
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><div className="text-muted-foreground">Laden...</div></div>;
   if (!project) return null;
   const isPlanProject = project.projectType === 'aufmass_mit_plan';
+  const sortedLocations = useMemo(() => [...project.locations].sort((a, b) => naturalLocationSortDesc(a.locationNumber, b.locationNumber)), [project.locations]);
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -213,6 +217,7 @@ const ProjectDetail = () => {
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">Projekt {project.projectNumber}</h1>
             <p className="text-muted-foreground mt-1 text-sm md:text-base">{project.locations.length} {project.locations.length === 1 ? "Standort" : "Standorte"}{isPlanProject && ` · ${project.floorPlans?.length || 0} Grundriss(e)`}</p>
+            <p className="text-xs md:text-sm text-muted-foreground mt-1">Erstellt am {format(project.createdAt, "dd.MM.yyyy, HH:mm", { locale: de })}</p>
           </div>
           <Button variant="outline" size="sm" onClick={() => { const guestUrl = `${window.location.origin}/guest/${projectId}`; navigator.clipboard.writeText(guestUrl); toast.success("Gast-Link kopiert!"); }}>
             <Share2 className="h-4 w-4 mr-1" /><span className="hidden sm:inline">Gast-Link</span>
@@ -247,10 +252,10 @@ const ProjectDetail = () => {
           </Card>
         )}
 
-        {project.locations.length === 0 ? (
+        {sortedLocations.length === 0 ? (
           <Card className="border-2 border-dashed"><CardContent className="flex flex-col items-center justify-center py-16 text-center"><MapPin className="h-16 w-16 text-muted-foreground mb-4" /><h3 className="text-xl font-semibold mb-2">Noch keine Standorte</h3><p className="text-muted-foreground mb-6 max-w-sm">{isPlanProject ? "Öffne die Grundrisse, um Standorte auf dem Plan zu platzieren" : "Nimm das erste Foto auf, um einen Standort zu erfassen"}</p></CardContent></Card>
         ) : (
-          <div className="grid gap-4">{project.locations.map((location) => <LocationCard key={location.id} location={location} projectId={projectId!} onDelete={handleDeleteLocation} onDeleteDetailImage={handleDeleteDetailImage} fieldConfigs={fieldConfigs} />)}</div>
+          <div className="grid gap-4">{sortedLocations.map((location) => <LocationCard key={location.id} location={location} projectId={projectId!} onDelete={handleDeleteLocation} onDeleteDetailImage={handleDeleteDetailImage} fieldConfigs={fieldConfigs} />)}</div>
         )}
       </div>
 

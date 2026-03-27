@@ -305,7 +305,7 @@ const Projects = () => {
                   </CardTitle>
                   <CardDescription className="flex items-center gap-1 text-xs">
                     <Calendar className="h-3 w-3" />
-                    Erstellt am {format(project.createdAt, "dd. MMM yyyy", { locale: de })}
+                    Erstellt am {format(project.createdAt, "dd.MM.yyyy, HH:mm", { locale: de })}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-4 pt-0">
