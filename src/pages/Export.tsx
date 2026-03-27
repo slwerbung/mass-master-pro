@@ -68,8 +68,7 @@ const Export = () => {
     const loadProject = async () => {
       if (!projectId) return;
       try {
-        const [localProject, fieldsRes, feedbackRes] = await Promise.all([
-          indexedDBStorage.getProject(projectId),
+        const [fieldsRes, feedbackRes] = await Promise.all([
           supabase
             .from("location_field_config")
             .select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order")
@@ -80,8 +79,13 @@ const Export = () => {
             .order("created_at", { ascending: true }),
         ]);
 
-        const needsHydration = !localProject || projectNeedsHydration(localProject);
-        const loadedProject = needsHydration ? (await hydrateProjectFromSupabase(projectId)) || localProject : localProject;
+        // PDF export should prefer the freshest fully-hydrated project data.
+        // Fallback to IndexedDB only if remote hydration is unavailable.
+        let loadedProject = await hydrateProjectFromSupabase(projectId);
+        if (!loadedProject) {
+          const localProject = await indexedDBStorage.getProject(projectId);
+          loadedProject = localProject;
+        }
 
         if (!loadedProject) {
           toast.error("Projekt nicht gefunden");
@@ -393,21 +397,6 @@ const Export = () => {
 };
 
 
-function projectNeedsHydration(project: Project | null): boolean {
-  if (!project) return true;
-  if (!Array.isArray(project.locations) || project.locations.length === 0) return true;
-
-  const hasRenderableLocationContent = project.locations.some((location) => {
-    const hasImage = !!location.imageData || !!location.originalImageData;
-    const hasDetails = Array.isArray(location.detailImages) && location.detailImages.length > 0;
-    const hasFields = !!(location.locationName || location.comment || location.system || location.label || location.locationType);
-    const hasCustomFields = !!(location.customFields && Object.keys(location.customFields).length > 0);
-    const hasAreaMeasurements = !!(location.areaMeasurements && location.areaMeasurements.length > 0);
-    return hasImage || hasDetails || hasFields || hasCustomFields || hasAreaMeasurements;
-  });
-
-  return !hasRenderableLocationContent;
-}
 
 function naturalLocationSort(a: string, b: string) {
   return a.localeCompare(b, "de", { numeric: true, sensitivity: "base" });

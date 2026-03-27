@@ -169,7 +169,12 @@ export const drawImageWithBorder = (
   h: number
 ) => {
   try {
-    pdf.addImage(dataURI, "PNG", x, y, w, h);
+    const format = typeof dataURI === "string" && dataURI.startsWith("data:image/jpeg")
+      ? "JPEG"
+      : typeof dataURI === "string" && dataURI.startsWith("data:image/webp")
+      ? "WEBP"
+      : "PNG";
+    pdf.addImage(dataURI, format as any, x, y, w, h);
   } catch (e) {
     console.error("Error adding image:", e);
   }
