@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check, Trash2, Upload, Download } from "lucide-react";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
+import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
@@ -682,7 +683,7 @@ const CustomerView = () => {
                             Standort {loc.location_number}
                             {loc.location_name && <span className="font-normal text-muted-foreground ml-2">· {loc.location_name}</span>}
                           </CardTitle>
-                          <p className="text-xs text-muted-foreground mt-1">Erstellt am {loc.created_at ? format(new Date(loc.created_at), "dd.MM.yyyy, HH:mm", { locale: de }) : "-"}</p>
+                          <p className="text-xs text-muted-foreground mt-1">Erstellt am {formatDateTimeSafe(loc.created_at)}</p>
                         </div>
                         {!isLimitedGuestMode && (
                           <Button size="sm" variant={isApproved ? "outline" : "default"} onClick={() => toggleApproval(loc.id, !isApproved)}>
@@ -733,7 +734,7 @@ const CustomerView = () => {
                                     <p className="text-sm font-medium">{entry.author_name}</p>
                                     <p className="text-xs text-muted-foreground">
                                       {entry.created_at && new Date(entry.created_at).getTime() > 0
-                                        ? format(new Date(entry.created_at), "dd.MM.yyyy, HH:mm", { locale: de })
+                                        ? formatDateTimeSafe(entry.created_at)
                                         : ""}
                                     </p>
                                   </div>

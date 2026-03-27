@@ -25,6 +25,7 @@ import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { naturalLocationSortDesc } from "@/lib/locationSorting";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
+import { formatDateTimeSafe } from "@/lib/dateUtils";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
@@ -217,7 +218,7 @@ const ProjectDetail = () => {
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">Projekt {project.projectNumber}</h1>
             <p className="text-muted-foreground mt-1 text-sm md:text-base">{project.locations.length} {project.locations.length === 1 ? "Standort" : "Standorte"}{isPlanProject && ` · ${project.floorPlans?.length || 0} Grundriss(e)`}</p>
-            <p className="text-xs md:text-sm text-muted-foreground mt-1">Erstellt am {format(project.createdAt, "dd.MM.yyyy, HH:mm", { locale: de })}</p>
+            <p className="text-xs md:text-sm text-muted-foreground mt-1">Erstellt am {formatDateTimeSafe(project.createdAt)}</p>
           </div>
           <Button variant="outline" size="sm" onClick={() => { const guestUrl = `${window.location.origin}/guest/${projectId}`; navigator.clipboard.writeText(guestUrl); toast.success("Gast-Link kopiert!"); }}>
             <Share2 className="h-4 w-4 mr-1" /><span className="hidden sm:inline">Gast-Link</span>

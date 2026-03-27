@@ -10,11 +10,11 @@ export const storage = {
     const projects = JSON.parse(data);
     return projects.map((p: any) => ({
       ...p,
-      createdAt: new Date(p.createdAt),
+      createdAt: parseStoredDate(p.createdAt),
       updatedAt: new Date(p.updatedAt),
       locations: p.locations.map((l: any) => ({
         ...l,
-        createdAt: new Date(l.createdAt),
+        createdAt: parseStoredDate(l.createdAt),
       })),
     }));
   },

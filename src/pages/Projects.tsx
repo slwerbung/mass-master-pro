@@ -12,6 +12,7 @@ import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
+import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { StorageIndicator } from "@/components/StorageIndicator";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
@@ -305,7 +306,7 @@ const Projects = () => {
                   </CardTitle>
                   <CardDescription className="flex items-center gap-1 text-xs">
                     <Calendar className="h-3 w-3" />
-                    Erstellt am {format(project.createdAt, "dd.MM.yyyy, HH:mm", { locale: de })}
+                    Erstellt am {formatDateTimeSafe(project.createdAt)}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-4 pt-0">

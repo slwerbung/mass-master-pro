@@ -258,7 +258,7 @@ export const indexedDBStorage = {
         projectType: record.projectType,
         employeeId: record.employeeId ?? null,
         accessEmployeeIds: Array.isArray(record.accessEmployeeIds) ? record.accessEmployeeIds : normaliseAccessEmployeeIds(record.employeeId),
-        createdAt: new Date(record.createdAt),
+        createdAt: parseStoredDate(record.createdAt),
         updatedAt: new Date(record.updatedAt),
         locations,
         floorPlans,
@@ -283,7 +283,7 @@ export const indexedDBStorage = {
       projectType: record.projectType,
       employeeId: record.employeeId ?? null,
       accessEmployeeIds: Array.isArray(record.accessEmployeeIds) ? record.accessEmployeeIds : normaliseAccessEmployeeIds(record.employeeId),
-      createdAt: new Date(record.createdAt),
+      createdAt: parseStoredDate(record.createdAt),
       updatedAt: new Date(record.updatedAt),
       locations,
       floorPlans,
@@ -323,7 +323,7 @@ export const indexedDBStorage = {
         imageData,
         originalImageData,
         detailImages,
-        createdAt: new Date(record.createdAt),
+        createdAt: parseStoredDate(record.createdAt),
       });
     }
     
@@ -348,7 +348,7 @@ export const indexedDBStorage = {
         imageData,
         originalImageData,
         caption: record.caption,
-        createdAt: new Date(record.createdAt),
+        createdAt: parseStoredDate(record.createdAt),
       });
     }
     
@@ -570,7 +570,7 @@ export const indexedDBStorage = {
         imageData,
         markers: JSON.parse(record.markers),
         pageIndex: record.pageIndex,
-        createdAt: new Date(record.createdAt),
+        createdAt: parseStoredDate(record.createdAt),
       });
     }
     
@@ -683,7 +683,7 @@ export const indexedDBStorage = {
         const project: Project = {
           id: p.id,
           projectNumber: p.projectNumber,
-          createdAt: new Date(p.createdAt),
+          createdAt: parseStoredDate(p.createdAt),
           updatedAt: new Date(p.updatedAt),
           locations: p.locations.map((l: any) => ({
             id: l.id,
@@ -692,7 +692,7 @@ export const indexedDBStorage = {
             comment: l.comment,
             imageData: l.imageData,
             originalImageData: l.originalImageData,
-            createdAt: new Date(l.createdAt),
+            createdAt: parseStoredDate(l.createdAt),
           })),
         };
         
