@@ -88,7 +88,7 @@ interface AufmassDBSchema extends DBSchema {
 }
 
 const DB_NAME = 'aufmass-db';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 let dbInstance: IDBPDatabase<AufmassDBSchema> | null = null;
 
@@ -189,6 +189,18 @@ function canAccessProjectRecord(record: { accessEmployeeIds?: string[]; employee
   return !!record.employeeId && record.employeeId === session.id;
 }
 
+
+async function getAccessibleProjectRecords(db: IDBPDatabase<AufmassDBSchema>, session?: Session | null) {
+  if (session?.role !== "employee") return db.getAll('projects');
+  try {
+    return await db.getAllFromIndex('projects', 'by-access-employee', session.id);
+  } catch (err) {
+    console.warn("IndexedDB by-access-employee index unavailable, falling back to full scan", err);
+    const all = await db.getAll('projects');
+    return all.filter((record) => canAccessProjectRecord(record, session));
+  }
+}
+
 function normaliseAccessEmployeeIds(employeeId?: string | null, assignedEmployeeIds?: string[]) {
   const ids = new Set<string>();
   if (employeeId) ids.add(employeeId);
@@ -202,9 +214,7 @@ export const indexedDBStorage = {
   // Lightweight: returns only metadata + location count, NO images loaded
   async getProjectsSummary(session?: Session | null): Promise<{ id: string; projectNumber: string; createdAt: Date; locationCount: number }[]> {
     const db = await getDB();
-    const records = session?.role === 'employee'
-      ? await db.getAllFromIndex('projects', 'by-access-employee', session.id)
-      : await db.getAll('projects');
+    const records = await getAccessibleProjectRecords(db, session);
     const result = [];
     for (const r of records) {
       const keys = await db.getAllKeysFromIndex('locations', 'by-project', r.id);
@@ -221,12 +231,8 @@ export const indexedDBStorage = {
   // Returns just project IDs for sync without loading any data
   async getProjectIds(session?: Session | null): Promise<string[]> {
     const db = await getDB();
-    if (session?.role === 'employee') {
-      const records = await db.getAllFromIndex('projects', 'by-access-employee', session.id);
-      return records.map((record) => record.id);
-    }
-    const keys = await db.getAllKeys('projects');
-    return keys as string[];
+    const records = await getAccessibleProjectRecords(db, session);
+    return records.map((record) => record.id);
   },
   // Update only the project timestamp without touching locations/images
   async updateProjectTimestamp(projectId: string, timestamp: string): Promise<void> {
@@ -239,9 +245,7 @@ export const indexedDBStorage = {
 
   async getProjects(session?: Session | null): Promise<Project[]> {
     const db = await getDB();
-    const projectRecords = session?.role === 'employee'
-      ? await db.getAllFromIndex('projects', 'by-access-employee', session.id)
-      : await db.getAll('projects');
+    const projectRecords = await getAccessibleProjectRecords(db, session);
     
     const projects: Project[] = [];
     
