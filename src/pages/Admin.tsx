@@ -432,7 +432,7 @@ const Admin = () => {
                               setSelectedProjectAccessId("");
                               setSelectedProjectOwnerId("");
                               setSelectedAdditionalEmployeeId("");
-                              setSelectedProjectAssignments([]);
+                              // selectedProjectAssignments is derived, clearing the ID resets it
                             } else {
                               handleProjectSelect(project.id);
                             }
