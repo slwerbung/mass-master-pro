@@ -19,14 +19,15 @@ const Camera = () => {
   const streamRef = useRef<MediaStream | null>(null);
 
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const [isDesktop, setIsDesktop] = useState(false);
+  const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
   const [streaming, setStreaming] = useState(false);
   const hasTriggered = useRef(false);
 
   // Detect desktop vs mobile
   useEffect(() => {
-    const isMobile = navigator.maxTouchPoints > 0;
-    setIsDesktop(!isMobile);
+    const touchCapable = navigator.maxTouchPoints > 0;
+    const mobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    setIsDesktop(!(touchCapable || mobileUA));
   }, []);
 
   // Start webcam stream on desktop
@@ -57,12 +58,15 @@ const Camera = () => {
 
   // Initialize: desktop → start webcam, mobile → trigger file input
   useEffect(() => {
-    if (hasTriggered.current) return;
+    if (isDesktop === null || hasTriggered.current) return;
     hasTriggered.current = true;
 
     if (mode === "upload") {
       setTimeout(() => fileInputRef.current?.click(), 100);
-    } else if (isDesktop) {
+      return;
+    }
+
+    if (isDesktop) {
       // Wait a tick for video element to mount
       setTimeout(() => startStream(), 100);
     } else {
@@ -113,7 +117,7 @@ const Camera = () => {
     const reader = new FileReader();
     reader.onload = () => {
       const imageData = reader.result as string;
-      const shouldSkipConfirmation = !isDesktop && mode !== "upload";
+      const shouldSkipConfirmation = isDesktop === false && mode !== "upload";
       if (shouldSkipConfirmation) {
         navigateToEditor(imageData);
         return;
@@ -136,7 +140,7 @@ const Camera = () => {
   const retake = () => {
     setCapturedImage(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    if (isDesktop && mode !== "upload") {
+    if (isDesktop === true && mode !== "upload") {
       setTimeout(() => startStream(), 100);
     } else {
       setTimeout(() => fileInputRef.current?.click(), 100);
@@ -167,7 +171,7 @@ const Camera = () => {
             alt="Aufgenommen"
             className="max-w-full max-h-full w-auto h-auto object-contain"
           />
-        ) : isDesktop && mode !== "upload" ? (
+        ) : isDesktop === true && mode !== "upload" ? (
           <div className="relative w-full h-full flex items-center justify-center">
             <video
               ref={videoRef}
