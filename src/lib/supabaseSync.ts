@@ -14,6 +14,8 @@ function getFloorPlanPath(projectId: string, floorPlanId: string) {
   return `floor-plans/${projectId}/${floorPlanId}`;
 }
 
+const storageBase64Cache = new Map<string, Promise<string | null>>();
+
 async function uploadImageToStorage(path: string, base64: string): Promise<string | null> {
   try {
     if (!base64 || !base64.includes(';base64,')) return null;
@@ -124,20 +126,29 @@ async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Prom
 }
 
 async function pathToBase64(path: string): Promise<string | null> {
-  try {
-    const { data } = supabase.storage.from("project-files").getPublicUrl(path);
-    const response = await fetch(data.publicUrl);
-    if (!response.ok) return null;
-    const blob = await response.blob();
-    return await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
+  if (!path) return null;
+  const cached = storageBase64Cache.get(path);
+  if (cached) return cached;
+
+  const promise = (async () => {
+    try {
+      const { data } = supabase.storage.from("project-files").getPublicUrl(path);
+      const response = await fetch(data.publicUrl);
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  })();
+
+  storageBase64Cache.set(path, promise);
+  return promise;
 }
 
 export async function getProjectRemoteTimestamp(projectId: string): Promise<Date | null> {
@@ -146,14 +157,21 @@ export async function getProjectRemoteTimestamp(projectId: string): Promise<Date
 }
 
 export async function hydrateProjectFromSupabase(projectId: string): Promise<Project | null> {
-  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, project_type, employee_id, created_at, updated_at").eq("id", projectId).single();
+  const [projectResult, locationResult, assignmentResult, floorPlanResult] = await Promise.all([
+    supabase.from("projects").select("id, project_number, project_type, employee_id, created_at, updated_at").eq("id", projectId).single(),
+    supabase
+      .from("locations")
+      .select("id, location_number, location_name, comment, system, label, location_type, custom_fields, guest_info, created_at")
+      .eq("project_id", projectId)
+      .order("created_at"),
+    (supabase as any).from('project_employee_assignments').select('employee_id').eq('project_id', projectId),
+    (supabase as any).from("floor_plans").select("id, name, storage_path, markers, page_index, created_at").eq("project_id", projectId).order("page_index"),
+  ]);
+
+  const { data: projectRow, error: projectError } = projectResult;
   if (projectError || !projectRow) return null;
 
-  const { data: locationRows, error: locationError } = await supabase
-    .from("locations")
-    .select("id, location_number, location_name, comment, system, label, location_type, custom_fields, guest_info, created_at")
-    .eq("project_id", projectId)
-    .order("created_at");
+  const { data: locationRows, error: locationError } = locationResult;
   if (locationError) throw locationError;
 
   const locationIds = (locationRows || []).map((row) => row.id);
@@ -161,21 +179,24 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
   const detailImageMap = new Map<string, DetailImage[]>();
 
   if (locationIds.length > 0) {
-    const { data: imageRows, error: imageError } = await supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds);
-    if (imageError) throw imageError;
-    await Promise.all((imageRows || []).map(async (row) => {
+    const [imageResult, detailResult] = await Promise.all([
+      supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds),
+      supabase.from("detail_images").select("id, location_id, caption, annotated_path, original_path, created_at").in("location_id", locationIds).order("created_at"),
+    ]);
+
+    if (imageResult.error) throw imageResult.error;
+    if (detailResult.error) throw detailResult.error;
+
+    await Promise.all((imageResult.data || []).map(async (row) => {
       const base64 = await pathToBase64(row.storage_path);
-      if (base64) {
-        const entry = imageMap.get(row.location_id) || {};
-        if (row.image_type === "annotated") entry.annotated = base64;
-        if (row.image_type === "original") entry.original = base64;
-        imageMap.set(row.location_id, entry);
-      }
+      if (!base64) return;
+      const entry = imageMap.get(row.location_id) || {};
+      if (row.image_type === "annotated") entry.annotated = base64;
+      if (row.image_type === "original") entry.original = base64;
+      imageMap.set(row.location_id, entry);
     }));
 
-    const { data: detailRows, error: detailError } = await supabase.from("detail_images").select("id, location_id, caption, annotated_path, original_path, created_at").in("location_id", locationIds).order("created_at");
-    if (detailError) throw detailError;
-    await Promise.all((detailRows || []).map(async (row) => {
+    await Promise.all((detailResult.data || []).map(async (row) => {
       const [annotated, original] = await Promise.all([pathToBase64(row.annotated_path), pathToBase64(row.original_path)]);
       const detailImage: DetailImage = {
         id: row.id,
@@ -190,24 +211,14 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     }));
   }
 
-  const { data: assignmentRows } = await (supabase as any)
-    .from('project_employee_assignments')
-    .select('employee_id')
-    .eq('project_id', projectId);
-
-  const { data: floorPlanRows } = await (supabase as any).from("floor_plans").select("id, name, storage_path, markers, page_index, created_at").eq("project_id", projectId).order("page_index");
-  const floorPlans: FloorPlan[] = [];
-  await Promise.all((floorPlanRows || []).map(async (row) => {
-    const imageData = await pathToBase64(row.storage_path);
-    floorPlans.push({
-      id: row.id,
-      name: row.name,
-      imageData: imageData || "",
-      markers: Array.isArray(row.markers) ? row.markers as any : [],
-      pageIndex: row.page_index,
-      createdAt: new Date(row.created_at),
-    });
-  }));
+  const floorPlans: FloorPlan[] = await Promise.all(((floorPlanResult.data || []) as any[]).map(async (row: any) => ({
+    id: row.id,
+    name: row.name,
+    imageData: (await pathToBase64(row.storage_path)) || "",
+    markers: Array.isArray(row.markers) ? row.markers as any : [],
+    pageIndex: row.page_index,
+    createdAt: new Date(row.created_at),
+  })));
 
   const locations = (locationRows || []).map((row) => {
     const images = imageMap.get(row.id) || {};
@@ -238,13 +249,13 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     projectNumber: projectRow.project_number,
     projectType: (projectRow as any).project_type === 'aufmass_mit_plan' ? 'aufmass_mit_plan' : 'aufmass',
     employeeId: (projectRow as any).employee_id || null,
-    accessEmployeeIds: Array.from(new Set([((projectRow as any).employee_id || null), ...((assignmentRows || []).map((row: any) => row.employee_id))].filter(Boolean))),
+    accessEmployeeIds: Array.from(new Set([((projectRow as any).employee_id || null), ...(((assignmentResult.data || []) as any[]).map((row: any) => row.employee_id))].filter(Boolean))),
     locations,
     floorPlans,
     createdAt: new Date(projectRow.created_at),
     updatedAt: new Date(projectRow.updated_at),
   };
-  await indexedDBStorage.saveProject(hydratedProject);
+  await indexedDBStorage.saveProject(hydratedProject, { dirty: false, syncedAt: projectRow.updated_at });
   return hydratedProject;
 }
 
@@ -323,13 +334,15 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
   await syncFloorPlans(project.id, project.floorPlans);
   // Only update timestamp, don't re-save all images
   await indexedDBStorage.updateProjectTimestamp(project.id, syncTimestamp);
+  if ((indexedDBStorage as any).markProjectClean) { await (indexedDBStorage as any).markProjectClean(project.id, syncTimestamp); }
   return 'uploaded';
 }
 
 export async function syncAllToSupabase(): Promise<void> {
   startSync();
   try {
-    const projectIds = await indexedDBStorage.getProjectIds(getSession());
+    const session = getSession();
+    const projectIds = (indexedDBStorage as any).getDirtyProjectIds ? await (indexedDBStorage as any).getDirtyProjectIds(session) : await indexedDBStorage.getProjectIds(session);
     for (const id of projectIds) await syncProjectInternal(id);
     finishSyncSuccess();
   } catch (e) {

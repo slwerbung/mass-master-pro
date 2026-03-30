@@ -2,6 +2,11 @@ import { openDB, deleteDB, DBSchema, IDBPDatabase } from 'idb';
 import { Project, Location, DetailImage, FloorPlan } from '@/types/project';
 import type { Session } from '@/lib/session';
 
+interface SaveProjectOptions {
+  dirty?: boolean;
+  dirtySections?: string[];
+  syncedAt?: string;
+}
 
 const parseStoredDateSafe = (value: unknown, fallback: Date = new Date(0)): Date => {
   if (value instanceof Date) return isNaN(value.getTime()) ? fallback : value;
@@ -23,6 +28,9 @@ interface AufmassDBSchema extends DBSchema {
       accessEmployeeIds?: string[];
       createdAt: string;
       updatedAt: string;
+      dirty?: boolean;
+      dirtySections?: string[];
+      lastSyncedAt?: string;
     };
     indexes: { 'by-updated': string; 'by-access-employee': string };
   };
@@ -199,6 +207,38 @@ function canAccessProjectRecord(record: { accessEmployeeIds?: string[]; employee
   return !!record.employeeId && record.employeeId === session.id;
 }
 
+const imageBase64Cache = new Map<string, string>();
+const detailImageBase64Cache = new Map<string, string>();
+const floorPlanBase64Cache = new Map<string, string>();
+
+function mergeDirtySections(existing?: string[], next?: string[]) {
+  return Array.from(new Set([...(existing || []), ...(next || [])]));
+}
+
+async function markProjectDirty(projectId: string, dirtySections?: string[]): Promise<void> {
+  const db = await getDB();
+  const project = await db.get('projects', projectId);
+  if (!project) return;
+  await db.put('projects', {
+    ...project,
+    dirty: true,
+    dirtySections: mergeDirtySections(project.dirtySections, dirtySections),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+async function markProjectClean(projectId: string, syncedAt?: string): Promise<void> {
+  const db = await getDB();
+  const project = await db.get('projects', projectId);
+  if (!project) return;
+  await db.put('projects', {
+    ...project,
+    dirty: false,
+    dirtySections: [],
+    updatedAt: syncedAt || project.updatedAt,
+    lastSyncedAt: syncedAt || project.lastSyncedAt || new Date().toISOString(),
+  });
+}
 
 async function getAccessibleProjectRecords(db: IDBPDatabase<AufmassDBSchema>, session?: Session | null) {
   if (session?.role !== "employee") return db.getAll('projects');
@@ -225,17 +265,19 @@ export const indexedDBStorage = {
   async getProjectsSummary(session?: Session | null): Promise<{ id: string; projectNumber: string; createdAt: Date; locationCount: number }[]> {
     const db = await getDB();
     const records = await getAccessibleProjectRecords(db, session);
-    const result = [];
-    for (const r of records) {
-      const keys = await db.getAllKeysFromIndex('locations', 'by-project', r.id);
-      result.push({
-        id: r.id,
-        projectNumber: r.projectNumber,
-        createdAt: new Date(r.createdAt),
-        locationCount: keys.length,
-      });
+    const projectIds = new Set(records.map((record) => record.id));
+    const locationCounts = new Map<string, number>();
+    const allLocations = await db.getAll('locations');
+    for (const location of allLocations) {
+      if (!projectIds.has(location.projectId)) continue;
+      locationCounts.set(location.projectId, (locationCounts.get(location.projectId) || 0) + 1);
     }
-    return result;
+    return records.map((r) => ({
+      id: r.id,
+      projectNumber: r.projectNumber,
+      createdAt: parseStoredDateSafe(r.createdAt),
+      locationCount: locationCounts.get(r.id) || 0,
+    }));
   },
 
   // Returns just project IDs for sync without loading any data
@@ -243,6 +285,16 @@ export const indexedDBStorage = {
     const db = await getDB();
     const records = await getAccessibleProjectRecords(db, session);
     return records.map((record) => record.id);
+  },
+
+  async getDirtyProjectIds(session?: Session | null): Promise<string[]> {
+    const db = await getDB();
+    const records = await getAccessibleProjectRecords(db, session);
+    return records.filter((record) => record.dirty).map((record) => record.id);
+  },
+
+  async markProjectClean(projectId: string, syncedAt?: string): Promise<void> {
+    await markProjectClean(projectId, syncedAt);
   },
   // Update only the project timestamp without touching locations/images
   async updateProjectTimestamp(projectId: string, timestamp: string): Promise<void> {
@@ -303,23 +355,34 @@ export const indexedDBStorage = {
   async getLocationsByProject(projectId: string): Promise<Location[]> {
     const db = await getDB();
     const locationRecords = await db.getAllFromIndex('locations', 'by-project', projectId);
-    
-    const locations: Location[] = [];
-    
-    for (const record of locationRecords) {
+
+    return Promise.all(locationRecords.map(async (record) => {
       const annotatedImageId = createImageId(record.id, 'annotated');
       const originalImageId = createImageId(record.id, 'original');
-      
-      const annotatedImage = await db.get('images', annotatedImageId);
-      const originalImage = await db.get('images', originalImageId);
-      
-      const imageData = annotatedImage ? await blobToBase64(annotatedImage.blob) : '';
-      const originalImageData = originalImage ? await blobToBase64(originalImage.blob) : imageData;
 
-      // Load detail images
-      const detailImages = await this.getDetailImagesByLocation(record.id);
-      
-      locations.push({
+      const [annotatedImage, originalImage, detailImages] = await Promise.all([
+        db.get('images', annotatedImageId),
+        db.get('images', originalImageId),
+        this.getDetailImagesByLocation(record.id),
+      ]);
+
+      let imageData = '';
+      let originalImageData = '';
+
+      if (annotatedImage) {
+        imageData = imageBase64Cache.get(annotatedImageId) || await blobToBase64(annotatedImage.blob);
+        imageBase64Cache.set(annotatedImageId, imageData);
+      }
+
+      if (originalImage) {
+        originalImageData = imageBase64Cache.get(originalImageId) || await blobToBase64(originalImage.blob);
+        imageBase64Cache.set(originalImageId, originalImageData);
+      }
+
+      if (!originalImageData) originalImageData = imageData;
+      if (!imageData) imageData = originalImageData;
+
+      return {
         id: record.id,
         locationNumber: record.locationNumber,
         locationName: record.locationName,
@@ -334,40 +397,51 @@ export const indexedDBStorage = {
         originalImageData,
         detailImages,
         createdAt: parseStoredDateSafe(record.createdAt),
-      });
-    }
-    
-    return locations;
+      };
+    }));
   },
 
   async getDetailImagesByLocation(locationId: string): Promise<DetailImage[]> {
     const db = await getDB();
     const records = await db.getAllFromIndex('detail-images', 'by-location', locationId);
-    
-    const detailImages: DetailImage[] = [];
-    
-    for (const record of records) {
-      const annotatedBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'annotated'));
-      const originalBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'original'));
-      
-      const imageData = annotatedBlob ? await blobToBase64(annotatedBlob.blob) : '';
-      const originalImageData = originalBlob ? await blobToBase64(originalBlob.blob) : imageData;
-      
-      detailImages.push({
+
+    return Promise.all(records.map(async (record) => {
+      const annotatedKey = createDetailBlobId(record.id, 'annotated');
+      const originalKey = createDetailBlobId(record.id, 'original');
+      const [annotatedBlob, originalBlob] = await Promise.all([
+        db.get('detail-image-blobs', annotatedKey),
+        db.get('detail-image-blobs', originalKey),
+      ]);
+
+      let imageData = '';
+      let originalImageData = '';
+      if (annotatedBlob) {
+        imageData = detailImageBase64Cache.get(annotatedKey) || await blobToBase64(annotatedBlob.blob);
+        detailImageBase64Cache.set(annotatedKey, imageData);
+      }
+      if (originalBlob) {
+        originalImageData = detailImageBase64Cache.get(originalKey) || await blobToBase64(originalBlob.blob);
+        detailImageBase64Cache.set(originalKey, originalImageData);
+      }
+      if (!originalImageData) originalImageData = imageData;
+      if (!imageData) imageData = originalImageData;
+
+      return {
         id: record.id,
         imageData,
         originalImageData,
         caption: record.caption,
         createdAt: parseStoredDateSafe(record.createdAt),
-      });
-    }
-    
-    return detailImages;
+      };
+    }));
   },
 
-  async saveDetailImage(locationId: string, detailImage: DetailImage): Promise<void> {
+  async saveDetailImage(locationId: string, detailImage: DetailImage, markDirtyFlag: boolean = true): Promise<void> {
     const db = await getDB();
     
+    detailImageBase64Cache.delete(createDetailBlobId(detailImage.id, 'annotated'));
+    detailImageBase64Cache.delete(createDetailBlobId(detailImage.id, 'original'));
+
     await db.put('detail-images', {
       id: detailImage.id,
       locationId,
@@ -392,47 +466,65 @@ export const indexedDBStorage = {
         blob: base64ToBlob(detailImage.originalImageData),
       });
     }
+
+    if (markDirtyFlag) {
+      const locationRecord = await db.get('locations', locationId);
+      if (locationRecord) await markProjectDirty(locationRecord.projectId, ['detail-images']);
+    }
   },
 
   async updateLocationImage(projectId: string, locationId: string, imageData: string): Promise<void> {
     const db = await getDB();
+    imageBase64Cache.delete(createImageId(locationId, 'annotated'));
     await db.put('images', {
       id: createImageId(locationId, 'annotated'),
       locationId,
       type: 'annotated',
       blob: base64ToBlob(imageData),
     });
-    const project = await db.get('projects', projectId);
-    if (project) {
-      await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
-    }
+    await markProjectDirty(projectId, ['images']);
   },
 
   async updateDetailImage(detailImageId: string, imageData: string): Promise<void> {
     const db = await getDB();
+    detailImageBase64Cache.delete(createDetailBlobId(detailImageId, 'annotated'));
     await db.put('detail-image-blobs', {
       id: createDetailBlobId(detailImageId, 'annotated'),
       detailImageId,
       type: 'annotated',
       blob: base64ToBlob(imageData),
     });
+    const detailRecord = await db.get('detail-images', detailImageId);
+    if (detailRecord) await markProjectDirty((await db.get('locations', detailRecord.locationId))?.projectId || '', ['detail-images']);
   },
 
   async updateDetailImageMetadata(detailImageId: string, data: { caption?: string }): Promise<void> {
     const db = await getDB();
     const record = await db.get('detail-images', detailImageId);
     if (!record) return;
+    detailImageBase64Cache.delete(createDetailBlobId(detailImageId, 'annotated'));
+    detailImageBase64Cache.delete(createDetailBlobId(detailImageId, 'original'));
+
     await db.put('detail-images', {
       ...record,
       caption: data.caption,
     });
+    const locationRecord = await db.get('locations', record.locationId);
+    if (locationRecord) await markProjectDirty(locationRecord.projectId, ['detail-images']);
   },
 
   async deleteDetailImage(detailImageId: string): Promise<void> {
     const db = await getDB();
+    const record = await db.get('detail-images', detailImageId);
     await db.delete('detail-images', detailImageId);
+    detailImageBase64Cache.delete(createDetailBlobId(detailImageId, 'annotated'));
+    detailImageBase64Cache.delete(createDetailBlobId(detailImageId, 'original'));
     await db.delete('detail-image-blobs', createDetailBlobId(detailImageId, 'annotated'));
     await db.delete('detail-image-blobs', createDetailBlobId(detailImageId, 'original'));
+    if (record) {
+      const locationRecord = await db.get('locations', record.locationId);
+      if (locationRecord) await markProjectDirty(locationRecord.projectId, ['detail-images']);
+    }
   },
 
   async updateLocationMetadata(projectId: string, locationId: string, data: { locationName?: string; comment?: string; system?: string; label?: string; locationType?: string; customFields?: Record<string, string>; guestInfo?: string; areaMeasurements?: { index: number; widthMm: number; heightMm: number }[] }): Promise<void> {
@@ -455,15 +547,13 @@ export const indexedDBStorage = {
     }
     await db.put('locations', updates);
 
-    const project = await db.get('projects', projectId);
-    if (project) {
-      await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
-    }
+    await markProjectDirty(projectId, ['locations']);
   },
 
-  async saveProject(project: Project): Promise<void> {
+  async saveProject(project: Project, options: SaveProjectOptions = {}): Promise<void> {
     const db = await getDB();
     
+    const existingProject = await db.get('projects', project.id);
     await db.put('projects', {
       id: project.id,
       projectNumber: project.projectNumber,
@@ -471,7 +561,10 @@ export const indexedDBStorage = {
       employeeId: project.employeeId ?? null,
       accessEmployeeIds: normaliseAccessEmployeeIds(project.employeeId, project.accessEmployeeIds),
       createdAt: project.createdAt.toISOString(),
-      updatedAt: new Date().toISOString(),
+      updatedAt: options.syncedAt ?? (options.dirty === false ? project.updatedAt.toISOString() : new Date().toISOString()),
+      dirty: options.dirty ?? existingProject?.dirty ?? true,
+      dirtySections: options.dirty === false ? [] : mergeDirtySections(existingProject?.dirtySections, options.dirtySections || ['project']),
+      lastSyncedAt: options.syncedAt ?? existingProject?.lastSyncedAt,
     });
     
     const existingLocations = await db.getAllFromIndex('locations', 'by-project', project.id);
@@ -521,7 +614,7 @@ export const indexedDBStorage = {
       const existingDetailImages = await db.getAllFromIndex('detail-images', 'by-location', location.id);
 
       for (const detailImage of location.detailImages || []) {
-        await this.saveDetailImage(location.id, detailImage);
+        await this.saveDetailImage(location.id, detailImage, options.dirty !== false);
       }
 
       for (const existingDetail of existingDetailImages) {
@@ -537,7 +630,7 @@ export const indexedDBStorage = {
     const currentFloorPlanIds = new Set((project.floorPlans || []).map(fp => fp.id));
 
     for (const floorPlan of project.floorPlans || []) {
-      await this.saveFloorPlan(project.id, floorPlan);
+      await this.saveFloorPlan(project.id, floorPlan, options.dirty !== false);
     }
 
     for (const existingFloorPlan of existingFloorPlans) {
@@ -567,27 +660,28 @@ export const indexedDBStorage = {
   async getFloorPlansByProject(projectId: string): Promise<FloorPlan[]> {
     const db = await getDB();
     const records = await db.getAllFromIndex('floor-plans', 'by-project', projectId);
-    
-    const floorPlans: FloorPlan[] = [];
-    
-    for (const record of records) {
+
+    const floorPlans = await Promise.all(records.map(async (record) => {
       const imageRecord = await db.get('floor-plan-images', record.id);
-      const imageData = imageRecord ? await blobToBase64(imageRecord.blob) : '';
-      
-      floorPlans.push({
+      let imageData = '';
+      if (imageRecord) {
+        imageData = floorPlanBase64Cache.get(record.id) || await blobToBase64(imageRecord.blob);
+        floorPlanBase64Cache.set(record.id, imageData);
+      }
+      return {
         id: record.id,
         name: record.name,
         imageData,
         markers: JSON.parse(record.markers),
         pageIndex: record.pageIndex,
         createdAt: parseStoredDateSafe(record.createdAt),
-      });
-    }
-    
+      };
+    }));
+
     return floorPlans.sort((a, b) => a.pageIndex - b.pageIndex);
   },
 
-  async saveFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<void> {
+  async saveFloorPlan(projectId: string, floorPlan: FloorPlan, markDirtyFlag: boolean = true): Promise<void> {
     const db = await getDB();
     
     await db.put('floor-plans', {
@@ -599,6 +693,7 @@ export const indexedDBStorage = {
       createdAt: floorPlan.createdAt.toISOString(),
     });
     
+    floorPlanBase64Cache.delete(floorPlan.id);
     if (floorPlan.imageData) {
       await db.put('floor-plan-images', {
         id: floorPlan.id,
@@ -607,10 +702,7 @@ export const indexedDBStorage = {
       });
     }
 
-    const project = await db.get('projects', projectId);
-    if (project) {
-      await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
-    }
+    await markProjectDirty(projectId, ['floor-plans']);
   },
 
   async updateFloorPlanMarkers(projectId: string, floorPlanId: string, markers: FloorPlan['markers']): Promise<void> {
@@ -623,16 +715,16 @@ export const indexedDBStorage = {
       markers: JSON.stringify(markers),
     });
 
-    const project = await db.get('projects', projectId);
-    if (project) {
-      await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
-    }
+    await markProjectDirty(projectId, ['floor-plans']);
   },
 
   async deleteFloorPlan(floorPlanId: string): Promise<void> {
     const db = await getDB();
+    const record = await db.get('floor-plans', floorPlanId);
+    floorPlanBase64Cache.delete(floorPlanId);
     await db.delete('floor-plans', floorPlanId);
     await db.delete('floor-plan-images', floorPlanId);
+    if (record) await markProjectDirty(record.projectId, ['floor-plans']);
   },
 
   async deleteProject(id: string): Promise<void> {
