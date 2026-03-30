@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { X, Check, ImagePlus, Camera as CameraIcon } from "lucide-react";
 import { toast } from "sonner";
+import { readImageFileForEditor } from "@/lib/imageFile";
 
 const Camera = () => {
   const { projectId } = useParams();
@@ -25,9 +26,8 @@ const Camera = () => {
 
   // Detect desktop vs mobile
   useEffect(() => {
-    const touchCapable = navigator.maxTouchPoints > 0;
-    const mobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-    setIsDesktop(!(touchCapable || mobileUA));
+    const isMobile = navigator.maxTouchPoints > 0;
+    setIsDesktop(!isMobile);
   }, []);
 
   // Start webcam stream on desktop
@@ -58,16 +58,12 @@ const Camera = () => {
 
   // Initialize: desktop → start webcam, mobile → trigger file input
   useEffect(() => {
-    if (isDesktop === null || hasTriggered.current) return;
+    if (hasTriggered.current || isDesktop === null) return;
     hasTriggered.current = true;
 
     if (mode === "upload") {
       setTimeout(() => fileInputRef.current?.click(), 100);
-      return;
-    }
-
-    if (isDesktop) {
-      // Wait a tick for video element to mount
+    } else if (isDesktop) {
       setTimeout(() => startStream(), 100);
     } else {
       setTimeout(() => fileInputRef.current?.click(), 100);
@@ -104,7 +100,7 @@ const Camera = () => {
     navigate(`/projects/${projectId}/editor${query}`, { state: { imageData } });
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) {
       goBack();
@@ -114,18 +110,17 @@ const Camera = () => {
       toast.error("Bitte ein Bild auswählen");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const imageData = reader.result as string;
-      const shouldSkipConfirmation = isDesktop === false && mode !== "upload";
+    try {
+      const imageData = await readImageFileForEditor(file);
+      const shouldSkipConfirmation = !isDesktop && mode !== "upload";
       if (shouldSkipConfirmation) {
         navigateToEditor(imageData);
         return;
       }
       setCapturedImage(imageData);
-    };
-    reader.onerror = () => toast.error("Fehler beim Laden des Bildes");
-    reader.readAsDataURL(file);
+    } catch {
+      toast.error("Fehler beim Laden des Bildes");
+    }
   };
 
   const goBack = () => {
@@ -140,7 +135,7 @@ const Camera = () => {
   const retake = () => {
     setCapturedImage(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    if (isDesktop === true && mode !== "upload") {
+    if (isDesktop && mode !== "upload") {
       setTimeout(() => startStream(), 100);
     } else {
       setTimeout(() => fileInputRef.current?.click(), 100);
@@ -171,7 +166,7 @@ const Camera = () => {
             alt="Aufgenommen"
             className="max-w-full max-h-full w-auto h-auto object-contain"
           />
-        ) : isDesktop === true && mode !== "upload" ? (
+        ) : isDesktop && mode !== "upload" ? (
           <div className="relative w-full h-full flex items-center justify-center">
             <video
               ref={videoRef}

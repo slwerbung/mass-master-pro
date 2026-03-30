@@ -78,6 +78,13 @@ const Admin = () => {
   const [passwordDialogEmployee, setPasswordDialogEmployee] = useState<any | null>(null);
   const [dialogPassword, setDialogPassword] = useState("");
   const [savingEmpPassword, setSavingEmpPassword] = useState(false);
+  const [viewSettings, setViewSettings] = useState({
+    internalShowPrintFiles: true,
+    customerShowPrintFiles: true,
+    internalShowDetailImages: true,
+    customerShowDetailImages: false,
+  });
+  const [savingViewSettings, setSavingViewSettings] = useState(false);
 
   const adminToken = session?.authToken || "";
 
@@ -92,7 +99,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadPrefix(); }
+    if (adminToken) { loadAll(); loadFields(); loadPrefix(); loadViewSettings(); }
   }, [adminToken]);
 
   useEffect(() => {
@@ -151,6 +158,24 @@ const Admin = () => {
       const { data } = await supabase.from("location_field_config").select("*").order("sort_order");
       setFields((data || []) as FieldConfig[]);
     }
+  };
+
+  const loadViewSettings = async () => {
+    try {
+      const data = await invoke("get_view_settings");
+      if (data?.settings) setViewSettings(data.settings);
+    } catch {}
+  };
+
+  const saveViewSettings = async () => {
+    setSavingViewSettings(true);
+    try {
+      await invoke("set_view_settings", { settings: viewSettings });
+      toast.success("Medien-Sichtbarkeit gespeichert");
+    } catch (e: any) {
+      toast.error(e.message || "Fehler beim Speichern");
+    }
+    setSavingViewSettings(false);
   };
 
   const addField = async () => {
@@ -534,6 +559,38 @@ const Admin = () => {
                   }}>Löschen</Button>
                 </div>
                 <p className="text-xs text-muted-foreground">Leer lassen oder löschen für keinen Präfix.</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><FolderOpen className="h-5 w-5" /> Medien-Sichtbarkeit</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Hier legst du fest, ob Druckdateien und Detailbilder in der internen Ansicht, der Kundenansicht und im jeweiligen PDF-Export sichtbar sind.</p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-lg border p-3 space-y-3">
+                    <p className="text-sm font-medium">Interne Ansicht / Interner Export</p>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="internal-print-files">Druckdateien anzeigen</Label>
+                      <Switch id="internal-print-files" checked={viewSettings.internalShowPrintFiles} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, internalShowPrintFiles: checked }))} />
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="internal-detail-images">Detailbilder anzeigen</Label>
+                      <Switch id="internal-detail-images" checked={viewSettings.internalShowDetailImages} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, internalShowDetailImages: checked }))} />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border p-3 space-y-3">
+                    <p className="text-sm font-medium">Kundenansicht / Kunden-Export</p>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="customer-print-files">Druckdateien anzeigen</Label>
+                      <Switch id="customer-print-files" checked={viewSettings.customerShowPrintFiles} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, customerShowPrintFiles: checked }))} />
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="customer-detail-images">Detailbilder anzeigen</Label>
+                      <Switch id="customer-detail-images" checked={viewSettings.customerShowDetailImages} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, customerShowDetailImages: checked }))} />
+                    </div>
+                  </div>
+                </div>
+                <Button onClick={saveViewSettings} disabled={savingViewSettings}>{savingViewSettings ? "Speichert..." : "Medien-Sichtbarkeit speichern"}</Button>
               </CardContent>
             </Card>
 

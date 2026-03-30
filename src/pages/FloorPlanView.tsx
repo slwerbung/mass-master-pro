@@ -47,41 +47,23 @@ const FloorPlanView = () => {
 
   const handleImageClick = async (e: React.MouseEvent<HTMLDivElement>) => {
     if (!placingMarker || !activeFloorPlan || !imageContainerRef.current || !projectId) return;
-
     const rect = imageContainerRef.current.getBoundingClientRect();
     const markerId = crypto.randomUUID();
     const locationId = crypto.randomUUID();
-    const newMarker: FloorPlanMarker = {
-      id: markerId,
-      locationId,
-      x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
-      y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
-    };
-
+    const newMarker: FloorPlanMarker = { id: markerId, locationId, x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)) };
     await indexedDBStorage.updateFloorPlanMarkers(projectId, activeFloorPlan.id, [...activeFloorPlan.markers, newMarker]);
-
+    const syncResult = await syncProjectToSupabase(projectId);
+    if (syncResult === 'remote-won') { toast.warning('Neuere Online-Version übernommen'); await loadProject(); return; }
     setPlacingMarker(false);
     setPendingLocationId(locationId);
     setShowCaptureDialog(true);
-
-    void (async () => {
-      try {
-        const syncResult = await syncProjectToSupabase(projectId);
-        if (syncResult === 'remote-won') {
-          toast.warning('Neuere Online-Version übernommen');
-          await loadProject();
-        }
-      } catch (error) {
-        console.error('Background marker sync failed:', error);
-      }
-    })();
   };
 
   const handleMarkerClick = (marker: FloorPlanMarker, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!projectId) return;
     const location = project?.locations.find((l) => l.id === marker.locationId);
-    if (location) navigate(`/projects/${projectId}?locationId=${location.id}`);
+    if (location) navigate(`/projects/${projectId}/locations/${location.id}/edit`);
   };
 
   const handleDeleteFloorPlan = async () => {

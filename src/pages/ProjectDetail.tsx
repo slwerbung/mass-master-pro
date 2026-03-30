@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map, FileText, ExternalLink } from "lucide-react";
@@ -26,6 +26,8 @@ import { naturalLocationSortDesc } from "@/lib/locationSorting";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
+import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
+import { readImageFileForEditor } from "@/lib/imageFile";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
@@ -35,8 +37,8 @@ const ProjectDetail = () => {
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<any[]>([]);
   const [customerUploads, setCustomerUploads] = useState<any[]>([]);
+  const [viewSettings, setViewSettings] = useState(defaultViewSettings);
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -45,6 +47,7 @@ const ProjectDetail = () => {
       setFieldConfigs(mergeWithDefaultLocationFields((data || []) as any[]));
     };
     loadFieldConfigs();
+    fetchViewSettings().then(setViewSettings);
 
     // Load customer uploads
     if (projectId) {
@@ -171,17 +174,19 @@ const ProjectDetail = () => {
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       toast.error("Bitte ein Bild auswählen");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => navigate(`/projects/${projectId}/editor`, { state: { imageData: reader.result as string } });
-    reader.onerror = () => toast.error("Fehler beim Laden des Bildes");
-    reader.readAsDataURL(file);
+    try {
+      const imageData = await readImageFileForEditor(file);
+      navigate(`/projects/${projectId}/editor`, { state: { imageData } });
+    } catch {
+      toast.error("Fehler beim Laden des Bildes");
+    }
   };
 
   const isPlanProject = project?.projectType === 'aufmass_mit_plan';
@@ -189,27 +194,6 @@ const ProjectDetail = () => {
     () => (project ? [...project.locations].sort((a, b) => naturalLocationSortDesc(a.locationNumber, b.locationNumber)) : []),
     [project?.locations],
   );
-
-
-  useEffect(() => {
-    const targetLocationId = searchParams.get("locationId");
-    if (!targetLocationId || sortedLocations.length === 0) return;
-
-    const timer = window.setTimeout(() => {
-      const el = document.getElementById(`location-card-${targetLocationId}`);
-      if (!el) return;
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      el.classList.add("ring-2", "ring-primary", "ring-offset-2", "rounded-lg");
-      window.setTimeout(() => {
-        el.classList.remove("ring-2", "ring-primary", "ring-offset-2", "rounded-lg");
-      }, 1800);
-      const next = new URLSearchParams(searchParams);
-      next.delete("locationId");
-      setSearchParams(next, { replace: true });
-    }, 50);
-
-    return () => window.clearTimeout(timer);
-  }, [searchParams, setSearchParams, sortedLocations]);
 
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><div className="text-muted-foreground">Laden...</div></div>;
   if (!project) return null;
@@ -281,7 +265,7 @@ const ProjectDetail = () => {
         {sortedLocations.length === 0 ? (
           <Card className="border-2 border-dashed"><CardContent className="flex flex-col items-center justify-center py-16 text-center"><MapPin className="h-16 w-16 text-muted-foreground mb-4" /><h3 className="text-xl font-semibold mb-2">Noch keine Standorte</h3><p className="text-muted-foreground mb-6 max-w-sm">{isPlanProject ? "Öffne die Grundrisse, um Standorte auf dem Plan zu platzieren" : "Nimm das erste Foto auf, um einen Standort zu erfassen"}</p></CardContent></Card>
         ) : (
-          <div className="grid gap-4">{sortedLocations.map((location) => <div key={location.id} id={`location-card-${location.id}`}><LocationCard location={location} projectId={projectId!} onDelete={handleDeleteLocation} onDeleteDetailImage={handleDeleteDetailImage} fieldConfigs={fieldConfigs} /></div>)}</div>
+          <div className="grid gap-4">{sortedLocations.map((location) => <LocationCard key={location.id} location={location} projectId={projectId!} onDelete={handleDeleteLocation} onDeleteDetailImage={handleDeleteDetailImage} fieldConfigs={fieldConfigs} showPrintFiles={viewSettings.internalShowPrintFiles} showDetailImages={viewSettings.internalShowDetailImages} />)}</div>
         )}
       </div>
 

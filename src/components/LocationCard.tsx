@@ -32,6 +32,21 @@ const isFeedbackTableUnavailable = (error: any) => {
   const message = String(error?.message || error?.details || "").toLowerCase();
   return error?.code === "42P01" || error?.code === "PGRST205" || message.includes("location_feedback") || message.includes("could not find the table");
 };
+const isSupportedPrintFile = (file: File) => {
+  const name = file.name.toLowerCase();
+  const mime = file.type.toLowerCase();
+  return mime === "application/pdf"
+    || mime.startsWith("image/")
+    || name.endsWith(".pdf")
+    || name.endsWith(".png")
+    || name.endsWith(".jpg")
+    || name.endsWith(".jpeg")
+    || name.endsWith(".webp")
+    || name.endsWith(".svg")
+    || name.endsWith(".ai")
+    || name.endsWith(".eps");
+};
+
 
 interface LocationCardProps {
   location: Location;
@@ -39,9 +54,11 @@ interface LocationCardProps {
   onDelete: (locationId: string) => void;
   onDeleteDetailImage: (locationId: string, detailImageId: string) => void;
   fieldConfigs?: any[];
+  showPrintFiles?: boolean;
+  showDetailImages?: boolean;
 }
 
-const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fieldConfigs = [] }: LocationCardProps) => {
+const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fieldConfigs = [], showPrintFiles = true, showDetailImages = true }: LocationCardProps) => {
   const navigate = useNavigate();
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -133,11 +150,11 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     }
   };
 
-  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePrintFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.type !== "application/pdf") {
-      toast.error("Bitte eine PDF-Datei auswählen");
+    if (!isSupportedPrintFile(file)) {
+      toast.error("Bitte eine PDF- oder Bilddatei auswählen");
       return;
     }
     setUploadingPdf(true);
@@ -166,8 +183,8 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
 
   return (
     <Card className="overflow-hidden">
-      <div className="aspect-video bg-muted relative cursor-pointer group" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}>
-        <img src={location.imageData} alt={`Standort ${location.locationNumber}`} className="w-full h-full object-contain" />
+      <div className="min-h-[180px] bg-muted relative cursor-pointer group rounded-lg overflow-hidden flex items-center justify-center" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}>
+        <img src={location.imageData} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
           <Pencil className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
         </div>
@@ -227,24 +244,28 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
 
         <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Druckdatei</p>
-          {pdfUrl && pdfName ? (
-            <div className="flex items-center gap-2">
-              <FileText className="h-4 w-4 text-primary shrink-0" />
-              <span className="text-sm truncate flex-1">{pdfName}</span>
-              <Button size="sm" variant="outline" asChild>
-                <a href={pdfUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="h-3 w-3 mr-1" /> Öffnen
-                </a>
+          {showPrintFiles ? (
+            pdfUrl && pdfName ? (
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-sm truncate flex-1">{pdfName}</span>
+                <Button size="sm" variant="outline" asChild>
+                  <a href={pdfUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-3 w-3 mr-1" /> Öffnen
+                  </a>
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf} title="Ersetzen">
+                  <FileUp className="h-3 w-3" />
+                </Button>
+              </div>
+            ) : (
+              <Button size="sm" variant="outline" className="w-full" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}>
+                {uploadingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileUp className="h-4 w-4 mr-2" />}
+                {uploadingPdf ? "Lädt hoch..." : "Druckdatei hochladen"}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf} title="Ersetzen">
-                <FileUp className="h-3 w-3" />
-              </Button>
-            </div>
+            )
           ) : (
-            <Button size="sm" variant="outline" className="w-full" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}>
-              {uploadingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileUp className="h-4 w-4 mr-2" />}
-              {uploadingPdf ? "Lädt hoch..." : "Druckdatei hochladen"}
-            </Button>
+            <p className="text-sm text-muted-foreground">In der internen Ansicht ausgeblendet.</p>
           )}
         </div>
 
@@ -275,14 +296,14 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           )}
         </div>
 
-        {location.detailImages && location.detailImages.length > 0 && (
+        {showDetailImages && location.detailImages && location.detailImages.length > 0 && (
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Detailbilder</p>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {location.detailImages.map((detail) => (
-                <div key={detail.id} className="relative group aspect-square bg-muted rounded overflow-hidden">
+                <div key={detail.id} className="relative group bg-muted rounded overflow-hidden flex items-center justify-center min-h-[140px]">
                   <img src={detail.imageData} alt={detail.caption || "Detailbild"}
-                    className="w-full h-full object-cover cursor-pointer"
+                    className="w-full h-auto max-h-[240px] object-contain cursor-pointer"
                     onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`)} />
                   {detail.caption && <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate">{detail.caption}</div>}
                   <Button variant="ghost" size="sm" className="absolute top-0 left-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-muted/80 hover:bg-muted text-foreground rounded-none rounded-br" onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit`); }}>
@@ -311,12 +332,12 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           </div>
         )}
 
-        <Button variant="outline" size="sm" className="w-full" onClick={() => navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`)}>
+        {showDetailImages && (<Button variant="outline" size="sm" className="w-full" onClick={() => navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`)}>
           <ImagePlus className="h-4 w-4 mr-2" /> Detailbild hinzufügen
-        </Button>
+        </Button>)}
       </CardContent>
 
-      <input ref={pdfInputRef} type="file" accept="application/pdf" onChange={handlePdfUpload} className="hidden" />
+      <input ref={pdfInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,.ai,.eps" onChange={handlePrintFileUpload} className="hidden" />
     </Card>
   );
 };

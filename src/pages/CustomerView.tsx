@@ -14,6 +14,7 @@ import { getSession, clearSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import LocationInfoFields from "@/components/LocationInfoFields";
 import { naturalLocationSortDesc } from "@/lib/locationSorting";
+import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 
 interface FieldConfig {
   id?: string;
@@ -59,6 +60,7 @@ const CustomerView = () => {
   const [selectedAssignment, setSelectedAssignment] = useState<any | null>(null);
   const [locations, setLocations] = useState<any[]>([]);
   const [images, setImages] = useState<any[]>([]);
+  const [detailImagesByLocation, setDetailImagesByLocation] = useState<Record<string, any[]>>({});
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [feedbacks, setFeedbacks] = useState<Record<string, FeedbackItem[]>>({});
   const [draftFeedback, setDraftFeedback] = useState<Record<string, string>>({});
@@ -69,9 +71,11 @@ const CustomerView = () => {
   const [savingApprovals, setSavingApprovals] = useState(false);
   const [customerUploads, setCustomerUploads] = useState<any[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [viewSettings, setViewSettings] = useState(defaultViewSettings);
 
   useEffect(() => {
     if (!session || session.role !== "customer") { navigate("/"); return; }
+    fetchViewSettings().then(setViewSettings);
     loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -224,6 +228,21 @@ const CustomerView = () => {
       setLocations(locs);
       setImages([...(imgs || []), ...((pdfs || []).map((p: any) => ({ ...p, image_type: "pdf" })))]);
       setApprovals({});
+      if (locationIds.length > 0) {
+        const { data: detailRows } = await supabase
+          .from("detail_images")
+          .select("id, location_id, caption, annotated_path, created_at")
+          .in("location_id", locationIds)
+          .order("created_at", { ascending: true });
+        const detailMap: Record<string, any[]> = {};
+        (detailRows || []).forEach((row: any) => {
+          if (!detailMap[row.location_id]) detailMap[row.location_id] = [];
+          detailMap[row.location_id].push(row);
+        });
+        setDetailImagesByLocation(detailMap);
+      } else {
+        setDetailImagesByLocation({});
+      }
 
       if (locationIds.length > 0) {
         const feedbackMap: Record<string, FeedbackItem[]> = {};
@@ -271,7 +290,7 @@ const CustomerView = () => {
     try {
       const { data: locs, error } = await supabase
         .from("locations")
-        .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields")
+        .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields, created_at")
         .eq("project_id", assignment.project_id)
         .order("created_at");
       if (error) throw error;
@@ -279,15 +298,22 @@ const CustomerView = () => {
       setLocations(locs || []);
 
       if (locationIds.length > 0) {
-        const [{ data: imgs }, { data: pdfs }, { data: approvData }, feedbackResponse] = await Promise.all([
+        const [{ data: imgs }, { data: pdfs }, { data: approvData }, feedbackResponse, { data: detailRows }] = await Promise.all([
           supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds),
           supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
           supabase.from("location_approvals").select("location_id, approved").eq("assignment_id", assignment.id).in("location_id", locationIds),
           (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at"),
+          supabase.from("detail_images").select("id, location_id, caption, annotated_path, created_at").in("location_id", locationIds).order("created_at", { ascending: true }),
         ]);
 
         const pdfEntries = (pdfs || []).map((p: any) => ({ location_id: p.location_id, image_type: "pdf", storage_path: p.storage_path, file_name: p.file_name, id: p.id }));
         setImages([...(imgs || []), ...pdfEntries]);
+        const detailMap: Record<string, any[]> = {};
+        (detailRows || []).forEach((row: any) => {
+          if (!detailMap[row.location_id]) detailMap[row.location_id] = [];
+          detailMap[row.location_id].push(row);
+        });
+        setDetailImagesByLocation(detailMap);
 
         const approvMap: Record<string, boolean> = {};
         (approvData || []).forEach((a: any) => { approvMap[a.location_id] = a.approved; });
@@ -308,6 +334,7 @@ const CustomerView = () => {
         setImages([]);
         setApprovals({});
         setFeedbacks({});
+        setDetailImagesByLocation({});
       }
     } catch (error) {
       console.error(error);
@@ -694,8 +721,8 @@ const CustomerView = () => {
                     </CardHeader>
                     <CardContent className="p-4 space-y-4">
                       {annotated && (
-                        <div className="aspect-video bg-muted rounded-lg overflow-hidden">
-                          <img src={getImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-full object-contain" />
+                        <div className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[180px]">
+                          <img src={getImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-auto max-h-[70vh] object-contain" />
                         </div>
                       )}
 
@@ -703,7 +730,7 @@ const CustomerView = () => {
                         <LocationInfoFields location={loc} fields={visibleFields} customerOnly />
                       )}
 
-                      {pdfEntries.length > 0 && (
+                      {viewSettings.customerShowPrintFiles && pdfEntries.length > 0 && (
                         <div className="space-y-2">
                           <p className="text-sm font-medium">Druckdaten</p>
                           {pdfEntries.map((pdf: any) => (
@@ -718,6 +745,19 @@ const CustomerView = () => {
                               {pdf.file_name}
                             </a>
                           ))}
+                        </div>
+                      )}
+
+                      {viewSettings.customerShowDetailImages && (detailImagesByLocation[loc.id] || []).length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">Detailbilder</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            {(detailImagesByLocation[loc.id] || []).map((detail: any) => (
+                              <div key={detail.id} className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[120px]">
+                                <img src={getImageUrl(detail.annotated_path)} alt={detail.caption || "Detailbild"} className="w-full h-auto max-h-[220px] object-contain" />
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 
