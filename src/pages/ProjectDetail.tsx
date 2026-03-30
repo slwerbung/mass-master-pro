@@ -184,10 +184,14 @@ const ProjectDetail = () => {
     reader.readAsDataURL(file);
   };
 
+  const isPlanProject = project?.projectType === 'aufmass_mit_plan';
+  const sortedLocations = useMemo(
+    () => (project ? [...project.locations].sort((a, b) => naturalLocationSortDesc(a.locationNumber, b.locationNumber)) : []),
+    [project],
+  );
+
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><div className="text-muted-foreground">Laden...</div></div>;
   if (!project) return null;
-  const isPlanProject = project.projectType === 'aufmass_mit_plan';
-  const sortedLocations = useMemo(() => [...project.locations].sort((a, b) => naturalLocationSortDesc(a.locationNumber, b.locationNumber)), [project.locations]);
 
   return (
     <div className="min-h-screen bg-background pb-24">
