@@ -61,7 +61,7 @@ const Projects = () => {
 
       let supabaseProjects = ownedResult.data || [];
       if (session?.role === 'employee') {
-        const assignedIds = Array.from(new Set(((assignedResult as any)?.data || []).map((row: any) => row.project_id).filter(Boolean)));
+        const assignedIds: string[] = Array.from(new Set(((assignedResult as any)?.data || []).map((row: any) => row.project_id).filter(Boolean))) as string[];
         if (assignedIds.length > 0) {
           const { data: assignedProjects } = await supabase
             .from('projects')
