@@ -1,5 +1,14 @@
 import { Project } from "@/types/project";
-import { parseStoredDate } from "@/lib/dateUtils";
+
+
+const parseStoredDateSafe = (value: unknown, fallback: Date = new Date(0)): Date => {
+  if (value instanceof Date) return isNaN(value.getTime()) ? fallback : value;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? fallback : d;
+  }
+  return fallback;
+};
 
 const STORAGE_KEY = "aufmass_projects";
 
@@ -11,11 +20,11 @@ export const storage = {
     const projects = JSON.parse(data);
     return projects.map((p: any) => ({
       ...p,
-      createdAt: parseStoredDate(p.createdAt),
+      createdAt: parseStoredDateSafe(p.createdAt),
       updatedAt: new Date(p.updatedAt),
       locations: p.locations.map((l: any) => ({
         ...l,
-        createdAt: parseStoredDate(l.createdAt),
+        createdAt: parseStoredDateSafe(l.createdAt),
       })),
     }));
   },

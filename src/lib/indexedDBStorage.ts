@@ -1,7 +1,16 @@
 import { openDB, deleteDB, DBSchema, IDBPDatabase } from 'idb';
 import { Project, Location, DetailImage, FloorPlan } from '@/types/project';
 import type { Session } from '@/lib/session';
-import { parseStoredDate } from '@/lib/dateUtils';
+
+
+const parseStoredDateSafe = (value: unknown, fallback: Date = new Date(0)): Date => {
+  if (value instanceof Date) return isNaN(value.getTime()) ? fallback : value;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? fallback : d;
+  }
+  return fallback;
+};
 
 interface AufmassDBSchema extends DBSchema {
   projects: {
@@ -259,7 +268,7 @@ export const indexedDBStorage = {
         projectType: record.projectType,
         employeeId: record.employeeId ?? null,
         accessEmployeeIds: Array.isArray(record.accessEmployeeIds) ? record.accessEmployeeIds : normaliseAccessEmployeeIds(record.employeeId),
-        createdAt: parseStoredDate(record.createdAt),
+        createdAt: parseStoredDateSafe(record.createdAt),
         updatedAt: new Date(record.updatedAt),
         locations,
         floorPlans,
@@ -284,7 +293,7 @@ export const indexedDBStorage = {
       projectType: record.projectType,
       employeeId: record.employeeId ?? null,
       accessEmployeeIds: Array.isArray(record.accessEmployeeIds) ? record.accessEmployeeIds : normaliseAccessEmployeeIds(record.employeeId),
-      createdAt: parseStoredDate(record.createdAt),
+      createdAt: parseStoredDateSafe(record.createdAt),
       updatedAt: new Date(record.updatedAt),
       locations,
       floorPlans,
@@ -324,7 +333,7 @@ export const indexedDBStorage = {
         imageData,
         originalImageData,
         detailImages,
-        createdAt: parseStoredDate(record.createdAt),
+        createdAt: parseStoredDateSafe(record.createdAt),
       });
     }
     
@@ -349,7 +358,7 @@ export const indexedDBStorage = {
         imageData,
         originalImageData,
         caption: record.caption,
-        createdAt: parseStoredDate(record.createdAt),
+        createdAt: parseStoredDateSafe(record.createdAt),
       });
     }
     
@@ -571,7 +580,7 @@ export const indexedDBStorage = {
         imageData,
         markers: JSON.parse(record.markers),
         pageIndex: record.pageIndex,
-        createdAt: parseStoredDate(record.createdAt),
+        createdAt: parseStoredDateSafe(record.createdAt),
       });
     }
     
@@ -684,7 +693,7 @@ export const indexedDBStorage = {
         const project: Project = {
           id: p.id,
           projectNumber: p.projectNumber,
-          createdAt: parseStoredDate(p.createdAt),
+          createdAt: parseStoredDateSafe(p.createdAt),
           updatedAt: new Date(p.updatedAt),
           locations: p.locations.map((l: any) => ({
             id: l.id,
@@ -693,7 +702,7 @@ export const indexedDBStorage = {
             comment: l.comment,
             imageData: l.imageData,
             originalImageData: l.originalImageData,
-            createdAt: parseStoredDate(l.createdAt),
+            createdAt: parseStoredDateSafe(l.createdAt),
           })),
         };
         
