@@ -197,7 +197,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
 
   const { data: floorPlanRows } = await (supabase as any).from("floor_plans").select("id, name, storage_path, markers, page_index, created_at").eq("project_id", projectId).order("page_index");
   const floorPlans: FloorPlan[] = [];
-  for (const row of floorPlanRows || []) {
+  await Promise.all((floorPlanRows || []).map(async (row) => {
     const imageData = await pathToBase64(row.storage_path);
     floorPlans.push({
       id: row.id,
@@ -207,7 +207,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
       pageIndex: row.page_index,
       createdAt: new Date(row.created_at),
     });
-  }
+  }));
 
   const locations = (locationRows || []).map((row) => {
     const images = imageMap.get(row.id) || {};
