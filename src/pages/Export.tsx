@@ -537,6 +537,40 @@ function drawAreaMeasurementsCard(pdf: jsPDF, areaMeasurements: any[], startY: n
   return drawSectionCard(pdf, "Flächen", rows, startY);
 }
 
+
+function drawPrintFilesCard(pdf: jsPDF, printFiles: any[], startY: number) {
+  if (!printFiles || printFiles.length === 0) return startY;
+  const padding = 4;
+  const lineH = 7;
+  const boxH = padding * 2 + printFiles.length * lineH;
+
+  pdf.setFillColor(248, 250, 252);
+  pdf.roundedRect(MARGIN, startY, CONTENT_WIDTH, boxH, 2, 2, "F");
+  pdf.setDrawColor(226, 232, 240);
+  pdf.setLineWidth(0.3);
+  pdf.roundedRect(MARGIN, startY, CONTENT_WIDTH, boxH, 2, 2, "S");
+
+  pdf.setFontSize(9);
+  pdf.setFont("helvetica", "bold");
+  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
+  pdf.text("Druckdateien", MARGIN + padding, startY + 6);
+
+  let y = startY + 11;
+  pdf.setFontSize(9);
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(BLUE.r, BLUE.g, BLUE.b);
+
+  for (const file of printFiles) {
+    const url = supabase.storage.from("project-files").getPublicUrl(file.storage_path).data.publicUrl;
+    const label = `• ${file.file_name}`;
+    pdf.textWithLink(label, MARGIN + padding, y, { url });
+    y += lineH;
+  }
+
+  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
+  return startY + boxH + 4;
+}
+
 async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, printFiles, showPrintFiles, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue }: any) {
   drawPageHeader(pdf, project.projectNumber);
   drawPageFooter(pdf, dateStr, currentPage, totalPages);
@@ -588,7 +622,7 @@ async function drawLocationPage({ pdf, project, location, visibleFields, custome
 
   y = drawAreaMeasurementsCard(pdf, location.areaMeasurements || [], y);
   if (showPrintFiles && printFiles && printFiles.length > 0) {
-    y = drawSectionCard(pdf, "Druckdateien", printFiles.map((file: any) => ({ label: "Datei", value: file.file_name })), y);
+    y = drawPrintFilesCard(pdf, printFiles, y);
   }
   y = drawFeedbackCard(pdf, feedbacks, y);
 }

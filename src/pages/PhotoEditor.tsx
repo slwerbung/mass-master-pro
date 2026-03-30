@@ -327,7 +327,24 @@ const PhotoEditor = () => {
     fabricCanvas.renderAll();
 
     setTimeout(async () => {
-      const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 2 });
+      const bg: any = fabricCanvas.backgroundImage as any;
+      let exportOptions: any = { format: "png", quality: 1, multiplier: 2 };
+      if (bg && typeof bg.width === "number" && typeof bg.height === "number") {
+        const scaleX = typeof bg.scaleX === "number" ? bg.scaleX : 1;
+        const scaleY = typeof bg.scaleY === "number" ? bg.scaleY : 1;
+        const displayW = bg.width * scaleX;
+        const displayH = bg.height * scaleY;
+        const originLeft = (bg.left ?? fabricCanvas.getWidth() / 2) - displayW / 2;
+        const originTop = (bg.top ?? fabricCanvas.getHeight() / 2) - displayH / 2;
+        exportOptions = {
+          ...exportOptions,
+          left: originLeft,
+          top: originTop,
+          width: displayW,
+          height: displayH,
+        };
+      }
+      const dataUrl = fabricCanvas.toDataURL(exportOptions);
 
       // Extract area measurements from canvas objects
       const areaMeasurements: { index: number; widthMm: number; heightMm: number }[] = [];
