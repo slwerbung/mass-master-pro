@@ -57,18 +57,6 @@ const ProjectDetail = () => {
       try {
         const currentSession = getSession();
         const localProject = await indexedDBStorage.getProject(projectId, currentSession);
-        const remoteUpdatedAt = await getProjectRemoteTimestamp(projectId);
-
-        if (localProject && remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000) {
-          const hydratedProject = await hydrateProjectFromSupabase(projectId);
-          if (hydratedProject) {
-            setProject(hydratedProject);
-            setIsOnlineOnly(false);
-            setConflictNotice("Es wurde eine neuere Online-Version geladen.");
-            setIsLoading(false);
-            return;
-          }
-        }
 
         if (localProject) {
           if (currentSession?.role === "employee") {
@@ -85,6 +73,17 @@ const ProjectDetail = () => {
           }
           setProject(localProject);
           setIsLoading(false);
+
+          // Background remote check
+          getProjectRemoteTimestamp(projectId).then(async (remoteUpdatedAt) => {
+            if (remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000) {
+              const hydrated = await hydrateProjectFromSupabase(projectId);
+              if (hydrated) {
+                setProject(hydrated);
+                setConflictNotice("Es wurde eine neuere Online-Version geladen.");
+              }
+            }
+          }).catch(console.error);
           return;
         }
 
