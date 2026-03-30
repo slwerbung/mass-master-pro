@@ -186,7 +186,7 @@ const ProjectDetail = () => {
   const isPlanProject = project?.projectType === 'aufmass_mit_plan';
   const sortedLocations = useMemo(
     () => (project ? [...project.locations].sort((a, b) => naturalLocationSortDesc(a.locationNumber, b.locationNumber)) : []),
-    [project],
+    [project?.locations],
   );
 
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><div className="text-muted-foreground">Laden...</div></div>;
