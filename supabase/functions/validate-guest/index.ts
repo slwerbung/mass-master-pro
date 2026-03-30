@@ -7,6 +7,34 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// Simple in-memory rate limiting
+const rateLimits = new Map<string, { count: number; resetTime: number }>();
+
+function checkRateLimit(identifier: string, maxRequests: number, windowMs: number): boolean {
+  const now = Date.now();
+  const limit = rateLimits.get(identifier);
+
+  if (!limit || now > limit.resetTime) {
+    rateLimits.set(identifier, { count: 1, resetTime: now + windowMs });
+    return true;
+  }
+
+  if (limit.count >= maxRequests) {
+    return false;
+  }
+
+  limit.count++;
+  return true;
+}
+
+// Cleanup old entries periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of rateLimits) {
+    if (now > val.resetTime) rateLimits.delete(key);
+  }
+}, 60_000);
+
 async function getHmacKey(): Promise<CryptoKey> {
   const secret = Deno.env.get("GUEST_TOKEN_SECRET")!;
   return crypto.subtle.importKey(
@@ -42,6 +70,15 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Rate limit by IP
+    const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+    if (!checkRateLimit(clientIp, 10, 60_000)) {
+      return new Response(
+        JSON.stringify({ valid: false, error: "Too many requests" }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const { projectId, password } = await req.json();
 
     if (!projectId || typeof projectId !== "string") {
@@ -72,6 +109,15 @@ Deno.serve(async (req) => {
     const needsPassword = !!data.guest_password;
 
     if (needsPassword) {
+      // Stricter rate limit for password attempts (5 per minute per IP+project)
+      const passwordKey = `pwd:${clientIp}:${projectId}`;
+      if (!checkRateLimit(passwordKey, 5, 60_000)) {
+        return new Response(
+          JSON.stringify({ valid: false, error: "Too many password attempts" }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       if (!password) {
         return new Response(
           JSON.stringify({ valid: false, needsPassword: true, error: "Password required" }),
