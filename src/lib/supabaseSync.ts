@@ -175,9 +175,8 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
 
     const { data: detailRows, error: detailError } = await supabase.from("detail_images").select("id, location_id, caption, annotated_path, original_path, created_at").in("location_id", locationIds).order("created_at");
     if (detailError) throw detailError;
-    for (const row of detailRows || []) {
-      const annotated = await pathToBase64(row.annotated_path);
-      const original = await pathToBase64(row.original_path);
+    await Promise.all((detailRows || []).map(async (row) => {
+      const [annotated, original] = await Promise.all([pathToBase64(row.annotated_path), pathToBase64(row.original_path)]);
       const detailImage: DetailImage = {
         id: row.id,
         imageData: annotated || original || "",
@@ -188,7 +187,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
       const existing = detailImageMap.get(row.location_id) || [];
       existing.push(detailImage);
       detailImageMap.set(row.location_id, existing);
-    }
+    }));
   }
 
   const { data: assignmentRows } = await (supabase as any)
