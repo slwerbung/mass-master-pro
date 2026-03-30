@@ -1,44 +1,69 @@
 
 
-## 3 Fixes: Kamera-Streaming Desktop, Flächen-Platzierung, Labels parallel
+## Fix: Projektseiten laden sehr lange
 
-### 1. Desktop-Kamera: WebRTC-Streaming wiederherstellen
+### Ursache
 
-**`src/pages/Camera.tsx`** — Hybride Lösung:
+`hydrateProjectFromSupabase` lädt **jedes Bild einzeln und sequentiell** herunter: Standortbilder, Detailbilder und Grundrisse werden nacheinander per `pathToBase64` (fetch → blob → FileReader) verarbeitet. Bei einem Projekt mit z.B. 20 Standorten mit je 2 Bildern sind das 40+ sequentielle HTTP-Requests.
 
-- **Geräteerkennung**: `const isMobile = navigator.maxTouchPoints > 0`
-- **Desktop** (`!isMobile && mode !== "upload"`): WebRTC-Stream via `getUserMedia({ video: { facingMode: "environment" } })` in ein `<video>`-Element. Ein Auslöser-Button macht einen Canvas-Snapshot (`canvas.toDataURL("image/jpeg", 0.85)`), der dann als `capturedImage` gesetzt wird. Stream-Cleanup im `useEffect` return.
-- **Mobile**: Bestehendes `<input capture="environment">` bleibt unverändert.
-- **Upload-Modus**: Immer `<input>` ohne `capture` (wie bisher).
+Zusätzlich wird `hydrateProjectFromSupabase` auch aufgerufen, wenn ein lokales Projekt existiert aber eine neuere Remote-Version erkannt wird — d.h. auch bei normalem Laden wird alles neu heruntergeladen.
 
-### 2. Flächen-Platzierung: Offset-Bug fixen
+### Lösung
 
-**`src/lib/areaMeasurement.ts`** — Gruppe ohne `left/top` im Konstruktor erstellen, Position danach setzen:
+1. **Bilder parallel laden** (`src/lib/supabaseSync.ts`):
+   - Location-Images: `Promise.all` statt `for...of`-Loop
+   - Detail-Images: `Promise.all` statt `for...of`-Loop  
+   - Floor-Plans: `Promise.all` statt `for...of`-Loop
+
+2. **Lokales Projekt sofort anzeigen** (`src/pages/ProjectDetail.tsx`):
+   - Wenn ein lokales Projekt vorhanden ist, dieses sofort anzeigen (`setProject`, `setIsLoading(false)`)
+   - Remote-Timestamp-Check und Hydration im Hintergrund ausführen
+   - Nur wenn Remote neuer ist, Projekt im Hintergrund aktualisieren
+
+### Änderungen
+
+**`src/lib/supabaseSync.ts`** — 3 sequentielle Loops durch `Promise.all` ersetzen:
 
 ```typescript
-const group = new Group([rect, widthLabel, heightLabel, indexLabel], {
-  originX: "center",
-  originY: "center",
-  selectable: true,
-  subTargetCheck: false,
-  objectCaching: true,
-});
-group.set({ left: left + cx, top: top + cy });
-group.setCoords();
+// Vorher (sequentiell):
+for (const row of imageRows || []) {
+  const base64 = await pathToBase64(row.storage_path);
+  ...
+}
+
+// Nachher (parallel):
+await Promise.all((imageRows || []).map(async (row) => {
+  const base64 = await pathToBase64(row.storage_path);
+  ...
+}));
 ```
 
-### 3. Labels parallel zu den Kanten, nie über die Fläche hinaus
+Gleiche Änderung für Detail-Images und Floor-Plans.
 
-**`src/lib/areaMeasurement.ts`** — Beide Labels parallel zu ihrer jeweiligen gestrichelten Kante:
+**`src/pages/ProjectDetail.tsx`** — Lokales Projekt sofort anzeigen, Remote-Check in den Hintergrund verschieben:
 
-- **Breitenlabel** (horizontal, parallel zur oberen Kante): Bleibt `angle: 0`. Schriftgröße begrenzen, sodass Textbreite ≤ `w - 2*padding`. Formel: `fontSize = Math.min(calculatedSize, w * 0.8 / textLength)` als Sicherheitsgrenze.
-- **Höhenlabel** (vertikal, parallel zur linken Kante): `angle: -90`, `originX: "center"`, `originY: "center"`. Schriftgröße begrenzen, sodass Textbreite (nach Rotation = Texthöhe auf dem Canvas) ≤ `h - 2*padding`. Gleiche Begrenzungslogik.
-- Position innerhalb der Fläche: Breitenlabel leicht unter der oberen Kante, Höhenlabel leicht rechts der linken Kante — beides mit Inset.
+```typescript
+// Lokales Projekt sofort setzen
+if (localProject) {
+  setProject(localProject);
+  setIsLoading(false);
+  
+  // Remote-Check im Hintergrund
+  getProjectRemoteTimestamp(projectId).then(async (remoteUpdatedAt) => {
+    if (remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000) {
+      const hydrated = await hydrateProjectFromSupabase(projectId);
+      if (hydrated) {
+        setProject(hydrated);
+        setConflictNotice("Neuere Online-Version geladen.");
+      }
+    }
+  });
+  return;
+}
+```
 
-### Betroffene Dateien
+### Erwarteter Effekt
 
-| Datei | Änderung |
-|---|---|
-| `src/pages/Camera.tsx` | WebRTC-Streaming für Desktop, Input für Mobile |
-| `src/lib/areaMeasurement.ts` | Gruppen-Position nach Konstruktor setzen; Labels parallel mit Größenbegrenzung |
+- Lokale Projekte: **sofortige Anzeige** (kein Warten auf Remote-Check)
+- Online-Projekte: **3-5x schneller** durch paralleles Laden aller Bilder
 
