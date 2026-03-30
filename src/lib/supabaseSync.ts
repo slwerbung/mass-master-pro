@@ -163,15 +163,15 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
   if (locationIds.length > 0) {
     const { data: imageRows, error: imageError } = await supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds);
     if (imageError) throw imageError;
-    for (const row of imageRows || []) {
-      const entry = imageMap.get(row.location_id) || {};
+    await Promise.all((imageRows || []).map(async (row) => {
       const base64 = await pathToBase64(row.storage_path);
       if (base64) {
+        const entry = imageMap.get(row.location_id) || {};
         if (row.image_type === "annotated") entry.annotated = base64;
         if (row.image_type === "original") entry.original = base64;
+        imageMap.set(row.location_id, entry);
       }
-      imageMap.set(row.location_id, entry);
-    }
+    }));
 
     const { data: detailRows, error: detailError } = await supabase.from("detail_images").select("id, location_id, caption, annotated_path, original_path, created_at").in("location_id", locationIds).order("created_at");
     if (detailError) throw detailError;
