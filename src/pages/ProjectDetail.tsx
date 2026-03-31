@@ -26,6 +26,7 @@ import { naturalLocationSortDesc } from "@/lib/locationSorting";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
+import ProjectInfoFields from "@/components/ProjectInfoFields";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
@@ -35,13 +36,18 @@ const ProjectDetail = () => {
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<any[]>([]);
   const [customerUploads, setCustomerUploads] = useState<any[]>([]);
+  const [projectFieldConfigs, setProjectFieldConfigs] = useState<any[]>([]);
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const loadFieldConfigs = async () => {
-      const { data } = await supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order");
-      setFieldConfigs(mergeWithDefaultLocationFields((data || []) as any[]));
+      const [{ data: locationData }, { data: projectData }] = await Promise.all([
+        supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+        supabase.from("project_field_config").select("*").order("sort_order"),
+      ]);
+      setFieldConfigs(mergeWithDefaultLocationFields((locationData || []) as any[]));
+      setProjectFieldConfigs((projectData || []) as any[]);
     };
     loadFieldConfigs();
 
@@ -227,6 +233,8 @@ const ProjectDetail = () => {
             <Share2 className="h-4 w-4 mr-1" /><span className="hidden sm:inline">Gast-Link</span>
           </Button>
         </div>
+
+        <ProjectInfoFields project={project} fields={projectFieldConfigs} />
 
         {isPlanProject && (
           <Card className="border-primary/30 bg-primary/5 cursor-pointer hover:bg-primary/10 transition-colors" onClick={() => navigate(`/projects/${projectId}/floor-plans`)}>

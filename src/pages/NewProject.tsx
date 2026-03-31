@@ -8,6 +8,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ArrowLeft, Ruler, Map } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
+import { mergeWithDefaultProjectFields, type ProjectFieldConfig } from "@/lib/projectFields";
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
@@ -17,6 +18,9 @@ const NewProject = () => {
   const [projectType, setProjectType] = useState<'aufmass' | 'aufmass_mit_plan'>('aufmass');
   const [isCreating, setIsCreating] = useState(false);
   const [prefix, setPrefix] = useState("");
+  const [allProjectFieldConfigs, setAllProjectFieldConfigs] = useState<ProjectFieldConfig[]>([]);
+  const [projectFieldConfigs, setProjectFieldConfigs] = useState<ProjectFieldConfig[]>([]);
+  const [projectFieldValues, setProjectFieldValues] = useState<Record<string, any>>({});
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -31,19 +35,61 @@ const NewProject = () => {
     }).then(({ data }) => {
       if (data?.prefix !== undefined) setPrefix(data.prefix);
     }).catch(() => {});
+
+    supabase.from("project_field_config").select("*").order("sort_order").then(({ data }) => {
+      const merged = mergeWithDefaultProjectFields((data || []) as any[]).filter((f) => f.is_active && ((f.applies_to || "all") === "all" || (f.applies_to || "all") === projectType));
+      setAllProjectFieldConfigs(merged);
+      setAllProjectFieldConfigs(merged);
+      setProjectFieldConfigs(merged);
+      setProjectFieldValues((prev) => {
+        const next = { ...prev };
+        for (const field of merged) {
+          if (!(field.field_key in next)) next[field.field_key] = field.field_type === "checkbox" ? false : "";
+        }
+        return next;
+      });
+    }).catch(() => {
+      const merged = mergeWithDefaultProjectFields([]).filter((f) => (f.applies_to || "all") === "all" || (f.applies_to || "all") === projectType);
+      setProjectFieldConfigs(merged);
+      setProjectFieldValues((prev) => {
+        const next = { ...prev };
+        for (const field of merged) {
+          if (!(field.field_key in next)) next[field.field_key] = field.field_type === "checkbox" ? false : "";
+        }
+        return next;
+      });
+    });
   }, []);
+
+  useEffect(() => {
+    setProjectFieldConfigs(allProjectFieldConfigs.filter((f) => (f.applies_to || "all") === "all" || (f.applies_to || "all") === projectType));
+  }, [projectType, allProjectFieldConfigs]);
 
   const handleCreate = async () => {
     if (!projectNumber.trim()) { toast.error("Bitte eine Projektnummer / Projektname eingeben"); return; }
+    const activeFields = projectFieldConfigs.filter((f) => f.is_active && ((f.applies_to || "all") === "all" || (f.applies_to || "all") === projectType));
+    for (const field of activeFields) {
+      const value = projectFieldValues[field.field_key];
+      if (field.is_required && (value === undefined || value === null || value === "" || value === false)) {
+        toast.error(`Bitte ${field.field_label} ausfüllen`);
+        return;
+      }
+    }
     setIsCreating(true);
     try {
       const fullProjectNumber = prefix ? `${prefix}${projectNumber.trim()}` : projectNumber.trim();
       const session = getSession();
       const projectId = crypto.randomUUID();
       const employeeId = session?.role === "employee" ? session.id : null;
+      const customerName = typeof projectFieldValues.customerName === 'string' ? projectFieldValues.customerName.trim() : undefined;
+      const customProjectFields = Object.fromEntries(
+        Object.entries(projectFieldValues).filter(([k, v]) => k !== 'customerName' && v !== '' && v !== null && v !== undefined && v !== false)
+      );
       const newProject: Project = {
         id: projectId,
         projectNumber: fullProjectNumber,
+        customerName: customerName || undefined,
+        customFields: customProjectFields,
         projectType,
         employeeId,
         accessEmployeeIds: employeeId ? [employeeId] : [],
@@ -61,6 +107,8 @@ const NewProject = () => {
           id: projectId,
           project_number: fullProjectNumber,
           project_type: projectType,
+          customer_name: customerName || null,
+          custom_fields: customProjectFields && Object.keys(customProjectFields).length > 0 ? customProjectFields : null,
           user_id: employeeId || projectId,
           employee_id: employeeId,
           created_at: new Date().toISOString(),
@@ -122,6 +170,32 @@ const NewProject = () => {
                 </label>
               </RadioGroup>
             </div>
+            {projectFieldConfigs.length > 0 && (
+              <div className="space-y-4">
+                <Label>Projektinfos</Label>
+                {projectFieldConfigs.filter((field) => field.is_active && ((field.applies_to || "all") === "all" || (field.applies_to || "all") === projectType)).map((field) => (
+                  <div key={field.field_key} className="space-y-2">
+                    <Label htmlFor={field.field_key}>{field.field_label}{field.is_required ? " *" : ""}</Label>
+                    {field.field_type === "textarea" ? (
+                      <textarea id={field.field_key} className="w-full min-h-24 rounded-md border bg-background px-3 py-2 text-sm" value={projectFieldValues[field.field_key] ?? ""} onChange={(e) => setProjectFieldValues(prev => ({ ...prev, [field.field_key]: e.target.value }))} />
+                    ) : field.field_type === "dropdown" ? (
+                      <select id={field.field_key} className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={projectFieldValues[field.field_key] ?? ""} onChange={(e) => setProjectFieldValues(prev => ({ ...prev, [field.field_key]: e.target.value }))}>
+                        <option value="">Bitte wählen</option>
+                        {(() => { try { return JSON.parse(field.field_options || '[]'); } catch { return []; } })().map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
+                      </select>
+                    ) : field.field_type === "checkbox" ? (
+                      <label className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={!!projectFieldValues[field.field_key]} onChange={(e) => setProjectFieldValues(prev => ({ ...prev, [field.field_key]: e.target.checked }))} />
+                        <span>Ja</span>
+                      </label>
+                    ) : (
+                      <Input id={field.field_key} type="text" value={projectFieldValues[field.field_key] ?? ""} onChange={(e) => setProjectFieldValues(prev => ({ ...prev, [field.field_key]: e.target.value }))} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <Button size="lg" className="w-full" onClick={handleCreate} disabled={isCreating}>
               {isCreating ? "Erstellt..." : "Projekt erstellen"}
             </Button>

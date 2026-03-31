@@ -19,6 +19,8 @@ interface AufmassDBSchema extends DBSchema {
       id: string;
       projectNumber: string;
       projectType?: 'aufmass' | 'aufmass_mit_plan';
+      customerName?: string;
+      customFields?: string;
       employeeId?: string | null;
       accessEmployeeIds?: string[];
       createdAt: string;
@@ -266,6 +268,8 @@ export const indexedDBStorage = {
         id: record.id,
         projectNumber: record.projectNumber,
         projectType: record.projectType,
+        customerName: record.customerName,
+        customFields: record.customFields ? JSON.parse(record.customFields) : undefined,
         employeeId: record.employeeId ?? null,
         accessEmployeeIds: Array.isArray(record.accessEmployeeIds) ? record.accessEmployeeIds : normaliseAccessEmployeeIds(record.employeeId),
         createdAt: parseStoredDateSafe(record.createdAt),
@@ -291,6 +295,8 @@ export const indexedDBStorage = {
       id: record.id,
       projectNumber: record.projectNumber,
       projectType: record.projectType,
+      customerName: record.customerName,
+      customFields: record.customFields ? JSON.parse(record.customFields) : undefined,
       employeeId: record.employeeId ?? null,
       accessEmployeeIds: Array.isArray(record.accessEmployeeIds) ? record.accessEmployeeIds : normaliseAccessEmployeeIds(record.employeeId),
       createdAt: parseStoredDateSafe(record.createdAt),
@@ -468,6 +474,8 @@ export const indexedDBStorage = {
       id: project.id,
       projectNumber: project.projectNumber,
       projectType: project.projectType,
+      customerName: project.customerName,
+      customFields: project.customFields ? JSON.stringify(project.customFields) : undefined,
       employeeId: project.employeeId ?? null,
       accessEmployeeIds: normaliseAccessEmployeeIds(project.employeeId, project.accessEmployeeIds),
       createdAt: project.createdAt.toISOString(),

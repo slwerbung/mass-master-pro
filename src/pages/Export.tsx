@@ -32,6 +32,7 @@ import {
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { supabase } from "@/integrations/supabase/client";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
+import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/projectFields";
 
 type FieldConfig = {
   id?: string;
@@ -56,6 +57,7 @@ const Export = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>([]);
+  const [projectFieldConfigs, setProjectFieldConfigs] = useState<any[]>([]);
   const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackItem[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [downloadingPDF, setDownloadingPDF] = useState(false);
@@ -68,10 +70,14 @@ const Export = () => {
     const loadProject = async () => {
       if (!projectId) return;
       try {
-        const [fieldsRes, feedbackRes] = await Promise.all([
+        const [fieldsRes, projectFieldsRes, feedbackRes] = await Promise.all([
           supabase
             .from("location_field_config")
             .select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order")
+            .order("sort_order"),
+          supabase
+            .from("project_field_config")
+            .select("*")
             .order("sort_order"),
           supabase
             .from("location_feedback")
@@ -95,6 +101,7 @@ const Export = () => {
 
         setProject(loadedProject);
         setFieldConfigs((fieldsRes.data || []) as FieldConfig[]);
+        setProjectFieldConfigs((projectFieldsRes.data || []) as any[]);
 
         const nextFeedbackMap: Record<string, FeedbackItem[]> = {};
         (feedbackRes.data || []).forEach((entry: any) => {
@@ -514,7 +521,7 @@ function drawAreaMeasurementsCard(pdf: jsPDF, areaMeasurements: any[], startY: n
   return drawSectionCard(pdf, "Flächen", rows, startY);
 }
 
-async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue }: any) {
+async function drawLocationPage({ pdf, project, projectFieldConfigs, location, visibleFields, customerOnly, feedbacks, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue }: any) {
   drawPageHeader(pdf, project.projectNumber);
   drawPageFooter(pdf, dateStr, currentPage, totalPages);
   let y = MARGIN + 16;
@@ -561,6 +568,9 @@ async function drawLocationPage({ pdf, project, location, visibleFields, custome
       return { label: field.field_label, value: displayValue };
     })
     .filter(Boolean);
+  const projectRows = mergeWithDefaultProjectFields(projectFieldConfigs || []).filter((f:any)=>f.is_active).map((field:any)=>{ const value = getProjectFieldValue(project, field.field_key); if (value === undefined || value === null || value === "") return null; return { label: field.field_label, value: field.field_type === "checkbox" ? ((value === true || value === "true") ? "Ja" : "Nein") : String(value)}; }).filter(Boolean);
+  if (projectRows.length) y = drawSectionCard(pdf, "Projektinfos", projectRows as any, y);
+
   y = drawSectionCard(pdf, customerOnly ? "Sichtbare Standortinfos" : "Standortinfos", rows as any, y);
 
   y = drawAreaMeasurementsCard(pdf, location.areaMeasurements || [], y);
