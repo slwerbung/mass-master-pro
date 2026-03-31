@@ -56,9 +56,11 @@ interface LocationCardProps {
   fieldConfigs?: any[];
   showPrintFiles?: boolean;
   showDetailImages?: boolean;
+  project?: any;
+  projectFieldConfigs?: any[];
 }
 
-const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fieldConfigs = [], showPrintFiles = true, showDetailImages = true }: LocationCardProps) => {
+const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fieldConfigs = [], showPrintFiles = true, showDetailImages = true, project, projectFieldConfigs = [] }: LocationCardProps) => {
   const navigate = useNavigate();
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -218,6 +220,8 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
                 customFields: location.customFields,
               }}
               fields={fieldConfigs}
+              project={project}
+              projectFields={projectFieldConfigs}
             />
           </div>
           <div className="flex gap-1">

@@ -22,12 +22,14 @@ import {
 import LocationCard from "@/components/LocationCard";
 import { supabase } from "@/integrations/supabase/client";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+import { mergeWithDefaultProjectFields } from "@/lib/projectFields";
 import { naturalLocationSortDesc } from "@/lib/locationSorting";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 import { readImageFileForEditor } from "@/lib/imageFile";
+import ProjectInfoFields from "@/components/ProjectInfoFields";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
@@ -36,6 +38,7 @@ const ProjectDetail = () => {
   const [isOnlineOnly, setIsOnlineOnly] = useState(false);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<any[]>([]);
+  const [projectFieldConfigs, setProjectFieldConfigs] = useState<any[]>([]);
   const [customerUploads, setCustomerUploads] = useState<any[]>([]);
   const [viewSettings, setViewSettings] = useState(defaultViewSettings);
   const navigate = useNavigate();
@@ -43,8 +46,12 @@ const ProjectDetail = () => {
 
   useEffect(() => {
     const loadFieldConfigs = async () => {
-      const { data } = await supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order");
+      const [{ data }, { data: projectData }] = await Promise.all([
+        supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+        supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
+      ]);
       setFieldConfigs(mergeWithDefaultLocationFields((data || []) as any[]));
+      setProjectFieldConfigs(mergeWithDefaultProjectFields((projectData || []) as any[]));
     };
     loadFieldConfigs();
     fetchViewSettings().then(setViewSettings);
@@ -234,6 +241,14 @@ const ProjectDetail = () => {
           </Button>
         </div>
 
+
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <p className="text-sm font-medium">Projektinfos</p>
+            <ProjectInfoFields project={project} fields={projectFieldConfigs} />
+          </CardContent>
+        </Card>
+
         {isPlanProject && (
           <Card className="border-primary/30 bg-primary/5 cursor-pointer hover:bg-primary/10 transition-colors" onClick={() => navigate(`/projects/${projectId}/floor-plans`)}>
             <CardContent className="flex items-center gap-3 py-4">
@@ -265,7 +280,7 @@ const ProjectDetail = () => {
         {sortedLocations.length === 0 ? (
           <Card className="border-2 border-dashed"><CardContent className="flex flex-col items-center justify-center py-16 text-center"><MapPin className="h-16 w-16 text-muted-foreground mb-4" /><h3 className="text-xl font-semibold mb-2">Noch keine Standorte</h3><p className="text-muted-foreground mb-6 max-w-sm">{isPlanProject ? "Öffne die Grundrisse, um Standorte auf dem Plan zu platzieren" : "Nimm das erste Foto auf, um einen Standort zu erfassen"}</p></CardContent></Card>
         ) : (
-          <div className="grid gap-4">{sortedLocations.map((location) => <LocationCard key={location.id} location={location} projectId={projectId!} onDelete={handleDeleteLocation} onDeleteDetailImage={handleDeleteDetailImage} fieldConfigs={fieldConfigs} showPrintFiles={viewSettings.internalShowPrintFiles} showDetailImages={viewSettings.internalShowDetailImages} />)}</div>
+          <div className="grid gap-4">{sortedLocations.map((location) => <LocationCard key={location.id} location={location} projectId={projectId!} onDelete={handleDeleteLocation} onDeleteDetailImage={handleDeleteDetailImage} fieldConfigs={fieldConfigs} showPrintFiles={viewSettings.internalShowPrintFiles} showDetailImages={viewSettings.internalShowDetailImages} project={project} projectFieldConfigs={projectFieldConfigs} />)}</div>
         )}
       </div>
 

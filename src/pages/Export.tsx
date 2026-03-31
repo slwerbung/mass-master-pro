@@ -30,6 +30,7 @@ import {
   PAGE_WIDTH,
 } from "@/lib/pdfHelpers";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/projectFields";
 import { supabase } from "@/integrations/supabase/client";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
@@ -57,6 +58,7 @@ const Export = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>([]);
+  const [projectFieldConfigs, setProjectFieldConfigs] = useState<any[]>([]);
   const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackItem[]>>({});
   const [printFilesByLocation, setPrintFilesByLocation] = useState<Record<string, any[]>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -71,11 +73,12 @@ const Export = () => {
     const loadProject = async () => {
       if (!projectId) return;
       try {
-        const [fieldsRes, feedbackRes, loadedViewSettings] = await Promise.all([
+        const [fieldsRes, projectFieldsRes, feedbackRes, loadedViewSettings] = await Promise.all([
           supabase
             .from("location_field_config")
             .select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order")
             .order("sort_order"),
+          supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
           supabase
             .from("location_feedback")
             .select("id, location_id, message, author_name, status, created_at")
@@ -100,6 +103,7 @@ const Export = () => {
         setProject(loadedProject);
         setViewSettings(loadedViewSettings);
         setFieldConfigs((fieldsRes.data || []) as FieldConfig[]);
+        setProjectFieldConfigs((projectFieldsRes.data || []) as any[]);
 
         const nextFeedbackMap: Record<string, FeedbackItem[]> = {};
         (feedbackRes.data || []).forEach((entry: any) => {
@@ -318,6 +322,7 @@ const Export = () => {
           feedbacks: feedbackMap[location.id] || [],
           printFiles: printFilesByLocation[location.id] || [],
           showPrintFiles: customerOnly ? viewSettings.customerShowPrintFiles : viewSettings.internalShowPrintFiles,
+          projectFieldConfigs,
           dateStr,
           currentPage: locationPageMap[location.id],
           totalPages,
@@ -571,7 +576,7 @@ function drawPrintFilesCard(pdf: jsPDF, printFiles: any[], startY: number) {
   return startY + boxH + 4;
 }
 
-async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, printFiles, showPrintFiles, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue }: any) {
+async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, printFiles, showPrintFiles, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue, projectFieldConfigs }: any) {
   drawPageHeader(pdf, project.projectNumber);
   drawPageFooter(pdf, dateStr, currentPage, totalPages);
   let y = MARGIN + 16;
@@ -609,6 +614,14 @@ async function drawLocationPage({ pdf, project, location, visibleFields, custome
   const imageX = MARGIN + (CONTENT_WIDTH - imageW) / 2;
   drawImageWithBorder(pdf, location.imageData, imageX, y, imageW, imageH);
   y += imageH + 6;
+
+  const projectRows = mergeWithDefaultProjectFields(projectFieldConfigs || []).filter((field: any) => field.is_active).map((field: any) => {
+    const value = getProjectFieldValue(project, field.field_key);
+    if (value === undefined || value === null || value === "") return null;
+    const displayValue = field.field_type === "checkbox" ? ((value === true || value === "true") ? "Ja" : "Nein") : String(value);
+    return { label: field.field_label, value: displayValue };
+  }).filter(Boolean);
+  if (projectRows.length > 0) y = drawSectionCard(pdf, "Projektinfos", projectRows as any, y);
 
   const rows = visibleFields
     .map((field: any) => {
