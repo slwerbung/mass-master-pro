@@ -30,10 +30,8 @@ import {
   PAGE_WIDTH,
 } from "@/lib/pdfHelpers";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
-import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/projectFields";
 import { supabase } from "@/integrations/supabase/client";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
-import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 
 type FieldConfig = {
   id?: string;
@@ -58,32 +56,27 @@ const Export = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>([]);
-  const [projectFieldConfigs, setProjectFieldConfigs] = useState<any[]>([]);
   const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackItem[]>>({});
-  const [printFilesByLocation, setPrintFilesByLocation] = useState<Record<string, any[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [downloadingPDF, setDownloadingPDF] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadingImages, setDownloadingImages] = useState<Record<string, boolean>>({});
   const [pdfOptions, setPdfOptions] = useState<PDFExportOptions>(defaultPDFOptions);
-  const [viewSettings, setViewSettings] = useState(defaultViewSettings);
   const navigate = useNavigate();
 
   useEffect(() => {
     const loadProject = async () => {
       if (!projectId) return;
       try {
-        const [fieldsRes, projectFieldsRes, feedbackRes, loadedViewSettings] = await Promise.all([
+        const [fieldsRes, feedbackRes] = await Promise.all([
           supabase
             .from("location_field_config")
             .select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order")
             .order("sort_order"),
-          supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
           supabase
             .from("location_feedback")
             .select("id, location_id, message, author_name, status, created_at")
             .order("created_at", { ascending: true }),
-          fetchViewSettings(),
         ]);
 
         // PDF export should prefer the freshest fully-hydrated project data.
@@ -101,9 +94,7 @@ const Export = () => {
         }
 
         setProject(loadedProject);
-        setViewSettings(loadedViewSettings);
         setFieldConfigs((fieldsRes.data || []) as FieldConfig[]);
-        setProjectFieldConfigs((projectFieldsRes.data || []) as any[]);
 
         const nextFeedbackMap: Record<string, FeedbackItem[]> = {};
         (feedbackRes.data || []).forEach((entry: any) => {
@@ -111,22 +102,6 @@ const Export = () => {
           nextFeedbackMap[entry.location_id].push(entry as FeedbackItem);
         });
         setFeedbackMap(nextFeedbackMap);
-
-        const locationIds = loadedProject.locations.map((loc) => loc.id);
-        if (locationIds.length > 0) {
-          const { data: printFiles } = await supabase
-            .from("location_pdfs")
-            .select("id, location_id, storage_path, file_name")
-            .in("location_id", locationIds);
-          const map: Record<string, any[]> = {};
-          (printFiles || []).forEach((row: any) => {
-            if (!map[row.location_id]) map[row.location_id] = [];
-            map[row.location_id].push(row);
-          });
-          setPrintFilesByLocation(map);
-        } else {
-          setPrintFilesByLocation({});
-        }
       } catch (error) {
         console.error("Error loading project:", error);
         toast.error("Fehler beim Laden des Projekts");
@@ -259,7 +234,7 @@ const Export = () => {
       for (const fp of sortedFloorPlans) floorPlanPageMap[fp.id] = pageCounter++;
       for (const location of sortedLocations) {
         locationPageMap[location.id] = pageCounter++;
-        if (((customerOnly && viewSettings.customerShowDetailImages) || (!customerOnly && viewSettings.internalShowDetailImages)) && location.detailImages && location.detailImages.length > 0) {
+        if (!customerOnly && location.detailImages && location.detailImages.length > 0) {
           pageCounter++;
         }
       }
@@ -320,9 +295,6 @@ const Export = () => {
           visibleFields,
           customerOnly,
           feedbacks: feedbackMap[location.id] || [],
-          printFiles: printFilesByLocation[location.id] || [],
-          showPrintFiles: customerOnly ? viewSettings.customerShowPrintFiles : viewSettings.internalShowPrintFiles,
-          projectFieldConfigs,
           dateStr,
           currentPage: locationPageMap[location.id],
           totalPages,
@@ -331,7 +303,7 @@ const Export = () => {
           resolveFieldValue,
         });
 
-        if (((customerOnly && viewSettings.customerShowDetailImages) || (!customerOnly && viewSettings.internalShowDetailImages)) && location.detailImages && location.detailImages.length > 0) {
+        if (!customerOnly && location.detailImages && location.detailImages.length > 0) {
           pdf.addPage();
           await drawDetailImagesPage({
             pdf,
@@ -542,41 +514,7 @@ function drawAreaMeasurementsCard(pdf: jsPDF, areaMeasurements: any[], startY: n
   return drawSectionCard(pdf, "Flächen", rows, startY);
 }
 
-
-function drawPrintFilesCard(pdf: jsPDF, printFiles: any[], startY: number) {
-  if (!printFiles || printFiles.length === 0) return startY;
-  const padding = 4;
-  const lineH = 7;
-  const boxH = padding * 2 + printFiles.length * lineH;
-
-  pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(MARGIN, startY, CONTENT_WIDTH, boxH, 2, 2, "F");
-  pdf.setDrawColor(226, 232, 240);
-  pdf.setLineWidth(0.3);
-  pdf.roundedRect(MARGIN, startY, CONTENT_WIDTH, boxH, 2, 2, "S");
-
-  pdf.setFontSize(9);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  pdf.text("Druckdateien", MARGIN + padding, startY + 6);
-
-  let y = startY + 11;
-  pdf.setFontSize(9);
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(BLUE.r, BLUE.g, BLUE.b);
-
-  for (const file of printFiles) {
-    const url = supabase.storage.from("project-files").getPublicUrl(file.storage_path).data.publicUrl;
-    const label = `• ${file.file_name}`;
-    pdf.textWithLink(label, MARGIN + padding, y, { url });
-    y += lineH;
-  }
-
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  return startY + boxH + 4;
-}
-
-async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, printFiles, showPrintFiles, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue, projectFieldConfigs }: any) {
+async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue }: any) {
   drawPageHeader(pdf, project.projectNumber);
   drawPageFooter(pdf, dateStr, currentPage, totalPages);
   let y = MARGIN + 16;
@@ -615,14 +553,6 @@ async function drawLocationPage({ pdf, project, location, visibleFields, custome
   drawImageWithBorder(pdf, location.imageData, imageX, y, imageW, imageH);
   y += imageH + 6;
 
-  const projectRows = mergeWithDefaultProjectFields(projectFieldConfigs || []).filter((field: any) => field.is_active).map((field: any) => {
-    const value = getProjectFieldValue(project, field.field_key);
-    if (value === undefined || value === null || value === "") return null;
-    const displayValue = field.field_type === "checkbox" ? ((value === true || value === "true") ? "Ja" : "Nein") : String(value);
-    return { label: field.field_label, value: displayValue };
-  }).filter(Boolean);
-  if (projectRows.length > 0) y = drawSectionCard(pdf, "Projektinfos", projectRows as any, y);
-
   const rows = visibleFields
     .map((field: any) => {
       const value = resolveFieldValue(location, field.field_key);
@@ -634,9 +564,6 @@ async function drawLocationPage({ pdf, project, location, visibleFields, custome
   y = drawSectionCard(pdf, customerOnly ? "Sichtbare Standortinfos" : "Standortinfos", rows as any, y);
 
   y = drawAreaMeasurementsCard(pdf, location.areaMeasurements || [], y);
-  if (showPrintFiles && printFiles && printFiles.length > 0) {
-    y = drawPrintFilesCard(pdf, printFiles, y);
-  }
   y = drawFeedbackCard(pdf, feedbacks, y);
 }
 

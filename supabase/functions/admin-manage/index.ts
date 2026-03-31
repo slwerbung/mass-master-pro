@@ -48,41 +48,6 @@ Deno.serve(async (req) => {
         return json({ adminPasswordConfigured: !!hashConfig?.value });
       }
 
-      // ---- VIEW SETTINGS ----
-      case "get_view_settings": {
-        const { data, error } = await supabase
-          .from("app_config")
-          .select("key, value")
-          .in("key", [
-            "internal_show_print_files",
-            "customer_show_print_files",
-            "internal_show_detail_images",
-            "customer_show_detail_images",
-          ]);
-        if (error) return json({ error: error.message }, 500);
-        const lookup = new Map((data || []).map((row: any) => [row.key, row.value]));
-        return json({
-          settings: {
-            internalShowPrintFiles: lookup.get("internal_show_print_files") ?? "true",
-            customerShowPrintFiles: lookup.get("customer_show_print_files") ?? "true",
-            internalShowDetailImages: lookup.get("internal_show_detail_images") ?? "true",
-            customerShowDetailImages: lookup.get("customer_show_detail_images") ?? "false",
-          },
-        });
-      }
-      case "set_view_settings": {
-        const settings = params.settings || {};
-        const rows = [
-          { key: "internal_show_print_files", value: String(!!settings.internalShowPrintFiles) },
-          { key: "customer_show_print_files", value: String(!!settings.customerShowPrintFiles) },
-          { key: "internal_show_detail_images", value: String(!!settings.internalShowDetailImages) },
-          { key: "customer_show_detail_images", value: String(!!settings.customerShowDetailImages) },
-        ];
-        const { error } = await supabase.from("app_config").upsert(rows, { onConflict: "key" });
-        if (error) return json({ error: error.message }, 500);
-        return json({ success: true });
-      }
-
       // ---- ADMIN PASSWORD ----
       case "set_admin_password": {
         const password = String(params.password || "").trim();

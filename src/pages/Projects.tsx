@@ -50,12 +50,11 @@ const Projects = () => {
 
       const projectQuery = supabase.from("projects").select("id, project_number, created_at, employee_id").order("created_at", { ascending: false });
 
-      const [ownedResult, assignedResult, locationRows, localSummary] = await Promise.all([
+      const [ownedResult, assignedResult, localSummary] = await Promise.all([
         session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery,
         session?.role === "employee"
           ? (supabase as any).from('project_employee_assignments').select('project_id').eq('employee_id', session.id)
           : Promise.resolve({ data: [] }),
-        supabase.from("locations").select("project_id"),
         indexedDBStorage.getProjectsSummary(session),
       ]);
 
@@ -74,11 +73,6 @@ const Projects = () => {
         }
       }
 
-      const dbCountMap = new Map<string, number>();
-      for (const row of locationRows.data || []) {
-        dbCountMap.set(row.project_id, (dbCountMap.get(row.project_id) || 0) + 1);
-      }
-
       const localMap = new Map(localSummary.map(p => [p.id, p]));
 
       const merged: ProjectListItem[] = supabaseProjects.map(sp => {
@@ -87,7 +81,7 @@ const Projects = () => {
           id: sp.id,
           projectNumber: sp.project_number,
           createdAt: new Date(sp.created_at),
-          locationCount: local ? local.locationCount : (dbCountMap.get(sp.id) || 0),
+          locationCount: local ? local.locationCount : 0,
           isLocal: !!local,
         };
       });
@@ -109,6 +103,27 @@ const Projects = () => {
 
       merged.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       setProjects(merged);
+
+      const projectIdsNeedingCounts = merged.filter((p) => !p.isLocal).map((p) => p.id);
+      if (projectIdsNeedingCounts.length > 0) {
+        void supabase
+          .from("locations")
+          .select("project_id")
+          .in("project_id", projectIdsNeedingCounts)
+          .then(({ data }) => {
+            const dbCountMap = new Map<string, number>();
+            for (const row of data || []) {
+              dbCountMap.set(row.project_id, (dbCountMap.get(row.project_id) || 0) + 1);
+            }
+
+            setProjects((prev) => prev.map((project) => (
+              project.isLocal
+                ? project
+                : { ...project, locationCount: dbCountMap.get(project.id) || 0 }
+            )));
+          })
+          .catch(() => {});
+      }
 
       if (syncAfter && !syncDoneRef.current) {
         syncDoneRef.current = true;

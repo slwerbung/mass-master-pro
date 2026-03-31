@@ -1,13 +1,63 @@
 import { Group, Rect, IText, Line } from "fabric";
 
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
+function createParallelLabel(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  label: string,
+  color: string,
+  side: "above" | "left",
+) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const centerX = (x1 + x2) / 2;
+  const centerY = (y1 + y2) / 2;
 
-function estimateFontSizeForSpan(label: string, primarySpan: number, secondarySpan: number) {
-  const bySecondary = secondarySpan - 6;
-  const byPrimary = primarySpan / Math.max(label.length * 0.62, 1);
-  return clamp(Math.min(bySecondary, byPrimary), 10, 20);
+  const px = -dy / len;
+  const py = dx / len;
+
+  let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+  if (angle > 90) angle -= 180;
+  if (angle < -90) angle += 180;
+
+  const fontSize = Math.max(10, Math.min(22, len * 0.18));
+  const distance = Math.max(8, Math.min(18, len * 0.10));
+  const padding = Math.max(2, Math.round(fontSize * 0.18));
+
+  // For horizontal width guide, move label upward.
+  // For vertical height guide, move label left.
+  let offsetSign = 1;
+  if (side === "above") {
+    offsetSign = py < 0 ? 1 : -1;
+  } else if (side === "left") {
+    offsetSign = px < 0 ? 1 : -1;
+  }
+
+  let labelAngle = angle;
+  // Ensure vertical label reads bottom-to-top, i.e. "nach oben laufend".
+  if (side === "left") {
+    labelAngle = 90;
+  }
+
+  const labelObj = new IText(label, {
+    left: centerX + px * distance * offsetSign,
+    top: centerY + py * distance * offsetSign,
+    originX: "center",
+    originY: "center",
+    angle: labelAngle,
+    fill: color,
+    fontSize,
+    fontFamily: "Arial",
+    fontWeight: "bold",
+    backgroundColor: "rgba(255,255,255,0.9)",
+    padding,
+    selectable: false,
+    editable: false,
+  });
+
+  return labelObj;
 }
 
 export function createAreaMeasurementGroup(
@@ -25,24 +75,14 @@ export function createAreaMeasurementGroup(
   const w = Math.abs(x2 - x1);
   const h = Math.abs(y2 - y1);
 
-  const widthLabelText = `${widthMm} mm`;
-  const heightLabelText = `${heightMm} mm`;
-
-  // Keep every visual element inside the rectangle so the group bounding box
-  // matches the user's actual clicked area exactly without positional offsets.
-  const topBand = clamp(Math.min(h * 0.22, 28), 18, Math.max(18, h - 8));
-  const leftBand = clamp(Math.min(w * 0.22, 28), 18, Math.max(18, w - 8));
-
-  const widthFontSize = estimateFontSizeForSpan(widthLabelText, w - 10, topBand);
-  const heightFontSize = estimateFontSizeForSpan(heightLabelText, h - 10, leftBand);
+  const cx = w / 2;
+  const cy = h / 2;
 
   const rect = new Rect({
-    left: 0,
-    top: 0,
+    left: -cx,
+    top: -cy,
     width: w,
     height: h,
-    originX: "left",
-    originY: "top",
     fill: `${color}20`,
     stroke: color,
     strokeWidth: 2,
@@ -50,9 +90,26 @@ export function createAreaMeasurementGroup(
     selectable: false,
   });
 
-  // Two inner guide lines that stay fully INSIDE the measured area.
-  // Width label sits above the horizontal guide, height label sits left of the vertical guide.
-  const topGuide = new Line([0, topBand, w, topBand], {
+  const topGuideInset = Math.max(12, Math.min(26, h * 0.16));
+  const leftGuideInset = Math.max(12, Math.min(26, w * 0.16));
+  const guideEndPadding = Math.max(10, Math.min(20, Math.min(w, h) * 0.10));
+  const topGuideY = -cy + topGuideInset;
+  const leftGuideX = -cx + leftGuideInset;
+
+  const widthLineStartX = -cx + guideEndPadding;
+  const widthLineEndX = cx - guideEndPadding;
+  const widthLineY = topGuideY;
+
+  const heightLineX = leftGuideX;
+  const heightLineStartY = -cy + guideEndPadding;
+  const heightLineEndY = cy - guideEndPadding;
+
+  const topGuide = new Line([
+    widthLineStartX,
+    widthLineY,
+    widthLineEndX,
+    widthLineY,
+  ], {
     stroke: color,
     strokeWidth: 1.5,
     strokeDashArray: [6, 4],
@@ -60,7 +117,12 @@ export function createAreaMeasurementGroup(
     selectable: false,
   });
 
-  const leftGuide = new Line([leftBand, 0, leftBand, h], {
+  const leftGuide = new Line([
+    heightLineX,
+    heightLineStartY,
+    heightLineX,
+    heightLineEndY,
+  ], {
     stroke: color,
     strokeWidth: 1.5,
     strokeDashArray: [6, 4],
@@ -68,42 +130,30 @@ export function createAreaMeasurementGroup(
     selectable: false,
   });
 
-  const widthLabel = new IText(widthLabelText, {
-    left: w / 2,
-    top: Math.max(8, topBand / 2),
-    originX: "center",
-    originY: "center",
-    angle: 0,
-    fill: color,
-    fontSize: widthFontSize,
-    fontFamily: "Arial",
-    fontWeight: "bold",
-    backgroundColor: "rgba(255,255,255,0.9)",
-    padding: 2,
-    selectable: false,
-    editable: false,
-  });
+  const widthLabel = createParallelLabel(
+    widthLineStartX,
+    widthLineY,
+    widthLineEndX,
+    widthLineY,
+    `${widthMm} mm`,
+    color,
+    "above",
+  );
 
-  const heightLabel = new IText(heightLabelText, {
-    left: Math.max(8, leftBand / 2),
-    top: h / 2,
-    originX: "center",
-    originY: "center",
-    angle: 90,
-    fill: color,
-    fontSize: heightFontSize,
-    fontFamily: "Arial",
-    fontWeight: "bold",
-    backgroundColor: "rgba(255,255,255,0.9)",
-    padding: 2,
-    selectable: false,
-    editable: false,
-  });
+  const heightLabel = createParallelLabel(
+    heightLineX,
+    heightLineStartY,
+    heightLineX,
+    heightLineEndY,
+    `${heightMm} mm`,
+    color,
+    "left",
+  );
 
-  const idxFontSize = clamp(Math.min(w, h) * 0.12, 10, 16);
+  const idxFontSize = Math.max(10, Math.min(16, Math.min(w, h) * 0.12));
   const indexLabel = new IText(`F ${index}`, {
-    left: 4,
-    top: 4,
+    left: -cx + 4,
+    top: -cy + 4,
     originX: "left",
     originY: "top",
     fill: "#ffffff",
@@ -117,15 +167,14 @@ export function createAreaMeasurementGroup(
   });
 
   const group = new Group([rect, topGuide, leftGuide, widthLabel, heightLabel, indexLabel], {
-    left,
-    top,
-    originX: "left",
-    originY: "top",
+    originX: "center",
+    originY: "center",
     selectable: true,
     subTargetCheck: false,
     objectCaching: true,
   });
 
+  group.set({ left: left + cx, top: top + cy });
   group.setCoords();
 
   // @ts-ignore

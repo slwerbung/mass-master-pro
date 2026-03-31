@@ -9,7 +9,6 @@ import { createAreaMeasurementGroup } from "@/lib/areaMeasurement";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import MeasurementInputDialog from "@/components/MeasurementInputDialog";
 import AreaMeasurementDialog from "@/components/AreaMeasurementDialog";
-import { compressImage } from "@/lib/imageCompression";
 
 type Tool = "select" | "draw" | "text" | "measure" | "area";
 
@@ -328,86 +327,54 @@ const PhotoEditor = () => {
     fabricCanvas.renderAll();
 
     setTimeout(async () => {
-      try {
-        const bg: any = fabricCanvas.backgroundImage as any;
-        let exportOptions: any = { format: "jpeg", quality: 0.92, multiplier: 1 };
-        if (bg && typeof bg.width === "number" && typeof bg.height === "number") {
-          const bounds = typeof bg.getBoundingRect === "function"
-            ? bg.getBoundingRect()
-            : {
-                left: (bg.left ?? fabricCanvas.getWidth() / 2) - ((bg.width ?? 0) * (bg.scaleX ?? 1)) / 2,
-                top: (bg.top ?? fabricCanvas.getHeight() / 2) - ((bg.height ?? 0) * (bg.scaleY ?? 1)) / 2,
-                width: (bg.width ?? 0) * (bg.scaleX ?? 1),
-                height: (bg.height ?? 0) * (bg.scaleY ?? 1),
-              };
+      const dataUrl = fabricCanvas.toDataURL({ format: "png", quality: 1, multiplier: 2 });
 
-          const safeLeft = Math.max(0, bounds.left ?? 0);
-          const safeTop = Math.max(0, bounds.top ?? 0);
-          const safeWidth = Math.min(fabricCanvas.getWidth() - safeLeft, bounds.width ?? fabricCanvas.getWidth());
-          const safeHeight = Math.min(fabricCanvas.getHeight() - safeTop, bounds.height ?? fabricCanvas.getHeight());
-
-          exportOptions = {
-            ...exportOptions,
-            left: safeLeft,
-            top: safeTop,
-            width: Math.max(1, safeWidth),
-            height: Math.max(1, safeHeight),
-          };
-        }
-
-        let dataUrl = fabricCanvas.toDataURL(exportOptions);
-        dataUrl = await compressImage(dataUrl, 1600, 0.88);
-
-        // Extract area measurements from canvas objects
-        const areaMeasurements: { index: number; widthMm: number; heightMm: number }[] = [];
-        fabricCanvas.getObjects().forEach((obj: any) => {
-          if (obj.data?.type === "area") {
-            areaMeasurements.push({
-              index: obj.data.index,
-              widthMm: obj.data.widthMm,
-              heightMm: obj.data.heightMm,
-            });
-          }
-        });
-
-        if (isReEdit && projectId) {
-          try {
-            if (isDetailReEdit && detailId) {
-              await indexedDBStorage.updateDetailImage(detailId, dataUrl);
-              toast.success("Detailbild aktualisiert");
-            } else if (locationId) {
-              await indexedDBStorage.updateLocationImage(projectId, locationId, dataUrl);
-              // Merge new area measurements with existing
-              const project = await indexedDBStorage.getProject(projectId);
-              const existingLoc = project?.locations.find(l => l.id === locationId);
-              const existingMeasurements = existingLoc?.areaMeasurements || [];
-              const mergedMeasurements = [...existingMeasurements, ...areaMeasurements];
-              if (mergedMeasurements.length > 0) {
-                await indexedDBStorage.updateLocationMetadata(projectId, locationId, { areaMeasurements: mergedMeasurements });
-              }
-              toast.success("Bild aktualisiert");
-            }
-            navigate(`/projects/${projectId}`);
-          } catch (e) {
-            console.error("Error saving:", e);
-            toast.error("Fehler beim Speichern");
-          }
-        } else {
-          const detailParam = searchParams.get("detail");
-          const locationIdParam = searchParams.get("locationId");
-          const floorPlanParam = searchParams.get("floorPlan");
-          let query = "";
-          if (detailParam === "true" && locationIdParam) query = `?detail=true&locationId=${locationIdParam}`;
-          else if (floorPlanParam && locationIdParam) query = `?floorPlan=${floorPlanParam}&locationId=${locationIdParam}`;
-          navigate(`/projects/${projectId}/location-details${query}`, {
-            state: { imageData: dataUrl, originalImageData: imageDataState, areaMeasurements },
+      // Extract area measurements from canvas objects
+      const areaMeasurements: { index: number; widthMm: number; heightMm: number }[] = [];
+      fabricCanvas.getObjects().forEach((obj: any) => {
+        if (obj.data?.type === "area") {
+          areaMeasurements.push({
+            index: obj.data.index,
+            widthMm: obj.data.widthMm,
+            heightMm: obj.data.heightMm,
           });
         }
-      } catch (e) {
-        console.error("Error exporting edited image:", e);
-        toast.error("Fehler beim Verarbeiten des Bildes");
+      });
+
+      if (isReEdit && projectId) {
+        try {
+          if (isDetailReEdit && detailId) {
+            await indexedDBStorage.updateDetailImage(detailId, dataUrl);
+            toast.success("Detailbild aktualisiert");
+          } else if (locationId) {
+            await indexedDBStorage.updateLocationImage(projectId, locationId, dataUrl);
+            // Merge new area measurements with existing
+            const project = await indexedDBStorage.getProject(projectId);
+            const existingLoc = project?.locations.find(l => l.id === locationId);
+            const existingMeasurements = existingLoc?.areaMeasurements || [];
+            const mergedMeasurements = [...existingMeasurements, ...areaMeasurements];
+            if (mergedMeasurements.length > 0) {
+              await indexedDBStorage.updateLocationMetadata(projectId, locationId, { areaMeasurements: mergedMeasurements });
+            }
+            toast.success("Bild aktualisiert");
+          }
+          navigate(`/projects/${projectId}`);
+        } catch (e) {
+          console.error("Error saving:", e);
+          toast.error("Fehler beim Speichern");
+        }
+      } else {
+        const detailParam = searchParams.get("detail");
+        const locationIdParam = searchParams.get("locationId");
+        const floorPlanParam = searchParams.get("floorPlan");
+        let query = "";
+        if (detailParam === "true" && locationIdParam) query = `?detail=true&locationId=${locationIdParam}`;
+        else if (floorPlanParam && locationIdParam) query = `?floorPlan=${floorPlanParam}&locationId=${locationIdParam}`;
+        navigate(`/projects/${projectId}/location-details${query}`, {
+          state: { imageData: dataUrl, originalImageData: imageDataState, areaMeasurements },
+        });
       }
-    }, 50);
+    }, 200);
   };
 
   if (loading) return <div className="min-h-screen bg-background flex items-center justify-center"><div className="text-muted-foreground">Bild wird geladen...</div></div>;
