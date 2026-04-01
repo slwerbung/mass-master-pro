@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { X, Check, ImagePlus, Camera as CameraIcon } from "lucide-react";
 import { toast } from "sonner";
+import { readImageFileForEditor } from "@/lib/imageFile";
 
 const Camera = () => {
   const { projectId } = useParams();
@@ -19,7 +20,7 @@ const Camera = () => {
   const streamRef = useRef<MediaStream | null>(null);
 
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const [isDesktop, setIsDesktop] = useState(false);
+  const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
   const [streaming, setStreaming] = useState(false);
   const hasTriggered = useRef(false);
 
@@ -57,13 +58,12 @@ const Camera = () => {
 
   // Initialize: desktop → start webcam, mobile → trigger file input
   useEffect(() => {
-    if (hasTriggered.current) return;
+    if (hasTriggered.current || isDesktop === null) return;
     hasTriggered.current = true;
 
     if (mode === "upload") {
       setTimeout(() => fileInputRef.current?.click(), 100);
     } else if (isDesktop) {
-      // Wait a tick for video element to mount
       setTimeout(() => startStream(), 100);
     } else {
       setTimeout(() => fileInputRef.current?.click(), 100);
@@ -100,7 +100,7 @@ const Camera = () => {
     navigate(`/projects/${projectId}/editor${query}`, { state: { imageData } });
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) {
       goBack();
@@ -110,18 +110,17 @@ const Camera = () => {
       toast.error("Bitte ein Bild auswählen");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const imageData = reader.result as string;
+    try {
+      const imageData = await readImageFileForEditor(file);
       const shouldSkipConfirmation = !isDesktop && mode !== "upload";
       if (shouldSkipConfirmation) {
         navigateToEditor(imageData);
         return;
       }
       setCapturedImage(imageData);
-    };
-    reader.onerror = () => toast.error("Fehler beim Laden des Bildes");
-    reader.readAsDataURL(file);
+    } catch {
+      toast.error("Fehler beim Laden des Bildes");
+    }
   };
 
   const goBack = () => {

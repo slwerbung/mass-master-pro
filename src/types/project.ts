@@ -68,9 +68,9 @@ export interface FloorPlan {
 export interface Project {
   id: string;
   projectNumber: string;
-  customerName?: string;
-  customFields?: Record<string, string | boolean>;
   projectType?: 'aufmass' | 'aufmass_mit_plan';
+  customerName?: string;
+  customFields?: Record<string, string>;
   employeeId?: string | null;
   accessEmployeeIds?: string[];
   floorPlans?: FloorPlan[];

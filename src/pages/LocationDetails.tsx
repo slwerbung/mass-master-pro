@@ -156,8 +156,10 @@ const LocationDetails = () => {
         navigate(`/projects/${projectId}`);
       } else if (isDetailImage && stateImageData) {
         toast.loading("Bild wird komprimiert...");
-        const compressedImageData = await compressImage(stateImageData, 1280, 0.65);
-        const compressedOriginalImageData = stateOriginalImageData ? await compressImage(stateOriginalImageData, 1280, 0.65) : compressedImageData;
+        const [compressedImageData, compressedOriginalImageData] = await Promise.all([
+          compressImage(stateImageData, 1440, 0.72),
+          stateOriginalImageData ? compressImage(stateOriginalImageData, 1440, 0.72) : Promise.resolve(stateImageData),
+        ]);
         const targetLocationId = searchParams.get("locationId");
         if (!targetLocationId) { toast.error("Standort nicht gefunden"); return; }
         const detailImage = { id: crypto.randomUUID(), imageData: compressedImageData, originalImageData: compressedOriginalImageData, caption: caption.trim() || undefined, createdAt: new Date() };
@@ -171,8 +173,10 @@ const LocationDetails = () => {
         const project = await indexedDBStorage.getProject(projectId);
         if (!project) { toast.error("Projekt nicht gefunden"); setIsSaving(false); return; }
         toast.loading("Bild wird komprimiert...");
-        const compressedImageData = await compressImage(stateImageData, 1280, 0.65);
-        const compressedOriginalImageData = stateOriginalImageData ? await compressImage(stateOriginalImageData, 1280, 0.65) : compressedImageData;
+        const [compressedImageData, compressedOriginalImageData] = await Promise.all([
+          compressImage(stateImageData, 1440, 0.72),
+          stateOriginalImageData ? compressImage(stateOriginalImageData, 1440, 0.72) : Promise.resolve(stateImageData),
+        ]);
         const locationNumber = project.locations.length + 1;
         const fullLocationNumber = `${project.projectNumber}-${100 + locationNumber - 1}`;
         const newLocation: Location = {

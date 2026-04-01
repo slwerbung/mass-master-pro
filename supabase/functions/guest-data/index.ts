@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
 
     const { data: locations } = await supabase
       .from("locations")
-      .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields, created_at")
+      .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields")
       .eq("project_id", projectId)
       .order("created_at");
 

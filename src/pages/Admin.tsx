@@ -35,19 +35,6 @@ interface FieldConfig {
   is_required: boolean;
 }
 
-
-interface ProjectFieldConfig {
-  id: string;
-  field_key: string;
-  field_label: string;
-  field_type: "text" | "textarea" | "dropdown" | "checkbox";
-  field_options: string | null;
-  sort_order: number;
-  is_active: boolean;
-  applies_to: string;
-  is_required: boolean;
-}
-
 const APPLIES_TO_LABELS: Record<string, string> = {
   all: "Alle",
   aufmass: "Nur Aufmaß",
@@ -75,28 +62,41 @@ const Admin = () => {
   const [projectPrefix, setProjectPrefix] = useState("");
   const [savingPrefix, setSavingPrefix] = useState(false);
   const [fields, setFields] = useState<FieldConfig[]>([]);
+  const [projectFields, setProjectFields] = useState<FieldConfig[]>([]);
   const [newFieldLabel, setNewFieldLabel] = useState("");
+  const [newProjectFieldLabel, setNewProjectFieldLabel] = useState("");
   const [newFieldType, setNewFieldType] = useState<FieldConfig["field_type"]>("text");
+  const [newProjectFieldType, setNewProjectFieldType] = useState<FieldConfig["field_type"]>("text");
   const [newFieldOptions, setNewFieldOptions] = useState("");
+  const [newProjectFieldOptions, setNewProjectFieldOptions] = useState("");
   const [newFieldAppliesTo, setNewFieldAppliesTo] = useState("all");
+  const [newProjectFieldAppliesTo, setNewProjectFieldAppliesTo] = useState("all");
   const [newFieldRequired, setNewFieldRequired] = useState(false);
+  const [newProjectFieldRequired, setNewProjectFieldRequired] = useState(false);
   const [savingField, setSavingField] = useState(false);
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const [editingProjectFieldId, setEditingProjectFieldId] = useState<string | null>(null);
   const [editFieldLabel, setEditFieldLabel] = useState("");
+  const [editProjectFieldLabel, setEditProjectFieldLabel] = useState("");
   const [editFieldType, setEditFieldType] = useState<FieldConfig["field_type"]>("text");
+  const [editProjectFieldType, setEditProjectFieldType] = useState<FieldConfig["field_type"]>("text");
   const [editFieldOptions, setEditFieldOptions] = useState("");
+  const [editProjectFieldOptions, setEditProjectFieldOptions] = useState("");
   const [editFieldAppliesTo, setEditFieldAppliesTo] = useState("all");
+  const [editProjectFieldAppliesTo, setEditProjectFieldAppliesTo] = useState("all");
   const [editFieldRequired, setEditFieldRequired] = useState(false);
+  const [editProjectFieldRequired, setEditProjectFieldRequired] = useState(false);
   // Employee password dialog
   const [passwordDialogEmployee, setPasswordDialogEmployee] = useState<any | null>(null);
   const [dialogPassword, setDialogPassword] = useState("");
   const [savingEmpPassword, setSavingEmpPassword] = useState(false);
-  const [projectFields, setProjectFields] = useState<ProjectFieldConfig[]>([]);
-  const [newProjectFieldLabel, setNewProjectFieldLabel] = useState("");
-  const [newProjectFieldType, setNewProjectFieldType] = useState<ProjectFieldConfig["field_type"]>("text");
-  const [newProjectFieldOptions, setNewProjectFieldOptions] = useState("");
-  const [newProjectFieldAppliesTo, setNewProjectFieldAppliesTo] = useState("all");
-  const [newProjectFieldRequired, setNewProjectFieldRequired] = useState(false);
+  const [viewSettings, setViewSettings] = useState({
+    internalShowPrintFiles: true,
+    customerShowPrintFiles: true,
+    internalShowDetailImages: true,
+    customerShowDetailImages: false,
+  });
+  const [savingViewSettings, setSavingViewSettings] = useState(false);
 
   const adminToken = session?.authToken || "";
 
@@ -111,7 +111,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadPrefix(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadPrefix(); loadViewSettings(); }
   }, [adminToken]);
 
   useEffect(() => {
@@ -172,21 +172,17 @@ const Admin = () => {
     }
   };
 
+
   const loadProjectFields = async () => {
-    try {
-      const { data } = await supabase.from("project_field_config").select("*").order("sort_order");
-      setProjectFields((data || []) as any);
-    } catch (e) {
-      console.error(e);
-    }
+    const { data } = await supabase.from("project_field_config").select("*").order("sort_order");
+    setProjectFields((data || []) as FieldConfig[]);
   };
 
   const addProjectField = async () => {
     if (!newProjectFieldLabel.trim()) return;
-    const fieldKey = `project_${Date.now()}`;
     const maxOrder = projectFields.length > 0 ? Math.max(...projectFields.map(f => f.sort_order)) + 1 : 0;
-    const payload = {
-      field_key: fieldKey,
+    const { error } = await supabase.from("project_field_config").insert({
+      field_key: `custom_${Date.now()}`,
       field_label: newProjectFieldLabel.trim(),
       field_type: newProjectFieldType,
       field_options: newProjectFieldType === "dropdown" && newProjectFieldOptions.trim() ? JSON.stringify(newProjectFieldOptions.split(",").map(s => s.trim()).filter(Boolean)) : null,
@@ -194,24 +190,64 @@ const Admin = () => {
       is_active: true,
       applies_to: newProjectFieldAppliesTo,
       is_required: newProjectFieldRequired,
+    } as any);
+    if (error) { toast.error(error.message || "Fehler beim Erstellen"); return; }
+    setNewProjectFieldLabel(""); setNewProjectFieldOptions(""); setNewProjectFieldType("text"); setNewProjectFieldAppliesTo("all"); setNewProjectFieldRequired(false);
+    toast.success("Projektfeld erstellt"); loadProjectFields();
+  };
+
+  const startEditProjectField = (field: FieldConfig) => {
+    setEditingProjectFieldId(field.id);
+    setEditProjectFieldLabel(field.field_label);
+    setEditProjectFieldType(field.field_type);
+    setEditProjectFieldAppliesTo(field.applies_to || "all");
+    setEditProjectFieldRequired(field.is_required ?? false);
+    try { const parsed = field.field_options ? JSON.parse(field.field_options) : []; setEditProjectFieldOptions(Array.isArray(parsed) ? parsed.join(", ") : ""); } catch { setEditProjectFieldOptions(""); }
+  };
+
+  const cancelEditProjectField = () => {
+    setEditingProjectFieldId(null); setEditProjectFieldLabel(""); setEditProjectFieldType("text"); setEditProjectFieldOptions(""); setEditProjectFieldAppliesTo("all"); setEditProjectFieldRequired(false);
+  };
+
+  const saveProjectFieldEdit = async (field: FieldConfig) => {
+    const changes: any = {
+      field_label: editProjectFieldLabel.trim() || field.field_label,
+      field_type: editProjectFieldType,
+      field_options: editProjectFieldType === "dropdown" && editProjectFieldOptions.trim() ? JSON.stringify(editProjectFieldOptions.split(",").map(s => s.trim()).filter(Boolean)) : null,
+      applies_to: editProjectFieldAppliesTo,
+      is_required: editProjectFieldRequired,
     };
-    const { error } = await supabase.from("project_field_config").insert(payload as any);
-    if (error) { toast.error(error.message); return; }
-    setNewProjectFieldLabel(""); setNewProjectFieldType("text"); setNewProjectFieldOptions(""); setNewProjectFieldAppliesTo("all"); setNewProjectFieldRequired(false);
-    toast.success("Projektfeld erstellt");
+    const { error } = await supabase.from("project_field_config").update(changes).eq("id", field.id);
+    if (error) { toast.error(error.message || "Fehler beim Speichern"); return; }
+    cancelEditProjectField(); loadProjectFields(); toast.success("Projektfeld aktualisiert");
+  };
+
+  const toggleProjectField = async (field: FieldConfig) => {
+    await supabase.from("project_field_config").update({ is_active: !field.is_active } as any).eq("id", field.id);
     loadProjectFields();
   };
 
-  const toggleProjectField = async (field: ProjectFieldConfig) => {
-    const { error } = await supabase.from("project_field_config").update({ is_active: !field.is_active } as any).eq("id", field.id);
-    if (error) toast.error(error.message);
-    loadProjectFields();
+  const deleteProjectField = async (id: string) => {
+    await supabase.from("project_field_config").delete().eq("id", id);
+    loadProjectFields(); toast.success("Projektfeld gelöscht");
   };
 
-  const deleteProjectField = async (fieldId: string) => {
-    const { error } = await supabase.from("project_field_config").delete().eq("id", fieldId);
-    if (error) toast.error(error.message);
-    else { toast.success("Projektfeld gelöscht"); loadProjectFields(); }
+  const loadViewSettings = async () => {
+    try {
+      const data = await invoke("get_view_settings");
+      if (data?.settings) setViewSettings(data.settings);
+    } catch {}
+  };
+
+  const saveViewSettings = async () => {
+    setSavingViewSettings(true);
+    try {
+      await invoke("set_view_settings", { settings: viewSettings });
+      toast.success("Medien-Sichtbarkeit gespeichert");
+    } catch (e: any) {
+      toast.error(e.message || "Fehler beim Speichern");
+    }
+    setSavingViewSettings(false);
   };
 
   const addField = async () => {
@@ -445,6 +481,86 @@ const Admin = () => {
                   {employees.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Mitarbeiter</p>}
                 </div>
               </CardContent></Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Projektfelder konfigurieren</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Diese Felder werden beim Anlegen eines Projekts abgefragt und anschließend in Projektinfos / PDF angezeigt.</p>
+                <div className="space-y-2">
+                  {projectFields.map((field) => {
+                    const isEditing = editingProjectFieldId === field.id;
+                    return (
+                      <div key={field.id || field.field_key} className={`p-3 rounded-lg border space-y-3 ${field.is_active ? "bg-background" : "bg-muted opacity-60"}`}>
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1 min-w-0 space-y-2">
+                            {isEditing ? (
+                              <div className="space-y-2">
+                                <Input value={editProjectFieldLabel} onChange={(e) => setEditProjectFieldLabel(e.target.value)} placeholder="Feldbezeichnung" />
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <Select value={editProjectFieldType} onValueChange={(v) => setEditProjectFieldType(v as FieldConfig["field_type"])}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="text">Textfeld</SelectItem>
+                                      <SelectItem value="textarea">Textarea</SelectItem>
+                                      <SelectItem value="dropdown">Dropdown</SelectItem>
+                                      <SelectItem value="checkbox">Checkbox</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  {editProjectFieldType === "dropdown" ? <Input value={editProjectFieldOptions} onChange={(e) => setEditProjectFieldOptions(e.target.value)} placeholder="Optionen, kommagetrennt" /> : <div />}
+                                </div>
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <Select value={editProjectFieldAppliesTo} onValueChange={setEditProjectFieldAppliesTo}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="all">Alle</SelectItem>
+                                      <SelectItem value="aufmass">Nur Aufmaß</SelectItem>
+                                      <SelectItem value="aufmass_mit_plan">Nur Aufmaß mit Plan</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <div className="flex items-center gap-2 pt-2"><Checkbox checked={editProjectFieldRequired} onCheckedChange={(c) => setEditProjectFieldRequired(!!c)} /><Label className="text-sm">Pflichtfeld</Label></div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-sm">{field.field_label}</span>
+                                <Badge variant="outline" className="text-xs">{fieldTypeLabel(field.field_type)}</Badge>
+                                {field.is_required && <Badge variant="default" className="text-xs">Pflichtfeld</Badge>}
+                                {!field.is_active && <Badge variant="secondary" className="text-xs">Ausgeblendet</Badge>}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-1">
+                            {isEditing ? (
+                              <><Button variant="ghost" size="sm" onClick={() => saveProjectFieldEdit(field)}><Save className="h-4 w-4" /></Button><Button variant="ghost" size="sm" onClick={cancelEditProjectField}><X className="h-4 w-4" /></Button></>
+                            ) : (
+                              <><Button variant="ghost" size="sm" onClick={() => startEditProjectField(field)}><Pencil className="h-4 w-4" /></Button><Button variant="ghost" size="sm" onClick={() => field.id && deleteProjectField(field.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between rounded border px-3 py-2">
+                          <div><p className="text-sm font-medium">Beim Projekt anlegen sichtbar</p></div>
+                          <Switch checked={field.is_active} onCheckedChange={() => toggleProjectField(field)} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
+                  <p className="text-sm font-medium">Neues Projektfeld hinzufügen</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1"><Label className="text-xs">Bezeichnung</Label><Input value={newProjectFieldLabel} onChange={(e) => setNewProjectFieldLabel(e.target.value)} /></div>
+                    <div className="space-y-1"><Label className="text-xs">Feldtyp</Label><Select value={newProjectFieldType} onValueChange={(v) => setNewProjectFieldType(v as FieldConfig["field_type"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="text">Textfeld</SelectItem><SelectItem value="textarea">Textarea</SelectItem><SelectItem value="dropdown">Dropdown</SelectItem><SelectItem value="checkbox">Checkbox</SelectItem></SelectContent></Select></div>
+                  </div>
+                  {newProjectFieldType === "dropdown" && <div className="space-y-1"><Label className="text-xs">Optionen</Label><Input value={newProjectFieldOptions} onChange={(e) => setNewProjectFieldOptions(e.target.value)} /></div>}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1"><Label className="text-xs">Gilt für</Label><Select value={newProjectFieldAppliesTo} onValueChange={setNewProjectFieldAppliesTo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle</SelectItem><SelectItem value="aufmass">Nur Aufmaß</SelectItem><SelectItem value="aufmass_mit_plan">Nur Aufmaß mit Plan</SelectItem></SelectContent></Select></div>
+                    <div className="flex items-center gap-2 pt-5"><Checkbox checked={newProjectFieldRequired} onCheckedChange={(c) => setNewProjectFieldRequired(!!c)} /><Label className="text-sm">Pflichtfeld</Label></div>
+                  </div>
+                  <Button onClick={addProjectField} size="sm" disabled={!newProjectFieldLabel.trim()}><Plus className="h-4 w-4 mr-1" /> Projektfeld hinzufügen</Button>
+                </div>
+              </CardContent>
+            </Card>
+
           </TabsContent>
 
           <TabsContent value="customers" className="space-y-4 mt-4">
@@ -599,6 +715,38 @@ const Admin = () => {
             </Card>
 
             <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><FolderOpen className="h-5 w-5" /> Medien-Sichtbarkeit</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Hier legst du fest, ob Druckdateien und Detailbilder in der internen Ansicht, der Kundenansicht und im jeweiligen PDF-Export sichtbar sind.</p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-lg border p-3 space-y-3">
+                    <p className="text-sm font-medium">Interne Ansicht / Interner Export</p>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="internal-print-files">Druckdateien anzeigen</Label>
+                      <Switch id="internal-print-files" checked={viewSettings.internalShowPrintFiles} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, internalShowPrintFiles: checked }))} />
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="internal-detail-images">Detailbilder anzeigen</Label>
+                      <Switch id="internal-detail-images" checked={viewSettings.internalShowDetailImages} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, internalShowDetailImages: checked }))} />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border p-3 space-y-3">
+                    <p className="text-sm font-medium">Kundenansicht / Kunden-Export</p>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="customer-print-files">Druckdateien anzeigen</Label>
+                      <Switch id="customer-print-files" checked={viewSettings.customerShowPrintFiles} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, customerShowPrintFiles: checked }))} />
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="customer-detail-images">Detailbilder anzeigen</Label>
+                      <Switch id="customer-detail-images" checked={viewSettings.customerShowDetailImages} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, customerShowDetailImages: checked }))} />
+                    </div>
+                  </div>
+                </div>
+                <Button onClick={saveViewSettings} disabled={savingViewSettings}>{savingViewSettings ? "Speichert..." : "Medien-Sichtbarkeit speichern"}</Button>
+              </CardContent>
+            </Card>
+
+            <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Standortfelder konfigurieren</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm text-muted-foreground">Hier legst du fest, welche Standortfelder intern genutzt werden und welche davon der Kunde in seiner Ansicht sehen darf.</p>
@@ -732,33 +880,6 @@ const Admin = () => {
                     </div>
                   </div>
                   <Button onClick={addField} disabled={!newFieldLabel.trim() || savingField} size="sm"><Plus className="h-4 w-4 mr-1" /> Feld hinzufügen</Button>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader><CardTitle>Projektfelder</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2"><Label>Feldbezeichnung</Label><Input value={newProjectFieldLabel} onChange={(e)=>setNewProjectFieldLabel(e.target.value)} placeholder="z. B. Kunde" /></div>
-                  <div className="space-y-2"><Label>Feldtyp</Label><Select value={newProjectFieldType} onValueChange={(v)=>setNewProjectFieldType(v as any)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="text">Text</SelectItem><SelectItem value="textarea">Mehrzeilig</SelectItem><SelectItem value="dropdown">Dropdown</SelectItem><SelectItem value="checkbox">Checkbox</SelectItem></SelectContent></Select></div>
-                  <div className="space-y-2"><Label>Gilt für</Label><Select value={newProjectFieldAppliesTo} onValueChange={setNewProjectFieldAppliesTo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle</SelectItem><SelectItem value="aufmass">Nur Aufmaß</SelectItem><SelectItem value="aufmass_mit_plan">Nur Aufmaß mit Plan</SelectItem></SelectContent></Select></div>
-                  {newProjectFieldType === "dropdown" && <div className="space-y-2"><Label>Optionen</Label><Input value={newProjectFieldOptions} onChange={(e)=>setNewProjectFieldOptions(e.target.value)} placeholder="Option 1, Option 2" /></div>}
-                  <div className="flex items-center gap-2 pt-8"><Checkbox checked={newProjectFieldRequired} onCheckedChange={(v)=>setNewProjectFieldRequired(!!v)} /><Label>Pflichtfeld</Label></div>
-                </div>
-                <Button onClick={addProjectField}><Plus className="mr-2 h-4 w-4" /> Projektfeld hinzufügen</Button>
-                <div className="space-y-2">
-                  {projectFields.sort((a,b)=>a.sort_order-b.sort_order).map((field)=> (
-                    <div key={field.id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                      <div>
-                        <div className="font-medium">{field.field_label}</div>
-                        <div className="text-xs text-muted-foreground">{field.field_key} · {field.field_type} · {APPLIES_TO_LABELS[field.applies_to] || field.applies_to}{field.is_required ? ' · Pflichtfeld' : ''}</div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2"><Label className="text-xs">Aktiv</Label><Switch checked={field.is_active} onCheckedChange={()=>toggleProjectField(field)} /></div>
-                        <Button variant="ghost" size="icon" onClick={()=>deleteProjectField(field.id)}><Trash2 className="h-4 w-4" /></Button>
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </CardContent>
             </Card>

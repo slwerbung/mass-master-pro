@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
           // If no specific permissions, show all locations of the project (read-only)
           const { data: locations } = await supabase
             .from("locations")
-            .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields, created_at")
+            .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields")
             .eq("project_id", assignment.project_id)
             .order("created_at");
 
@@ -100,7 +100,7 @@ Deno.serve(async (req) => {
         const locationIds = permissions.map(p => p.location_id);
         const { data: locations } = await supabase
           .from("locations")
-          .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields, created_at")
+          .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields")
           .in("id", locationIds)
           .order("created_at");
 

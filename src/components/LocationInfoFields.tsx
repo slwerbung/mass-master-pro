@@ -1,4 +1,5 @@
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+import { getProjectFieldValue, mergeWithDefaultProjectFields } from "@/lib/projectFields";
 
 export interface LocationInfoFieldConfig {
   id?: string;
@@ -14,11 +15,14 @@ interface Props {
   location: any;
   fields: LocationInfoFieldConfig[];
   customerOnly?: boolean;
+  project?: any;
+  projectFields?: any[];
 }
 
-export default function LocationInfoFields({ location, fields, customerOnly = false }: Props) {
+export default function LocationInfoFields({ location, fields, customerOnly = false, project, projectFields = [] }: Props) {
   const visibleFields = mergeWithDefaultLocationFields(fields).filter((field) => field.is_active && (!customerOnly || field.customer_visible));
-  if (visibleFields.length === 0) return null;
+  const visibleProjectFields = mergeWithDefaultProjectFields(projectFields || []).filter((field) => field.is_active);
+  if (visibleFields.length === 0 && visibleProjectFields.length === 0) return null;
 
   const customFields = location?.custom_fields && typeof location.custom_fields === "object"
     ? location.custom_fields
@@ -41,22 +45,33 @@ export default function LocationInfoFields({ location, fields, customerOnly = fa
     }
   };
 
+  const projectRows = visibleProjectFields.map((field) => {
+    const value = getProjectFieldValue(project, field.field_key);
+    if (value === undefined || value === null || value === "") return null;
+    const displayValue = field.field_type === "checkbox" ? ((value === true || value === "true") ? "Ja" : "Nein") : String(value);
+    return { key: `project-${field.field_key}`, label: field.field_label, displayValue };
+  }).filter(Boolean) as {key:string;label:string;displayValue:string}[];
+
+  const locationRows = visibleFields.map((field) => {
+    const value = resolveValue(field.field_key);
+    if (value === undefined || value === null || value === "") return null;
+    const displayValue = field.field_type === "checkbox"
+      ? (value === true || value === "true" ? "Ja" : "Nein")
+      : String(value);
+    return { key: field.field_key, label: field.field_label, displayValue };
+  }).filter(Boolean) as {key:string;label:string;displayValue:string}[];
+
+  const rows = [...projectRows, ...locationRows];
+  if (rows.length === 0) return null;
+
   return (
     <div className="grid gap-2 sm:grid-cols-2">
-      {visibleFields.map((field) => {
-        const value = resolveValue(field.field_key);
-        if (value === undefined || value === null || value === "") return null;
-        const displayValue = field.field_type === "checkbox"
-          ? (value === true || value === "true" ? "Ja" : "Nein")
-          : String(value);
-
-        return (
-          <div key={field.field_key} className="space-y-1 rounded-lg border p-3 bg-muted/20">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{field.field_label}</p>
-            <p className="text-sm whitespace-pre-wrap">{displayValue}</p>
-          </div>
-        );
-      })}
+      {rows.map((row) => (
+        <div key={row.key} className="space-y-1 rounded-lg border p-3 bg-muted/20">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{row.label}</p>
+          <p className="text-sm whitespace-pre-wrap">{row.displayValue}</p>
+        </div>
+      ))}
     </div>
   );
 }
