@@ -224,7 +224,7 @@ function normaliseAccessEmployeeIds(employeeId?: string | null, assignedEmployee
 
 export const indexedDBStorage = {
   // Lightweight: returns only metadata + location count, NO images loaded
-  async getProjectsSummary(session?: Session | null): Promise<{ id: string; projectNumber: string; createdAt: Date; locationCount: number }[]> {
+  async getProjectsSummary(session?: Session | null): Promise<{ id: string; projectNumber: string; projectType?: 'aufmass' | 'aufmass_mit_plan'; customerName?: string; customFields?: Record<string, string>; createdAt: Date; locationCount: number }[]> {
     const db = await getDB();
     const records = await getAccessibleProjectRecords(db, session);
     const result = [];
@@ -233,6 +233,9 @@ export const indexedDBStorage = {
       result.push({
         id: r.id,
         projectNumber: r.projectNumber,
+        projectType: r.projectType,
+        customerName: (r as any).customerName,
+        customFields: (r as any).customFields ? JSON.parse((r as any).customFields) : undefined,
         createdAt: new Date(r.createdAt),
         locationCount: keys.length,
       });

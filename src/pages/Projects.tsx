@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,9 +22,19 @@ import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
 interface ProjectListItem {
   id: string;
   projectNumber: string;
+  projectType?: "aufmass" | "aufmass_mit_plan";
+  customerName?: string;
+  customFields?: Record<string, string>;
   createdAt: Date;
   locationCount: number;
   isLocal: boolean;
+}
+
+interface ProjectFieldConfig {
+  field_key: string;
+  field_label: string;
+  is_active: boolean;
+  sort_order: number;
 }
 
 const Projects = () => {
@@ -36,6 +46,7 @@ const Projects = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [projectFieldConfig, setProjectFieldConfig] = useState<ProjectFieldConfig[]>([]);
   const navigate = useNavigate();
   const session = getSession();
   const syncDoneRef = useRef(false);
@@ -44,11 +55,28 @@ const Projects = () => {
     loadProjects();
   }, []);
 
+  useEffect(() => {
+    loadProjectFieldConfig();
+  }, []);
+
+  const loadProjectFieldConfig = async () => {
+    try {
+      const { data } = await supabase
+        .from("project_field_config")
+        .select("field_key, field_label, is_active, sort_order")
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true });
+      setProjectFieldConfig((data || []) as ProjectFieldConfig[]);
+    } catch (error) {
+      console.error("Error loading project field config:", error);
+    }
+  };
+
   const loadProjects = async (syncAfter = true) => {
     try {
       await indexedDBStorage.migrateFromLocalStorage();
 
-      const projectQuery = supabase.from("projects").select("id, project_number, created_at, employee_id").order("created_at", { ascending: false });
+      const projectQuery = supabase.from("projects").select("id, project_number, project_type, customer_name, custom_fields, created_at, employee_id").order("created_at", { ascending: false });
 
       const [ownedResult, assignedResult, locationRows, localSummary] = await Promise.all([
         session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery,
@@ -65,7 +93,7 @@ const Projects = () => {
         if (assignedIds.length > 0) {
           const { data: assignedProjects } = await supabase
             .from('projects')
-            .select('id, project_number, created_at, employee_id')
+.select('id, project_number, project_type, customer_name, custom_fields, created_at, employee_id')
             .in('id', assignedIds)
             .order('created_at', { ascending: false });
           const mergedRemote = new Map<string, any>();
@@ -86,6 +114,9 @@ const Projects = () => {
         return {
           id: sp.id,
           projectNumber: sp.project_number,
+          projectType: sp.project_type,
+          customerName: sp.customer_name ?? local?.customerName,
+          customFields: (sp.custom_fields && typeof sp.custom_fields === "object" ? sp.custom_fields as Record<string, string> : undefined) ?? local?.customFields,
           createdAt: new Date(sp.created_at),
           locationCount: local ? local.locationCount : (dbCountMap.get(sp.id) || 0),
           isLocal: !!local,
@@ -99,6 +130,9 @@ const Projects = () => {
             merged.push({
               id: lp.id,
               projectNumber: lp.projectNumber,
+              projectType: lp.projectType,
+              customerName: lp.customerName,
+              customFields: lp.customFields,
               createdAt: lp.createdAt,
               locationCount: lp.locationCount,
               isLocal: true,
@@ -176,6 +210,26 @@ const Projects = () => {
   const exitSelectionMode = () => {
     setSelectionMode(false);
     setSelectedIds(new Set());
+  };
+
+
+  const visibleProjectFields = useMemo(() => {
+    const configs = [...projectFieldConfig].sort((a, b) => a.sort_order - b.sort_order);
+    return configs;
+  }, [projectFieldConfig]);
+
+  const getProjectInfoRows = (project: ProjectListItem) => {
+    return visibleProjectFields
+      .map((field) => {
+        const key = field.field_key;
+        let value: string | undefined;
+        if (key === "customerName") value = project.customerName;
+        else value = project.customFields?.[key];
+        value = typeof value === "string" ? value.trim() : value;
+        if (!value) return null;
+        return { key, label: field.field_label, value };
+      })
+      .filter(Boolean) as { key: string; label: string; value: string }[];
   };
 
   if (isLoading) {
@@ -309,10 +363,20 @@ const Projects = () => {
                     Erstellt am {formatDateTimeSafe(project.createdAt)}
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="p-4 pt-0">
+                <CardContent className="p-4 pt-0 space-y-2">
                   <p className="text-sm text-muted-foreground">
                     {project.locationCount} Standort{project.locationCount !== 1 ? "e" : ""}
                   </p>
+                  {getProjectInfoRows(project).length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      {getProjectInfoRows(project).map((row) => (
+                        <div key={row.key} className="text-xs">
+                          <span className="text-muted-foreground">{row.label}: </span>
+                          <span className="text-foreground break-words">{row.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}
