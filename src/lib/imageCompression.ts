@@ -3,40 +3,40 @@ export async function compressImage(
   maxWidth: number = 1920,
   quality: number = 0.8
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      let width = img.width;
-      let height = img.height;
+  const img = new Image();
+  img.decoding = "async";
+  const loaded = new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("Failed to load image"));
+  });
+  img.src = dataUrl;
+  await loaded;
 
-      // Calculate new dimensions while maintaining aspect ratio
-      if (width > maxWidth) {
-        height = (height * maxWidth) / width;
-        width = maxWidth;
-      }
+  let width = img.width;
+  let height = img.height;
+  if (width > maxWidth) {
+    height = Math.round((height * maxWidth) / width);
+    width = maxWidth;
+  }
 
-      canvas.width = width;
-      canvas.height = height;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) throw new Error("Could not get canvas context");
+  ctx.drawImage(img, 0, 0, width, height);
 
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("Could not get canvas context"));
-        return;
-      }
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((result) => {
+      if (result) resolve(result);
+      else reject(new Error("Failed to compress image"));
+    }, "image/jpeg", quality);
+  });
 
-      ctx.drawImage(img, 0, 0, width, height);
-
-      // Convert to compressed JPEG
-      const compressedDataUrl = canvas.toDataURL("image/jpeg", quality);
-      resolve(compressedDataUrl);
-    };
-
-    img.onerror = () => {
-      reject(new Error("Failed to load image"));
-    };
-
-    img.src = dataUrl;
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Failed to read compressed image"));
+    reader.readAsDataURL(blob);
   });
 }

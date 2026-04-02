@@ -12,7 +12,9 @@ import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+import { mergeWithDefaultProjectFields } from "@/lib/projectFields";
 import LocationInfoFields from "@/components/LocationInfoFields";
+import ProjectInfoFields from "@/components/ProjectInfoFields";
 import { naturalLocationSortDesc } from "@/lib/locationSorting";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 
@@ -62,6 +64,8 @@ const CustomerView = () => {
   const [images, setImages] = useState<any[]>([]);
   const [detailImagesByLocation, setDetailImagesByLocation] = useState<Record<string, any[]>>({});
   const [fields, setFields] = useState<FieldConfig[]>([]);
+  const [projectFields, setProjectFields] = useState<any[]>([]);
+  const [selectedProjectMeta, setSelectedProjectMeta] = useState<any>(null);
   const [feedbacks, setFeedbacks] = useState<Record<string, FeedbackItem[]>>({});
   const [draftFeedback, setDraftFeedback] = useState<Record<string, string>>({});
   const [editingFeedbackId, setEditingFeedbackId] = useState<Record<string, string | null>>({});
@@ -94,6 +98,7 @@ const CustomerView = () => {
   }, [assignments, directProjectId, selectedAssignment, guestToken]);
 
   const visibleFields = useMemo(() => mergeWithDefaultLocationFields(fields).filter((f) => f.is_active && f.customer_visible), [fields]);
+  const visibleProjectFields = useMemo(() => mergeWithDefaultProjectFields(projectFields).filter((f) => f.is_active), [projectFields]);
   const sortedLocations = useMemo(() => [...locations].sort((a, b) => naturalLocationSortDesc(a.location_number, b.location_number)), [locations]);
 
   const parseLegacyFeedback = (loc: any): FeedbackItem[] => {
@@ -169,14 +174,16 @@ const CustomerView = () => {
   const loadInitial = async () => {
     setLoading(true);
     try {
-      const [{ data: fieldData }, assignmentResult] = await Promise.all([
+      const [{ data: fieldData }, { data: projectFieldData }, assignmentResult] = await Promise.all([
         (supabase as any).from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+        (supabase as any).from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
         isRealCustomerId(session?.id)
           ? supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", session!.id)
           : Promise.resolve({ data: [], error: null } as any),
       ]);
 
       setFields(mergeWithDefaultLocationFields((fieldData || []) as FieldConfig[]));
+      setProjectFields(mergeWithDefaultProjectFields((projectFieldData || []) as any[]));
 
       if (assignmentResult?.error) throw assignmentResult.error;
       let loadedAssignments = assignmentResult?.data || [];
@@ -212,12 +219,14 @@ const CustomerView = () => {
     });
     setLoading(true);
     try {
-      const [{ data: fieldData }, response] = await Promise.all([
+      const [{ data: fieldData }, { data: projectFieldData }, response] = await Promise.all([
         (supabase as any).from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
+        (supabase as any).from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
         supabase.functions.invoke("guest-data", { body: { projectId, token: guestToken } }),
       ]);
 
       setFields(mergeWithDefaultLocationFields((fieldData || []) as FieldConfig[]));
+      setProjectFields(mergeWithDefaultProjectFields((projectFieldData || []) as any[]));
       const payload = response.data || {};
       if (response.error || payload?.error) throw response.error || new Error(payload.error || "guest-load-failed");
 
@@ -288,6 +297,8 @@ const CustomerView = () => {
     setLoading(true);
     loadCustomerUploads(assignment.project_id);
     try {
+      const { data: projectMeta } = await supabase.from("projects").select("id, project_number, customer_name, custom_fields").eq("id", assignment.project_id).maybeSingle();
+      setSelectedProjectMeta(projectMeta || null);
       const { data: locs, error } = await supabase
         .from("locations")
         .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields, created_at")
@@ -695,6 +706,16 @@ const CustomerView = () => {
               </Card>
             )}
 
+
+            {selectedProjectMeta && (
+              <Card>
+                <CardContent className="p-4 space-y-3">
+                  <p className="text-sm font-medium">Projektinfos</p>
+                  <ProjectInfoFields project={selectedProjectMeta} fields={visibleProjectFields} />
+                </CardContent>
+              </Card>
+            )}
+
             <div className="space-y-4">
               {sortedLocations.map((loc) => {
                 const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
@@ -710,7 +731,7 @@ const CustomerView = () => {
                             Standort {loc.location_number}
                             {loc.location_name && <span className="font-normal text-muted-foreground ml-2">· {loc.location_name}</span>}
                           </CardTitle>
-                          <p className="text-xs text-muted-foreground mt-1">Erstellt am {formatDateTimeSafe(loc.created_at)}</p>
+                          <p className="text-xs text-muted-foreground mt-1">Erstellt am {formatDateTimeSafe((loc as any).created_at ?? (loc as any).createdAt)}</p>
                         </div>
                         {!isLimitedGuestMode && (
                           <Button size="sm" variant={isApproved ? "outline" : "default"} onClick={() => toggleApproval(loc.id, !isApproved)}>
@@ -727,7 +748,7 @@ const CustomerView = () => {
                       )}
 
                       {visibleFields.length > 0 && (
-                        <LocationInfoFields location={loc} fields={visibleFields} customerOnly />
+                        <LocationInfoFields location={loc} fields={visibleFields} customerOnly project={selectedProjectMeta} projectFields={visibleProjectFields} />
                       )}
 
                       {viewSettings.customerShowPrintFiles && pdfEntries.length > 0 && (

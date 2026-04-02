@@ -146,7 +146,7 @@ export async function getProjectRemoteTimestamp(projectId: string): Promise<Date
 }
 
 export async function hydrateProjectFromSupabase(projectId: string): Promise<Project | null> {
-  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, project_type, employee_id, created_at, updated_at").eq("id", projectId).single();
+  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, project_type, employee_id, customer_name, custom_fields, created_at, updated_at").eq("id", projectId).single();
   if (projectError || !projectRow) return null;
 
   const { data: locationRows, error: locationError } = await supabase
@@ -237,6 +237,8 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     id: projectRow.id,
     projectNumber: projectRow.project_number,
     projectType: (projectRow as any).project_type === 'aufmass_mit_plan' ? 'aufmass_mit_plan' : 'aufmass',
+    customerName: (projectRow as any).customer_name || undefined,
+    customFields: (projectRow as any).custom_fields && typeof (projectRow as any).custom_fields === 'object' ? (projectRow as any).custom_fields : undefined,
     employeeId: (projectRow as any).employee_id || null,
     accessEmployeeIds: Array.from(new Set([((projectRow as any).employee_id || null), ...((assignmentRows || []).map((row: any) => row.employee_id))].filter(Boolean))),
     locations,
@@ -305,6 +307,8 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
     id: project.id,
     project_number: project.projectNumber,
     project_type: project.projectType || 'aufmass',
+    customer_name: (project as any).customerName || null,
+    custom_fields: (project as any).customFields || null,
     user_id: userId,
     employee_id: employeeId,
     created_at: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),

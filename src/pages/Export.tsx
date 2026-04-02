@@ -30,6 +30,7 @@ import {
   PAGE_WIDTH,
 } from "@/lib/pdfHelpers";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/projectFields";
 import { supabase } from "@/integrations/supabase/client";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
@@ -57,6 +58,7 @@ const Export = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>([]);
+  const [projectFieldConfigs, setProjectFieldConfigs] = useState<any[]>([]);
   const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackItem[]>>({});
   const [printFilesByLocation, setPrintFilesByLocation] = useState<Record<string, any[]>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -71,11 +73,12 @@ const Export = () => {
     const loadProject = async () => {
       if (!projectId) return;
       try {
-        const [fieldsRes, feedbackRes, loadedViewSettings] = await Promise.all([
+        const [fieldsRes, projectFieldsRes, feedbackRes, loadedViewSettings] = await Promise.all([
           supabase
             .from("location_field_config")
             .select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order")
             .order("sort_order"),
+          supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
           supabase
             .from("location_feedback")
             .select("id, location_id, message, author_name, status, created_at")
@@ -100,6 +103,7 @@ const Export = () => {
         setProject(loadedProject);
         setViewSettings(loadedViewSettings);
         setFieldConfigs((fieldsRes.data || []) as FieldConfig[]);
+        setProjectFieldConfigs((projectFieldsRes.data || []) as any[]);
 
         const nextFeedbackMap: Record<string, FeedbackItem[]> = {};
         (feedbackRes.data || []).forEach((entry: any) => {
@@ -216,6 +220,16 @@ const Export = () => {
           `${project.projectNumber}_${location.locationNumber}_original.png`,
           originalBlob
         );
+
+        for (const [index, detail] of (location.detailImages || []).entries()) {
+          const detailPrefix = `${project.projectNumber}_${location.locationNumber}_detail_${index + 1}`;
+          if (detail.imageData) {
+            zip.file(`${detailPrefix}_bemasst.png`, dataURItoBlob(detail.imageData));
+          }
+          if (detail.originalImageData) {
+            zip.file(`${detailPrefix}_original.png`, dataURItoBlob(detail.originalImageData));
+          }
+        }
       }
 
       const zipBlob = await zip.generateAsync({ type: "blob" });
@@ -318,6 +332,7 @@ const Export = () => {
           feedbacks: feedbackMap[location.id] || [],
           printFiles: printFilesByLocation[location.id] || [],
           showPrintFiles: customerOnly ? viewSettings.customerShowPrintFiles : viewSettings.internalShowPrintFiles,
+          projectFieldConfigs,
           dateStr,
           currentPage: locationPageMap[location.id],
           totalPages,
@@ -386,7 +401,7 @@ const Export = () => {
             <CardTitle className="flex items-center gap-3"><Archive className="h-5 w-5 text-primary" /> Alle Bilder als ZIP</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground mb-3">Alle Standorte (bemaßt + original) in einer ZIP-Datei</p>
+            <p className="text-sm text-muted-foreground mb-3">Alle Standortbilder und Detailbilder (bemaßt + original) in einer ZIP-Datei</p>
             <Button onClick={exportAsZip} disabled={downloadingZip} variant="secondary" className="w-full">
               {downloadingZip ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />} ZIP herunterladen
             </Button>
@@ -398,18 +413,49 @@ const Export = () => {
             <CardTitle className="flex items-center gap-3"><FileImage className="h-5 w-5 text-primary" /> Einzelne Bilder</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">Standorte einzeln herunterladen</p>
+            <p className="text-sm text-muted-foreground">Standortbilder und Detailbilder einzeln herunterladen</p>
             {sortedLocations.map((location) => (
-              <div key={location.id} className="border rounded-lg p-3 space-y-2">
+              <div key={location.id} className="border rounded-lg p-3 space-y-3">
                 <div className="font-medium text-sm">Standort {location.locationNumber}{location.locationName && <span className="text-muted-foreground font-normal ml-2">{location.locationName}</span>}</div>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" className="flex-1" disabled={downloadingImages[`${location.id}-annotated`]} onClick={() => handleDownloadImage(location.id, location.imageData, `${project.projectNumber}_${location.locationNumber}_bemasst.png`, 'annotated')}>
-                    {downloadingImages[`${location.id}-annotated`] ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FileImage className="h-3 w-3 mr-1" />} Bemaßt
+                    {downloadingImages[`${location.id}-annotated`] ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FileImage className="h-3 w-3 mr-1" />} Standort bemaßt
                   </Button>
                   <Button size="sm" variant="outline" className="flex-1" disabled={downloadingImages[`${location.id}-original`]} onClick={() => handleDownloadImage(location.id, location.originalImageData, `${project.projectNumber}_${location.locationNumber}_original.png`, 'original')}>
-                    {downloadingImages[`${location.id}-original`] ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FileImage className="h-3 w-3 mr-1" />} Original
+                    {downloadingImages[`${location.id}-original`] ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FileImage className="h-3 w-3 mr-1" />} Standort original
                   </Button>
                 </div>
+
+                {location.detailImages && location.detailImages.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">Detailbilder</div>
+                    {location.detailImages.map((detail, index) => (
+                      <div key={detail.id} className="rounded border p-2 space-y-2">
+                        <div className="text-xs">Detailbild {index + 1}{detail.caption ? <span className="text-muted-foreground ml-2">{detail.caption}</span> : null}</div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1"
+                            disabled={downloadingImages[`${detail.id}-annotated`]}
+                            onClick={() => handleDownloadImage(detail.id, detail.imageData, `${project.projectNumber}_${location.locationNumber}_detail_${index + 1}_bemasst.png`, 'annotated')}
+                          >
+                            {downloadingImages[`${detail.id}-annotated`] ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FileImage className="h-3 w-3 mr-1" />} Bemaßt
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1"
+                            disabled={downloadingImages[`${detail.id}-original`]}
+                            onClick={() => handleDownloadImage(detail.id, detail.originalImageData, `${project.projectNumber}_${location.locationNumber}_detail_${index + 1}_original.png`, 'original')}
+                          >
+                            {downloadingImages[`${detail.id}-original`] ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FileImage className="h-3 w-3 mr-1" />} Original
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </CardContent>
@@ -571,7 +617,7 @@ function drawPrintFilesCard(pdf: jsPDF, printFiles: any[], startY: number) {
   return startY + boxH + 4;
 }
 
-async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, printFiles, showPrintFiles, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue }: any) {
+async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, printFiles, showPrintFiles, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue, projectFieldConfigs }: any) {
   drawPageHeader(pdf, project.projectNumber);
   drawPageFooter(pdf, dateStr, currentPage, totalPages);
   let y = MARGIN + 16;
@@ -609,6 +655,14 @@ async function drawLocationPage({ pdf, project, location, visibleFields, custome
   const imageX = MARGIN + (CONTENT_WIDTH - imageW) / 2;
   drawImageWithBorder(pdf, location.imageData, imageX, y, imageW, imageH);
   y += imageH + 6;
+
+  const projectRows = mergeWithDefaultProjectFields(projectFieldConfigs || []).filter((field: any) => field.is_active).map((field: any) => {
+    const value = getProjectFieldValue(project, field.field_key);
+    if (value === undefined || value === null || value === "") return null;
+    const displayValue = field.field_type === "checkbox" ? ((value === true || value === "true") ? "Ja" : "Nein") : String(value);
+    return { label: field.field_label, value: displayValue };
+  }).filter(Boolean);
+  if (projectRows.length > 0) y = drawSectionCard(pdf, "Projektinfos", projectRows as any, y);
 
   const rows = visibleFields
     .map((field: any) => {
