@@ -3,14 +3,17 @@ import { indexedDBStorage } from "./indexedDBStorage";
 import { getSession } from "./session";
 import { Project, DetailImage, FloorPlan } from "@/types/project";
 import { finishSyncError, finishSyncSuccess, startSync } from "./syncStatus";
+import { compressImage } from "./imageCompression";
 
 // ─── Image hash cache ────────────────────────────────────────────────────────
-// Persists to localStorage so unchanged images are skipped across sessions.
+// Persists to localStorage. Skips re-upload of unchanged images across sessions.
+// Limited to MAX_HASH_ENTRIES to prevent unbounded localStorage growth.
 
-const HASH_CACHE_KEY = 'mmp_img_hashes';
-let _hashCache: Record<string, string> | null = null;
+const HASH_CACHE_KEY  = 'mmp_img_hashes';
+const MAX_HASH_ENTRIES = 500;
+let _hashCache: Record<string, { fp: string; ts: number }> | null = null;
 
-function getHashCache(): Record<string, string> {
+function getHashCache(): Record<string, { fp: string; ts: number }> {
   if (!_hashCache) {
     try { _hashCache = JSON.parse(localStorage.getItem(HASH_CACHE_KEY) || '{}'); }
     catch { _hashCache = {}; }
@@ -19,7 +22,14 @@ function getHashCache(): Record<string, string> {
 }
 
 function persistHashCache() {
-  try { localStorage.setItem(HASH_CACHE_KEY, JSON.stringify(_hashCache)); } catch {}
+  const cache = getHashCache();
+  // Prune oldest entries if over limit
+  const keys = Object.keys(cache);
+  if (keys.length > MAX_HASH_ENTRIES) {
+    const sorted = keys.sort((a, b) => (cache[a].ts || 0) - (cache[b].ts || 0));
+    sorted.slice(0, keys.length - MAX_HASH_ENTRIES).forEach(k => delete cache[k]);
+  }
+  try { localStorage.setItem(HASH_CACHE_KEY, JSON.stringify(cache)); } catch {}
 }
 
 /** Fast fingerprint: length + first 32 chars + last 16 chars. */
@@ -29,17 +39,54 @@ function imageFingerprint(data: string): string {
 }
 
 function isImageSynced(key: string, data: string): boolean {
-  return !!data && getHashCache()[key] === imageFingerprint(data);
+  const entry = getHashCache()[key];
+  return !!data && !!entry && entry.fp === imageFingerprint(data);
 }
 
 function markImageSynced(key: string, data: string) {
-  getHashCache()[key] = imageFingerprint(data);
+  getHashCache()[key] = { fp: imageFingerprint(data), ts: Date.now() };
   persistHashCache();
 }
 
 function invalidateImageCache(key: string) {
   delete getHashCache()[key];
   persistHashCache();
+}
+
+// ─── Signed URL cache ─────────────────────────────────────────────────────────
+// Signed URLs are valid for 1 hour; cache them for 50 min to avoid regenerating
+// on every hydrate call.
+
+const _signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+const SIGNED_URL_TTL_MS = 50 * 60 * 1000; // 50 minutes
+
+async function getSignedUrl(path: string): Promise<string | null> {
+  const cached = _signedUrlCache.get(path);
+  if (cached && Date.now() < cached.expiresAt) return cached.url;
+
+  const { data, error } = await supabase.storage
+    .from("project-files")
+    .createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) return null;
+
+  _signedUrlCache.set(path, { url: data.signedUrl, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
+  return data.signedUrl;
+}
+
+// ─── Sync debounce ────────────────────────────────────────────────────────────
+// Prevents rapid sequential changes from each triggering a full sync.
+// Call scheduleSyncProject(id) anywhere – it will wait 2.5s after the last call.
+
+const _debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const DEBOUNCE_MS = 2500;
+
+export function scheduleSyncProject(projectId: string): void {
+  const existing = _debounceTimers.get(projectId);
+  if (existing) clearTimeout(existing);
+  _debounceTimers.set(projectId, setTimeout(async () => {
+    _debounceTimers.delete(projectId);
+    await syncProjectToSupabase(projectId);
+  }, DEBOUNCE_MS));
 }
 
 // ─── Batched async helper ─────────────────────────────────────────────────────
@@ -67,7 +114,15 @@ function getFloorPlanPath(projectId: string, floorPlanId: string) {
 async function uploadImageToStorage(path: string, base64: string): Promise<string | null> {
   try {
     if (!base64 || !base64.includes(';base64,')) return null;
-    const parts = base64.split(';base64,');
+
+    // Compress before upload if image is large (safety net – pages should compress too)
+    let data = base64;
+    const sizeKb = Math.round(base64.length * 0.75 / 1024);
+    if (sizeKb > 400) {
+      try { data = await compressImage(base64, 1600, 0.82); } catch { /* keep original */ }
+    }
+
+    const parts = data.split(';base64,');
     const contentType = parts[0].split(':')[1] || 'image/jpeg';
     const raw = atob(parts[1]);
     const uInt8Array = new Uint8Array(raw.length);
@@ -75,6 +130,8 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
     const blob = new Blob([uInt8Array], { type: contentType });
     const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType, upsert: true });
     if (error) return null;
+    // Invalidate signed URL cache for this path since we just replaced the file
+    _signedUrlCache.delete(path);
     return path;
   } catch {
     return null;
@@ -84,6 +141,7 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
 async function removeStoragePaths(paths: (string | null | undefined)[]) {
   const uniquePaths = [...new Set(paths.filter(Boolean) as string[])];
   if (uniquePaths.length === 0) return;
+  uniquePaths.forEach(p => _signedUrlCache.delete(p));
   await supabase.storage.from('project-files').remove(uniquePaths);
 }
 
@@ -125,8 +183,8 @@ async function syncLocationImages(locationId: string, annotatedImage?: string, o
 // ─── Sync: detail images ──────────────────────────────────────────────────────
 
 async function syncDetailImage(detailImage: DetailImage, locationId: string): Promise<void> {
-  const annotatedKey = `detail_${detailImage.id}_annotated`;
-  const originalKey  = `detail_${detailImage.id}_original`;
+  const annotatedKey  = `detail_${detailImage.id}_annotated`;
+  const originalKey   = `detail_${detailImage.id}_original`;
   const annotatedData = detailImage.imageData;
   const originalData  = detailImage.originalImageData || detailImage.imageData;
 
@@ -159,7 +217,6 @@ async function syncDetailImage(detailImage: DetailImage, locationId: string): Pr
 async function syncDetailImages(locationId: string, detailImages?: DetailImage[]): Promise<void> {
   const current = detailImages || [];
   const currentIds = new Set(current.map((d) => d.id));
-  // Process all detail images in parallel (was sequential for...of)
   await Promise.all(current.map(d => syncDetailImage(d, locationId)));
   const { data: existingRows } = await supabase.from('detail_images').select('id, annotated_path, original_path').eq('location_id', locationId);
   const rowsToDelete = (existingRows || []).filter((row) => !currentIds.has(row.id));
@@ -185,7 +242,6 @@ async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<v
     markImageSynced(cacheKey, floorPlan.imageData);
   }
 
-  // Always upsert metadata (markers / name may have changed even if image didn't)
   await (supabase as any).from("floor_plans").upsert({
     id: floorPlan.id,
     project_id: projectId,
@@ -211,17 +267,13 @@ async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Prom
   }
 }
 
-// ─── Download: path → base64 (signed URL) ────────────────────────────────────
-// Uses signed URLs (1 hour) instead of public URLs.
-// To fully benefit: set the 'project-files' bucket to "private" in Supabase dashboard.
+// ─── Download: path → base64 ──────────────────────────────────────────────────
 
 async function pathToBase64(path: string): Promise<string | null> {
   try {
-    const { data: signedData, error: signErr } = await supabase.storage
-      .from("project-files")
-      .createSignedUrl(path, 3600);
-    if (signErr || !signedData?.signedUrl) return null;
-    const response = await fetch(signedData.signedUrl);
+    const signedUrl = await getSignedUrl(path);
+    if (!signedUrl) return null;
+    const response = await fetch(signedUrl);
     if (!response.ok) return null;
     const blob = await response.blob();
     return await new Promise<string>((resolve, reject) => {
@@ -268,7 +320,6 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
       .in("location_id", locationIds);
     if (imageError) throw imageError;
 
-    // Load in batches of 6 (was unbounded Promise.all)
     await loadInBatches(imageRows || [], async (row) => {
       const base64 = await pathToBase64(row.storage_path);
       if (base64) {
@@ -450,7 +501,6 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
 
   if (project.locations?.length) {
     await supabase.from('locations').upsert(buildLocationRows(project), { onConflict: 'id' });
-    // All location image syncs in parallel – hash cache skips unchanged images
     await Promise.all(project.locations.map(async (loc) => {
       await syncLocationImages(loc.id, loc.imageData, loc.originalImageData);
       await syncDetailImages(loc.id, loc.detailImages);
@@ -467,13 +517,21 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
 
 export async function syncAllToSupabase(): Promise<void> {
   startSync();
-  try {
-    const projectIds = await indexedDBStorage.getProjectIds(getSession());
-    for (const id of projectIds) await syncProjectInternal(id);
+  const projectIds = await indexedDBStorage.getProjectIds(getSession());
+  const errors: string[] = [];
+  // Each project syncs independently – one failure doesn't abort the others
+  for (const id of projectIds) {
+    try {
+      await syncProjectInternal(id);
+    } catch (e) {
+      errors.push(id);
+      console.error(`Sync failed for project ${id}:`, e);
+    }
+  }
+  if (errors.length > 0) {
+    finishSyncError(new Error(`${errors.length} Projekt(e) konnten nicht synchronisiert werden`));
+  } else {
     finishSyncSuccess();
-  } catch (e) {
-    finishSyncError(e);
-    throw e;
   }
 }
 
