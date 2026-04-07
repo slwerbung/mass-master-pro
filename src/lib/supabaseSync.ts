@@ -4,6 +4,54 @@ import { getSession } from "./session";
 import { Project, DetailImage, FloorPlan } from "@/types/project";
 import { finishSyncError, finishSyncSuccess, startSync } from "./syncStatus";
 
+// ─── Image hash cache ────────────────────────────────────────────────────────
+// Persists to localStorage so unchanged images are skipped across sessions.
+
+const HASH_CACHE_KEY = 'mmp_img_hashes';
+let _hashCache: Record<string, string> | null = null;
+
+function getHashCache(): Record<string, string> {
+  if (!_hashCache) {
+    try { _hashCache = JSON.parse(localStorage.getItem(HASH_CACHE_KEY) || '{}'); }
+    catch { _hashCache = {}; }
+  }
+  return _hashCache;
+}
+
+function persistHashCache() {
+  try { localStorage.setItem(HASH_CACHE_KEY, JSON.stringify(_hashCache)); } catch {}
+}
+
+/** Fast fingerprint: length + first 32 chars + last 16 chars. */
+function imageFingerprint(data: string): string {
+  if (!data) return '';
+  return `${data.length}|${data.slice(0, 32)}|${data.slice(-16)}`;
+}
+
+function isImageSynced(key: string, data: string): boolean {
+  return !!data && getHashCache()[key] === imageFingerprint(data);
+}
+
+function markImageSynced(key: string, data: string) {
+  getHashCache()[key] = imageFingerprint(data);
+  persistHashCache();
+}
+
+function invalidateImageCache(key: string) {
+  delete getHashCache()[key];
+  persistHashCache();
+}
+
+// ─── Batched async helper ─────────────────────────────────────────────────────
+
+async function loadInBatches<T>(items: T[], fn: (item: T) => Promise<void>, batchSize = 6): Promise<void> {
+  for (let i = 0; i < items.length; i += batchSize) {
+    await Promise.all(items.slice(i, i + batchSize).map(fn));
+  }
+}
+
+// ─── Path helpers ─────────────────────────────────────────────────────────────
+
 function getLocationImagePath(locationId: string, imageType: "annotated" | "original") {
   return `images/${locationId}/${imageType}`;
 }
@@ -13,6 +61,8 @@ function getDetailImagePath(locationId: string, detailImageId: string, imageType
 function getFloorPlanPath(projectId: string, floorPlanId: string) {
   return `floor-plans/${projectId}/${floorPlanId}`;
 }
+
+// ─── Storage helpers ──────────────────────────────────────────────────────────
 
 async function uploadImageToStorage(path: string, base64: string): Promise<string | null> {
   try {
@@ -31,48 +81,68 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
   }
 }
 
-async function uploadBlobToStorage(path: string, blob: Blob): Promise<string | null> {
-  try {
-    const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
-    if (error) return null;
-    return path;
-  } catch {
-    return null;
-  }
-}
-
 async function removeStoragePaths(paths: (string | null | undefined)[]) {
   const uniquePaths = [...new Set(paths.filter(Boolean) as string[])];
   if (uniquePaths.length === 0) return;
   await supabase.storage.from('project-files').remove(uniquePaths);
 }
 
+// ─── Sync: location images ────────────────────────────────────────────────────
+
 async function syncImageVariant(locationId: string, imageType: "annotated" | "original", imageData: string): Promise<void> {
   if (!imageData) return;
+  const cacheKey = `loc_${locationId}_${imageType}`;
+  if (isImageSynced(cacheKey, imageData)) return;
   const path = getLocationImagePath(locationId, imageType);
   const uploaded = await uploadImageToStorage(path, imageData);
   if (!uploaded) return;
-  await supabase.from("location_images").upsert({ location_id: locationId, image_type: imageType, storage_path: path }, { onConflict: "location_id,image_type" });
+  await supabase.from("location_images").upsert(
+    { location_id: locationId, image_type: imageType, storage_path: path },
+    { onConflict: "location_id,image_type" }
+  );
+  markImageSynced(cacheKey, imageData);
 }
 
 async function syncLocationImages(locationId: string, annotatedImage?: string, originalImage?: string): Promise<void> {
   const desiredTypes = new Set<string>();
-  if (annotatedImage) { desiredTypes.add('annotated'); await syncImageVariant(locationId, "annotated", annotatedImage); }
-  if (originalImage) { desiredTypes.add('original'); await syncImageVariant(locationId, "original", originalImage); }
+  if (annotatedImage) desiredTypes.add('annotated');
+  if (originalImage)  desiredTypes.add('original');
+
+  await Promise.all([
+    annotatedImage ? syncImageVariant(locationId, "annotated", annotatedImage) : Promise.resolve(),
+    originalImage  ? syncImageVariant(locationId, "original",  originalImage)  : Promise.resolve(),
+  ]);
+
   const { data: existingRows } = await supabase.from('location_images').select('image_type, storage_path').eq('location_id', locationId);
   const rowsToDelete = (existingRows || []).filter((row) => !desiredTypes.has(row.image_type));
   if (rowsToDelete.length) {
     await removeStoragePaths(rowsToDelete.map((row) => row.storage_path));
     await supabase.from('location_images').delete().eq('location_id', locationId).in('image_type', rowsToDelete.map((row) => row.image_type));
+    rowsToDelete.forEach(row => invalidateImageCache(`loc_${locationId}_${row.image_type}`));
   }
 }
 
+// ─── Sync: detail images ──────────────────────────────────────────────────────
+
 async function syncDetailImage(detailImage: DetailImage, locationId: string): Promise<void> {
+  const annotatedKey = `detail_${detailImage.id}_annotated`;
+  const originalKey  = `detail_${detailImage.id}_original`;
+  const annotatedData = detailImage.imageData;
+  const originalData  = detailImage.originalImageData || detailImage.imageData;
+
+  const annotatedAlreadySynced = isImageSynced(annotatedKey, annotatedData);
+  const originalAlreadySynced  = isImageSynced(originalKey,  originalData);
+
   const annotatedPath = getDetailImagePath(locationId, detailImage.id, 'annotated');
-  const originalPath = getDetailImagePath(locationId, detailImage.id, 'original');
-  const uploadedAnnotated = await uploadImageToStorage(annotatedPath, detailImage.imageData);
-  const uploadedOriginal = await uploadImageToStorage(originalPath, detailImage.originalImageData || detailImage.imageData);
+  const originalPath  = getDetailImagePath(locationId, detailImage.id, 'original');
+
+  const [uploadedAnnotated, uploadedOriginal] = await Promise.all([
+    annotatedAlreadySynced ? annotatedPath : uploadImageToStorage(annotatedPath, annotatedData),
+    originalAlreadySynced  ? originalPath  : uploadImageToStorage(originalPath,  originalData),
+  ]);
+
   if (!uploadedAnnotated || !uploadedOriginal) return;
+
   await supabase.from("detail_images").upsert({
     id: detailImage.id,
     location_id: locationId,
@@ -81,24 +151,41 @@ async function syncDetailImage(detailImage: DetailImage, locationId: string): Pr
     original_path: originalPath,
     created_at: detailImage.createdAt instanceof Date ? detailImage.createdAt.toISOString() : new Date().toISOString(),
   }, { onConflict: "id" });
+
+  if (!annotatedAlreadySynced) markImageSynced(annotatedKey, annotatedData);
+  if (!originalAlreadySynced)  markImageSynced(originalKey,  originalData);
 }
 
 async function syncDetailImages(locationId: string, detailImages?: DetailImage[]): Promise<void> {
   const current = detailImages || [];
   const currentIds = new Set(current.map((d) => d.id));
-  for (const detailImage of current) await syncDetailImage(detailImage, locationId);
+  // Process all detail images in parallel (was sequential for...of)
+  await Promise.all(current.map(d => syncDetailImage(d, locationId)));
   const { data: existingRows } = await supabase.from('detail_images').select('id, annotated_path, original_path').eq('location_id', locationId);
   const rowsToDelete = (existingRows || []).filter((row) => !currentIds.has(row.id));
   if (rowsToDelete.length) {
     await removeStoragePaths(rowsToDelete.flatMap((row) => [row.annotated_path, row.original_path]));
     await supabase.from('detail_images').delete().eq('location_id', locationId).in('id', rowsToDelete.map((row) => row.id));
+    rowsToDelete.forEach(row => {
+      invalidateImageCache(`detail_${row.id}_annotated`);
+      invalidateImageCache(`detail_${row.id}_original`);
+    });
   }
 }
 
+// ─── Sync: floor plans ────────────────────────────────────────────────────────
+
 async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<void> {
+  const cacheKey = `floor_${floorPlan.id}`;
   const path = getFloorPlanPath(projectId, floorPlan.id);
-  const uploaded = await uploadImageToStorage(path, floorPlan.imageData);
-  if (!uploaded) return;
+
+  if (!isImageSynced(cacheKey, floorPlan.imageData)) {
+    const uploaded = await uploadImageToStorage(path, floorPlan.imageData);
+    if (!uploaded) return;
+    markImageSynced(cacheKey, floorPlan.imageData);
+  }
+
+  // Always upsert metadata (markers / name may have changed even if image didn't)
   await (supabase as any).from("floor_plans").upsert({
     id: floorPlan.id,
     project_id: projectId,
@@ -113,20 +200,28 @@ async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<v
 async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Promise<void> {
   const current = floorPlans || [];
   const currentIds = new Set(current.map((fp) => fp.id));
-  for (const floorPlan of current) await syncFloorPlan(projectId, floorPlan);
+  await Promise.all(current.map(fp => syncFloorPlan(projectId, fp)));
   const { data: existingRows, error } = await (supabase as any).from('floor_plans').select('id, storage_path').eq('project_id', projectId);
   if (error) return;
-  const rowsToDelete = (existingRows || []).filter((row) => !currentIds.has(row.id));
+  const rowsToDelete = (existingRows || []).filter((row: any) => !currentIds.has(row.id));
   if (rowsToDelete.length) {
-    await removeStoragePaths(rowsToDelete.map((row) => row.storage_path));
+    await removeStoragePaths(rowsToDelete.map((row: any) => row.storage_path));
     await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).in('id', rowsToDelete.map((row: any) => row.id));
+    rowsToDelete.forEach((row: any) => invalidateImageCache(`floor_${row.id}`));
   }
 }
 
+// ─── Download: path → base64 (signed URL) ────────────────────────────────────
+// Uses signed URLs (1 hour) instead of public URLs.
+// To fully benefit: set the 'project-files' bucket to "private" in Supabase dashboard.
+
 async function pathToBase64(path: string): Promise<string | null> {
   try {
-    const { data } = supabase.storage.from("project-files").getPublicUrl(path);
-    const response = await fetch(data.publicUrl);
+    const { data: signedData, error: signErr } = await supabase.storage
+      .from("project-files")
+      .createSignedUrl(path, 3600);
+    if (signErr || !signedData?.signedUrl) return null;
+    const response = await fetch(signedData.signedUrl);
     if (!response.ok) return null;
     const blob = await response.blob();
     return await new Promise<string>((resolve, reject) => {
@@ -140,13 +235,19 @@ async function pathToBase64(path: string): Promise<string | null> {
   }
 }
 
+// ─── Hydrate project from Supabase ───────────────────────────────────────────
+
 export async function getProjectRemoteTimestamp(projectId: string): Promise<Date | null> {
   const { data } = await supabase.from('projects').select('updated_at').eq('id', projectId).maybeSingle();
   return data?.updated_at ? new Date(data.updated_at) : null;
 }
 
 export async function hydrateProjectFromSupabase(projectId: string): Promise<Project | null> {
-  const { data: projectRow, error: projectError } = await supabase.from("projects").select("id, project_number, project_type, employee_id, customer_name, custom_fields, created_at, updated_at").eq("id", projectId).single();
+  const { data: projectRow, error: projectError } = await supabase
+    .from("projects")
+    .select("id, project_number, project_type, employee_id, customer_name, custom_fields, created_at, updated_at")
+    .eq("id", projectId)
+    .single();
   if (projectError || !projectRow) return null;
 
   const { data: locationRows, error: locationError } = await supabase
@@ -161,22 +262,35 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
   const detailImageMap = new Map<string, DetailImage[]>();
 
   if (locationIds.length > 0) {
-    const { data: imageRows, error: imageError } = await supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds);
+    const { data: imageRows, error: imageError } = await supabase
+      .from("location_images")
+      .select("location_id, image_type, storage_path")
+      .in("location_id", locationIds);
     if (imageError) throw imageError;
-    await Promise.all((imageRows || []).map(async (row) => {
+
+    // Load in batches of 6 (was unbounded Promise.all)
+    await loadInBatches(imageRows || [], async (row) => {
       const base64 = await pathToBase64(row.storage_path);
       if (base64) {
         const entry = imageMap.get(row.location_id) || {};
         if (row.image_type === "annotated") entry.annotated = base64;
-        if (row.image_type === "original") entry.original = base64;
+        if (row.image_type === "original")  entry.original  = base64;
         imageMap.set(row.location_id, entry);
       }
-    }));
+    });
 
-    const { data: detailRows, error: detailError } = await supabase.from("detail_images").select("id, location_id, caption, annotated_path, original_path, created_at").in("location_id", locationIds).order("created_at");
+    const { data: detailRows, error: detailError } = await supabase
+      .from("detail_images")
+      .select("id, location_id, caption, annotated_path, original_path, created_at")
+      .in("location_id", locationIds)
+      .order("created_at");
     if (detailError) throw detailError;
-    await Promise.all((detailRows || []).map(async (row) => {
-      const [annotated, original] = await Promise.all([pathToBase64(row.annotated_path), pathToBase64(row.original_path)]);
+
+    await loadInBatches(detailRows || [], async (row) => {
+      const [annotated, original] = await Promise.all([
+        pathToBase64(row.annotated_path),
+        pathToBase64(row.original_path),
+      ]);
       const detailImage: DetailImage = {
         id: row.id,
         imageData: annotated || original || "",
@@ -187,7 +301,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
       const existing = detailImageMap.get(row.location_id) || [];
       existing.push(detailImage);
       detailImageMap.set(row.location_id, existing);
-    }));
+    });
   }
 
   const { data: assignmentRows } = await (supabase as any)
@@ -195,9 +309,14 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     .select('employee_id')
     .eq('project_id', projectId);
 
-  const { data: floorPlanRows } = await (supabase as any).from("floor_plans").select("id, name, storage_path, markers, page_index, created_at").eq("project_id", projectId).order("page_index");
+  const { data: floorPlanRows } = await (supabase as any)
+    .from("floor_plans")
+    .select("id, name, storage_path, markers, page_index, created_at")
+    .eq("project_id", projectId)
+    .order("page_index");
+
   const floorPlans: FloorPlan[] = [];
-  await Promise.all((floorPlanRows || []).map(async (row) => {
+  await loadInBatches(floorPlanRows || [], async (row: any) => {
     const imageData = await pathToBase64(row.storage_path);
     floorPlans.push({
       id: row.id,
@@ -207,7 +326,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
       pageIndex: row.page_index,
       createdAt: new Date(row.created_at),
     });
-  }));
+  });
 
   const locations = (locationRows || []).map((row) => {
     const images = imageMap.get(row.id) || {};
@@ -240,7 +359,10 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     customerName: (projectRow as any).customer_name || undefined,
     customFields: (projectRow as any).custom_fields && typeof (projectRow as any).custom_fields === 'object' ? (projectRow as any).custom_fields : undefined,
     employeeId: (projectRow as any).employee_id || null,
-    accessEmployeeIds: Array.from(new Set([((projectRow as any).employee_id || null), ...((assignmentRows || []).map((row: any) => row.employee_id))].filter(Boolean))),
+    accessEmployeeIds: Array.from(new Set([
+      ((projectRow as any).employee_id || null),
+      ...((assignmentRows || []).map((row: any) => row.employee_id)),
+    ].filter(Boolean))),
     locations,
     floorPlans,
     createdAt: new Date(projectRow.created_at),
@@ -249,6 +371,8 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
   await indexedDBStorage.saveProject(hydratedProject);
   return hydratedProject;
 }
+
+// ─── Build DB rows helper ─────────────────────────────────────────────────────
 
 function buildLocationRows(project: Project) {
   return project.locations.map((l) => {
@@ -278,31 +402,40 @@ async function removeDeletedLocationsFromSupabase(project: Project) {
   if (deletedLocationIds.length === 0) return;
   const { data: remoteLocationImages } = await supabase.from('location_images').select('storage_path').in('location_id', deletedLocationIds);
   const { data: remoteDetailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', deletedLocationIds);
-  await removeStoragePaths([...(remoteLocationImages || []).map((row) => row.storage_path), ...(remoteDetailImages || []).flatMap((row) => [row.annotated_path, row.original_path])]);
+  await removeStoragePaths([
+    ...(remoteLocationImages || []).map((row) => row.storage_path),
+    ...(remoteDetailImages || []).flatMap((row) => [row.annotated_path, row.original_path]),
+  ]);
   await (supabase as any).from('location_feedback').delete().in('location_id', deletedLocationIds);
   await supabase.from('location_approvals').delete().in('location_id', deletedLocationIds);
   await supabase.from('location_pdfs').delete().in('location_id', deletedLocationIds);
   await supabase.from('detail_images').delete().in('location_id', deletedLocationIds);
   await supabase.from('location_images').delete().in('location_id', deletedLocationIds);
   await supabase.from('locations').delete().eq('project_id', project.id).in('id', deletedLocationIds);
+  deletedLocationIds.forEach(id => {
+    invalidateImageCache(`loc_${id}_annotated`);
+    invalidateImageCache(`loc_${id}_original`);
+  });
 }
+
+// ─── Core sync ────────────────────────────────────────────────────────────────
 
 async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'remote-won' | 'skipped'> {
   const session = getSession();
-  // Use lightweight getProject — but we need locations for sync.
-  // Instead of loading full project (with base64 images), read raw records directly.
   const project = await indexedDBStorage.getProject(projectId, session);
   if (!project) return 'skipped';
+
   const remoteUpdatedAt = await getProjectRemoteTimestamp(projectId);
   if (remoteUpdatedAt && remoteUpdatedAt.getTime() > project.updatedAt.getTime() + 1000) {
     await hydrateProjectFromSupabase(projectId);
     return 'remote-won';
   }
+
   const syncTimestamp = new Date().toISOString();
-  // Check if project already exists remotely to preserve existing employee_id
   const { data: existingProject } = await supabase.from('projects').select('employee_id, user_id').eq('id', project.id).maybeSingle();
   const employeeId = existingProject?.employee_id ?? project.employeeId ?? (session?.role === 'employee' ? session.id : null);
   const userId = existingProject?.user_id ?? (project.employeeId || (session?.role === 'employee' ? session.id : project.id));
+
   await supabase.from('projects').upsert({
     id: project.id,
     project_number: project.projectNumber,
@@ -317,18 +450,20 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
 
   if (project.locations?.length) {
     await supabase.from('locations').upsert(buildLocationRows(project), { onConflict: 'id' });
-    for (const loc of project.locations) {
+    // All location image syncs in parallel – hash cache skips unchanged images
+    await Promise.all(project.locations.map(async (loc) => {
       await syncLocationImages(loc.id, loc.imageData, loc.originalImageData);
       await syncDetailImages(loc.id, loc.detailImages);
-    }
+    }));
   }
 
   await removeDeletedLocationsFromSupabase(project);
   await syncFloorPlans(project.id, project.floorPlans);
-  // Only update timestamp, don't re-save all images
   await indexedDBStorage.updateProjectTimestamp(project.id, syncTimestamp);
   return 'uploaded';
 }
+
+// ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function syncAllToSupabase(): Promise<void> {
   startSync();
@@ -362,12 +497,15 @@ export async function deleteFloorPlanFromSupabase(projectId: string, floorPlanId
   const { data } = await (supabase as any).from('floor_plans').select('storage_path').eq('project_id', projectId).eq('id', floorPlanId).maybeSingle();
   await removeStoragePaths([data?.storage_path]);
   await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).eq('id', floorPlanId);
+  invalidateImageCache(`floor_${floorPlanId}`);
 }
 
 export async function deleteDetailImageFromSupabase(detailImageId: string): Promise<void> {
   const { data } = await supabase.from('detail_images').select('annotated_path, original_path').eq('id', detailImageId).maybeSingle();
   await removeStoragePaths([data?.annotated_path, data?.original_path]);
   await supabase.from('detail_images').delete().eq('id', detailImageId);
+  invalidateImageCache(`detail_${detailImageId}_annotated`);
+  invalidateImageCache(`detail_${detailImageId}_original`);
 }
 
 export async function deleteProjectFromSupabase(projectId: string): Promise<void> {
@@ -376,16 +514,24 @@ export async function deleteProjectFromSupabase(projectId: string): Promise<void
   if (locationIds.length > 0) {
     const { data: locationImages } = await supabase.from('location_images').select('storage_path').in('location_id', locationIds);
     const { data: detailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', locationIds);
-    await removeStoragePaths([...(locationImages || []).map((row) => row.storage_path), ...(detailImages || []).flatMap((row) => [row.annotated_path, row.original_path])]);
+    await removeStoragePaths([
+      ...(locationImages || []).map((row) => row.storage_path),
+      ...(detailImages || []).flatMap((row) => [row.annotated_path, row.original_path]),
+    ]);
     await (supabase as any).from("location_feedback").delete().in("location_id", locationIds);
     await supabase.from("location_approvals").delete().in("location_id", locationIds);
     await supabase.from("location_images").delete().in("location_id", locationIds);
     await supabase.from("location_pdfs").delete().in("location_id", locationIds);
     await supabase.from("detail_images").delete().in("location_id", locationIds);
+    locationIds.forEach(id => {
+      invalidateImageCache(`loc_${id}_annotated`);
+      invalidateImageCache(`loc_${id}_original`);
+    });
   }
-  const { data: floorPlans } = await (supabase as any).from('floor_plans').select('storage_path').eq('project_id', projectId);
+  const { data: floorPlans } = await (supabase as any).from('floor_plans').select('id, storage_path').eq('project_id', projectId);
   await removeStoragePaths((floorPlans || []).map((row: any) => row.storage_path));
   await (supabase as any).from('floor_plans').delete().eq('project_id', projectId);
+  (floorPlans || []).forEach((row: any) => invalidateImageCache(`floor_${row.id}`));
   await supabase.from("customer_project_assignments").delete().eq("project_id", projectId);
   await supabase.from("locations").delete().eq("project_id", projectId);
   const { error } = await supabase.from("projects").delete().eq('id', projectId);

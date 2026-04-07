@@ -174,26 +174,33 @@ const Admin = () => {
 
 
   const loadProjectFields = async () => {
-    const { data } = await supabase.from("project_field_config").select("*").order("sort_order");
-    setProjectFields((data || []) as FieldConfig[]);
+    try {
+      const data = await invoke("list_project_fields");
+      setProjectFields((data.fields || []) as FieldConfig[]);
+    } catch {
+      // Fallback: direct read (read-only, no write risk)
+      const { data } = await supabase.from("project_field_config").select("*").order("sort_order");
+      setProjectFields((data || []) as FieldConfig[]);
+    }
   };
 
   const addProjectField = async () => {
     if (!newProjectFieldLabel.trim()) return;
     const maxOrder = projectFields.length > 0 ? Math.max(...projectFields.map(f => f.sort_order)) + 1 : 0;
-    const { error } = await supabase.from("project_field_config").insert({
-      field_key: `custom_${Date.now()}`,
-      field_label: newProjectFieldLabel.trim(),
-      field_type: newProjectFieldType,
-      field_options: newProjectFieldType === "dropdown" && newProjectFieldOptions.trim() ? JSON.stringify(newProjectFieldOptions.split(",").map(s => s.trim()).filter(Boolean)) : null,
-      sort_order: maxOrder,
-      is_active: true,
-      applies_to: newProjectFieldAppliesTo,
-      is_required: newProjectFieldRequired,
-    } as any);
-    if (error) { toast.error(error.message || "Fehler beim Erstellen"); return; }
-    setNewProjectFieldLabel(""); setNewProjectFieldOptions(""); setNewProjectFieldType("text"); setNewProjectFieldAppliesTo("all"); setNewProjectFieldRequired(false);
-    toast.success("Projektfeld erstellt"); loadProjectFields();
+    try {
+      await invoke("create_project_field", {
+        fieldKey: `custom_${Date.now()}`,
+        fieldLabel: newProjectFieldLabel.trim(),
+        fieldType: newProjectFieldType,
+        fieldOptions: newProjectFieldType === "dropdown" && newProjectFieldOptions.trim()
+          ? newProjectFieldOptions.split(",").map((s: string) => s.trim()).filter(Boolean) : null,
+        sortOrder: maxOrder,
+        appliesTo: newProjectFieldAppliesTo,
+        isRequired: newProjectFieldRequired,
+      });
+      setNewProjectFieldLabel(""); setNewProjectFieldOptions(""); setNewProjectFieldType("text"); setNewProjectFieldAppliesTo("all"); setNewProjectFieldRequired(false);
+      toast.success("Projektfeld erstellt"); loadProjectFields();
+    } catch (e: any) { toast.error(e.message || "Fehler beim Erstellen"); }
   };
 
   const startEditProjectField = (field: FieldConfig) => {
@@ -213,22 +220,24 @@ const Admin = () => {
     const changes: any = {
       field_label: editProjectFieldLabel.trim() || field.field_label,
       field_type: editProjectFieldType,
-      field_options: editProjectFieldType === "dropdown" && editProjectFieldOptions.trim() ? JSON.stringify(editProjectFieldOptions.split(",").map(s => s.trim()).filter(Boolean)) : null,
+      field_options: editProjectFieldType === "dropdown" && editProjectFieldOptions.trim()
+        ? JSON.stringify(editProjectFieldOptions.split(",").map((s: string) => s.trim()).filter(Boolean)) : null,
       applies_to: editProjectFieldAppliesTo,
       is_required: editProjectFieldRequired,
     };
-    const { error } = await supabase.from("project_field_config").update(changes).eq("id", field.id);
-    if (error) { toast.error(error.message || "Fehler beim Speichern"); return; }
-    cancelEditProjectField(); loadProjectFields(); toast.success("Projektfeld aktualisiert");
+    try {
+      await invoke("update_project_field", { fieldId: field.id, changes });
+      cancelEditProjectField(); loadProjectFields(); toast.success("Projektfeld aktualisiert");
+    } catch (e: any) { toast.error(e.message || "Fehler beim Speichern"); }
   };
 
   const toggleProjectField = async (field: FieldConfig) => {
-    await supabase.from("project_field_config").update({ is_active: !field.is_active } as any).eq("id", field.id);
+    try { await invoke("update_project_field", { fieldId: field.id, changes: { is_active: !field.is_active } }); } catch {}
     loadProjectFields();
   };
 
   const deleteProjectField = async (id: string) => {
-    await supabase.from("project_field_config").delete().eq("id", id);
+    try { await invoke("delete_project_field", { fieldId: id }); } catch {}
     loadProjectFields(); toast.success("Projektfeld gelöscht");
   };
 
@@ -324,13 +333,14 @@ const Admin = () => {
     if (direction === "up" && idx === 0) return;
     if (direction === "down" && idx === sorted.length - 1) return;
     const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-    // Swap in array
-    [sorted[idx], sorted[swapIdx]] = [sorted[swapIdx], sorted[idx]];
-    // Reassign sequential sort_order values
+    // Only update the 2 affected fields (was updating all N fields)
+    const orderA = sorted[idx].sort_order;
+    const orderB = sorted[swapIdx].sort_order;
     try {
-      await Promise.all(
-        sorted.map((f, i) => invoke("update_field", { fieldId: f.id, changes: { sort_order: i } }))
-      );
+      await Promise.all([
+        invoke("update_field", { fieldId: sorted[idx].id, changes: { sort_order: orderB } }),
+        invoke("update_field", { fieldId: sorted[swapIdx].id, changes: { sort_order: orderA } }),
+      ]);
     } catch {}
     loadFields();
   };

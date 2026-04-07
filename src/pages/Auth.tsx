@@ -10,6 +10,38 @@ import { toast } from "sonner";
 import { setSession, getSession } from "@/lib/session";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 
+// ─── Rate limiting ────────────────────────────────────────────────────────────
+const RATE_LIMIT_KEY = 'mmp_login_attempts';
+const MAX_ATTEMPTS   = 5;
+const LOCKOUT_MS     = 30_000;
+
+function getRateLimit(): { count: number; lockedUntil?: number } {
+  try { return JSON.parse(sessionStorage.getItem(RATE_LIMIT_KEY) || '{"count":0}'); }
+  catch { return { count: 0 }; }
+}
+
+function setRateLimit(value: { count: number; lockedUntil?: number }) {
+  try { sessionStorage.setItem(RATE_LIMIT_KEY, JSON.stringify(value)); } catch {}
+}
+
+function checkRateLimit(): { allowed: boolean; remainingSeconds?: number } {
+  const rl = getRateLimit();
+  if (rl.lockedUntil && Date.now() < rl.lockedUntil) {
+    return { allowed: false, remainingSeconds: Math.ceil((rl.lockedUntil - Date.now()) / 1000) };
+  }
+  return { allowed: true };
+}
+
+function recordFailedAttempt() {
+  const rl = getRateLimit();
+  const count = (rl.count || 0) + 1;
+  setRateLimit({ count, lockedUntil: count >= MAX_ATTEMPTS ? Date.now() + LOCKOUT_MS : undefined });
+}
+
+function resetRateLimit() {
+  sessionStorage.removeItem(RATE_LIMIT_KEY);
+}
+
 const SESSION_CACHE_KEY = "session_validation_cache";
 function setLoginCache(role: string, token: string, userId: string) {
   try {
@@ -33,6 +65,14 @@ const Auth = () => {
   const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [lockoutSeconds, setLockoutSeconds] = useState(0);
+
+  // Countdown timer for lockout display
+  useEffect(() => {
+    if (lockoutSeconds <= 0) return;
+    const timer = setTimeout(() => setLockoutSeconds(s => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [lockoutSeconds]);
 
   useEffect(() => {
     const session = getSession();
@@ -53,12 +93,26 @@ const Auth = () => {
 
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    const rl = checkRateLimit();
+    if (!rl.allowed) {
+      setLockoutSeconds(rl.remainingSeconds || LOCKOUT_MS / 1000);
+      toast.error(`Zu viele Versuche. Bitte warte ${rl.remainingSeconds} Sekunden.`);
+      return;
+    }
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("validate-admin", { body: { password: adminPassword } });
       if (error || !data?.valid) {
-        toast.error(data?.error || "Falsches Passwort");
+        recordFailedAttempt();
+        const newRl = checkRateLimit();
+        if (!newRl.allowed) {
+          setLockoutSeconds(newRl.remainingSeconds || LOCKOUT_MS / 1000);
+          toast.error(`Falsches Passwort. Login für ${newRl.remainingSeconds} Sekunden gesperrt.`);
+        } else {
+          toast.error(data?.error || "Falsches Passwort");
+        }
       } else if (data?.token) {
+        resetRateLimit();
         setSession({ role: "admin", id: "admin", name: "Admin", authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("admin", data.token, "admin");
         toast.success("Als Admin angemeldet");
@@ -69,6 +123,12 @@ const Auth = () => {
   };
 
   const handleEmployeeSelect = async (emp: { id: string; name: string }) => {
+    const rl = checkRateLimit();
+    if (!rl.allowed) {
+      setLockoutSeconds(rl.remainingSeconds || LOCKOUT_MS / 1000);
+      toast.error(`Zu viele Versuche. Bitte warte ${rl.remainingSeconds} Sekunden.`);
+      return;
+    }
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("validate-employee", { body: { employeeId: emp.id } });
@@ -76,6 +136,7 @@ const Auth = () => {
       if (data?.requiresPassword) {
         setSelectedEmployee(emp);
       } else if (data?.valid && data?.token) {
+        resetRateLimit();
         const prev = getSession();
         if (prev?.id !== emp.id) await indexedDBStorage.clearAll();
         setSession({ role: "employee", id: emp.id, name: emp.name, authToken: data.token, expiresAt: data.expiresAt });
@@ -94,11 +155,18 @@ const Auth = () => {
 
   const handleEmployeePasswordLogin = async () => {
     if (!selectedEmployee) return;
+    const rl = checkRateLimit();
+    if (!rl.allowed) {
+      setLockoutSeconds(rl.remainingSeconds || LOCKOUT_MS / 1000);
+      toast.error(`Zu viele Versuche. Bitte warte ${rl.remainingSeconds} Sekunden.`);
+      return;
+    }
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("validate-employee", { body: { employeeId: selectedEmployee.id, password: employeePassword } });
       if (error) { toast.error("Verbindungsfehler"); }
       else if (data?.valid && data?.token) {
+        resetRateLimit();
         const prev = getSession();
         if (prev?.id !== selectedEmployee.id) await indexedDBStorage.clearAll();
         setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name, authToken: data.token, expiresAt: data.expiresAt });
@@ -106,7 +174,14 @@ const Auth = () => {
         toast.success(`Angemeldet als ${selectedEmployee.name}`);
         navigate("/projects");
       } else {
-        toast.error("Falsches Passwort");
+        recordFailedAttempt();
+        const newRl = checkRateLimit();
+        if (!newRl.allowed) {
+          setLockoutSeconds(newRl.remainingSeconds || LOCKOUT_MS / 1000);
+          toast.error(`Falsches Passwort. Login für ${newRl.remainingSeconds} Sekunden gesperrt.`);
+        } else {
+          toast.error("Falsches Passwort");
+        }
         setEmployeePassword("");
       }
     } catch {
@@ -123,6 +198,8 @@ const Auth = () => {
     toast.success(`Angemeldet als ${match.name}`);
     navigate("/customer");
   };
+
+  const isLocked = lockoutSeconds > 0;
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -157,10 +234,15 @@ const Auth = () => {
                   <Label htmlFor="admin-pw">Admin-Passwort</Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                    <Input id="admin-pw" type="password" className="pl-9" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="Passwort eingeben" required autoFocus />
+                    <Input id="admin-pw" type="password" className="pl-9" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="Passwort eingeben" required autoFocus disabled={isLocked} />
                   </div>
                 </div>
-                <Button type="submit" className="w-full" disabled={loading}>{loading ? "Prüfe..." : "Anmelden"}</Button>
+                {isLocked && (
+                  <p className="text-sm text-destructive text-center">Login gesperrt – noch {lockoutSeconds} Sekunden</p>
+                )}
+                <Button type="submit" className="w-full" disabled={loading || isLocked}>
+                  {loading ? "Prüfe..." : isLocked ? `Gesperrt (${lockoutSeconds}s)` : "Anmelden"}
+                </Button>
               </form>
             </div>
           )}
@@ -175,11 +257,12 @@ const Auth = () => {
                   <Label>Mitarbeiter auswählen</Label>
                   <div className="grid gap-2 max-h-64 overflow-y-auto">
                     {employees.map((emp) => (
-                      <Button key={emp.id} variant="outline" className="w-full justify-start" onClick={() => handleEmployeeSelect(emp)} disabled={loading}>
+                      <Button key={emp.id} variant="outline" className="w-full justify-start" onClick={() => handleEmployeeSelect(emp)} disabled={loading || isLocked}>
                         <User className="h-4 w-4 mr-2" />{emp.name}
                       </Button>
                     ))}
                   </div>
+                  {isLocked && <p className="text-sm text-destructive text-center">Login gesperrt – noch {lockoutSeconds} Sekunden</p>}
                 </div>
               )}
             </div>
@@ -195,12 +278,13 @@ const Auth = () => {
                   <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input id="emp-pw" type="password" className="pl-9" value={employeePassword}
                     onChange={(e) => setEmployeePassword(e.target.value)}
-                    placeholder="Passwort eingeben" autoFocus
+                    placeholder="Passwort eingeben" autoFocus disabled={isLocked}
                     onKeyDown={(e) => e.key === "Enter" && handleEmployeePasswordLogin()} />
                 </div>
               </div>
-              <Button className="w-full" onClick={handleEmployeePasswordLogin} disabled={!employeePassword.trim() || loading}>
-                {loading ? "Prüfe..." : "Anmelden"}
+              {isLocked && <p className="text-sm text-destructive text-center">Login gesperrt – noch {lockoutSeconds} Sekunden</p>}
+              <Button className="w-full" onClick={handleEmployeePasswordLogin} disabled={!employeePassword.trim() || loading || isLocked}>
+                {loading ? "Prüfe..." : isLocked ? `Gesperrt (${lockoutSeconds}s)` : "Anmelden"}
               </Button>
             </div>
           )}
