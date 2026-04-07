@@ -579,9 +579,50 @@ export type Database = {
           },
         ]
       }
+      project_field_config: {
+        Row: {
+          applies_to: string
+          created_at: string
+          field_key: string
+          field_label: string
+          field_options: string | null
+          field_type: string
+          id: string
+          is_active: boolean
+          is_required: boolean
+          sort_order: number
+        }
+        Insert: {
+          applies_to?: string
+          created_at?: string
+          field_key: string
+          field_label: string
+          field_options?: string | null
+          field_type: string
+          id?: string
+          is_active?: boolean
+          is_required?: boolean
+          sort_order?: number
+        }
+        Update: {
+          applies_to?: string
+          created_at?: string
+          field_key?: string
+          field_label?: string
+          field_options?: string | null
+          field_type?: string
+          id?: string
+          is_active?: boolean
+          is_required?: boolean
+          sort_order?: number
+        }
+        Relationships: []
+      }
       projects: {
         Row: {
           created_at: string
+          custom_fields: Json | null
+          customer_name: string | null
           employee_id: string | null
           guest_password: string | null
           id: string
@@ -592,6 +633,8 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          custom_fields?: Json | null
+          customer_name?: string | null
           employee_id?: string | null
           guest_password?: string | null
           id?: string
@@ -602,6 +645,8 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          custom_fields?: Json | null
+          customer_name?: string | null
           employee_id?: string | null
           guest_password?: string | null
           id?: string

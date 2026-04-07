@@ -143,6 +143,37 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
+      // ---- PROJECT FIELDS ----
+      case "list_project_fields": {
+        const { data, error } = await supabase.from("project_field_config").select("*").order("sort_order");
+        if (error) return json({ error: error.message }, 500);
+        return json({ fields: data });
+      }
+      case "create_project_field": {
+        const { error } = await supabase.from("project_field_config").insert({
+          field_key: params.fieldKey,
+          field_label: params.fieldLabel,
+          field_type: params.fieldType,
+          field_options: Array.isArray(params.fieldOptions) ? JSON.stringify(params.fieldOptions) : null,
+          sort_order: params.sortOrder ?? 1,
+          is_active: true,
+          applies_to: params.appliesTo || "all",
+          is_required: params.isRequired ?? false,
+        });
+        if (error) return json({ error: error.message }, 400);
+        return json({ success: true });
+      }
+      case "update_project_field": {
+        const { error } = await supabase.from("project_field_config").update(params.changes || {}).eq("id", params.fieldId);
+        if (error) return json({ error: error.message }, 400);
+        return json({ success: true });
+      }
+      case "delete_project_field": {
+        const { error } = await supabase.from("project_field_config").delete().eq("id", params.fieldId);
+        if (error) return json({ error: error.message }, 400);
+        return json({ success: true });
+      }
+
       // ---- SYNC PROJECTS ----
       case "sync_projects": {
         const projects = params.projects as Array<{
