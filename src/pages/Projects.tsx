@@ -114,7 +114,7 @@ const Projects = () => {
         return {
           id: sp.id,
           projectNumber: sp.project_number,
-          projectType: sp.project_type,
+          projectType: sp.project_type as ProjectListItem["projectType"],
           customerName: sp.customer_name ?? local?.customerName,
           customFields: (sp.custom_fields && typeof sp.custom_fields === "object" ? sp.custom_fields as Record<string, string> : undefined) ?? local?.customFields,
           createdAt: new Date(sp.created_at),
