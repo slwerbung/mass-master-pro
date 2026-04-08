@@ -48,9 +48,9 @@ const NewProject = () => {
       body: tokenBody,
     }).then(({ data }) => {
       if (data?.prefix !== undefined) setPrefix(data.prefix);
-    });
+    }).catch(() => {});
 
-    Promise.resolve(supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order")).then(({ data }) => {
+    supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order").then(({ data }) => {
       setProjectFieldConfigs(mergeWithDefaultProjectFields((data || []) as any[]));
     }).catch(() => {
       setProjectFieldConfigs(mergeWithDefaultProjectFields([]));

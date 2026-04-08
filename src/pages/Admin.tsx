@@ -180,7 +180,7 @@ const Admin = () => {
     } catch {
       // Fallback: direct read (read-only, no write risk)
       const { data } = await supabase.from("project_field_config").select("*").order("sort_order");
-      setProjectFields((data || []).map((d: any) => ({ ...d, customer_visible: d.customer_visible ?? true })) as FieldConfig[]);
+      setProjectFields((data || []) as FieldConfig[]);
     }
   };
 
