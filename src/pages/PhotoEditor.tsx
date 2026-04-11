@@ -410,10 +410,18 @@ const PhotoEditor = () => {
     }, 50);
   };
 
+  // Handle missing image data for new locations (must be useEffect, not render-time navigate)
+  useEffect(() => {
+    if (!loading && !imageDataState && !isReEdit) {
+      toast.error("Kein Bild gefunden");
+      navigate(`/projects/${projectId}`);
+    }
+  }, [loading, imageDataState, isReEdit, navigate, projectId]);
+
   if (loading) return <div className="min-h-screen bg-background flex items-center justify-center"><div className="text-muted-foreground">Bild wird geladen...</div></div>;
 
-  if (!imageDataState) {
-    if (!isReEdit) { toast.error("Kein Bild gefunden"); navigate(`/projects/${projectId}`); }
+  // NOTE: navigation when imageData is missing is handled in useEffect below, not here
+  if (!imageDataState && !loading) {
     return null;
   }
 

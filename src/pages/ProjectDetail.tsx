@@ -90,7 +90,20 @@ const ProjectDetail = () => {
             if (remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000) {
               const hydrated = await hydrateProjectFromSupabase(projectId);
               if (hydrated) {
-                setProject(hydrated);
+                // Merge: if hydrated location has empty imageData (e.g. signed URL failed),
+                // keep the local image to avoid showing a placeholder
+                const merged = {
+                  ...hydrated,
+                  locations: hydrated.locations.map(hLoc => {
+                    const localLoc = localProject.locations.find(l => l.id === hLoc.id);
+                    return {
+                      ...hLoc,
+                      imageData: hLoc.imageData || localLoc?.imageData || '',
+                      originalImageData: hLoc.originalImageData || localLoc?.originalImageData || '',
+                    };
+                  }),
+                };
+                setProject(merged);
                 setConflictNotice("Es wurde eine neuere Online-Version geladen.");
               }
             }
