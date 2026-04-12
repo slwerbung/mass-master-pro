@@ -78,12 +78,11 @@ const Projects = () => {
 
       const projectQuery = supabase.from("projects").select("id, project_number, project_type, customer_name, custom_fields, created_at, employee_id").order("created_at", { ascending: false });
 
-      const [ownedResult, assignedResult, locationRows, localSummary] = await Promise.all([
+      const [ownedResult, assignedResult, localSummary] = await Promise.all([
         session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery,
         session?.role === "employee"
           ? (supabase as any).from('project_employee_assignments').select('project_id').eq('employee_id', session.id)
           : Promise.resolve({ data: [] }),
-        supabase.from("locations").select("project_id"),
         indexedDBStorage.getProjectsSummary(session),
       ]);
 
@@ -102,11 +101,6 @@ const Projects = () => {
         }
       }
 
-      const dbCountMap = new Map<string, number>();
-      for (const row of locationRows.data || []) {
-        dbCountMap.set(row.project_id, (dbCountMap.get(row.project_id) || 0) + 1);
-      }
-
       const localMap = new Map(localSummary.map(p => [p.id, p]));
 
       const merged: ProjectListItem[] = supabaseProjects.map(sp => {
@@ -118,7 +112,7 @@ const Projects = () => {
           customerName: sp.customer_name ?? local?.customerName,
           customFields: (sp.custom_fields && typeof sp.custom_fields === "object" ? sp.custom_fields as Record<string, string> : undefined) ?? local?.customFields,
           createdAt: new Date(sp.created_at),
-          locationCount: local ? local.locationCount : (dbCountMap.get(sp.id) || 0),
+          locationCount: local?.locationCount ?? 0,
           isLocal: !!local,
         };
       });
@@ -148,7 +142,7 @@ const Projects = () => {
         syncDoneRef.current = true;
         setTimeout(() => {
           syncAllToSupabase().then(() => loadProjects(false)).catch(() => {});
-        }, 100);
+        }, 2000);
       }
     } catch (error) {
       console.error("Error loading projects:", error);

@@ -28,7 +28,7 @@ import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient();
 
 const SESSION_CACHE_KEY = "session_validation_cache";
-const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const SESSION_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 function getCachedValidation(role: string, token: string, userId: string): boolean | null {
   try {
@@ -55,39 +55,27 @@ function setCachedValidation(role: string, token: string, userId: string, valid:
 
 const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; children: React.ReactNode }) => {
   const session = getSession();
-  const [validated, setValidated] = useState<boolean | null>(null);
+
+  const getInitialState = (): boolean | null => {
+    if (!session) return false;
+    if (!allowedRoles.includes(session.role)) return false;
+    if (session.role === "customer") return true;
+    if (!session.authToken) return true;
+    return getCachedValidation(session.role, session.authToken, session.id); // null = cache miss
+  };
+
+  const [validated, setValidated] = useState<boolean | null>(getInitialState);
 
   useEffect(() => {
+    if (validated !== null) return; // cache hit – kein Netzwerkaufruf nötig
     let mounted = true;
     const run = async () => {
-      if (!session) {
-        if (mounted) setValidated(false);
-        return;
-      }
-      if (!allowedRoles.includes(session.role)) {
-        if (mounted) setValidated(false);
-        return;
-      }
-      if (session.role === "customer") {
-        if (mounted) setValidated(true);
-        return;
-      }
-      if (!session.authToken) {
-        if (mounted) setValidated(true);
-        return;
-      }
-      // Check cache first
-      const cached = getCachedValidation(session.role, session.authToken, session.id);
-      if (cached !== null) {
-        if (mounted) setValidated(cached);
-        return;
-      }
       const { data, error } = await supabase.functions.invoke("validate-session", {
-        body: { role: session.role, token: session.authToken, userId: session.id },
+        body: { role: session!.role, token: session!.authToken, userId: session!.id },
       });
       if (mounted) {
         const isValid = error ? true : !!data?.valid;
-        setCachedValidation(session.role, session.authToken, session.id, isValid);
+        setCachedValidation(session!.role, session!.authToken!, session!.id, isValid);
         setValidated(isValid);
       }
     };
