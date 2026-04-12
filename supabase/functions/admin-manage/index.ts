@@ -310,6 +310,18 @@ Deno.serve(async (req) => {
         return json({ projects: data });
       }
 
+      // ---- COMPANY LOGO ----
+      case "get_logo": {
+        const { data } = await supabase.from("app_config").select("value").eq("key", "company_logo").maybeSingle();
+        return json({ logoData: data?.value ?? "" });
+      }
+      case "set_logo": {
+        const logoData = String(params.logoData ?? "").trim();
+        const { error } = await supabase.from("app_config").upsert({ key: "company_logo", value: logoData }, { onConflict: "key" });
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
       // ---- PROJECT PREFIX ----
       case "get_project_prefix": {
         const { data } = await supabase.from("app_config").select("value").eq("key", "project_prefix").maybeSingle();

@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
-import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound } from "lucide-react";
+import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -97,6 +97,8 @@ const Admin = () => {
     customerShowDetailImages: false,
   });
   const [savingViewSettings, setSavingViewSettings] = useState(false);
+  const [logoData, setLogoData] = useState<string>("");
+  const [savingLogo, setSavingLogo] = useState(false);
 
   const adminToken = session?.authToken || "";
 
@@ -111,7 +113,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadPrefix(); loadViewSettings(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadPrefix(); loadViewSettings(); loadLogo(); }
   }, [adminToken]);
 
   useEffect(() => {
@@ -246,6 +248,33 @@ const Admin = () => {
       const data = await invoke("get_view_settings");
       if (data?.settings) setViewSettings(data.settings);
     } catch {}
+  };
+
+  const loadLogo = async () => {
+    try {
+      const data = await invoke("get_logo");
+      setLogoData(data?.logoData ?? "");
+    } catch {}
+  };
+
+  const saveLogo = async (base64: string) => {
+    setSavingLogo(true);
+    try {
+      await invoke("set_logo", { logoData: base64 });
+      setLogoData(base64);
+      toast.success("Logo gespeichert");
+    } catch (e: any) { toast.error(e.message || "Fehler beim Speichern"); }
+    setSavingLogo(false);
+  };
+
+  const handleLogoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 1.5 * 1024 * 1024) { toast.error("Datei zu groß (max. 1,5 MB)"); return; }
+    const reader = new FileReader();
+    reader.onload = () => { if (typeof reader.result === "string") saveLogo(reader.result); };
+    reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   const saveViewSettings = async () => {
@@ -721,6 +750,27 @@ const Admin = () => {
                   }}>Löschen</Button>
                 </div>
                 <p className="text-xs text-muted-foreground">Leer lassen oder löschen für keinen Präfix.</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><ImageIcon className="h-5 w-5" /> Firmenlogo</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Das Logo erscheint im PDF-Export. PNG, JPG oder SVG, max. 1,5 MB.</p>
+                {logoData && (
+                  <div className="flex items-center gap-4">
+                    <img src={logoData} alt="Firmenlogo" className="h-16 max-w-[200px] object-contain border rounded p-1" />
+                    <Button variant="destructive" size="sm" disabled={savingLogo} onClick={() => saveLogo("")}>Logo entfernen</Button>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <label className="cursor-pointer">
+                    <input type="file" accept="image/png,image/jpeg,image/svg+xml" className="hidden" onChange={handleLogoFile} disabled={savingLogo} />
+                    <Button asChild variant="outline" disabled={savingLogo}>
+                      <span>{savingLogo ? "Speichert..." : logoData ? "Logo ersetzen" : "Logo hochladen"}</span>
+                    </Button>
+                  </label>
+                </div>
               </CardContent>
             </Card>
 

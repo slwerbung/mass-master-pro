@@ -17,23 +17,21 @@ import {
 import PDFExportOptionsUI, { PDFExportOptions, defaultPDFOptions } from "@/components/PDFExportOptions";
 import {
   getImageDimensions,
-  drawPageHeader,
-  drawPageFooter,
-  drawCoverPage,
-  drawImageWithBorder,
   MARGIN,
   CONTENT_WIDTH,
-  PAGE_HEIGHT,
+  PAGE_W,
+  PAGE_H,
   BLUE,
-  TEXT_PRIMARY,
-  TEXT_MUTED,
-  PAGE_WIDTH,
 } from "@/lib/pdfHelpers";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/projectFields";
 import { supabase } from "@/integrations/supabase/client";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
+
+// Local design tokens (landscape layout owns these)
+const TEXT_PRIMARY = { r: 31, g: 41, b: 55 };
+const TEXT_MUTED   = { r: 107, g: 114, b: 128 };
 
 type FieldConfig = {
   id?: string;
@@ -86,8 +84,6 @@ const Export = () => {
           fetchViewSettings(),
         ]);
 
-        // PDF export should prefer the freshest fully-hydrated project data.
-        // Fallback to IndexedDB only if remote hydration is unavailable.
         let loadedProject = await hydrateProjectFromSupabase(projectId);
         if (!loadedProject) {
           const localProject = await indexedDBStorage.getProject(projectId);
@@ -256,7 +252,7 @@ const Export = () => {
 
     setDownloadingPDF(true);
     try {
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
       const dateStr = new Date().toLocaleDateString("de-DE");
       const customerOnly = pdfOptions.mode === "customer";
       const visibleFields = getVisibleFields(customerOnly);
@@ -275,18 +271,34 @@ const Export = () => {
       }
       const totalPages = pageCounter - 1;
 
-      drawCoverPage(pdf, project.projectNumber, sortedLocations.length, project.projectType);
+      // Cover page (landscape 297×210)
+      pdf.setDrawColor(BLUE.r, BLUE.g, BLUE.b);
+      pdf.setLineWidth(2);
+      pdf.line(MARGIN, 60, PAGE_W - MARGIN, 60);
+      pdf.setFontSize(32);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
+      pdf.text("Aufmaß-Bericht", MARGIN, 80);
+      pdf.setFontSize(20);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(BLUE.r, BLUE.g, BLUE.b);
+      pdf.text(`Projekt ${project.projectNumber}`, MARGIN, 95);
       pdf.setFontSize(11);
       pdf.setFont("helvetica", "normal");
       pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-      pdf.text(modeLabel, MARGIN, 166);
-      drawPageFooter(pdf, dateStr, 1, totalPages);
+      const coverDate = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
+      const typeLabel = project.projectType === "aufmass_mit_plan" ? "Aufmaß mit Plan" : "Aufmaß";
+      pdf.text(`Datum: ${coverDate}`, MARGIN, 115);
+      pdf.text(`Typ: ${typeLabel}`, MARGIN, 123);
+      pdf.text(`Standorte: ${sortedLocations.length}`, MARGIN, 131);
+      pdf.text(modeLabel, MARGIN, 139);
+      drawFooter(pdf, dateStr, 1, totalPages);
 
       for (const floorPlan of sortedFloorPlans) {
         pdf.addPage();
         const currentPage = floorPlanPageMap[floorPlan.id];
-        drawPageHeader(pdf, project.projectNumber);
-        drawPageFooter(pdf, dateStr, currentPage, totalPages);
+        drawHeader(pdf, project.projectNumber);
+        drawFooter(pdf, dateStr, currentPage, totalPages);
         let y = MARGIN + 16;
 
         pdf.setFontSize(14);
@@ -296,13 +308,13 @@ const Export = () => {
         y += 8;
 
         const fpDims = await getImageDimensions(floorPlan.imageData);
-        const fpMaxH = PAGE_HEIGHT - y - MARGIN - 18;
+        const fpMaxH = PAGE_H - y - MARGIN - 18;
         const fpRatio = Math.min(CONTENT_WIDTH / fpDims.width, fpMaxH / fpDims.height);
         const fpW = fpDims.width * fpRatio;
         const fpH = fpDims.height * fpRatio;
         const fpX = MARGIN + (CONTENT_WIDTH - fpW) / 2;
 
-        drawImageWithBorder(pdf, floorPlan.imageData, fpX, y, fpW, fpH);
+        drawImg(pdf, floorPlan.imageData, fpX, y, fpW, fpH);
 
         for (const marker of floorPlan.markers) {
           const loc = sortedLocations.find(l => l.id === marker.locationId);
@@ -465,7 +477,7 @@ const Export = () => {
   );
 };
 
-
+// ── Utility ──────────────────────────────────────────────────────────────────
 
 function naturalLocationSort(a: string, b: string) {
   return a.localeCompare(b, "de", { numeric: true, sensitivity: "base" });
@@ -476,150 +488,45 @@ function shortLocationNumber(locationNumber: string) {
   return parts[parts.length - 1] || locationNumber;
 }
 
-function drawSectionCard(pdf: jsPDF, title: string, rows: { label: string; value: string }[], startY: number) {
-  if (!rows.length) return startY;
-  const left = MARGIN;
-  const width = CONTENT_WIDTH;
-  const colWidth = (width - 8) / 2;
-  let cursorY = startY;
+// ── Local PDF helpers (A4 landscape 297×210) ─────────────────────────────────
 
-  const measuredRows = rows.map((row) => {
-    const valueLines = pdf.splitTextToSize(row.value, colWidth - 8);
-    return { ...row, valueLines, height: 10 + valueLines.length * 4 };
-  });
-
-  const rowPairs: typeof measuredRows[] = [];
-  for (let i = 0; i < measuredRows.length; i += 2) rowPairs.push(measuredRows.slice(i, i + 2));
-  const bodyHeight = rowPairs.reduce((sum, pair) => sum + Math.max(...pair.map((item) => item.height)) + 3, 0);
-  const totalHeight = 12 + bodyHeight + 2;
-
-  pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(left, cursorY, width, totalHeight, 2, 2, "F");
-  pdf.setDrawColor(226, 232, 240);
+function drawImg(pdf: jsPDF, dataURI: string, x: number, y: number, w: number, h: number) {
+  const fmt = dataURI.startsWith("data:image/jpeg") ? "JPEG"
+            : dataURI.startsWith("data:image/webp")  ? "WEBP"
+            : "PNG";
+  try { pdf.addImage(dataURI, fmt as any, x, y, w, h); } catch (e) { console.error("addImage error", e); }
+  pdf.setDrawColor(209, 213, 219);
   pdf.setLineWidth(0.3);
-  pdf.roundedRect(left, cursorY, width, totalHeight, 2, 2, "S");
-
-  pdf.setFontSize(9);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-  pdf.text(title.toUpperCase(), left + 4, cursorY + 7);
-  cursorY += 11;
-
-  for (const pair of rowPairs) {
-    const pairHeight = Math.max(...pair.map((item) => item.height));
-    pair.forEach((item, idx) => {
-      const x = left + 4 + idx * (colWidth + 8);
-      pdf.setFontSize(8);
-      pdf.setFont("helvetica", "bold");
-      pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-      pdf.text(item.label, x, cursorY + 3);
-      pdf.setFontSize(10);
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-      pdf.text(item.valueLines, x, cursorY + 8);
-    });
-    cursorY += pairHeight + 3;
-  }
-
-  return startY + totalHeight + 5;
+  pdf.rect(x, y, w, h, "S");
 }
 
-function drawFeedbackCard(pdf: jsPDF, feedbacks: FeedbackItem[], startY: number) {
-  if (!feedbacks.length) return startY;
-  const left = MARGIN;
-  const width = CONTENT_WIDTH;
-  let y = startY;
-  const rows = feedbacks.map((entry) => {
-    const messageLines = pdf.splitTextToSize(entry.message, width - 16);
-    return { entry, messageLines, height: 15 + messageLines.length * 4 };
-  });
-  const totalHeight = 12 + rows.reduce((sum, row) => sum + row.height + 3, 0);
-
-  pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(left, y, width, totalHeight, 2, 2, "F");
-  pdf.setDrawColor(226, 232, 240);
-  pdf.setLineWidth(0.3);
-  pdf.roundedRect(left, y, width, totalHeight, 2, 2, "S");
-
-  pdf.setFontSize(9);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-  pdf.text("KUNDEN-FEEDBACK", left + 4, y + 7);
-  y += 11;
-
-  rows.forEach(({ entry, messageLines, height }) => {
-    pdf.setFillColor(255, 255, 255);
-    pdf.roundedRect(left + 4, y, width - 8, height, 1.5, 1.5, "F");
-    pdf.setDrawColor(226, 232, 240);
-    pdf.roundedRect(left + 4, y, width - 8, height, 1.5, 1.5, "S");
-
-    pdf.setFontSize(9);
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-    pdf.text(entry.author_name, left + 8, y + 5);
-
-    pdf.setFontSize(8);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-    const statusText = entry.status === "done" ? "Umgesetzt" : "Offen";
-    pdf.text(`${new Date(entry.created_at).toLocaleDateString("de-DE")} · ${statusText}`, left + width - 8, y + 5, { align: "right" });
-
-    pdf.setFontSize(9);
-    pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-    pdf.text(messageLines, left + 8, y + 11);
-    y += height + 3;
-  });
-  return startY + totalHeight + 5;
-}
-
-function drawAreaMeasurementsCard(pdf: jsPDF, areaMeasurements: any[], startY: number) {
-  if (!areaMeasurements?.length) return startY;
-  const rows = areaMeasurements.map((am) => ({
-    label: `Fläche ${am.index}`,
-    value: `${am.widthMm} × ${am.heightMm} mm · ${((am.widthMm * am.heightMm) / 1_000_000).toFixed(2)} m²`,
-  }));
-  const total = areaMeasurements.reduce((sum, am) => sum + (am.widthMm * am.heightMm) / 1_000_000, 0);
-  rows.push({ label: "Gesamt", value: `${total.toFixed(2)} m²` });
-  return drawSectionCard(pdf, "Flächen", rows, startY);
-}
-
-
-function drawPrintFilesCard(pdf: jsPDF, printFiles: any[], startY: number) {
-  if (!printFiles || printFiles.length === 0) return startY;
-  const padding = 4;
-  const lineH = 7;
-  const boxH = padding * 2 + printFiles.length * lineH;
-
-  pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(MARGIN, startY, CONTENT_WIDTH, boxH, 2, 2, "F");
-  pdf.setDrawColor(226, 232, 240);
-  pdf.setLineWidth(0.3);
-  pdf.roundedRect(MARGIN, startY, CONTENT_WIDTH, boxH, 2, 2, "S");
-
-  pdf.setFontSize(9);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  pdf.text("Druckdateien", MARGIN + padding, startY + 6);
-
-  let y = startY + 11;
-  pdf.setFontSize(9);
+function drawHeader(pdf: jsPDF, projectNumber: string) {
+  pdf.setDrawColor(BLUE.r, BLUE.g, BLUE.b);
+  pdf.setLineWidth(0.8);
+  pdf.line(MARGIN, 12, PAGE_W - MARGIN, 12);
+  pdf.setFontSize(8);
   pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(BLUE.r, BLUE.g, BLUE.b);
-
-  for (const file of printFiles) {
-    const url = supabase.storage.from("project-files").getPublicUrl(file.storage_path).data.publicUrl;
-    const label = `• ${file.file_name}`;
-    pdf.textWithLink(label, MARGIN + padding, y, { url });
-    y += lineH;
-  }
-
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  return startY + boxH + 4;
+  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
+  pdf.text(`Projekt ${projectNumber}`, PAGE_W - MARGIN, 10, { align: "right" });
 }
+
+function drawFooter(pdf: jsPDF, date: string, pageNum: number, totalPages: number) {
+  const footerY = PAGE_H - 12;
+  pdf.setDrawColor(209, 213, 219);
+  pdf.setLineWidth(0.3);
+  pdf.line(MARGIN, footerY - 3, PAGE_W - MARGIN, footerY - 3);
+  pdf.setFontSize(7);
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
+  pdf.text(date, MARGIN, footerY);
+  pdf.text(`Seite ${pageNum} / ${totalPages}`, PAGE_W - MARGIN, footerY, { align: "right" });
+}
+
+// ── Page renderers ────────────────────────────────────────────────────────────
 
 async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, printFiles, showPrintFiles, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue, projectFieldConfigs }: any) {
-  drawPageHeader(pdf, project.projectNumber);
-  drawPageFooter(pdf, dateStr, currentPage, totalPages);
+  drawHeader(pdf, project.projectNumber);
+  drawFooter(pdf, dateStr, currentPage, totalPages);
   let y = MARGIN + 16;
 
   const parentFloorPlan = sortedFloorPlans.find((fp: any) => fp.markers.some((m: any) => m.locationId === location.id));
@@ -648,42 +555,17 @@ async function drawLocationPage({ pdf, project, location, visibleFields, custome
   }
 
   const imgDims = await getImageDimensions(location.imageData);
-  const imageMaxH = 95;
+  const imageMaxH = PAGE_H - y - MARGIN - 20;
   const imageRatio = Math.min(CONTENT_WIDTH / imgDims.width, imageMaxH / imgDims.height);
   const imageW = imgDims.width * imageRatio;
   const imageH = imgDims.height * imageRatio;
   const imageX = MARGIN + (CONTENT_WIDTH - imageW) / 2;
-  drawImageWithBorder(pdf, location.imageData, imageX, y, imageW, imageH);
-  y += imageH + 6;
-
-  const projectRows = mergeWithDefaultProjectFields(projectFieldConfigs || []).filter((field: any) => field.is_active).map((field: any) => {
-    const value = getProjectFieldValue(project, field.field_key);
-    if (value === undefined || value === null || value === "") return null;
-    const displayValue = field.field_type === "checkbox" ? ((value === true || value === "true") ? "Ja" : "Nein") : String(value);
-    return { label: field.field_label, value: displayValue };
-  }).filter(Boolean);
-  if (projectRows.length > 0) y = drawSectionCard(pdf, "Projektinfos", projectRows as any, y);
-
-  const rows = visibleFields
-    .map((field: any) => {
-      const value = resolveFieldValue(location, field.field_key);
-      if (value === undefined || value === null || value === "") return null;
-      const displayValue = field.field_type === "checkbox" ? ((value === true || value === "true") ? "Ja" : "Nein") : String(value);
-      return { label: field.field_label, value: displayValue };
-    })
-    .filter(Boolean);
-  y = drawSectionCard(pdf, customerOnly ? "Sichtbare Standortinfos" : "Standortinfos", rows as any, y);
-
-  y = drawAreaMeasurementsCard(pdf, location.areaMeasurements || [], y);
-  if (showPrintFiles && printFiles && printFiles.length > 0) {
-    y = drawPrintFilesCard(pdf, printFiles, y);
-  }
-  y = drawFeedbackCard(pdf, feedbacks, y);
+  drawImg(pdf, location.imageData, imageX, y, imageW, imageH);
 }
 
 async function drawDetailImagesPage({ pdf, projectNumber, location, dateStr, currentPage, totalPages }: any) {
-  drawPageHeader(pdf, projectNumber);
-  drawPageFooter(pdf, dateStr, currentPage, totalPages);
+  drawHeader(pdf, projectNumber);
+  drawFooter(pdf, dateStr, currentPage, totalPages);
   let y = MARGIN + 16;
   pdf.setFontSize(13);
   pdf.setFont("helvetica", "bold");
@@ -700,13 +582,13 @@ async function drawDetailImagesPage({ pdf, projectNumber, location, dateStr, cur
     const w = dims.width * ratio;
     const h = dims.height * ratio;
     const x = MARGIN + col * (maxW + 6) + (maxW - w) / 2;
-    if (y + h + 14 > PAGE_HEIGHT - MARGIN) {
+    if (y + h + 14 > PAGE_H - MARGIN) {
       pdf.addPage();
-      drawPageHeader(pdf, projectNumber);
+      drawHeader(pdf, projectNumber);
       y = MARGIN + 16;
       col = 0;
     }
-    drawImageWithBorder(pdf, detail.imageData, x, y, w, h);
+    drawImg(pdf, detail.imageData, x, y, w, h);
     if (detail.caption) {
       pdf.setFontSize(8);
       pdf.setFont("helvetica", "normal");

@@ -234,4 +234,8 @@ export const drawBackLink = (
   return y + 8;
 };
 
+/** A4 landscape: 297 × 210 mm */
+export const PAGE_W = 297;
+export const PAGE_H = 210;
+
 export { MARGIN, CONTENT_WIDTH, PAGE_HEIGHT, PAGE_WIDTH, BLUE, TEXT_PRIMARY, TEXT_MUTED };
