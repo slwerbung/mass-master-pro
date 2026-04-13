@@ -85,21 +85,17 @@ const ProjectDetail = () => {
           setProject(localProject);
           setIsLoading(false);
 
-          // Hydrate if: remote is newer OR any local location is missing its image
-          // (images are not automatically downloaded to every device)
-          const locationsWithMissingImages = localProject.locations.filter(l => !l.imageData);
-          const needsHydration = locationsWithMissingImages.length > 0;
-
+          // Background check: only hydrate when remote is genuinely newer
           getProjectRemoteTimestamp(projectId).then(async (remoteUpdatedAt) => {
             const remoteIsNewer = remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000;
-            if (!remoteIsNewer && !needsHydration) return;
+            if (!remoteIsNewer) return;
 
             await hydrateProjectFromSupabase(projectId);
-            // Reload from IndexedDB after hydration – images come from local blobs, not signed URLs
+            // Reload from IndexedDB – blobs are preserved, images always come from local store
             const refreshed = await indexedDBStorage.getProject(projectId, currentSession);
             if (refreshed) {
               setProject(refreshed);
-              if (remoteIsNewer) setConflictNotice("Es wurde eine neuere Online-Version geladen.");
+              setConflictNotice("Es wurde eine neuere Online-Version geladen.");
             }
           }).catch(console.error);
           return;

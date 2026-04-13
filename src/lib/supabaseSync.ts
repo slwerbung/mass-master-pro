@@ -403,26 +403,8 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     };
   });
 
-  // Merge with existing local project to preserve images that couldn't be loaded from Supabase
-  // (e.g. signed URLs failed, or images not yet synced to new storage)
-  const existingLocal = await indexedDBStorage.getProject(projectRow.id);
-  const mergedLocations = locations.map(loc => {
-    const existing = existingLocal?.locations.find(l => l.id === loc.id);
-    return {
-      ...loc,
-      imageData:         loc.imageData         || existing?.imageData         || '',
-      originalImageData: loc.originalImageData || existing?.originalImageData || '',
-      detailImages: loc.detailImages.map(di => {
-        const existingDi = existing?.detailImages?.find(e => e.id === di.id);
-        return {
-          ...di,
-          imageData:         di.imageData         || existingDi?.imageData         || '',
-          originalImageData: di.originalImageData || existingDi?.originalImageData || '',
-        };
-      }),
-    };
-  });
-
+  // Note: saveProject only writes image blobs for NEW locations.
+  // Existing location blobs are preserved in IndexedDB regardless of imageData value here.
   const hydratedProject: Project = {
     id: projectRow.id,
     projectNumber: projectRow.project_number,
@@ -434,7 +416,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
       ((projectRow as any).employee_id || null),
       ...((assignmentRows || []).map((row: any) => row.employee_id)),
     ].filter(Boolean))),
-    locations: mergedLocations,
+    locations,
     floorPlans,
     createdAt: new Date(projectRow.created_at),
     updatedAt: new Date(projectRow.updated_at),
