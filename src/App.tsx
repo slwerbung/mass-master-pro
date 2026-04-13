@@ -56,32 +56,35 @@ function setCachedValidation(role: string, token: string, userId: string, valid:
 const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; children: React.ReactNode }) => {
   const session = getSession();
 
+  // Compute initial validation state synchronously to avoid flash of "Sitzung wird geprüft..."
   const getInitialState = (): boolean | null => {
     if (!session) return false;
     if (!allowedRoles.includes(session.role)) return false;
     if (session.role === "customer") return true;
     if (!session.authToken) return true;
-    return getCachedValidation(session.role, session.authToken, session.id); // null = cache miss
+    // Try cache synchronously - avoids spinner on every navigation
+    const cached = getCachedValidation(session.role, session.authToken, session.id);
+    return cached; // null = cache miss, needs async validation
   };
 
   const [validated, setValidated] = useState<boolean | null>(getInitialState);
 
   useEffect(() => {
-    if (validated !== null) return; // cache hit – kein Netzwerkaufruf nötig
+    // Only run async validation if cache missed (validated === null)
+    if (validated !== null) return;
+    if (!session?.authToken) { setValidated(true); return; }
+
     let mounted = true;
-    const run = async () => {
-      const { data, error } = await supabase.functions.invoke("validate-session", {
-        body: { role: session!.role, token: session!.authToken, userId: session!.id },
-      });
-      if (mounted) {
-        const isValid = error ? true : !!data?.valid;
-        setCachedValidation(session!.role, session!.authToken!, session!.id, isValid);
-        setValidated(isValid);
-      }
-    };
-    run();
+    supabase.functions.invoke("validate-session", {
+      body: { role: session.role, token: session.authToken, userId: session.id },
+    }).then(({ data, error }) => {
+      if (!mounted) return;
+      const isValid = error ? true : !!data?.valid;
+      setCachedValidation(session.role, session.authToken!, session.id, isValid);
+      setValidated(isValid);
+    });
     return () => { mounted = false; };
-  }, [allowedRoles, session?.role, session?.authToken, session?.id]);
+  }, [validated, session?.role, session?.authToken, session?.id]);
 
   if (validated === null) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Sitzung wird geprüft...</div>;
   if (!validated) return <Navigate to="/" replace />;

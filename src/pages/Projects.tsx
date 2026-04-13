@@ -92,7 +92,7 @@ const Projects = () => {
         if (assignedIds.length > 0) {
           const { data: assignedProjects } = await supabase
             .from('projects')
-.select('id, project_number, project_type, customer_name, custom_fields, created_at, employee_id')
+            .select('id, project_number, project_type, customer_name, custom_fields, created_at, employee_id')
             .in('id', assignedIds)
             .order('created_at', { ascending: false });
           const mergedRemote = new Map<string, any>();
@@ -100,6 +100,9 @@ const Projects = () => {
           supabaseProjects = Array.from(mergedRemote.values());
         }
       }
+
+      // Location counts come from IndexedDB (fast, local) - no extra Supabase query needed
+      // Online-only projects show 0 until synced locally
 
       const localMap = new Map(localSummary.map(p => [p.id, p]));
 
@@ -140,6 +143,7 @@ const Projects = () => {
 
       if (syncAfter && !syncDoneRef.current) {
         syncDoneRef.current = true;
+        // Defer sync by 2s so the UI is fully interactive before network load starts
         setTimeout(() => {
           syncAllToSupabase().then(() => loadProjects(false)).catch(() => {});
         }, 2000);

@@ -1,241 +1,175 @@
 /**
- * PDF layout helpers for professional Aufmaß reports
+ * PDF layout helpers – A4 Querformat
+ * Layout: Foto füllt oberen Bereich, 3-spaltiger Footer mit Projektinfos + Logo
  */
 import jsPDF from "jspdf";
 
-// Design tokens
-const BLUE = { r: 37, g: 99, b: 235 };
-const GRAY_BG = { r: 243, g: 244, b: 246 };
-const TEXT_PRIMARY = { r: 31, g: 41, b: 55 };
-const TEXT_MUTED = { r: 107, g: 114, b: 128 };
-const BORDER_GRAY = { r: 209, g: 213, b: 219 };
+// ─── Design-Tokens ────────────────────────────────────────────────────────────
+export const PINK        = { r: 230, g: 0,   b: 126 }; // #E6007E
+export const DARK        = { r: 26,  g: 26,  b: 26  }; // #1A1A1A
+export const TEXT_MUTED  = { r: 100, g: 100, b: 100 };
+export const BLUE        = { r: 37,  g: 99,  b: 235 }; // für Grundriss-Links
+export const BORDER_GRAY = { r: 200, g: 200, b: 200 };
 
-const PAGE_WIDTH = 210;
-const PAGE_HEIGHT = 297;
-const MARGIN = 20;
-const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
+// ─── Seitenmaße (A4 Querformat in mm) ────────────────────────────────────────
+export const PAGE_W   = 297;
+export const PAGE_H   = 210;
+export const MARGIN   = 8;
+export const FOOTER_H = 30;   // Höhe des Footer-Bereichs
+export const LOGO_W   = 18;   // Logo-Breite im Footer
+export const LOGO_GAP = 4;
+
+// Spaltenbreiten
+const COL_TOTAL = PAGE_W - 2 * MARGIN - LOGO_W - LOGO_GAP;
+const COL_W     = COL_TOTAL / 3;
+export const COL1_X = MARGIN;
+export const COL2_X = MARGIN + COL_W;
+export const COL3_X = MARGIN + COL_W * 2;
+export const LOGO_X = PAGE_W - MARGIN - LOGO_W;
+
+// Label-Offset innerhalb einer Spalte
+const LABEL_W   = 16;  // max. Breite Label-Text in mm
+const VAL_OFFSET = 18; // Abstand Spaltenbeginn → Wert
+export const MAX_VAL_W = COL_W - VAL_OFFSET - 3; // max. Wert-Breite in mm
+
+const FONT_SZ  = 7;    // pt
+const LINE_H   = 5.5;  // Zeilenabstand in mm (≈ 4pt leading + 7pt font)
+
+// ─── Hilfsfunktionen ──────────────────────────────────────────────────────────
 
 export const getImageDimensions = (dataURI: string): Promise<{ width: number; height: number }> => {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => resolve({ width: img.width, height: img.height });
+    img.onload  = () => resolve({ width: img.width, height: img.height });
     img.onerror = () => resolve({ width: 800, height: 600 });
     img.src = dataURI;
   });
 };
 
-export const drawPageHeader = (
-  pdf: jsPDF,
-  projectNumber: string
-) => {
-  // Blue accent line at top
-  pdf.setDrawColor(BLUE.r, BLUE.g, BLUE.b);
-  pdf.setLineWidth(0.8);
-  pdf.line(MARGIN, 12, PAGE_WIDTH - MARGIN, 12);
-
-  // Project number top-right
-  pdf.setFontSize(8);
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-  pdf.text(`Projekt ${projectNumber}`, PAGE_WIDTH - MARGIN, 10, { align: "right" });
-};
-
-export const drawPageFooter = (
-  pdf: jsPDF,
-  date: string,
-  pageNum: number,
-  totalPages: number
-) => {
-  const footerY = PAGE_HEIGHT - 12;
-
-  // Thin separator line
-  pdf.setDrawColor(BORDER_GRAY.r, BORDER_GRAY.g, BORDER_GRAY.b);
-  pdf.setLineWidth(0.3);
-  pdf.line(MARGIN, footerY - 3, PAGE_WIDTH - MARGIN, footerY - 3);
-
-  pdf.setFontSize(7);
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-  pdf.text(date, MARGIN, footerY);
-  pdf.text(`Seite ${pageNum} / ${totalPages}`, PAGE_WIDTH - MARGIN, footerY, { align: "right" });
-};
-
-export const drawCoverPage = (
-  pdf: jsPDF,
-  projectNumber: string,
-  locationCount: number,
-  projectType?: string
-) => {
-  // Large blue accent line
-  pdf.setDrawColor(BLUE.r, BLUE.g, BLUE.b);
-  pdf.setLineWidth(2);
-  pdf.line(MARGIN, 80, PAGE_WIDTH - MARGIN, 80);
-
-  // Title
-  pdf.setFontSize(32);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  pdf.text("Aufmaß-Bericht", MARGIN, 100);
-
-  // Project number
-  pdf.setFontSize(20);
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(BLUE.r, BLUE.g, BLUE.b);
-  pdf.text(`Projekt ${projectNumber}`, MARGIN, 115);
-
-  // Metadata block
-  pdf.setFontSize(11);
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-
-  const today = new Date().toLocaleDateString("de-DE", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  });
-
-  const typeLabel = projectType === "aufmass_mit_plan" ? "Aufmaß mit Plan" : "Aufmaß";
-
-  pdf.text(`Datum: ${today}`, MARGIN, 135);
-  pdf.text(`Typ: ${typeLabel}`, MARGIN, 143);
-  pdf.text(`Standorte: ${locationCount}`, MARGIN, 151);
-
-  // Bottom accent line
-  pdf.setDrawColor(BLUE.r, BLUE.g, BLUE.b);
-  pdf.setLineWidth(0.5);
-  pdf.line(MARGIN, 160, MARGIN + 40, 160);
-};
-
-interface MetadataRow {
-  label: string;
-  value: string;
+/** Kürzt Text auf maxBreite (in mm) mit aktuellem Font */
+function truncateText(pdf: jsPDF, text: string, maxMm: number): string {
+  while (pdf.getTextWidth(text) > maxMm && text.length > 3) {
+    text = text.slice(0, -1);
+  }
+  return text;
 }
 
-export const drawMetadataBox = (
-  pdf: jsPDF,
-  rows: MetadataRow[],
-  startY: number
-): number => {
-  if (rows.length === 0) return startY;
+// ─── Footer ───────────────────────────────────────────────────────────────────
 
-  const rowH = 7;
-  const padding = 4;
-  const boxH = padding * 2 + Math.ceil(rows.length / 2) * rowH;
-  const colWidth = CONTENT_WIDTH / 2;
+export interface FooterRow {
+  label: string;
+  value: string;
+  pink?: boolean;
+  pageLink?: number; // interne Seitenverknüpfung
+}
 
-  // Gray background
-  pdf.setFillColor(GRAY_BG.r, GRAY_BG.g, GRAY_BG.b);
-  pdf.roundedRect(MARGIN, startY, CONTENT_WIDTH, boxH, 1.5, 1.5, "F");
+export interface FooterData {
+  col1: FooterRow[];
+  col2: FooterRow[];
+  col3: FooterRow[];
+  logoDataUri?: string | null; // base64 Firmenlogo
+}
 
-  // Border
+export function drawFooter(pdf: jsPDF, data: FooterData) {
+  const fottoBottom = FOOTER_H; // Footer beginnt bei y = FOOTER_H von unten
+  const footerTop   = PAGE_H - FOOTER_H;
+
+  // Dünne Trennlinie nur über den Text-Spalten (nicht über Logo)
   pdf.setDrawColor(BORDER_GRAY.r, BORDER_GRAY.g, BORDER_GRAY.b);
-  pdf.setLineWidth(0.3);
-  pdf.roundedRect(MARGIN, startY, CONTENT_WIDTH, boxH, 1.5, 1.5, "S");
+  pdf.setLineWidth(0.2);
+  pdf.line(MARGIN, footerTop, LOGO_X - 2, footerTop);
 
-  let y = startY + padding + 4;
+  // Zeilen-Y-Positionen: 2mm unter der Linie, dann je LINE_H
+  const ROW1   = footerTop + 3;
+  const rows_y = [ROW1, ROW1 + LINE_H, ROW1 + LINE_H * 2, ROW1 + LINE_H * 3, ROW1 + LINE_H * 4];
 
-  for (let i = 0; i < rows.length; i++) {
-    const col = i % 2;
-    const x = MARGIN + padding + col * colWidth;
-
+  const drawRow = (colX: number, rowY: number, row: FooterRow) => {
     // Label
-    pdf.setFontSize(7);
+    pdf.setFontSize(FONT_SZ);
     pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-    pdf.text(rows[i].label, x, y);
+    pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+    const lbl = truncateText(pdf, row.label, LABEL_W);
+    pdf.text(lbl, colX, rowY);
 
-    // Value
-    pdf.setFontSize(9);
+    // Wert
     pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-    const maxW = colWidth - padding * 2;
-    const truncated = pdf.splitTextToSize(rows[i].value, maxW)[0] || rows[i].value;
-    pdf.text(truncated, x, y + 4);
+    if (row.pink) {
+      pdf.setTextColor(PINK.r, PINK.g, PINK.b);
+    } else {
+      pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+    }
+    const val = truncateText(pdf, row.value, MAX_VAL_W);
+    const vx = colX + VAL_OFFSET;
+    if (row.pageLink) {
+      pdf.textWithLink(val, vx, rowY, { pageNumber: row.pageLink });
+    } else {
+      pdf.text(val, vx, rowY);
+    }
+    pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+  };
 
-    if (col === 1 || i === rows.length - 1) {
-      y += rowH;
+  [data.col1, data.col2, data.col3].forEach((col, ci) => {
+    const cx = [COL1_X, COL2_X, COL3_X][ci];
+    col.slice(0, 5).forEach((row, ri) => {
+      if (rows_y[ri] < PAGE_H - 1) drawRow(cx, rows_y[ri], row);
+    });
+  });
+
+  // Logo – Dimensionen via getImageInfo (synchron in jsPDF verfügbar)
+  if (data.logoDataUri) {
+    try {
+      const fmt = data.logoDataUri.startsWith("data:image/png") ? "PNG"
+                : data.logoDataUri.startsWith("data:image/svg") ? "PNG"
+                : "JPEG";
+      const props = pdf.getImageProperties(data.logoDataUri);
+      const maxW  = LOGO_W;
+      const maxH  = FOOTER_H - 6;
+      const ratio = Math.min(maxW / props.width, maxH / props.height);
+      const lw    = props.width  * ratio;
+      const lh    = props.height * ratio;
+      const lx    = LOGO_X + (maxW - lw) / 2;
+      const ly    = footerTop + (maxH - lh) / 2;
+      pdf.addImage(data.logoDataUri, fmt, lx, ly, lw, lh);
+    } catch {
+      // Logo konnte nicht eingebettet werden – still fail
     }
   }
+}
 
-  return startY + boxH + 3;
-};
+// ─── Standortseite ────────────────────────────────────────────────────────────
 
-export const drawImageWithBorder = (
-  pdf: jsPDF,
-  dataURI: string,
-  x: number,
-  y: number,
-  w: number,
-  h: number
-) => {
-  try {
-    const format = typeof dataURI === "string" && dataURI.startsWith("data:image/jpeg")
-      ? "JPEG"
-      : typeof dataURI === "string" && dataURI.startsWith("data:image/webp")
-      ? "WEBP"
-      : "PNG";
-    pdf.addImage(dataURI, format as any, x, y, w, h);
-  } catch (e) {
-    console.error("Error adding image:", e);
+export async function drawLocationPageLandscape(params: {
+  pdf: jsPDF;
+  imageData: string;
+  footer: FooterData;
+}) {
+  const { pdf, imageData, footer } = params;
+
+  // Foto-Bereich: von MARGIN bis über dem Footer
+  const fotoTop    = MARGIN;
+  const fotoBottom = PAGE_H - FOOTER_H;
+  const fotoH      = fotoBottom - fotoTop;
+  const fotoW      = PAGE_W - 2 * MARGIN;
+
+  if (imageData) {
+    const dims  = await getImageDimensions(imageData);
+    const ratio = Math.min(fotoW / dims.width, fotoH / dims.height);
+    const iw    = dims.width  * ratio;
+    const ih    = dims.height * ratio;
+    const ix    = MARGIN + (fotoW - iw) / 2;
+    const iy    = fotoTop + (fotoH - ih) / 2;
+    const fmt   = imageData.startsWith("data:image/jpeg") ? "JPEG"
+                : imageData.startsWith("data:image/webp") ? "WEBP"
+                : "PNG";
+    try { pdf.addImage(imageData, fmt as any, ix, iy, iw, ih); } catch {}
   }
 
-  // Thin gray border
-  pdf.setDrawColor(BORDER_GRAY.r, BORDER_GRAY.g, BORDER_GRAY.b);
-  pdf.setLineWidth(0.3);
-  pdf.rect(x, y, w, h, "S");
-};
+  drawFooter(pdf, footer);
+}
 
-export const drawCommentBlock = (
-  pdf: jsPDF,
-  comment: string,
-  y: number
-): number => {
-  const indent = 5;
+// ─── Grundrissseite (bleibt Hochformat) ───────────────────────────────────────
+// Wird weiterhin in Export.tsx direkt gezeichnet
 
-  // Blue accent line left
-  pdf.setDrawColor(BLUE.r, BLUE.g, BLUE.b);
-  pdf.setLineWidth(1);
-  pdf.line(MARGIN + 1, y, MARGIN + 1, y + 2); // will extend after measuring
+export const CONTENT_WIDTH  = PAGE_W - 2 * MARGIN;
+export const CONTENT_HEIGHT = PAGE_H - 2 * MARGIN;
 
-  // Label
-  pdf.setFontSize(8);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-  pdf.text("Kommentar", MARGIN + indent, y + 3);
-
-  // Comment text
-  pdf.setFontSize(9);
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  const lines = pdf.splitTextToSize(comment, CONTENT_WIDTH - indent - 2);
-  pdf.text(lines, MARGIN + indent, y + 8);
-
-  const blockH = 10 + lines.length * 3.8;
-
-  // Extend the accent line
-  pdf.setDrawColor(BLUE.r, BLUE.g, BLUE.b);
-  pdf.setLineWidth(1);
-  pdf.line(MARGIN + 1, y, MARGIN + 1, y + blockH);
-
-  return y + blockH + 3;
-};
-
-export const drawBackLink = (
-  pdf: jsPDF,
-  text: string,
-  y: number,
-  targetPage: number
-): number => {
-  pdf.setFontSize(8);
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(BLUE.r, BLUE.g, BLUE.b);
-  pdf.textWithLink(text, MARGIN, y + 3, { pageNumber: targetPage });
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  return y + 8;
-};
-
-/** A4 landscape: 297 × 210 mm */
-export const PAGE_W = 297;
-export const PAGE_H = 210;
-
-export { MARGIN, CONTENT_WIDTH, PAGE_HEIGHT, PAGE_WIDTH, BLUE, TEXT_PRIMARY, TEXT_MUTED };

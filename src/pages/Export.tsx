@@ -17,21 +17,22 @@ import {
 import PDFExportOptionsUI, { PDFExportOptions, defaultPDFOptions } from "@/components/PDFExportOptions";
 import {
   getImageDimensions,
+  drawLocationPageLandscape,
+  drawFooter,
+  FooterData,
+  FooterRow,
   MARGIN,
-  CONTENT_WIDTH,
   PAGE_W,
   PAGE_H,
   BLUE,
+  DARK,
+  CONTENT_WIDTH,
 } from "@/lib/pdfHelpers";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/projectFields";
 import { supabase } from "@/integrations/supabase/client";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
-
-// Local design tokens (landscape layout owns these)
-const TEXT_PRIMARY = { r: 31, g: 41, b: 55 };
-const TEXT_MUTED   = { r: 107, g: 114, b: 128 };
 
 type FieldConfig = {
   id?: string;
@@ -65,6 +66,8 @@ const Export = () => {
   const [downloadingImages, setDownloadingImages] = useState<Record<string, boolean>>({});
   const [pdfOptions, setPdfOptions] = useState<PDFExportOptions>(defaultPDFOptions);
   const [viewSettings, setViewSettings] = useState(defaultViewSettings);
+  const [companyLogo, setCompanyLogo] = useState<string | null>(null);
+  const [employeeName, setEmployeeName] = useState<string>("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -84,10 +87,11 @@ const Export = () => {
           fetchViewSettings(),
         ]);
 
-        let loadedProject = await hydrateProjectFromSupabase(projectId);
+        // Prefer IndexedDB (has full images as blobs) for PDF export.
+        // Supabase hydration as fallback for online-only projects.
+        let loadedProject = await indexedDBStorage.getProject(projectId);
         if (!loadedProject) {
-          const localProject = await indexedDBStorage.getProject(projectId);
-          loadedProject = localProject;
+          loadedProject = await hydrateProjectFromSupabase(projectId);
         }
 
         if (!loadedProject) {
@@ -100,6 +104,17 @@ const Export = () => {
         setViewSettings(loadedViewSettings);
         setFieldConfigs((fieldsRes.data || []) as FieldConfig[]);
         setProjectFieldConfigs((projectFieldsRes.data || []) as any[]);
+
+        // Load company logo
+        supabase.functions.invoke("admin-manage", { body: { action: "get_logo" } })
+          .then(({ data }) => { if (data?.logo) setCompanyLogo(data.logo); });
+
+        // Load employee name for "Zeichner"
+        const empId = loadedProject.employeeId;
+        if (empId) {
+          supabase.functions.invoke("admin-manage", { body: { action: "get_employee_name", employeeId: empId } })
+            .then(({ data }) => { if (data?.name) setEmployeeName(data.name); });
+        }
 
         const nextFeedbackMap: Record<string, FeedbackItem[]> = {};
         (feedbackRes.data || []).forEach((entry: any) => {
@@ -252,16 +267,17 @@ const Export = () => {
 
     setDownloadingPDF(true);
     try {
+      // Querformat für Standortseiten
       const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-      const dateStr = new Date().toLocaleDateString("de-DE");
+      const dateStr = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
       const customerOnly = pdfOptions.mode === "customer";
       const visibleFields = getVisibleFields(customerOnly);
-      const modeLabel = customerOnly ? "Kunden-Export" : "Interner Export";
 
       const locationPageMap: Record<string, number> = {};
       const floorPlanPageMap: Record<string, number> = {};
-      let pageCounter = 2;
+      let pageCounter = 1;
 
+      // Grundrisse bleiben im Hochformat → eigene Seiten zählen
       for (const fp of sortedFloorPlans) floorPlanPageMap[fp.id] = pageCounter++;
       for (const location of sortedLocations) {
         locationPageMap[location.id] = pageCounter++;
@@ -271,90 +287,130 @@ const Export = () => {
       }
       const totalPages = pageCounter - 1;
 
-      // Cover page (landscape 297×210)
-      pdf.setDrawColor(BLUE.r, BLUE.g, BLUE.b);
-      pdf.setLineWidth(2);
-      pdf.line(MARGIN, 60, PAGE_W - MARGIN, 60);
-      pdf.setFontSize(32);
-      pdf.setFont("helvetica", "bold");
-      pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-      pdf.text("Aufmaß-Bericht", MARGIN, 80);
-      pdf.setFontSize(20);
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(BLUE.r, BLUE.g, BLUE.b);
-      pdf.text(`Projekt ${project.projectNumber}`, MARGIN, 95);
-      pdf.setFontSize(11);
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-      const coverDate = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
-      const typeLabel = project.projectType === "aufmass_mit_plan" ? "Aufmaß mit Plan" : "Aufmaß";
-      pdf.text(`Datum: ${coverDate}`, MARGIN, 115);
-      pdf.text(`Typ: ${typeLabel}`, MARGIN, 123);
-      pdf.text(`Standorte: ${sortedLocations.length}`, MARGIN, 131);
-      pdf.text(modeLabel, MARGIN, 139);
-      drawFooter(pdf, dateStr, 1, totalPages);
-
+      // Grundrissseiten (Hochformat – eigene addPage mit orientation)
+      let firstPage = true;
       for (const floorPlan of sortedFloorPlans) {
-        pdf.addPage();
+        if (!firstPage) pdf.addPage("a4", "landscape");
+        firstPage = false;
         const currentPage = floorPlanPageMap[floorPlan.id];
-        drawHeader(pdf, project.projectNumber);
-        drawFooter(pdf, dateStr, currentPage, totalPages);
-        let y = MARGIN + 16;
-
-        pdf.setFontSize(14);
-        pdf.setFont("helvetica", "bold");
-        pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-        pdf.text(`Grundriss · ${floorPlan.name}`, MARGIN, y);
-        y += 8;
-
+        // Grundriss im Querformat darstellen
         const fpDims = await getImageDimensions(floorPlan.imageData);
-        const fpMaxH = PAGE_H - y - MARGIN - 18;
-        const fpRatio = Math.min(CONTENT_WIDTH / fpDims.width, fpMaxH / fpDims.height);
+        const maxW = PAGE_W - 2 * MARGIN;
+        const maxH = PAGE_H - 2 * MARGIN - 12;
+        const fpRatio = Math.min(maxW / fpDims.width, maxH / fpDims.height);
         const fpW = fpDims.width * fpRatio;
         const fpH = fpDims.height * fpRatio;
-        const fpX = MARGIN + (CONTENT_WIDTH - fpW) / 2;
+        const fpX = MARGIN + (maxW - fpW) / 2;
+        const fpY = MARGIN + 10;
 
-        drawImg(pdf, floorPlan.imageData, fpX, y, fpW, fpH);
+        pdf.setFontSize(8);
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+        pdf.text(`Grundriss · ${floorPlan.name}`, MARGIN, MARGIN + 6);
+
+        const fmt = floorPlan.imageData.startsWith("data:image/jpeg") ? "JPEG"
+                  : floorPlan.imageData.startsWith("data:image/webp") ? "WEBP" : "PNG";
+        try { pdf.addImage(floorPlan.imageData, fmt as any, fpX, fpY, fpW, fpH); } catch {}
 
         for (const marker of floorPlan.markers) {
           const loc = sortedLocations.find(l => l.id === marker.locationId);
           if (!loc) continue;
           const mx = fpX + marker.x * fpW;
-          const my = y + marker.y * fpH;
+          const my = fpY + marker.y * fpH;
           const shortNum = shortLocationNumber(loc.locationNumber);
           const targetPage = locationPageMap[loc.id];
           if (targetPage) pdf.link(mx - 4, my - 4, 8, 8, { pageNumber: targetPage });
           pdf.setFillColor(BLUE.r, BLUE.g, BLUE.b);
-          pdf.circle(mx, my, 2.5, 'F');
-          pdf.setFontSize(6);
+          pdf.circle(mx, my, 2.5, "F");
+          pdf.setFontSize(5);
           pdf.setFont("helvetica", "bold");
           pdf.setTextColor(255, 255, 255);
           pdf.text(shortNum, mx, my + 0.8, { align: "center" });
         }
       }
 
+      // Standortseiten
       for (const location of sortedLocations) {
-        pdf.addPage();
-        await drawLocationPage({
-          pdf,
-          project,
-          location,
-          visibleFields,
-          customerOnly,
-          feedbacks: feedbackMap[location.id] || [],
-          printFiles: printFilesByLocation[location.id] || [],
-          showPrintFiles: customerOnly ? viewSettings.customerShowPrintFiles : viewSettings.internalShowPrintFiles,
-          projectFieldConfigs,
-          dateStr,
-          currentPage: locationPageMap[location.id],
-          totalPages,
-          floorPlanPageMap,
-          sortedFloorPlans,
-          resolveFieldValue,
-        });
+        if (!firstPage) pdf.addPage("a4", "landscape");
+        firstPage = false;
 
+        // Footer-Daten aufbauen
+        const parentFP = sortedFloorPlans.find(fp => fp.markers.some(m => m.locationId === location.id));
+        const printFiles = printFilesByLocation[location.id] || [];
+        const showPrintFiles = customerOnly ? viewSettings.customerShowPrintFiles : viewSettings.internalShowPrintFiles;
+
+        // Spalte 1: Projekt-Pflichtfelder + konfigurierte Projektfelder
+        const col1: FooterRow[] = [
+          { label: "Stand",     value: dateStr },
+          ...(employeeName ? [{ label: "Zeichner", value: employeeName }] : []),
+          { label: "Projektnr.", value: project.projectNumber },
+        ];
+        if (project.customerName) col1.push({ label: "Kunde", value: project.customerName });
+        mergeWithDefaultProjectFields(projectFieldConfigs || [])
+          .filter((f: any) => f.is_active)
+          .forEach((f: any) => {
+            const v = getProjectFieldValue(project, f.field_key);
+            if (v && String(v).trim()) col1.push({ label: f.field_label, value: String(v) });
+          });
+
+        // Spalte 2: Standort-Pflichtfelder + optional + Plan
+        const col2: FooterRow[] = [
+          { label: "Standortnr.", value: location.locationNumber },
+        ];
+        if (location.locationName) col2.push({ label: "Standortname", value: location.locationName });
+        if (location.comment) col2.push({ label: "Kommentar", value: location.comment });
+        if (parentFP) {
+          col2.push({
+            label: "Plan",
+            value: parentFP.name,
+            pink: true,
+            pageLink: floorPlanPageMap[parentFP.id],
+          });
+        }
+        // Konfigurierte Standortfelder für Spalte 2 (nicht System/Art/Beschriftung/Format)
+        const col2FieldKeys = new Set(["system", "label", "locationType"]);
+        visibleFields
+          .filter((f: any) => !col2FieldKeys.has(f.field_key))
+          .forEach((f: any) => {
+            const v = resolveFieldValue(location, f.field_key);
+            if (v && String(v).trim()) {
+              const displayVal = f.field_type === "checkbox"
+                ? ((v === true || v === "true") ? "Ja" : "Nein")
+                : String(v);
+              col2.push({ label: f.field_label, value: displayVal, pink: false });
+            }
+          });
+        // Druckdatei
+        if (showPrintFiles && printFiles.length > 0) {
+          printFiles.forEach((pf: any) => {
+            col2.push({ label: "Druckdatei", value: pf.file_name, pink: true });
+          });
+        }
+
+        // Spalte 3: System, Art, Beschriftung + weitere konfigurierte Felder
+        const col3: FooterRow[] = [];
+        if (location.system) col3.push({ label: "System", value: location.system });
+        if (location.locationType) col3.push({ label: "Art", value: location.locationType });
+        if (location.label) col3.push({ label: "Beschriftung", value: location.label });
+        visibleFields
+          .filter((f: any) => col2FieldKeys.has(f.field_key) && !["system", "locationType", "label"].includes(f.field_key))
+          .forEach((f: any) => {
+            const v = resolveFieldValue(location, f.field_key);
+            if (v && String(v).trim()) col3.push({ label: f.field_label, value: String(v) });
+          });
+
+        const footer: FooterData = {
+          col1: col1.slice(0, 5),
+          col2: col2.slice(0, 5),
+          col3: col3.slice(0, 5),
+          logoDataUri: companyLogo,
+        };
+
+        await drawLocationPageLandscape({ pdf, imageData: location.imageData, footer });
+
+        // Detailbilder
         if (((customerOnly && viewSettings.customerShowDetailImages) || (!customerOnly && viewSettings.internalShowDetailImages)) && location.detailImages && location.detailImages.length > 0) {
-          pdf.addPage();
+          pdf.addPage("a4", "landscape");
           await drawDetailImagesPage({
             pdf,
             projectNumber: project.projectNumber,
@@ -362,6 +418,7 @@ const Export = () => {
             dateStr,
             currentPage: locationPageMap[location.id] + 1,
             totalPages,
+            companyLogo,
           });
         }
       }
@@ -477,7 +534,7 @@ const Export = () => {
   );
 };
 
-// ── Utility ──────────────────────────────────────────────────────────────────
+
 
 function naturalLocationSort(a: string, b: string) {
   return a.localeCompare(b, "de", { numeric: true, sensitivity: "base" });
@@ -488,93 +545,20 @@ function shortLocationNumber(locationNumber: string) {
   return parts[parts.length - 1] || locationNumber;
 }
 
-// ── Local PDF helpers (A4 landscape 297×210) ─────────────────────────────────
+async function drawDetailImagesPage({ pdf, projectNumber, location, dateStr, companyLogo }: any) {
+  // Querformat – Detailbilder nebeneinander über dem Footer
+  const FOOTER_H_D = 12;
+  const contentH = PAGE_H - 2 * MARGIN - FOOTER_H_D;
+  let y = MARGIN;
 
-function drawImg(pdf: jsPDF, dataURI: string, x: number, y: number, w: number, h: number) {
-  const fmt = dataURI.startsWith("data:image/jpeg") ? "JPEG"
-            : dataURI.startsWith("data:image/webp")  ? "WEBP"
-            : "PNG";
-  try { pdf.addImage(dataURI, fmt as any, x, y, w, h); } catch (e) { console.error("addImage error", e); }
-  pdf.setDrawColor(209, 213, 219);
-  pdf.setLineWidth(0.3);
-  pdf.rect(x, y, w, h, "S");
-}
-
-function drawHeader(pdf: jsPDF, projectNumber: string) {
-  pdf.setDrawColor(BLUE.r, BLUE.g, BLUE.b);
-  pdf.setLineWidth(0.8);
-  pdf.line(MARGIN, 12, PAGE_W - MARGIN, 12);
   pdf.setFontSize(8);
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-  pdf.text(`Projekt ${projectNumber}`, PAGE_W - MARGIN, 10, { align: "right" });
-}
-
-function drawFooter(pdf: jsPDF, date: string, pageNum: number, totalPages: number) {
-  const footerY = PAGE_H - 12;
-  pdf.setDrawColor(209, 213, 219);
-  pdf.setLineWidth(0.3);
-  pdf.line(MARGIN, footerY - 3, PAGE_W - MARGIN, footerY - 3);
-  pdf.setFontSize(7);
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-  pdf.text(date, MARGIN, footerY);
-  pdf.text(`Seite ${pageNum} / ${totalPages}`, PAGE_W - MARGIN, footerY, { align: "right" });
-}
-
-// ── Page renderers ────────────────────────────────────────────────────────────
-
-async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, printFiles, showPrintFiles, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue, projectFieldConfigs }: any) {
-  drawHeader(pdf, project.projectNumber);
-  drawFooter(pdf, dateStr, currentPage, totalPages);
-  let y = MARGIN + 16;
-
-  const parentFloorPlan = sortedFloorPlans.find((fp: any) => fp.markers.some((m: any) => m.locationId === location.id));
-  if (parentFloorPlan) {
-    const targetPage = floorPlanPageMap[parentFloorPlan.id];
-    if (targetPage) {
-      pdf.setFontSize(8);
-      pdf.setTextColor(BLUE.r, BLUE.g, BLUE.b);
-      pdf.textWithLink(`← Grundriss: ${parentFloorPlan.name}`, MARGIN, y, { pageNumber: targetPage });
-      y += 6;
-    }
-  }
-
-  pdf.setFontSize(17);
   pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  pdf.text(`Standort ${location.locationNumber}`, MARGIN, y + 2);
+  pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+  pdf.text(`Detailbilder · Standort ${location.locationNumber}`, MARGIN, y + 4);
   y += 8;
 
-  if (location.locationName) {
-    pdf.setFontSize(10);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-    pdf.text(location.locationName, MARGIN, y + 1);
-    y += 6;
-  }
-
-  const imgDims = await getImageDimensions(location.imageData);
-  const imageMaxH = PAGE_H - y - MARGIN - 20;
-  const imageRatio = Math.min(CONTENT_WIDTH / imgDims.width, imageMaxH / imgDims.height);
-  const imageW = imgDims.width * imageRatio;
-  const imageH = imgDims.height * imageRatio;
-  const imageX = MARGIN + (CONTENT_WIDTH - imageW) / 2;
-  drawImg(pdf, location.imageData, imageX, y, imageW, imageH);
-}
-
-async function drawDetailImagesPage({ pdf, projectNumber, location, dateStr, currentPage, totalPages }: any) {
-  drawHeader(pdf, projectNumber);
-  drawFooter(pdf, dateStr, currentPage, totalPages);
-  let y = MARGIN + 16;
-  pdf.setFontSize(13);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  pdf.text(`Detailbilder · Standort ${location.locationNumber}`, MARGIN, y);
-  y += 8;
-
-  const maxW = (CONTENT_WIDTH - 6) / 2;
-  const maxH = 72;
+  const maxW = (PAGE_W - 2 * MARGIN - 6) / 2;
+  const maxH = contentH - 10;
   let col = 0;
   for (const detail of location.detailImages) {
     const dims = await getImageDimensions(detail.imageData);
@@ -582,23 +566,23 @@ async function drawDetailImagesPage({ pdf, projectNumber, location, dateStr, cur
     const w = dims.width * ratio;
     const h = dims.height * ratio;
     const x = MARGIN + col * (maxW + 6) + (maxW - w) / 2;
-    if (y + h + 14 > PAGE_H - MARGIN) {
-      pdf.addPage();
-      drawHeader(pdf, projectNumber);
-      y = MARGIN + 16;
+    if (y + h + 10 > PAGE_H - MARGIN - FOOTER_H_D) {
+      pdf.addPage("a4", "landscape");
+      y = MARGIN + 8;
       col = 0;
     }
-    drawImg(pdf, detail.imageData, x, y, w, h);
+    const fmt = detail.imageData.startsWith("data:image/jpeg") ? "JPEG"
+              : detail.imageData.startsWith("data:image/webp") ? "WEBP" : "PNG";
+    try { pdf.addImage(detail.imageData, fmt as any, x, y, w, h); } catch {}
     if (detail.caption) {
-      pdf.setFontSize(8);
+      pdf.setFontSize(6);
       pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-      const captionLines = pdf.splitTextToSize(detail.caption, maxW);
-      pdf.text(captionLines, x, y + h + 4);
+      pdf.setTextColor(100, 100, 100);
+      pdf.text(detail.caption, x, y + h + 3, { maxWidth: maxW });
     }
     if (col === 1) {
       col = 0;
-      y += maxH + 18;
+      y += maxH + 12;
     } else {
       col = 1;
     }

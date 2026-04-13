@@ -97,10 +97,10 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
       .maybeSingle();
     if (error) console.warn("loadPdf error:", error.message);
     if (data) {
-      const { data: urlData } = supabase.storage
+      const { data: signedData } = await supabase.storage
         .from("project-files")
-        .getPublicUrl(data.storage_path);
-      setPdfUrl(urlData.publicUrl);
+        .createSignedUrl(data.storage_path, 3600);
+      setPdfUrl(signedData?.signedUrl || null);
       setPdfName(data.file_name);
     }
   };

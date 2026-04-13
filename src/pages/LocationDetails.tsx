@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,13 @@ const LocationDetails = () => {
   const presetLocationId = searchParams.get("locationId");
 
   const { imageData: stateImageData, originalImageData: stateOriginalImageData, areaMeasurements: stateAreaMeasurements } = location.state || {};
+
+  // Store image data in a ref immediately so it survives re-renders and React StrictMode double-mounts
+  const imageDataRef = useRef<string | null>(stateImageData || null);
+  const originalImageDataRef = useRef<string | null>(stateOriginalImageData || null);
+  // Sync ref if state arrives after initial render (edge case)
+  if (stateImageData && !imageDataRef.current) imageDataRef.current = stateImageData;
+  if (stateOriginalImageData && !originalImageDataRef.current) originalImageDataRef.current = stateOriginalImageData;
 
   const [caption, setCaption] = useState("");
   const [previewImage, setPreviewImage] = useState<string | null>(stateImageData || null);
@@ -154,11 +161,13 @@ const LocationDetails = () => {
         if (syncResult === "remote-won") toast.warning("Neuere Online-Version übernommen");
         else toast.success("Standort aktualisiert");
         navigate(`/projects/${projectId}`);
-      } else if (isDetailImage && stateImageData) {
+      } else if (isDetailImage && imageDataRef.current) {
+        const imageDataToSave = imageDataRef.current;
+        const originalImageDataToSave = originalImageDataRef.current || imageDataToSave;
         toast.loading("Bild wird komprimiert...");
         const [compressedImageData, compressedOriginalImageData] = await Promise.all([
-          compressImage(stateImageData, 1440, 0.72),
-          stateOriginalImageData ? compressImage(stateOriginalImageData, 1440, 0.72) : Promise.resolve(stateImageData),
+          compressImage(imageDataToSave, 1440, 0.72),
+          compressImage(originalImageDataToSave, 1440, 0.72),
         ]);
         const targetLocationId = searchParams.get("locationId");
         if (!targetLocationId) { toast.error("Standort nicht gefunden"); return; }
@@ -169,13 +178,15 @@ const LocationDetails = () => {
         if (syncResult === "remote-won") toast.warning("Neuere Online-Version übernommen");
         else toast.success("Detailbild gespeichert");
         navigate(`/projects/${projectId}`);
-      } else if (stateImageData) {
+      } else if (imageDataRef.current) {
+        const imageDataToSave = imageDataRef.current;
+        const originalImageDataToSave = originalImageDataRef.current || imageDataToSave;
         const project = await indexedDBStorage.getProject(projectId);
         if (!project) { toast.error("Projekt nicht gefunden"); setIsSaving(false); return; }
         toast.loading("Bild wird komprimiert...");
         const [compressedImageData, compressedOriginalImageData] = await Promise.all([
-          compressImage(stateImageData, 1440, 0.72),
-          stateOriginalImageData ? compressImage(stateOriginalImageData, 1440, 0.72) : Promise.resolve(stateImageData),
+          compressImage(imageDataToSave, 1440, 0.72),
+          compressImage(originalImageDataToSave, 1440, 0.72),
         ]);
         const locationNumber = project.locations.length + 1;
         const fullLocationNumber = `${project.projectNumber}-${100 + locationNumber - 1}`;

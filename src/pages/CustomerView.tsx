@@ -235,7 +235,11 @@ const CustomerView = () => {
       const pdfs = payload.pdfs || [];
       const locationIds = locs.map((l: any) => l.id);
       setLocations(locs);
-      setImages([...(imgs || []), ...((pdfs || []).map((p: any) => ({ ...p, image_type: "pdf" })))]);
+      const allImgs = [...(imgs || []), ...((pdfs || []).map((p: any) => ({ ...p, image_type: "pdf" })))];
+      setImages(allImgs);
+      // Pre-resolve signed URLs for all images
+      const paths = allImgs.map((img: any) => img.storage_path).filter(Boolean);
+      resolveSignedUrls(paths);
       setApprovals({});
       if (locationIds.length > 0) {
         const { data: detailRows } = await supabase
@@ -325,6 +329,11 @@ const CustomerView = () => {
           detailMap[row.location_id].push(row);
         });
         setDetailImagesByLocation(detailMap);
+        // Pre-resolve signed URLs for detail images
+        const detailPaths = (detailRows || []).flatMap((r: any) =>
+          [r.annotated_path, r.original_path].filter(Boolean)
+        );
+        if (detailPaths.length > 0) resolveSignedUrls(detailPaths);
 
         const approvMap: Record<string, boolean> = {};
         (approvData || []).forEach((a: any) => { approvMap[a.location_id] = a.approved; });
@@ -397,10 +406,25 @@ const CustomerView = () => {
     };
   }, [locations, selectedAssignment, directProjectId]);
 
-  const getImageUrl = (path: string) => {
-    const { data } = supabase.storage.from("project-files").getPublicUrl(path);
-    return data.publicUrl;
+  const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
+
+  const resolveSignedUrls = async (paths: string[]) => {
+    const unresolved = paths.filter(p => p && !signedUrlCache[p]);
+    if (unresolved.length === 0) return;
+    const results = await Promise.all(
+      unresolved.map(async (path) => {
+        const { data } = await supabase.storage.from("project-files").createSignedUrl(path, 3600);
+        return { path, url: data?.signedUrl || "" };
+      })
+    );
+    setSignedUrlCache(prev => {
+      const next = { ...prev };
+      results.forEach(({ path, url }) => { if (url) next[path] = url; });
+      return next;
+    });
   };
+
+  const getSignedImageUrl = (path: string): string => signedUrlCache[path] || "";
 
   const triggerNotification = async (changeType: "approval" | "comment") => {
     if (!selectedAssignment || isLimitedGuestMode) return;
@@ -688,7 +712,7 @@ const CustomerView = () => {
                           </div>
                           <div className="flex gap-1">
                             <Button size="sm" variant="ghost" asChild>
-                              <a href={supabase.storage.from("project-files").getPublicUrl(upload.storage_path).data.publicUrl} target="_blank" rel="noopener noreferrer">
+                              <a href="#" onClick={async (e) => { e.preventDefault(); const { data } = await supabase.storage.from("project-files").createSignedUrl(upload.storage_path, 3600); if (data?.signedUrl) window.open(data.signedUrl, "_blank"); }} rel="noopener noreferrer">
                                 <Download className="h-3 w-3" />
                               </a>
                             </Button>
@@ -743,7 +767,7 @@ const CustomerView = () => {
                     <CardContent className="p-4 space-y-4">
                       {annotated && (
                         <div className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[180px]">
-                          <img src={getImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-auto max-h-[70vh] object-contain" />
+                          <img src={getSignedImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-auto max-h-[70vh] object-contain" />
                         </div>
                       )}
 
@@ -757,7 +781,7 @@ const CustomerView = () => {
                           {pdfEntries.map((pdf: any) => (
                             <a
                               key={pdf.id}
-                              href={getImageUrl(pdf.storage_path)}
+                              href={getSignedImageUrl(pdf.storage_path)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="flex items-center gap-2 text-sm text-primary hover:underline"
@@ -775,7 +799,7 @@ const CustomerView = () => {
                           <div className="grid grid-cols-2 gap-2">
                             {(detailImagesByLocation[loc.id] || []).map((detail: any) => (
                               <div key={detail.id} className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[120px]">
-                                <img src={getImageUrl(detail.annotated_path)} alt={detail.caption || "Detailbild"} className="w-full h-auto max-h-[220px] object-contain" />
+                                <img src={getSignedImageUrl(detail.annotated_path)} alt={detail.caption || "Detailbild"} className="w-full h-auto max-h-[220px] object-contain" />
                               </div>
                             ))}
                           </div>
