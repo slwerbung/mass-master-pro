@@ -53,24 +53,12 @@ function invalidateImageCache(key: string) {
   persistHashCache();
 }
 
-// ─── Signed URL cache ─────────────────────────────────────────────────────────
-// Signed URLs are valid for 1 hour; cache them for 50 min to avoid regenerating
-// on every hydrate call.
+// ─── Storage URL helper ──────────────────────────────────────────────────────
+// Bucket is public – getPublicUrl is synchronous and reliable.
 
-const _signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
-const SIGNED_URL_TTL_MS = 50 * 60 * 1000; // 50 minutes
-
-async function getSignedUrl(path: string): Promise<string | null> {
-  const cached = _signedUrlCache.get(path);
-  if (cached && Date.now() < cached.expiresAt) return cached.url;
-
-  const { data, error } = await supabase.storage
-    .from("project-files")
-    .createSignedUrl(path, 3600);
-  if (error || !data?.signedUrl) return null;
-
-  _signedUrlCache.set(path, { url: data.signedUrl, expiresAt: Date.now() + SIGNED_URL_TTL_MS });
-  return data.signedUrl;
+function getStorageUrl(path: string): string {
+  const { data } = supabase.storage.from("project-files").getPublicUrl(path);
+  return data.publicUrl;
 }
 
 // ─── Sync debounce ────────────────────────────────────────────────────────────
@@ -130,8 +118,6 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
     const blob = new Blob([uInt8Array], { type: contentType });
     const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType, upsert: true });
     if (error) return null;
-    // Invalidate signed URL cache for this path since we just replaced the file
-    _signedUrlCache.delete(path);
     return path;
   } catch {
     return null;
@@ -141,7 +127,6 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
 async function removeStoragePaths(paths: (string | null | undefined)[]) {
   const uniquePaths = [...new Set(paths.filter(Boolean) as string[])];
   if (uniquePaths.length === 0) return;
-  uniquePaths.forEach(p => _signedUrlCache.delete(p));
   await supabase.storage.from('project-files').remove(uniquePaths);
 }
 
@@ -271,9 +256,9 @@ async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Prom
 
 async function pathToBase64(path: string): Promise<string | null> {
   try {
-    const signedUrl = await getSignedUrl(path);
-    if (!signedUrl) return null;
-    const response = await fetch(signedUrl);
+    const url = getStorageUrl(path);
+    if (!url) return null;
+    const response = await fetch(url);
     if (!response.ok) return null;
     const blob = await response.blob();
     return await new Promise<string>((resolve, reject) => {
