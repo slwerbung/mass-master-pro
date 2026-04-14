@@ -504,26 +504,28 @@ export const indexedDBStorage = {
         createdAt: location.createdAt.toISOString(),
       });
       
-      if (!existingLocationIds.has(location.id)) {
-        if (location.imageData) {
-          const annotatedBlob = base64ToBlob(location.imageData);
-          await db.put('images', {
-            id: createImageId(location.id, 'annotated'),
-            locationId: location.id,
-            type: 'annotated',
-            blob: annotatedBlob,
-          });
-        }
-        
-        if (location.originalImageData) {
-          const originalBlob = base64ToBlob(location.originalImageData);
-          await db.put('images', {
-            id: createImageId(location.id, 'original'),
-            locationId: location.id,
-            type: 'original',
-            blob: originalBlob,
-          });
-        }
+      // Save image blob if: new location OR existing location but blob is missing
+      const annotatedId = createImageId(location.id, 'annotated');
+      const originalId  = createImageId(location.id, 'original');
+      const hasAnnotated = !!(await db.get('images', annotatedId));
+      const hasOriginal  = !!(await db.get('images', originalId));
+
+      if (location.imageData && (!hasAnnotated || !existingLocationIds.has(location.id))) {
+        await db.put('images', {
+          id: annotatedId,
+          locationId: location.id,
+          type: 'annotated',
+          blob: base64ToBlob(location.imageData),
+        });
+      }
+
+      if (location.originalImageData && (!hasOriginal || !existingLocationIds.has(location.id))) {
+        await db.put('images', {
+          id: originalId,
+          locationId: location.id,
+          type: 'original',
+          blob: base64ToBlob(location.originalImageData),
+        });
       }
     }
     

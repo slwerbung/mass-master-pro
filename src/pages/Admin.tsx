@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
-import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound } from "lucide-react";
+import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -61,6 +61,8 @@ const Admin = () => {
   const [savingAdminPassword, setSavingAdminPassword] = useState(false);
   const [projectPrefix, setProjectPrefix] = useState("");
   const [savingPrefix, setSavingPrefix] = useState(false);
+  const [companyLogo, setCompanyLogo] = useState<string | null>(null);
+  const [savingLogo, setSavingLogo] = useState(false);
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [projectFields, setProjectFields] = useState<FieldConfig[]>([]);
   const [newFieldLabel, setNewFieldLabel] = useState("");
@@ -111,7 +113,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadPrefix(); loadViewSettings(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadPrefix(); loadViewSettings(); loadLogo(); }
   }, [adminToken]);
 
   useEffect(() => {
@@ -160,6 +162,32 @@ const Admin = () => {
       toast.success("Präfix gespeichert");
     } catch (e: any) { toast.error(e.message || "Fehler"); }
     setSavingPrefix(false);
+  };
+
+  const loadLogo = async () => {
+    try {
+      const data = await invoke("get_logo");
+      setCompanyLogo(data?.logo ?? null);
+    } catch {}
+  };
+
+  const saveLogo = async (logoData: string | null) => {
+    setSavingLogo(true);
+    try {
+      await invoke("set_logo", { logoData });
+      setCompanyLogo(logoData);
+      toast.success(logoData ? "Logo gespeichert" : "Logo gelöscht");
+    } catch (e: any) { toast.error(e.message || "Fehler beim Speichern"); }
+    setSavingLogo(false);
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 1.5 * 1024 * 1024) { toast.error("Logo zu groß (max. 1.5 MB)"); return; }
+    const reader = new FileReader();
+    reader.onload = () => saveLogo(reader.result as string);
+    reader.readAsDataURL(file);
   };
 
   const loadFields = async () => {
@@ -753,6 +781,33 @@ const Admin = () => {
                   </div>
                 </div>
                 <Button onClick={saveViewSettings} disabled={savingViewSettings}>{savingViewSettings ? "Speichert..." : "Medien-Sichtbarkeit speichern"}</Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><ImageIcon className="h-5 w-5" /> Firmenlogo</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Das Logo wird im PDF-Export rechts unten angezeigt. Empfohlen: PNG mit Transparenz, max. 1.5 MB.</p>
+                <div className="flex items-center gap-4">
+                  {companyLogo && (
+                    <div className="border rounded-lg p-2 bg-muted/30 flex items-center justify-center" style={{ width: 80, height: 60 }}>
+                      <img src={companyLogo} alt="Firmenlogo" className="max-w-full max-h-full object-contain" />
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-2">
+                    <label className="cursor-pointer">
+                      <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="hidden" onChange={handleLogoUpload} disabled={savingLogo} />
+                      <span className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border rounded-md bg-background hover:bg-muted transition-colors cursor-pointer">
+                        {savingLogo ? "Speichert..." : companyLogo ? "Logo ersetzen" : "Logo hochladen"}
+                      </span>
+                    </label>
+                    {companyLogo && (
+                      <Button variant="outline" size="sm" onClick={() => saveLogo(null)} disabled={savingLogo} className="text-destructive hover:text-destructive">
+                        Logo löschen
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </CardContent>
             </Card>
 

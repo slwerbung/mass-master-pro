@@ -85,27 +85,17 @@ const ProjectDetail = () => {
           setProject(localProject);
           setIsLoading(false);
 
-          // Background remote check
+          // Background check: only hydrate when remote is genuinely newer
           getProjectRemoteTimestamp(projectId).then(async (remoteUpdatedAt) => {
-            if (remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000) {
-              const hydrated = await hydrateProjectFromSupabase(projectId);
-              if (hydrated) {
-                // Merge: if hydrated location has empty imageData (e.g. signed URL failed),
-                // keep the local image to avoid showing a placeholder
-                const merged = {
-                  ...hydrated,
-                  locations: hydrated.locations.map(hLoc => {
-                    const localLoc = localProject.locations.find(l => l.id === hLoc.id);
-                    return {
-                      ...hLoc,
-                      imageData: hLoc.imageData || localLoc?.imageData || '',
-                      originalImageData: hLoc.originalImageData || localLoc?.originalImageData || '',
-                    };
-                  }),
-                };
-                setProject(merged);
-                setConflictNotice("Es wurde eine neuere Online-Version geladen.");
-              }
+            const remoteIsNewer = remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000;
+            if (!remoteIsNewer) return;
+
+            await hydrateProjectFromSupabase(projectId);
+            // Reload from IndexedDB – blobs are preserved, images always come from local store
+            const refreshed = await indexedDBStorage.getProject(projectId, currentSession);
+            if (refreshed) {
+              setProject(refreshed);
+              setConflictNotice("Es wurde eine neuere Online-Version geladen.");
             }
           }).catch(console.error);
           return;
@@ -280,7 +270,7 @@ const ProjectDetail = () => {
                 <div key={upload.id} className="flex items-center justify-between gap-2 p-2 rounded border bg-muted/30">
                   <span className="text-sm truncate">{upload.file_name}</span>
                   <Button size="sm" variant="outline" asChild>
-                    <a href={supabase.storage.from("project-files").getPublicUrl(upload.storage_path).data.publicUrl} target="_blank" rel="noopener noreferrer">
+                    <a href="#" onClick={async (e) => { e.preventDefault(); const { data } = await supabase.storage.from("project-files").createSignedUrl(upload.storage_path, 3600); if (data?.signedUrl) window.open(data.signedUrl, "_blank"); }} rel="noopener noreferrer">
                       <ExternalLink className="h-3 w-3 mr-1" /> Öffnen
                     </a>
                   </Button>

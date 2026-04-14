@@ -17,17 +17,16 @@ import {
 import PDFExportOptionsUI, { PDFExportOptions, defaultPDFOptions } from "@/components/PDFExportOptions";
 import {
   getImageDimensions,
-  drawPageHeader,
-  drawPageFooter,
-  drawCoverPage,
-  drawImageWithBorder,
+  drawLocationPageLandscape,
+  drawFooter,
+  FooterData,
+  FooterRow,
   MARGIN,
-  CONTENT_WIDTH,
-  PAGE_HEIGHT,
+  PAGE_W,
+  PAGE_H,
   BLUE,
-  TEXT_PRIMARY,
-  TEXT_MUTED,
-  PAGE_WIDTH,
+  DARK,
+  CONTENT_WIDTH,
 } from "@/lib/pdfHelpers";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/projectFields";
@@ -67,6 +66,8 @@ const Export = () => {
   const [downloadingImages, setDownloadingImages] = useState<Record<string, boolean>>({});
   const [pdfOptions, setPdfOptions] = useState<PDFExportOptions>(defaultPDFOptions);
   const [viewSettings, setViewSettings] = useState(defaultViewSettings);
+  const [companyLogo, setCompanyLogo] = useState<string | null>(null);
+  const [employeeName, setEmployeeName] = useState<string>("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -86,12 +87,11 @@ const Export = () => {
           fetchViewSettings(),
         ]);
 
-        // PDF export should prefer the freshest fully-hydrated project data.
-        // Fallback to IndexedDB only if remote hydration is unavailable.
-        let loadedProject = await hydrateProjectFromSupabase(projectId);
+        // Prefer IndexedDB (has full images as blobs) for PDF export.
+        // Supabase hydration as fallback for online-only projects.
+        let loadedProject = await indexedDBStorage.getProject(projectId);
         if (!loadedProject) {
-          const localProject = await indexedDBStorage.getProject(projectId);
-          loadedProject = localProject;
+          loadedProject = await hydrateProjectFromSupabase(projectId);
         }
 
         if (!loadedProject) {
@@ -104,6 +104,17 @@ const Export = () => {
         setViewSettings(loadedViewSettings);
         setFieldConfigs((fieldsRes.data || []) as FieldConfig[]);
         setProjectFieldConfigs((projectFieldsRes.data || []) as any[]);
+
+        // Load company logo
+        supabase.functions.invoke("admin-manage", { body: { action: "get_logo" } })
+          .then(({ data }) => { if (data?.logo) setCompanyLogo(data.logo); });
+
+        // Load employee name for "Zeichner"
+        const empId = loadedProject.employeeId;
+        if (empId) {
+          supabase.functions.invoke("admin-manage", { body: { action: "get_employee_name", employeeId: empId } })
+            .then(({ data }) => { if (data?.name) setEmployeeName(data.name); });
+        }
 
         const nextFeedbackMap: Record<string, FeedbackItem[]> = {};
         (feedbackRes.data || []).forEach((entry: any) => {
@@ -256,16 +267,17 @@ const Export = () => {
 
     setDownloadingPDF(true);
     try {
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const dateStr = new Date().toLocaleDateString("de-DE");
+      // Querformat für Standortseiten
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const dateStr = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
       const customerOnly = pdfOptions.mode === "customer";
       const visibleFields = getVisibleFields(customerOnly);
-      const modeLabel = customerOnly ? "Kunden-Export" : "Interner Export";
 
       const locationPageMap: Record<string, number> = {};
       const floorPlanPageMap: Record<string, number> = {};
-      let pageCounter = 2;
+      let pageCounter = 1;
 
+      // Grundrisse bleiben im Hochformat → eigene Seiten zählen
       for (const fp of sortedFloorPlans) floorPlanPageMap[fp.id] = pageCounter++;
       for (const location of sortedLocations) {
         locationPageMap[location.id] = pageCounter++;
@@ -275,74 +287,130 @@ const Export = () => {
       }
       const totalPages = pageCounter - 1;
 
-      drawCoverPage(pdf, project.projectNumber, sortedLocations.length, project.projectType);
-      pdf.setFontSize(11);
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-      pdf.text(modeLabel, MARGIN, 166);
-      drawPageFooter(pdf, dateStr, 1, totalPages);
-
+      // Grundrissseiten (Hochformat – eigene addPage mit orientation)
+      let firstPage = true;
       for (const floorPlan of sortedFloorPlans) {
-        pdf.addPage();
+        if (!firstPage) pdf.addPage("a4", "landscape");
+        firstPage = false;
         const currentPage = floorPlanPageMap[floorPlan.id];
-        drawPageHeader(pdf, project.projectNumber);
-        drawPageFooter(pdf, dateStr, currentPage, totalPages);
-        let y = MARGIN + 16;
-
-        pdf.setFontSize(14);
-        pdf.setFont("helvetica", "bold");
-        pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-        pdf.text(`Grundriss · ${floorPlan.name}`, MARGIN, y);
-        y += 8;
-
+        // Grundriss im Querformat darstellen
         const fpDims = await getImageDimensions(floorPlan.imageData);
-        const fpMaxH = PAGE_HEIGHT - y - MARGIN - 18;
-        const fpRatio = Math.min(CONTENT_WIDTH / fpDims.width, fpMaxH / fpDims.height);
+        const maxW = PAGE_W - 2 * MARGIN;
+        const maxH = PAGE_H - 2 * MARGIN - 12;
+        const fpRatio = Math.min(maxW / fpDims.width, maxH / fpDims.height);
         const fpW = fpDims.width * fpRatio;
         const fpH = fpDims.height * fpRatio;
-        const fpX = MARGIN + (CONTENT_WIDTH - fpW) / 2;
+        const fpX = MARGIN + (maxW - fpW) / 2;
+        const fpY = MARGIN + 10;
 
-        drawImageWithBorder(pdf, floorPlan.imageData, fpX, y, fpW, fpH);
+        pdf.setFontSize(8);
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+        pdf.text(`Grundriss · ${floorPlan.name}`, MARGIN, MARGIN + 6);
+
+        const fmt = floorPlan.imageData.startsWith("data:image/jpeg") ? "JPEG"
+                  : floorPlan.imageData.startsWith("data:image/webp") ? "WEBP" : "PNG";
+        try { pdf.addImage(floorPlan.imageData, fmt as any, fpX, fpY, fpW, fpH); } catch {}
 
         for (const marker of floorPlan.markers) {
           const loc = sortedLocations.find(l => l.id === marker.locationId);
           if (!loc) continue;
           const mx = fpX + marker.x * fpW;
-          const my = y + marker.y * fpH;
+          const my = fpY + marker.y * fpH;
           const shortNum = shortLocationNumber(loc.locationNumber);
           const targetPage = locationPageMap[loc.id];
           if (targetPage) pdf.link(mx - 4, my - 4, 8, 8, { pageNumber: targetPage });
           pdf.setFillColor(BLUE.r, BLUE.g, BLUE.b);
-          pdf.circle(mx, my, 2.5, 'F');
-          pdf.setFontSize(6);
+          pdf.circle(mx, my, 2.5, "F");
+          pdf.setFontSize(5);
           pdf.setFont("helvetica", "bold");
           pdf.setTextColor(255, 255, 255);
           pdf.text(shortNum, mx, my + 0.8, { align: "center" });
         }
       }
 
+      // Standortseiten
       for (const location of sortedLocations) {
-        pdf.addPage();
-        await drawLocationPage({
-          pdf,
-          project,
-          location,
-          visibleFields,
-          customerOnly,
-          feedbacks: feedbackMap[location.id] || [],
-          printFiles: printFilesByLocation[location.id] || [],
-          showPrintFiles: customerOnly ? viewSettings.customerShowPrintFiles : viewSettings.internalShowPrintFiles,
-          projectFieldConfigs,
-          dateStr,
-          currentPage: locationPageMap[location.id],
-          totalPages,
-          floorPlanPageMap,
-          sortedFloorPlans,
-          resolveFieldValue,
-        });
+        if (!firstPage) pdf.addPage("a4", "landscape");
+        firstPage = false;
 
+        // Footer-Daten aufbauen
+        const parentFP = sortedFloorPlans.find(fp => fp.markers.some(m => m.locationId === location.id));
+        const printFiles = printFilesByLocation[location.id] || [];
+        const showPrintFiles = customerOnly ? viewSettings.customerShowPrintFiles : viewSettings.internalShowPrintFiles;
+
+        // Spalte 1: Projekt-Pflichtfelder + konfigurierte Projektfelder
+        const col1: FooterRow[] = [
+          { label: "Stand",     value: dateStr },
+          ...(employeeName ? [{ label: "Zeichner", value: employeeName }] : []),
+          { label: "Projektnr.", value: project.projectNumber },
+        ];
+        if (project.customerName) col1.push({ label: "Kunde", value: project.customerName });
+        mergeWithDefaultProjectFields(projectFieldConfigs || [])
+          .filter((f: any) => f.is_active)
+          .forEach((f: any) => {
+            const v = getProjectFieldValue(project, f.field_key);
+            if (v && String(v).trim()) col1.push({ label: f.field_label, value: String(v) });
+          });
+
+        // Spalte 2: Standort-Pflichtfelder + optional + Plan
+        const col2: FooterRow[] = [
+          { label: "Standortnr.", value: location.locationNumber },
+        ];
+        if (location.locationName) col2.push({ label: "Standortname", value: location.locationName });
+        if (location.comment) col2.push({ label: "Kommentar", value: location.comment });
+        if (parentFP) {
+          col2.push({
+            label: "Plan",
+            value: parentFP.name,
+            pink: true,
+            pageLink: floorPlanPageMap[parentFP.id],
+          });
+        }
+        // Konfigurierte Standortfelder für Spalte 2 (nicht System/Art/Beschriftung/Format)
+        const col2FieldKeys = new Set(["system", "label", "locationType"]);
+        visibleFields
+          .filter((f: any) => !col2FieldKeys.has(f.field_key))
+          .forEach((f: any) => {
+            const v = resolveFieldValue(location, f.field_key);
+            if (v && String(v).trim()) {
+              const displayVal = f.field_type === "checkbox"
+                ? ((v === true || v === "true") ? "Ja" : "Nein")
+                : String(v);
+              col2.push({ label: f.field_label, value: displayVal, pink: false });
+            }
+          });
+        // Druckdatei
+        if (showPrintFiles && printFiles.length > 0) {
+          printFiles.forEach((pf: any) => {
+            col2.push({ label: "Druckdatei", value: pf.file_name, pink: true });
+          });
+        }
+
+        // Spalte 3: System, Art, Beschriftung + weitere konfigurierte Felder
+        const col3: FooterRow[] = [];
+        if (location.system) col3.push({ label: "System", value: location.system });
+        if (location.locationType) col3.push({ label: "Art", value: location.locationType });
+        if (location.label) col3.push({ label: "Beschriftung", value: location.label });
+        visibleFields
+          .filter((f: any) => col2FieldKeys.has(f.field_key) && !["system", "locationType", "label"].includes(f.field_key))
+          .forEach((f: any) => {
+            const v = resolveFieldValue(location, f.field_key);
+            if (v && String(v).trim()) col3.push({ label: f.field_label, value: String(v) });
+          });
+
+        const footer: FooterData = {
+          col1: col1.slice(0, 5),
+          col2: col2.slice(0, 5),
+          col3: col3.slice(0, 5),
+          logoDataUri: companyLogo,
+        };
+
+        await drawLocationPageLandscape({ pdf, imageData: location.imageData, footer });
+
+        // Detailbilder
         if (((customerOnly && viewSettings.customerShowDetailImages) || (!customerOnly && viewSettings.internalShowDetailImages)) && location.detailImages && location.detailImages.length > 0) {
-          pdf.addPage();
+          pdf.addPage("a4", "landscape");
           await drawDetailImagesPage({
             pdf,
             projectNumber: project.projectNumber,
@@ -350,6 +418,7 @@ const Export = () => {
             dateStr,
             currentPage: locationPageMap[location.id] + 1,
             totalPages,
+            companyLogo,
           });
         }
       }
@@ -476,223 +545,20 @@ function shortLocationNumber(locationNumber: string) {
   return parts[parts.length - 1] || locationNumber;
 }
 
-function drawSectionCard(pdf: jsPDF, title: string, rows: { label: string; value: string }[], startY: number) {
-  if (!rows.length) return startY;
-  const left = MARGIN;
-  const width = CONTENT_WIDTH;
-  const colWidth = (width - 8) / 2;
-  let cursorY = startY;
+async function drawDetailImagesPage({ pdf, projectNumber, location, dateStr, companyLogo }: any) {
+  // Querformat – Detailbilder nebeneinander über dem Footer
+  const FOOTER_H_D = 12;
+  const contentH = PAGE_H - 2 * MARGIN - FOOTER_H_D;
+  let y = MARGIN;
 
-  const measuredRows = rows.map((row) => {
-    const valueLines = pdf.splitTextToSize(row.value, colWidth - 8);
-    return { ...row, valueLines, height: 10 + valueLines.length * 4 };
-  });
-
-  const rowPairs: typeof measuredRows[] = [];
-  for (let i = 0; i < measuredRows.length; i += 2) rowPairs.push(measuredRows.slice(i, i + 2));
-  const bodyHeight = rowPairs.reduce((sum, pair) => sum + Math.max(...pair.map((item) => item.height)) + 3, 0);
-  const totalHeight = 12 + bodyHeight + 2;
-
-  pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(left, cursorY, width, totalHeight, 2, 2, "F");
-  pdf.setDrawColor(226, 232, 240);
-  pdf.setLineWidth(0.3);
-  pdf.roundedRect(left, cursorY, width, totalHeight, 2, 2, "S");
-
-  pdf.setFontSize(9);
+  pdf.setFontSize(8);
   pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-  pdf.text(title.toUpperCase(), left + 4, cursorY + 7);
-  cursorY += 11;
-
-  for (const pair of rowPairs) {
-    const pairHeight = Math.max(...pair.map((item) => item.height));
-    pair.forEach((item, idx) => {
-      const x = left + 4 + idx * (colWidth + 8);
-      pdf.setFontSize(8);
-      pdf.setFont("helvetica", "bold");
-      pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-      pdf.text(item.label, x, cursorY + 3);
-      pdf.setFontSize(10);
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-      pdf.text(item.valueLines, x, cursorY + 8);
-    });
-    cursorY += pairHeight + 3;
-  }
-
-  return startY + totalHeight + 5;
-}
-
-function drawFeedbackCard(pdf: jsPDF, feedbacks: FeedbackItem[], startY: number) {
-  if (!feedbacks.length) return startY;
-  const left = MARGIN;
-  const width = CONTENT_WIDTH;
-  let y = startY;
-  const rows = feedbacks.map((entry) => {
-    const messageLines = pdf.splitTextToSize(entry.message, width - 16);
-    return { entry, messageLines, height: 15 + messageLines.length * 4 };
-  });
-  const totalHeight = 12 + rows.reduce((sum, row) => sum + row.height + 3, 0);
-
-  pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(left, y, width, totalHeight, 2, 2, "F");
-  pdf.setDrawColor(226, 232, 240);
-  pdf.setLineWidth(0.3);
-  pdf.roundedRect(left, y, width, totalHeight, 2, 2, "S");
-
-  pdf.setFontSize(9);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-  pdf.text("KUNDEN-FEEDBACK", left + 4, y + 7);
-  y += 11;
-
-  rows.forEach(({ entry, messageLines, height }) => {
-    pdf.setFillColor(255, 255, 255);
-    pdf.roundedRect(left + 4, y, width - 8, height, 1.5, 1.5, "F");
-    pdf.setDrawColor(226, 232, 240);
-    pdf.roundedRect(left + 4, y, width - 8, height, 1.5, 1.5, "S");
-
-    pdf.setFontSize(9);
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-    pdf.text(entry.author_name, left + 8, y + 5);
-
-    pdf.setFontSize(8);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-    const statusText = entry.status === "done" ? "Umgesetzt" : "Offen";
-    pdf.text(`${new Date(entry.created_at).toLocaleDateString("de-DE")} · ${statusText}`, left + width - 8, y + 5, { align: "right" });
-
-    pdf.setFontSize(9);
-    pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-    pdf.text(messageLines, left + 8, y + 11);
-    y += height + 3;
-  });
-  return startY + totalHeight + 5;
-}
-
-function drawAreaMeasurementsCard(pdf: jsPDF, areaMeasurements: any[], startY: number) {
-  if (!areaMeasurements?.length) return startY;
-  const rows = areaMeasurements.map((am) => ({
-    label: `Fläche ${am.index}`,
-    value: `${am.widthMm} × ${am.heightMm} mm · ${((am.widthMm * am.heightMm) / 1_000_000).toFixed(2)} m²`,
-  }));
-  const total = areaMeasurements.reduce((sum, am) => sum + (am.widthMm * am.heightMm) / 1_000_000, 0);
-  rows.push({ label: "Gesamt", value: `${total.toFixed(2)} m²` });
-  return drawSectionCard(pdf, "Flächen", rows, startY);
-}
-
-
-function drawPrintFilesCard(pdf: jsPDF, printFiles: any[], startY: number) {
-  if (!printFiles || printFiles.length === 0) return startY;
-  const padding = 4;
-  const lineH = 7;
-  const boxH = padding * 2 + printFiles.length * lineH;
-
-  pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(MARGIN, startY, CONTENT_WIDTH, boxH, 2, 2, "F");
-  pdf.setDrawColor(226, 232, 240);
-  pdf.setLineWidth(0.3);
-  pdf.roundedRect(MARGIN, startY, CONTENT_WIDTH, boxH, 2, 2, "S");
-
-  pdf.setFontSize(9);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  pdf.text("Druckdateien", MARGIN + padding, startY + 6);
-
-  let y = startY + 11;
-  pdf.setFontSize(9);
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(BLUE.r, BLUE.g, BLUE.b);
-
-  for (const file of printFiles) {
-    const url = supabase.storage.from("project-files").getPublicUrl(file.storage_path).data.publicUrl;
-    const label = `• ${file.file_name}`;
-    pdf.textWithLink(label, MARGIN + padding, y, { url });
-    y += lineH;
-  }
-
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  return startY + boxH + 4;
-}
-
-async function drawLocationPage({ pdf, project, location, visibleFields, customerOnly, feedbacks, printFiles, showPrintFiles, dateStr, currentPage, totalPages, floorPlanPageMap, sortedFloorPlans, resolveFieldValue, projectFieldConfigs }: any) {
-  drawPageHeader(pdf, project.projectNumber);
-  drawPageFooter(pdf, dateStr, currentPage, totalPages);
-  let y = MARGIN + 16;
-
-  const parentFloorPlan = sortedFloorPlans.find((fp: any) => fp.markers.some((m: any) => m.locationId === location.id));
-  if (parentFloorPlan) {
-    const targetPage = floorPlanPageMap[parentFloorPlan.id];
-    if (targetPage) {
-      pdf.setFontSize(8);
-      pdf.setTextColor(BLUE.r, BLUE.g, BLUE.b);
-      pdf.textWithLink(`← Grundriss: ${parentFloorPlan.name}`, MARGIN, y, { pageNumber: targetPage });
-      y += 6;
-    }
-  }
-
-  pdf.setFontSize(17);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  pdf.text(`Standort ${location.locationNumber}`, MARGIN, y + 2);
+  pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+  pdf.text(`Detailbilder · Standort ${location.locationNumber}`, MARGIN, y + 4);
   y += 8;
 
-  if (location.locationName) {
-    pdf.setFontSize(10);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-    pdf.text(location.locationName, MARGIN, y + 1);
-    y += 6;
-  }
-
-  const imgDims = await getImageDimensions(location.imageData);
-  const imageMaxH = 95;
-  const imageRatio = Math.min(CONTENT_WIDTH / imgDims.width, imageMaxH / imgDims.height);
-  const imageW = imgDims.width * imageRatio;
-  const imageH = imgDims.height * imageRatio;
-  const imageX = MARGIN + (CONTENT_WIDTH - imageW) / 2;
-  drawImageWithBorder(pdf, location.imageData, imageX, y, imageW, imageH);
-  y += imageH + 6;
-
-  const projectRows = mergeWithDefaultProjectFields(projectFieldConfigs || []).filter((field: any) => field.is_active).map((field: any) => {
-    const value = getProjectFieldValue(project, field.field_key);
-    if (value === undefined || value === null || value === "") return null;
-    const displayValue = field.field_type === "checkbox" ? ((value === true || value === "true") ? "Ja" : "Nein") : String(value);
-    return { label: field.field_label, value: displayValue };
-  }).filter(Boolean);
-  if (projectRows.length > 0) y = drawSectionCard(pdf, "Projektinfos", projectRows as any, y);
-
-  const rows = visibleFields
-    .map((field: any) => {
-      const value = resolveFieldValue(location, field.field_key);
-      if (value === undefined || value === null || value === "") return null;
-      const displayValue = field.field_type === "checkbox" ? ((value === true || value === "true") ? "Ja" : "Nein") : String(value);
-      return { label: field.field_label, value: displayValue };
-    })
-    .filter(Boolean);
-  y = drawSectionCard(pdf, customerOnly ? "Sichtbare Standortinfos" : "Standortinfos", rows as any, y);
-
-  y = drawAreaMeasurementsCard(pdf, location.areaMeasurements || [], y);
-  if (showPrintFiles && printFiles && printFiles.length > 0) {
-    y = drawPrintFilesCard(pdf, printFiles, y);
-  }
-  y = drawFeedbackCard(pdf, feedbacks, y);
-}
-
-async function drawDetailImagesPage({ pdf, projectNumber, location, dateStr, currentPage, totalPages }: any) {
-  drawPageHeader(pdf, projectNumber);
-  drawPageFooter(pdf, dateStr, currentPage, totalPages);
-  let y = MARGIN + 16;
-  pdf.setFontSize(13);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(TEXT_PRIMARY.r, TEXT_PRIMARY.g, TEXT_PRIMARY.b);
-  pdf.text(`Detailbilder · Standort ${location.locationNumber}`, MARGIN, y);
-  y += 8;
-
-  const maxW = (CONTENT_WIDTH - 6) / 2;
-  const maxH = 72;
+  const maxW = (PAGE_W - 2 * MARGIN - 6) / 2;
+  const maxH = contentH - 10;
   let col = 0;
   for (const detail of location.detailImages) {
     const dims = await getImageDimensions(detail.imageData);
@@ -700,23 +566,23 @@ async function drawDetailImagesPage({ pdf, projectNumber, location, dateStr, cur
     const w = dims.width * ratio;
     const h = dims.height * ratio;
     const x = MARGIN + col * (maxW + 6) + (maxW - w) / 2;
-    if (y + h + 14 > PAGE_HEIGHT - MARGIN) {
-      pdf.addPage();
-      drawPageHeader(pdf, projectNumber);
-      y = MARGIN + 16;
+    if (y + h + 10 > PAGE_H - MARGIN - FOOTER_H_D) {
+      pdf.addPage("a4", "landscape");
+      y = MARGIN + 8;
       col = 0;
     }
-    drawImageWithBorder(pdf, detail.imageData, x, y, w, h);
+    const fmt = detail.imageData.startsWith("data:image/jpeg") ? "JPEG"
+              : detail.imageData.startsWith("data:image/webp") ? "WEBP" : "PNG";
+    try { pdf.addImage(detail.imageData, fmt as any, x, y, w, h); } catch {}
     if (detail.caption) {
-      pdf.setFontSize(8);
+      pdf.setFontSize(6);
       pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
-      const captionLines = pdf.splitTextToSize(detail.caption, maxW);
-      pdf.text(captionLines, x, y + h + 4);
+      pdf.setTextColor(100, 100, 100);
+      pdf.text(detail.caption, x, y + h + 3, { maxWidth: maxW });
     }
     if (col === 1) {
       col = 0;
-      y += maxH + 18;
+      y += maxH + 12;
     } else {
       col = 1;
     }

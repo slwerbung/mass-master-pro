@@ -403,6 +403,8 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
     };
   });
 
+  // Note: saveProject only writes image blobs for NEW locations.
+  // Existing location blobs are preserved in IndexedDB regardless of imageData value here.
   const hydratedProject: Project = {
     id: projectRow.id,
     projectNumber: projectRow.project_number,

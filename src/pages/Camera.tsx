@@ -23,7 +23,7 @@ const Camera = () => {
   const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
   const [streaming, setStreaming] = useState(false);
   const hasTriggered = useRef(false);
-  const isProcessingFile = useRef(false); // Guard against double-fire on Android
+  const isProcessingFile = useRef(false); // Guard against double-fire on Android/iOS
 
   // Detect desktop vs mobile
   useEffect(() => {
@@ -102,33 +102,32 @@ const Camera = () => {
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Guard against double-fire (common on Android with capture="environment")
+    // Guard against double-fire (common on Android/iOS with capture="environment")
     if (isProcessingFile.current) return;
     const file = e.target.files?.[0];
+    // No file = user cancelled (only allow goBack if we haven't already processed a file)
     if (!file) {
-      goBack();
+      if (!capturedImage) goBack();
       return;
     }
     if (!file.type.startsWith("image/")) {
       toast.error("Bitte ein Bild auswählen");
       return;
     }
+    // Lock immediately before any async work
     isProcessingFile.current = true;
-    // Reset file input so the same file can be selected again if user retakes
-    if (fileInputRef.current) fileInputRef.current.value = "";
     try {
       const imageData = await readImageFileForEditor(file);
       const shouldSkipConfirmation = !isDesktop && mode !== "upload";
       if (shouldSkipConfirmation) {
         navigateToEditor(imageData);
+        // Don't reset isProcessingFile – component will unmount after navigate
         return;
       }
       setCapturedImage(imageData);
     } catch {
       toast.error("Fehler beim Laden des Bildes");
-    } finally {
-      // Reset after a short delay to allow navigation to complete
-      setTimeout(() => { isProcessingFile.current = false; }, 1000);
+      isProcessingFile.current = false; // Only reset on error so user can retry
     }
   };
 
