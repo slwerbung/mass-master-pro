@@ -301,19 +301,16 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
   const detailImageMap = new Map<string, DetailImage[]>();
 
   if (locationIds.length > 0) {
-    const { data: imageRows, error: imageError } = await supabase
-      .from("location_images")
-      .select("location_id, image_type, storage_path")
-      .in("location_id", locationIds);
-    if (imageError) throw imageError;
-
-    await loadInBatches(imageRows || [], async (row) => {
-      const base64 = await pathToBase64(row.storage_path);
-      if (base64) {
-        const entry = imageMap.get(row.location_id) || {};
-        if (row.image_type === "annotated") entry.annotated = base64;
-        if (row.image_type === "original")  entry.original  = base64;
-        imageMap.set(row.location_id, entry);
+    // Load location images directly from known storage paths.
+    // We don't query location_images table to avoid dependency on that DB row existing.
+    // Path pattern: images/{locationId}/annotated and images/{locationId}/original
+    await loadInBatches(locationIds, async (locationId) => {
+      const [annotated, original] = await Promise.all([
+        pathToBase64(getLocationImagePath(locationId, "annotated")),
+        pathToBase64(getLocationImagePath(locationId, "original")),
+      ]);
+      if (annotated || original) {
+        imageMap.set(locationId, { annotated: annotated || undefined, original: original || undefined });
       }
     });
 
@@ -440,10 +437,13 @@ async function removeDeletedLocationsFromSupabase(project: Project) {
   const localLocationIds = new Set(project.locations.map((location) => location.id));
   const deletedLocationIds = (remoteLocations || []).map((row) => row.id).filter((id) => !localLocationIds.has(id));
   if (deletedLocationIds.length === 0) return;
-  const { data: remoteLocationImages } = await supabase.from('location_images').select('storage_path').in('location_id', deletedLocationIds);
+  const locationStoragePathsToDelete = deletedLocationIds.flatMap(id => [
+    getLocationImagePath(id, "annotated"),
+    getLocationImagePath(id, "original"),
+  ]);
   const { data: remoteDetailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', deletedLocationIds);
   await removeStoragePaths([
-    ...(remoteLocationImages || []).map((row) => row.storage_path),
+    ...locationStoragePathsToDelete,
     ...(remoteDetailImages || []).flatMap((row) => [row.annotated_path, row.original_path]),
   ]);
   await (supabase as any).from('location_feedback').delete().in('location_id', deletedLocationIds);
@@ -559,10 +559,14 @@ export async function deleteProjectFromSupabase(projectId: string): Promise<void
   const { data: locations } = await supabase.from("locations").select("id").eq("project_id", projectId);
   const locationIds = (locations || []).map((l) => l.id);
   if (locationIds.length > 0) {
-    const { data: locationImages } = await supabase.from('location_images').select('storage_path').in('location_id', locationIds);
+    // Build storage paths directly (don't rely on location_images table having rows)
+    const locationStoragePaths = locationIds.flatMap(id => [
+      getLocationImagePath(id, "annotated"),
+      getLocationImagePath(id, "original"),
+    ]);
     const { data: detailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', locationIds);
     await removeStoragePaths([
-      ...(locationImages || []).map((row) => row.storage_path),
+      ...locationStoragePaths,
       ...(detailImages || []).flatMap((row) => [row.annotated_path, row.original_path]),
     ]);
     await (supabase as any).from("location_feedback").delete().in("location_id", locationIds);
