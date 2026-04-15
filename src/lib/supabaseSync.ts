@@ -9,7 +9,7 @@ import { compressImage } from "./imageCompression";
 // Persists to localStorage. Skips re-upload of unchanged images across sessions.
 // Limited to MAX_HASH_ENTRIES to prevent unbounded localStorage growth.
 
-const HASH_CACHE_KEY  = 'mmp_img_hashes_v2'; // v2: bumped to invalidate stale entries from broken anon policy era
+const HASH_CACHE_KEY  = 'mmp_img_hashes_v2';
 const MAX_HASH_ENTRIES = 500;
 let _hashCache: Record<string, { fp: string; ts: number }> | null = null;
 
@@ -118,13 +118,16 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
     const blob = new Blob([uInt8Array], { type: contentType });
     const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType });
     if (error) {
-      console.error('[MMP] Storage upload failed:', path, JSON.stringify(error), error);
-      return null;
+      // File already exists → update instead
+      if ((error as any).statusCode === '409' || error.message?.includes('already exists')) {
+        const { error: updateError } = await supabase.storage.from('project-files').update(path, blob, { contentType });
+        if (updateError) return null;
+      } else {
+        return null;
+      }
     }
-    console.log('[MMP] Storage upload OK:', path);
     return path;
-  } catch (e) {
-    console.error('[MMP] Storage upload exception:', path, e);
+  } catch {
     return null;
   }
 }
@@ -152,10 +155,7 @@ async function syncImageVariant(locationId: string, imageType: "annotated" | "or
   const { error } = await supabase.from("location_images").insert(
     { location_id: locationId, image_type: imageType, storage_path: path }
   );
-  if (error) {
-    console.error('[MMP] location_images insert failed:', locationId, imageType, error.message, error);
-    return;
-  }
+  if (error) return;
   markImageSynced(cacheKey, imageData);
 }
 

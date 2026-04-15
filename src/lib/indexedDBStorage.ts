@@ -739,7 +739,6 @@ export const indexedDBStorage = {
       const tx = db.transaction([...storeNames], 'readwrite');
       await Promise.all(storeNames.map(s => tx.objectStore(s).clear()));
       await tx.done;
-      console.log('IndexedDB cleared');
     } catch (e) {
       console.warn('Failed to clear IndexedDB', e);
     }
