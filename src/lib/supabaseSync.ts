@@ -116,9 +116,12 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
     const uInt8Array = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) uInt8Array[i] = raw.charCodeAt(i);
     const blob = new Blob([uInt8Array], { type: contentType });
-    const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType, upsert: true });
+    // Remove first (ignore error if not exists), then upload fresh.
+    // upsert:true can return HTTP 400 for anon users without Supabase Auth JWT.
+    await supabase.storage.from('project-files').remove([path]);
+    const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType });
     if (error) {
-      console.error('[MMP] Storage upload failed:', path, error.message, error);
+      console.error('[MMP] Storage upload failed:', path, JSON.stringify(error), error);
       return null;
     }
     console.log('[MMP] Storage upload OK:', path);
