@@ -116,9 +116,6 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
     const uInt8Array = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) uInt8Array[i] = raw.charCodeAt(i);
     const blob = new Blob([uInt8Array], { type: contentType });
-    // Remove first (ignore error if not exists), then upload fresh.
-    // upsert:true can return HTTP 400 for anon users without Supabase Auth JWT.
-    await supabase.storage.from('project-files').remove([path]);
     const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType });
     if (error) {
       console.error('[MMP] Storage upload failed:', path, JSON.stringify(error), error);
@@ -147,12 +144,16 @@ async function syncImageVariant(locationId: string, imageType: "annotated" | "or
   const path = getLocationImagePath(locationId, imageType);
   const uploaded = await uploadImageToStorage(path, imageData);
   if (!uploaded) return;
-  const { error } = await supabase.from("location_images").upsert(
-    { location_id: locationId, image_type: imageType, storage_path: path },
-    { onConflict: "location_id,image_type" }
+  // Delete existing row first, then insert fresh (no unique constraint in DB)
+  await supabase.from("location_images")
+    .delete()
+    .eq("location_id", locationId)
+    .eq("image_type", imageType);
+  const { error } = await supabase.from("location_images").insert(
+    { location_id: locationId, image_type: imageType, storage_path: path }
   );
   if (error) {
-    console.error('[MMP] location_images upsert failed:', locationId, imageType, error.message, error);
+    console.error('[MMP] location_images insert failed:', locationId, imageType, error.message, error);
     return;
   }
   markImageSynced(cacheKey, imageData);
