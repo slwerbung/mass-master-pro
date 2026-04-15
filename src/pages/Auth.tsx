@@ -138,7 +138,7 @@ const Auth = () => {
       } else if (data?.valid && data?.token) {
         resetRateLimit();
         const prev = getSession();
-        if (prev?.id !== emp.id) await indexedDBStorage.clearAll();
+        if (prev?.id && prev.id !== emp.id) await indexedDBStorage.clearAll();
         setSession({ role: "employee", id: emp.id, name: emp.name, authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("employee", data.token, emp.id);
         toast.success(`Angemeldet als ${emp.name}`);
@@ -168,7 +168,7 @@ const Auth = () => {
       else if (data?.valid && data?.token) {
         resetRateLimit();
         const prev = getSession();
-        if (prev?.id !== selectedEmployee.id) await indexedDBStorage.clearAll();
+        if (prev?.id && prev.id !== selectedEmployee.id) await indexedDBStorage.clearAll();
         setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name, authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("employee", data.token, selectedEmployee.id);
         toast.success(`Angemeldet als ${selectedEmployee.name}`);
