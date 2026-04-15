@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Plus, MapPin, List, Upload, Trash2, RefreshCw, Camera } from "lucide-react";
@@ -12,6 +13,20 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 const FloorPlanView = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
+  const { cameraInput: floorCameraInput, triggerCamera: triggerFloorCamera } = useDirectCamera({
+    onCapture: (imageData) => {
+      setShowCaptureDialog(false);
+      navigate(`/projects/${projectId}/editor?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`, { state: { imageData } });
+    },
+  });
+  const { cameraInput: floorUploadInput, triggerCamera: triggerFloorUpload } = useDirectCamera({
+    uploadMode: true,
+    onCapture: (imageData) => {
+      setShowCaptureDialog(false);
+      navigate(`/projects/${projectId}/editor?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`, { state: { imageData } });
+    },
+  });
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeFloorPlanId, setActiveFloorPlanId] = useState<string>("");
@@ -145,15 +160,17 @@ const FloorPlanView = () => {
             <DialogTitle>Bild erfassen</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-3">
-            <Button size="lg" className="h-14 text-base" onClick={() => { setShowCaptureDialog(false); navigate(`/projects/${projectId}/camera?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`); }}>
+            <Button size="lg" className="h-14 text-base" onClick={() => { if (isMobile) { triggerFloorCamera(); } else { setShowCaptureDialog(false); navigate(`/projects/${projectId}/camera?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`); } }}>
               <Camera className="h-5 w-5 mr-2" />Kamera
             </Button>
-            <Button size="lg" variant="outline" className="h-14 text-base" onClick={() => { setShowCaptureDialog(false); navigate(`/projects/${projectId}/camera?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}&mode=upload`); }}>
+            <Button size="lg" variant="outline" className="h-14 text-base" onClick={() => { if (isMobile) { triggerFloorUpload(); } else { setShowCaptureDialog(false); navigate(`/projects/${projectId}/camera?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}&mode=upload`); } }}>
               <Upload className="h-5 w-5 mr-2" />Hochladen
             </Button>
           </div>
         </DialogContent>
       </Dialog>
+      {floorCameraInput}
+      {floorUploadInput}
     </div>
   );
 };

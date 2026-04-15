@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from "react";
+import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -63,6 +64,10 @@ interface LocationCardProps {
 const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fieldConfigs = [], showPrintFiles = true, showDetailImages = true, project, projectFieldConfigs = [] }: LocationCardProps) => {
   const navigate = useNavigate();
   const pdfInputRef = useRef<HTMLInputElement>(null);
+  const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
+  const { cameraInput: detailCameraInput, triggerCamera: triggerDetailCamera } = useDirectCamera({
+    onCapture: (imageData) => navigate(`/projects/${projectId}/editor?detail=true&locationId=${location.id}`, { state: { imageData } }),
+  });
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState<string | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState(false);
@@ -336,11 +341,12 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           </div>
         )}
 
-        {showDetailImages && (<Button variant="outline" size="sm" className="w-full" onClick={() => navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`)}>
+        {showDetailImages && (<Button variant="outline" size="sm" className="w-full" onClick={() => { if (isMobile) { triggerDetailCamera(); } else { navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`); } }}>
           <ImagePlus className="h-4 w-4 mr-2" /> Detailbild hinzufügen
         </Button>)}
       </CardContent>
 
+      {detailCameraInput}
       <input ref={pdfInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,.ai,.eps" onChange={handlePrintFileUpload} className="hidden" />
     </Card>
   );

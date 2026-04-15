@@ -29,6 +29,7 @@ import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 import { readImageFileForEditor } from "@/lib/imageFile";
+import { useDirectCamera } from "@/lib/useDirectCamera";
 import ProjectInfoFields from "@/components/ProjectInfoFields";
 
 const ProjectDetail = () => {
@@ -43,6 +44,10 @@ const ProjectDetail = () => {
   const [viewSettings, setViewSettings] = useState(defaultViewSettings);
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
+  const { cameraInput, triggerCamera } = useDirectCamera({
+    onCapture: (imageData) => navigate(`/projects/${projectId}/editor`, { state: { imageData } }),
+  });
 
   useEffect(() => {
     const loadFieldConfigs = async () => {
@@ -288,6 +293,7 @@ const ProjectDetail = () => {
       </div>
 
       <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+      {cameraInput}
 
       <div className="fixed bottom-0 left-0 right-0 bg-card border-t shadow-lg p-3 md:p-4 safe-area-bottom">
         <div className="container max-w-4xl mx-auto flex gap-1.5 md:gap-3">
@@ -296,7 +302,7 @@ const ProjectDetail = () => {
           ) : (
             <>
               <Button size="lg" variant="outline" className="flex-1 h-12 md:h-11 px-2 md:px-4" onClick={() => fileInputRef.current?.click()}><ImagePlus className="mr-1 h-4 w-4 md:h-5 md:w-5 shrink-0" /><span className="text-xs md:text-base">Hochladen</span></Button>
-              <Button size="lg" variant="outline" className="flex-1 h-12 md:h-11 px-2 md:px-4" onClick={() => navigate(`/projects/${projectId}/camera`)}><Camera className="mr-1 h-4 w-4 md:h-5 md:w-5 shrink-0" /><span className="text-xs md:text-base">Kamera</span></Button>
+              <Button size="lg" variant="outline" className="flex-1 h-12 md:h-11 px-2 md:px-4" onClick={() => { if (isMobile) { triggerCamera(); } else { navigate(`/projects/${projectId}/camera`); } }}><Camera className="mr-1 h-4 w-4 md:h-5 md:w-5 shrink-0" /><span className="text-xs md:text-base">Kamera</span></Button>
             </>
           )}
           <Button size="lg" variant="outline" onClick={() => navigate(`/projects/${projectId}/export`)} className="flex-1 h-12 md:h-11 px-2 md:px-4"><Download className="mr-1 h-4 w-4 md:h-5 md:w-5 shrink-0" /><span className="text-xs md:text-base">Export</span></Button>
