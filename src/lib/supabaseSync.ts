@@ -54,24 +54,11 @@ function invalidateImageCache(key: string) {
 }
 
 // ─── Storage URL helper ──────────────────────────────────────────────────────
-// Bucket is private – use signed URLs (1h TTL) with in-memory cache.
+// Bucket is public – getPublicUrl is synchronous, no auth required.
 
-const _signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
-const SIGNED_URL_TTL_SECONDS = 3600;
-const SIGNED_URL_CACHE_BUFFER_MS = 300_000; // refresh 5 min before expiry
-
-async function getStorageUrl(path: string): Promise<string | null> {
-  const now = Date.now();
-  const cached = _signedUrlCache.get(path);
-  if (cached && cached.expiresAt - now > SIGNED_URL_CACHE_BUFFER_MS) {
-    return cached.url;
-  }
-  const { data, error } = await supabase.storage
-    .from("project-files")
-    .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
-  if (error || !data?.signedUrl) return null;
-  _signedUrlCache.set(path, { url: data.signedUrl, expiresAt: now + SIGNED_URL_TTL_SECONDS * 1000 });
-  return data.signedUrl;
+function getStorageUrl(path: string): string {
+  const { data } = supabase.storage.from("project-files").getPublicUrl(path);
+  return data.publicUrl;
 }
 
 // ─── Sync debounce ────────────────────────────────────────────────────────────
@@ -271,7 +258,7 @@ async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Prom
 
 async function pathToBase64(path: string): Promise<string | null> {
   try {
-    const url = await getStorageUrl(path);
+    const url = getStorageUrl(path);
     if (!url) return null;
     const response = await fetch(url);
     if (!response.ok) return null;
