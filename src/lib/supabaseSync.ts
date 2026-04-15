@@ -117,9 +117,14 @@ async function uploadImageToStorage(path: string, base64: string): Promise<strin
     for (let i = 0; i < raw.length; i++) uInt8Array[i] = raw.charCodeAt(i);
     const blob = new Blob([uInt8Array], { type: contentType });
     const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType, upsert: true });
-    if (error) return null;
+    if (error) {
+      console.error('[MMP] Storage upload failed:', path, error.message, error);
+      return null;
+    }
+    console.log('[MMP] Storage upload OK:', path);
     return path;
-  } catch {
+  } catch (e) {
+    console.error('[MMP] Storage upload exception:', path, e);
     return null;
   }
 }
@@ -143,7 +148,10 @@ async function syncImageVariant(locationId: string, imageType: "annotated" | "or
     { location_id: locationId, image_type: imageType, storage_path: path },
     { onConflict: "location_id,image_type" }
   );
-  if (error) return; // Don't mark as synced if DB write failed
+  if (error) {
+    console.error('[MMP] location_images upsert failed:', locationId, imageType, error.message, error);
+    return;
+  }
   markImageSynced(cacheKey, imageData);
 }
 
