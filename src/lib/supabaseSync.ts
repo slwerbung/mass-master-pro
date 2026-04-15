@@ -9,7 +9,7 @@ import { compressImage } from "./imageCompression";
 // Persists to localStorage. Skips re-upload of unchanged images across sessions.
 // Limited to MAX_HASH_ENTRIES to prevent unbounded localStorage growth.
 
-const HASH_CACHE_KEY  = 'mmp_img_hashes';
+const HASH_CACHE_KEY  = 'mmp_img_hashes_v2'; // v2: bumped to invalidate stale entries from broken anon policy era
 const MAX_HASH_ENTRIES = 500;
 let _hashCache: Record<string, { fp: string; ts: number }> | null = null;
 
@@ -152,10 +152,11 @@ async function syncImageVariant(locationId: string, imageType: "annotated" | "or
   const path = getLocationImagePath(locationId, imageType);
   const uploaded = await uploadImageToStorage(path, imageData);
   if (!uploaded) return;
-  await supabase.from("location_images").upsert(
+  const { error } = await supabase.from("location_images").upsert(
     { location_id: locationId, image_type: imageType, storage_path: path },
     { onConflict: "location_id,image_type" }
   );
+  if (error) return; // Don't mark as synced if DB write failed
   markImageSynced(cacheKey, imageData);
 }
 
@@ -199,7 +200,7 @@ async function syncDetailImage(detailImage: DetailImage, locationId: string): Pr
 
   if (!uploadedAnnotated || !uploadedOriginal) return;
 
-  await supabase.from("detail_images").upsert({
+  const { error: detailUpsertError } = await supabase.from("detail_images").upsert({
     id: detailImage.id,
     location_id: locationId,
     caption: detailImage.caption || null,
@@ -208,6 +209,7 @@ async function syncDetailImage(detailImage: DetailImage, locationId: string): Pr
     created_at: detailImage.createdAt instanceof Date ? detailImage.createdAt.toISOString() : new Date().toISOString(),
   }, { onConflict: "id" });
 
+  if (detailUpsertError) return; // Don't mark as synced if DB write failed
   if (!annotatedAlreadySynced) markImageSynced(annotatedKey, annotatedData);
   if (!originalAlreadySynced)  markImageSynced(originalKey,  originalData);
 }
