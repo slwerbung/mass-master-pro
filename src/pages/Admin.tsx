@@ -39,6 +39,7 @@ const APPLIES_TO_LABELS: Record<string, string> = {
   all: "Alle",
   aufmass: "Nur Aufmaß",
   aufmass_mit_plan: "Nur Aufmaß mit Plan",
+  fahrzeugbeschriftung: "Nur Fahrzeugbeschriftung",
 };
 
 const Admin = () => {
@@ -621,6 +622,7 @@ const Admin = () => {
                                       <SelectItem value="all">Alle</SelectItem>
                                       <SelectItem value="aufmass">Nur Aufmaß</SelectItem>
                                       <SelectItem value="aufmass_mit_plan">Nur Aufmaß mit Plan</SelectItem>
+                        <SelectItem value="fahrzeugbeschriftung">Nur Fahrzeugbeschriftung</SelectItem>
                                     </SelectContent>
                                   </Select>
                                   <div className="flex items-center gap-2 pt-2"><Checkbox checked={editProjectFieldRequired} onCheckedChange={(c) => setEditProjectFieldRequired(!!c)} /><Label className="text-sm">Pflichtfeld</Label></div>
@@ -659,7 +661,8 @@ const Admin = () => {
                   </div>
                   {newProjectFieldType === "dropdown" && <div className="space-y-1"><Label className="text-xs">Optionen</Label><Input value={newProjectFieldOptions} onChange={(e) => setNewProjectFieldOptions(e.target.value)} /></div>}
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1"><Label className="text-xs">Gilt für</Label><Select value={newProjectFieldAppliesTo} onValueChange={setNewProjectFieldAppliesTo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle</SelectItem><SelectItem value="aufmass">Nur Aufmaß</SelectItem><SelectItem value="aufmass_mit_plan">Nur Aufmaß mit Plan</SelectItem></SelectContent></Select></div>
+                    <div className="space-y-1"><Label className="text-xs">Gilt für</Label><Select value={newProjectFieldAppliesTo} onValueChange={setNewProjectFieldAppliesTo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle</SelectItem><SelectItem value="aufmass">Nur Aufmaß</SelectItem><SelectItem value="aufmass_mit_plan">Nur Aufmaß mit Plan</SelectItem>
+                        <SelectItem value="fahrzeugbeschriftung">Nur Fahrzeugbeschriftung</SelectItem></SelectContent></Select></div>
                     <div className="flex items-center gap-2 pt-5"><Checkbox checked={newProjectFieldRequired} onCheckedChange={(c) => setNewProjectFieldRequired(!!c)} /><Label className="text-sm">Pflichtfeld</Label></div>
                   </div>
                   <Button onClick={addProjectField} size="sm" disabled={!newProjectFieldLabel.trim()}><Plus className="h-4 w-4 mr-1" /> Projektfeld hinzufügen</Button>
@@ -918,6 +921,7 @@ const Admin = () => {
                                       <SelectItem value="all">Alle</SelectItem>
                                       <SelectItem value="aufmass">Nur Aufmaß</SelectItem>
                                       <SelectItem value="aufmass_mit_plan">Nur Aufmaß mit Plan</SelectItem>
+                        <SelectItem value="fahrzeugbeschriftung">Nur Fahrzeugbeschriftung</SelectItem>
                                     </SelectContent>
                                   </Select>
                                 </div>
@@ -1004,6 +1008,7 @@ const Admin = () => {
                           <SelectItem value="all">Alle</SelectItem>
                           <SelectItem value="aufmass">Nur Aufmaß</SelectItem>
                           <SelectItem value="aufmass_mit_plan">Nur Aufmaß mit Plan</SelectItem>
+                        <SelectItem value="fahrzeugbeschriftung">Nur Fahrzeugbeschriftung</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

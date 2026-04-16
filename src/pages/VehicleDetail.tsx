@@ -74,7 +74,9 @@ const VehicleDetail = () => {
   const [editingCaptionId, setEditingCaptionId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [captionDraft, setCaptionDraft] = useState("");
-  const imageInputRef = useRef<HTMLInputElement>(null);
+  
+  const customerAccessLink = projectId ? `${window.location.origin}/customer-login?project=${projectId}` : "";
+const imageInputRef = useRef<HTMLInputElement>(null);
   const layoutInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -125,7 +127,7 @@ const VehicleDetail = () => {
     for (const file of imageFiles) {
       try {
         const path = `vehicle-images/${projectId}/${crypto.randomUUID()}`;
-        const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type });
+        const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type, upsert: true });
         if (uploadError) throw uploadError;
         await supabase.from("vehicle_images").insert({
           project_id: projectId,
@@ -167,7 +169,7 @@ const VehicleDetail = () => {
         await supabase.from("vehicle_layouts").delete().eq("id", layout.id);
       }
       const path = `vehicle-layouts/${projectId}/${crypto.randomUUID()}-${file.name}`;
-      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type });
+      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type, upsert: true });
       if (uploadError) throw uploadError;
       const { error: dbError } = await supabase.from("vehicle_layouts").insert({
         project_id: projectId,
@@ -281,7 +283,7 @@ const VehicleDetail = () => {
     let options: string[] = [];
     try { options = config.field_options ? JSON.parse(config.field_options) : []; } catch {}
     if (config.field_type === "textarea") return <Textarea value={value} onChange={e => onChange(e.target.value)} rows={3} />;
-    if (config.field_type === "dropdown") return (
+    if (config.field_type === "dropdown") return (<div className="mb-4"><Button variant="outline" onClick={() => {navigator.clipboard.writeText(customerAccessLink); toast.success("Kundenzugangslink kopiert");}}>Kundenzugangslink kopieren</Button></div>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger><SelectValue placeholder="Bitte wählen" /></SelectTrigger>
         <SelectContent>{options.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
