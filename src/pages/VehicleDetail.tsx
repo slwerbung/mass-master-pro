@@ -74,9 +74,7 @@ const VehicleDetail = () => {
   const [editingCaptionId, setEditingCaptionId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [captionDraft, setCaptionDraft] = useState("");
-  
-  const customerAccessLink = projectId ? `${window.location.origin}/customer-login?project=${projectId}` : "";
-const imageInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const layoutInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -124,25 +122,36 @@ const imageInputRef = useRef<HTMLInputElement>(null);
     if (imageFiles.length === 0) { toast.error("Bitte Bilddateien auswählen"); return; }
     setUploadingImage(true);
     let uploaded = 0;
+    let lastError = "";
     for (const file of imageFiles) {
       try {
         const path = `vehicle-images/${projectId}/${crypto.randomUUID()}`;
-        const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type, upsert: true });
-        if (uploadError) throw uploadError;
-        await supabase.from("vehicle_images").insert({
+        const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type });
+        if (uploadError) {
+          // 409 = already exists (shouldn't happen with UUID path, but handle anyway)
+          if ((uploadError as any).statusCode === '409' || uploadError.message?.includes('already exists')) {
+            const { error: updateError } = await supabase.storage.from("project-files").update(path, file, { contentType: file.type });
+            if (updateError) { lastError = updateError.message; continue; }
+          } else {
+            lastError = uploadError.message;
+            continue;
+          }
+        }
+        const { error: dbError } = await supabase.from("vehicle_images").insert({
           project_id: projectId,
           storage_path: path,
           uploaded_by: session?.name || "Mitarbeiter",
         });
+        if (dbError) { lastError = dbError.message; continue; }
         uploaded++;
-      } catch {}
+      } catch (e: any) { lastError = e?.message || "Unbekannter Fehler"; }
     }
     setUploadingImage(false);
     if (uploaded > 0) {
       toast.success(`${uploaded} Bild${uploaded > 1 ? "er" : ""} hochgeladen`);
       loadAll();
     } else {
-      toast.error("Upload fehlgeschlagen");
+      toast.error("Upload fehlgeschlagen: " + lastError);
     }
   };
 
@@ -169,8 +178,15 @@ const imageInputRef = useRef<HTMLInputElement>(null);
         await supabase.from("vehicle_layouts").delete().eq("id", layout.id);
       }
       const path = `vehicle-layouts/${projectId}/${crypto.randomUUID()}-${file.name}`;
-      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type, upsert: true });
-      if (uploadError) throw uploadError;
+      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type });
+      if (uploadError) {
+        if ((uploadError as any).statusCode === '409' || uploadError.message?.includes('already exists')) {
+          const { error: updateError } = await supabase.storage.from("project-files").update(path, file, { contentType: file.type });
+          if (updateError) throw updateError;
+        } else {
+          throw uploadError;
+        }
+      }
       const { error: dbError } = await supabase.from("vehicle_layouts").insert({
         project_id: projectId,
         storage_path: path,
@@ -283,7 +299,7 @@ const imageInputRef = useRef<HTMLInputElement>(null);
     let options: string[] = [];
     try { options = config.field_options ? JSON.parse(config.field_options) : []; } catch {}
     if (config.field_type === "textarea") return <Textarea value={value} onChange={e => onChange(e.target.value)} rows={3} />;
-    if (config.field_type === "dropdown") return (<div className="mb-4"><Button variant="outline" onClick={() => {navigator.clipboard.writeText(customerAccessLink); toast.success("Kundenzugangslink kopiert");}}>Kundenzugangslink kopieren</Button></div>
+    if (config.field_type === "dropdown") return (
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger><SelectValue placeholder="Bitte wählen" /></SelectTrigger>
         <SelectContent>{options.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>

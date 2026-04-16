@@ -192,7 +192,7 @@ const CustomerView = () => {
         (supabase as any).from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
         (supabase as any).from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
         isRealCustomerId(session?.id)
-          ? supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", session!.id)
+          ? supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number, project_type)").eq("customer_id", session!.id)
           : Promise.resolve({ data: [], error: null } as any),
       ]);
 
@@ -205,7 +205,7 @@ const CustomerView = () => {
       if (directProjectId && isRealCustomerId(session?.id) && !loadedAssignments.some((a: any) => a.project_id === directProjectId)) {
         const ensured = await ensureDirectProjectAssignment(directProjectId);
         if (ensured) {
-          const refreshed = await supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number)").eq("customer_id", session!.id);
+          const refreshed = await supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number, project_type)").eq("customer_id", session!.id);
           loadedAssignments = refreshed.data || loadedAssignments;
         }
       }
@@ -319,7 +319,8 @@ const CustomerView = () => {
       setSelectedProjectMeta(projectMeta || null);
 
       // If vehicle project, load vehicle data instead of locations
-      if (projectMeta?.project_type === 'fahrzeugbeschriftung') {
+      const projectType = projectMeta?.project_type || (assignment.projects as any)?.project_type;
+      if (projectType === 'fahrzeugbeschriftung') {
         await loadVehicleData(assignment.project_id, assignment.id);
         setLoading(false);
         return;
@@ -831,7 +832,7 @@ const CustomerView = () => {
           )
         ) : loading ? (
           <p className="text-center text-muted-foreground py-8">Laden...</p>
-        ) : selectedProjectMeta?.project_type === 'fahrzeugbeschriftung' ? (
+        ) : (selectedProjectMeta?.project_type === 'fahrzeugbeschriftung' || (selectedAssignment?.projects as any)?.project_type === 'fahrzeugbeschriftung') ? (
           // ── Vehicle project view ──
           <div className="space-y-5">
             <div className="flex items-center gap-2 mb-1">
