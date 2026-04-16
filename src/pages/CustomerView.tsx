@@ -244,6 +244,20 @@ const CustomerView = () => {
       const payload = response.data || {};
       if (response.error || payload?.error) throw response.error || new Error(payload.error || "guest-load-failed");
 
+      // Handle vehicle projects from guest-data response
+      if (payload.projectType === "fahrzeugbeschriftung") {
+        setSelectedProjectMeta({ project_type: "fahrzeugbeschriftung" });
+        setVehicleImages(payload.vehicleImages || []);
+        setVehicleLayout(payload.vehicleLayout || null);
+        setVehicleFieldConfigs(payload.vehicleFieldConfigs || []);
+        const vals: Record<string, string> = {};
+        (payload.vehicleFieldValues || []).forEach((v: any) => { vals[v.field_key] = v.value || ""; });
+        setVehicleFieldValues(vals);
+        setVehicleFeedbacks(payload.vehicleFeedbacks || []);
+        setLoading(false);
+        return;
+      }
+
       const locs = payload.locations || [];
       const imgs = payload.images || [];
       const pdfs = payload.pdfs || [];

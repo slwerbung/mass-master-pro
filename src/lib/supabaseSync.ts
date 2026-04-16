@@ -404,7 +404,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
   const hydratedProject: Project = {
     id: projectRow.id,
     projectNumber: projectRow.project_number,
-    projectType: (projectRow as any).project_type === 'aufmass_mit_plan' ? 'aufmass_mit_plan' : 'aufmass',
+    projectType: (['aufmass', 'aufmass_mit_plan', 'fahrzeugbeschriftung'].includes((projectRow as any).project_type) ? (projectRow as any).project_type : 'aufmass') as 'aufmass' | 'aufmass_mit_plan' | 'fahrzeugbeschriftung',
     customerName: (projectRow as any).customer_name || undefined,
     customFields: (projectRow as any).custom_fields && typeof (projectRow as any).custom_fields === 'object' ? (projectRow as any).custom_fields : undefined,
     employeeId: (projectRow as any).employee_id || null,
@@ -491,7 +491,7 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
   await supabase.from('projects').upsert({
     id: project.id,
     project_number: project.projectNumber,
-    project_type: project.projectType || 'aufmass',
+    project_type: project.projectType || (existingProject as any)?.project_type || 'aufmass',
     customer_name: (project as any).customerName || null,
     custom_fields: (project as any).customFields || null,
     user_id: userId,

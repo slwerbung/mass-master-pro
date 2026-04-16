@@ -59,6 +59,46 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // Get project type first
+    const { data: projectRow } = await supabase
+      .from("projects")
+      .select("project_type")
+      .eq("id", projectId)
+      .maybeSingle();
+
+    const projectType = projectRow?.project_type || "aufmass";
+
+    // Vehicle project: return vehicle-specific data
+    if (projectType === "fahrzeugbeschriftung") {
+      const [
+        { data: vehicleImages },
+        { data: vehicleLayouts },
+        { data: vehicleFieldConfigs },
+        { data: vehicleFieldValues },
+        { data: vehicleFeedbacks },
+      ] = await Promise.all([
+        supabase.from("vehicle_images").select("*").eq("project_id", projectId).order("created_at"),
+        supabase.from("vehicle_layouts").select("*").eq("project_id", projectId).order("uploaded_at", { ascending: false }).limit(1),
+        supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
+        supabase.from("vehicle_field_values").select("field_key, value").eq("project_id", projectId),
+        supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId).order("created_at"),
+      ]);
+      return new Response(
+        JSON.stringify({
+          projectType: "fahrzeugbeschriftung",
+          locations: [],
+          images: [],
+          pdfs: [],
+          vehicleImages: vehicleImages || [],
+          vehicleLayout: vehicleLayouts && vehicleLayouts.length > 0 ? vehicleLayouts[0] : null,
+          vehicleFieldConfigs: vehicleFieldConfigs || [],
+          vehicleFieldValues: vehicleFieldValues || [],
+          vehicleFeedbacks: vehicleFeedbacks || [],
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const { data: locations } = await supabase
       .from("locations")
       .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields")
@@ -67,7 +107,7 @@ Deno.serve(async (req) => {
 
     if (!locations || locations.length === 0) {
       return new Response(
-        JSON.stringify({ locations: [], images: [], pdfs: [] }),
+        JSON.stringify({ projectType, locations: [], images: [], pdfs: [] }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -92,6 +132,7 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify({
+        projectType,
         locations: locations || [],
         images: images || [],
         pdfs: pdfs || [],
