@@ -949,11 +949,30 @@ const CustomerView = () => {
                   </div>
                 </CardHeader>
                 <CardContent className="p-4 space-y-3">
-                  {vehicleFieldConfigs.map((cfg: any) => (
+                  {vehicleFieldConfigs.map((cfg: any) => {
+                    let fieldOptions: string[] = [];
+                    try { fieldOptions = cfg.field_options ? JSON.parse(cfg.field_options) : []; } catch {}
+                    const draftVal = vehicleDraftValues[cfg.field_key] || "";
+                    const updateDraft = (v: string) => setVehicleDraftValues(prev => ({ ...prev, [cfg.field_key]: v }));
+                    return (
                     <div key={cfg.field_key} className="space-y-1">
                       <Label className="text-sm text-muted-foreground">{cfg.field_label}{cfg.is_required ? " *" : ""}</Label>
                       {editingVehicleFields ? (
-                        renderVehicleFieldInput(cfg, vehicleDraftValues[cfg.field_key] || "", v => setVehicleDraftValues(prev => ({ ...prev, [cfg.field_key]: v })))
+                        cfg.field_type === "textarea" ? (
+                          <Textarea value={draftVal} onChange={e => updateDraft(e.target.value)} rows={2} className="text-sm" />
+                        ) : cfg.field_type === "dropdown" ? (
+                          <select value={draftVal} onChange={e => updateDraft(e.target.value)} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                            <option value="">Bitte wählen</option>
+                            {fieldOptions.map((o: string) => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                        ) : cfg.field_type === "checkbox" ? (
+                          <div className="flex items-center gap-2 h-9">
+                            <input type="checkbox" checked={draftVal === "true"} onChange={e => updateDraft(e.target.checked ? "true" : "false")} className="h-4 w-4" />
+                            <span className="text-sm text-muted-foreground">Ja / Nein</span>
+                          </div>
+                        ) : (
+                          <Input value={draftVal} onChange={e => updateDraft(e.target.value)} className="text-sm" />
+                        )
                       ) : (
                         <p className="text-sm font-medium min-h-[1.25rem]">
                           {vehicleFieldValues[cfg.field_key]
@@ -964,7 +983,8 @@ const CustomerView = () => {
                         </p>
                       )}
                     </div>
-                  ))}
+                  );
+                  })}
                 </CardContent>
               </Card>
             )}
