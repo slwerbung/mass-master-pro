@@ -1016,6 +1016,8 @@ const Admin = () => {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
           <TabsContent value="vehicle" className="space-y-4 mt-4">
             <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Car className="h-5 w-5" /> Fahrzeugfelder verwalten</CardTitle></CardHeader>
