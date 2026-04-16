@@ -339,6 +339,51 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
+      case "get_integration_config": {
+        const { data } = await supabase.from("app_config").select("key, value")
+          .in("key", ["hero_api_key", "hero_enabled"]);
+        const lookup = new Map((data || []).map((row: any) => [row.key, row.value]));
+        // Never return the actual key - just whether it exists and is enabled
+        const hasKey = !!lookup.get("hero_api_key");
+        return json({
+          hero: {
+            enabled: lookup.get("hero_enabled") === "true" && hasKey,
+            hasKey,
+          }
+        });
+      }
+
+      case "set_integration_config": {
+        const rows: any[] = [];
+        if (params.heroApiKey !== undefined) {
+          rows.push({ key: "hero_api_key", value: params.heroApiKey });
+        }
+        if (params.heroEnabled !== undefined) {
+          rows.push({ key: "hero_enabled", value: String(!!params.heroEnabled) });
+        }
+        if (rows.length > 0) {
+          const { error } = await supabase.from("app_config").upsert(rows, { onConflict: "key" });
+          if (error) return json({ error: error.message }, 500);
+        }
+        return json({ success: true });
+      }
+
+      case "test_hero_connection": {
+        const { data: keyRow } = await supabase.from("app_config").select("value").eq("key", "hero_api_key").maybeSingle();
+        const apiKey = keyRow?.value;
+        if (!apiKey) return json({ error: "Kein API Key hinterlegt" }, 400);
+        const testQuery = `query { contacts(limit: 1) { id } }`;
+        const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+          body: JSON.stringify({ query: testQuery }),
+        });
+        if (!resp.ok) return json({ error: `HERO API Fehler: ${resp.status}` }, 400);
+        const result = await resp.json();
+        if (result.errors) return json({ error: result.errors[0]?.message || "GraphQL Fehler" }, 400);
+        return json({ success: true, message: "Verbindung erfolgreich" });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

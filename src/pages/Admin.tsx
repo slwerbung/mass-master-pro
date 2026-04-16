@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
-import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car } from "lucide-react";
+import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -89,6 +89,14 @@ const Admin = () => {
   const [editProjectFieldAppliesTo, setEditProjectFieldAppliesTo] = useState("all");
   const [editFieldRequired, setEditFieldRequired] = useState(false);
   const [editProjectFieldRequired, setEditProjectFieldRequired] = useState(false);
+  // Integration state
+  const [heroApiKey, setHeroApiKey] = useState("");
+  const [heroEnabled, setHeroEnabled] = useState(false);
+  const [heroHasKey, setHeroHasKey] = useState(false);
+  const [savingHero, setSavingHero] = useState(false);
+  const [testingHero, setTestingHero] = useState(false);
+  const [heroTestResult, setHeroTestResult] = useState<{ok: boolean; msg: string} | null>(null);
+
   const [vehicleFields, setVehicleFields] = useState<FieldConfig[]>([]);
   const [newVehicleFieldLabel, setNewVehicleFieldLabel] = useState("");
   const [newVehicleFieldType, setNewVehicleFieldType] = useState<FieldConfig["field_type"]>("text");
@@ -124,7 +132,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadPrefix(); loadViewSettings(); loadLogo(); loadVehicleFields(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadPrefix(); loadViewSettings(); loadLogo(); loadVehicleFields(); loadIntegrations(); }
   }, [adminToken]);
 
   useEffect(() => {
@@ -278,6 +286,41 @@ const Admin = () => {
   const deleteProjectField = async (id: string) => {
     try { await invoke("delete_project_field", { fieldId: id }); } catch {}
     loadProjectFields(); toast.success("Projektfeld gelöscht");
+  };
+
+  const loadIntegrations = async () => {
+    try {
+      const data = await invoke("get_integration_config");
+      setHeroEnabled(data?.hero?.enabled ?? false);
+      setHeroHasKey(data?.hero?.hasKey ?? false);
+    } catch {}
+  };
+
+  const saveHeroConfig = async () => {
+    setSavingHero(true);
+    setHeroTestResult(null);
+    try {
+      await invoke("set_integration_config", {
+        heroApiKey: heroApiKey.trim() || undefined,
+        heroEnabled,
+      });
+      toast.success("HERO Einstellungen gespeichert");
+      setHeroApiKey(""); // clear after save
+      await loadIntegrations();
+    } catch (e: any) { toast.error(e.message || "Fehler"); }
+    finally { setSavingHero(false); }
+  };
+
+  const testHeroConnection = async () => {
+    setTestingHero(true);
+    setHeroTestResult(null);
+    try {
+      const data = await invoke("test_hero_connection");
+      setHeroTestResult({ ok: true, msg: data?.message || "Verbindung erfolgreich" });
+    } catch (e: any) {
+      setHeroTestResult({ ok: false, msg: e.message || "Verbindung fehlgeschlagen" });
+    }
+    finally { setTestingHero(false); }
   };
 
   const loadVehicleFields = async () => {
@@ -532,13 +575,14 @@ const Admin = () => {
           <Button variant="outline" onClick={handleLogout}><LogOut className="h-4 w-4 mr-1" /> Abmelden</Button>
         </div>
         <Tabs defaultValue="employees">
-          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 h-auto">
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-7 h-auto">
             <TabsTrigger value="employees" className="text-xs sm:text-sm">Mitarbeiter</TabsTrigger>
             <TabsTrigger value="customers" className="text-xs sm:text-sm">Kunden</TabsTrigger>
             <TabsTrigger value="assignments" className="text-xs sm:text-sm">Zuweisungen</TabsTrigger>
             <TabsTrigger value="projects" className="text-xs sm:text-sm">Projekte</TabsTrigger>
             <TabsTrigger value="settings" className="text-xs sm:text-sm">Einstellungen</TabsTrigger>
             <TabsTrigger value="vehicle" className="text-xs sm:text-sm">Fahrzeug</TabsTrigger>
+            <TabsTrigger value="integrations" className="text-xs sm:text-sm">Integrationen</TabsTrigger>
           </TabsList>
 
           <TabsContent value="employees" className="space-y-4 mt-4">
@@ -1085,6 +1129,71 @@ const Admin = () => {
                     <div className="flex items-center gap-2 pt-1"><Checkbox checked={newVehicleFieldRequired} onCheckedChange={(c) => setNewVehicleFieldRequired(!!c)} /><Label className="text-sm">Pflichtfeld</Label></div>
                   </div>
                   <Button onClick={addVehicleField} size="sm" disabled={!newVehicleFieldLabel.trim()}><Plus className="h-4 w-4 mr-1" /> Fahrzeugfeld hinzufügen</Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="integrations" className="space-y-4 mt-4">
+            <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Plug className="h-5 w-5" /> HERO Software Integration</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Verbinde die App mit deiner HERO Handwerkersoftware. Mit einem API Key können Projekte aus HERO gesucht und Kundendaten automatisch übernommen werden.
+                </p>
+
+                <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/20">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Status</p>
+                    <p className="text-xs text-muted-foreground">{heroHasKey ? (heroEnabled ? "Aktiv" : "Key hinterlegt, aber deaktiviert") : "Kein API Key hinterlegt"}</p>
+                  </div>
+                  <div className={`h-3 w-3 rounded-full ${heroEnabled && heroHasKey ? "bg-green-500" : "bg-muted-foreground"}`} />
+                </div>
+
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>API Key</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="password"
+                        placeholder={heroHasKey ? "●●●●●●●●●●●● (gespeichert)" : "Bearer Token eingeben"}
+                        value={heroApiKey}
+                        onChange={e => setHeroApiKey(e.target.value)}
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">Den API Key erhältst du vom HERO Support. Er wird verschlüsselt gespeichert und nie im Frontend angezeigt.</p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Checkbox checked={heroEnabled} onCheckedChange={c => setHeroEnabled(!!c)} />
+                    <Label className="text-sm cursor-pointer" onClick={() => setHeroEnabled(v => !v)}>Integration aktivieren</Label>
+                  </div>
+
+                  {heroTestResult && (
+                    <div className={`flex items-center gap-2 p-3 rounded-lg text-sm ${heroTestResult.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                      {heroTestResult.ok ? <CheckCircle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
+                      {heroTestResult.msg}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Button onClick={saveHeroConfig} disabled={savingHero}>
+                      {savingHero ? "Speichert..." : "Speichern"}
+                    </Button>
+                    {heroHasKey && (
+                      <Button variant="outline" onClick={testHeroConnection} disabled={testingHero}>
+                        {testingHero ? "Teste..." : "Verbindung testen"}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="border-t pt-4">
+                  <p className="text-sm font-medium mb-2">Verfügbare Funktionen</p>
+                  <div className="space-y-1 text-sm text-muted-foreground">
+                    <p>✓ Beim Anlegen eines Projekts: HERO-Projekt suchen und Kundendaten übernehmen</p>
+                    <p className="text-muted-foreground/60">◌ Weitere Funktionen folgen</p>
+                  </div>
                 </div>
               </CardContent>
             </Card>
