@@ -244,15 +244,41 @@ const CustomerView = () => {
       const payload = response.data || {};
       if (response.error || payload?.error) throw response.error || new Error(payload.error || "guest-load-failed");
 
-      // Handle vehicle projects from guest-data response
-      if (payload.projectType === "fahrzeugbeschriftung") {
+      // Detect project type from edge function response or direct Supabase fallback
+      let detectedProjectType = payload.projectType;
+      if (!detectedProjectType) {
+        const { data: projRow } = await supabase.from("projects").select("project_type").eq("id", projectId).maybeSingle();
+        detectedProjectType = projRow?.project_type || "aufmass";
+      }
+
+      // Handle vehicle projects
+      if (detectedProjectType === "fahrzeugbeschriftung") {
+        // Use data from edge function if available, otherwise load directly
+        let vImages = payload.vehicleImages;
+        if (!vImages) {
+          const [
+            { data: imgs }, { data: layouts }, { data: configs },
+            { data: values }, { data: fbs },
+          ] = await Promise.all([
+            supabase.from("vehicle_images").select("*").eq("project_id", projectId).order("created_at"),
+            supabase.from("vehicle_layouts").select("*").eq("project_id", projectId).order("uploaded_at", { ascending: false }).limit(1),
+            supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
+            supabase.from("vehicle_field_values").select("field_key, value").eq("project_id", projectId),
+            supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId).order("created_at"),
+          ]);
+          payload.vehicleImages = imgs || [];
+          payload.vehicleLayout = layouts?.[0] || null;
+          payload.vehicleFieldConfigs = configs || [];
+          payload.vehicleFieldValues = values || [];
+          payload.vehicleFeedbacks = fbs || [];
+        }
         setSelectedProjectMeta({ project_type: "fahrzeugbeschriftung" });
         setVehicleImages(payload.vehicleImages || []);
         setVehicleLayout(payload.vehicleLayout || null);
         setVehicleFieldConfigs(payload.vehicleFieldConfigs || []);
-        const vals: Record<string, string> = {};
-        (payload.vehicleFieldValues || []).forEach((v: any) => { vals[v.field_key] = v.value || ""; });
-        setVehicleFieldValues(vals);
+        const vVals: Record<string, string> = {};
+        (payload.vehicleFieldValues || []).forEach((v: any) => { vVals[v.field_key] = v.value || ""; });
+        setVehicleFieldValues(vVals);
         setVehicleFeedbacks(payload.vehicleFeedbacks || []);
         setLoading(false);
         return;
