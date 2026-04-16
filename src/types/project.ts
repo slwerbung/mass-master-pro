@@ -68,7 +68,7 @@ export interface FloorPlan {
 export interface Project {
   id: string;
   projectNumber: string;
-  projectType?: 'aufmass' | 'aufmass_mit_plan';
+  projectType?: 'aufmass' | 'aufmass_mit_plan' | 'fahrzeugbeschriftung';
   customerName?: string;
   customFields?: Record<string, string>;
   employeeId?: string | null;

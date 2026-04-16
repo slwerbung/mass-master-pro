@@ -13,7 +13,7 @@ import { Location, AreaMeasurement } from "@/types/project";
 import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
 import { supabase } from "@/integrations/supabase/client";
-import { syncProjectToSupabase } from "@/lib/supabaseSync";
+import { scheduleSyncProject } from "@/lib/supabaseSync";
 
 interface FieldConfig {
   id: string;
@@ -157,9 +157,8 @@ const LocationDetails = () => {
           locationType: fieldValues["locationType"]?.trim() || undefined,
           customFields: Object.fromEntries(Object.entries(fieldValues).filter(([k]) => k.startsWith("custom_"))),
         });
-        const syncResult = await syncProjectToSupabase(projectId);
-        if (syncResult === "remote-won") toast.warning("Neuere Online-Version übernommen");
-        else toast.success("Standort aktualisiert");
+        scheduleSyncProject(projectId);
+        toast.success("Standort aktualisiert");
         navigate(`/projects/${projectId}`);
       } else if (isDetailImage && imageDataRef.current) {
         const imageDataToSave = imageDataRef.current;
@@ -173,11 +172,10 @@ const LocationDetails = () => {
         if (!targetLocationId) { toast.error("Standort nicht gefunden"); return; }
         const detailImage = { id: crypto.randomUUID(), imageData: compressedImageData, originalImageData: compressedOriginalImageData, caption: caption.trim() || undefined, createdAt: new Date() };
         await indexedDBStorage.saveDetailImage(targetLocationId, detailImage);
-        const syncResult = await syncProjectToSupabase(projectId);
         toast.dismiss();
-        if (syncResult === "remote-won") toast.warning("Neuere Online-Version übernommen");
-        else toast.success("Detailbild gespeichert");
+        toast.success("Detailbild gespeichert");
         navigate(`/projects/${projectId}`);
+        scheduleSyncProject(projectId);
       } else if (imageDataRef.current) {
         const imageDataToSave = imageDataRef.current;
         const originalImageDataToSave = originalImageDataRef.current || imageDataToSave;
@@ -212,12 +210,11 @@ const LocationDetails = () => {
         }
         project.locations.push(newLocation);
         await indexedDBStorage.saveProject(project);
-        const syncResult = await syncProjectToSupabase(projectId);
         toast.dismiss();
-        if (syncResult === "remote-won") toast.warning("Neuere Online-Version übernommen");
-        else toast.success("Standort gespeichert");
+        toast.success("Standort gespeichert");
         if (floorPlanId) navigate(`/projects/${projectId}/floor-plans`);
         else navigate(`/projects/${projectId}`);
+        scheduleSyncProject(projectId);
       }
     } catch (error) {
       toast.dismiss();

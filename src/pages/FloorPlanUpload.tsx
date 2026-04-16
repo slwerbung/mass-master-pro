@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Upload, FileText, Loader2, Trash2 } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { syncProjectToSupabase } from "@/lib/supabaseSync";
+import { scheduleSyncProject } from "@/lib/supabaseSync";
 import { FloorPlan } from "@/types/project";
 import { toast } from "sonner";
 import * as pdfjsLib from "pdfjs-dist";
@@ -109,10 +109,9 @@ const FloorPlanUpload = () => {
         await indexedDBStorage.saveFloorPlan(projectId, floorPlan);
       }
 
-      const syncResult = await syncProjectToSupabase(projectId);
-      if (syncResult === "remote-won") toast.warning("Neuere Online-Version übernommen");
-      else toast.success("Grundrisse gespeichert");
+      toast.success("Grundrisse gespeichert");
       navigate(`/projects/${projectId}/floor-plans`);
+      scheduleSyncProject(projectId);
     } catch (error) {
       console.error("Error saving floor plans:", error);
       toast.error("Fehler beim Speichern");

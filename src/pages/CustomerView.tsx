@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check, Trash2, Upload, Download } from "lucide-react";
+import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check, Trash2, Upload, Download, Car, ImagePlus } from "lucide-react";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
@@ -76,6 +76,20 @@ const CustomerView = () => {
   const [customerUploads, setCustomerUploads] = useState<any[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [viewSettings, setViewSettings] = useState(defaultViewSettings);
+  const [vehicleImages, setVehicleImages] = useState<any[]>([]);
+  const [vehicleLayout, setVehicleLayout] = useState<any>(null);
+  const [vehicleFieldConfigs, setVehicleFieldConfigs] = useState<any[]>([]);
+  const [vehicleFieldValues, setVehicleFieldValues] = useState<Record<string, string>>({});
+  const [vehicleFeedbackDraft, setVehicleFeedbackDraft] = useState("");
+  const [vehicleFeedbacks, setVehicleFeedbacks] = useState<any[]>([]);
+  const [vehicleApproved, setVehicleApproved] = useState(false);
+  const [savingVehicleFeedback, setSavingVehicleFeedback] = useState(false);
+  const [savingVehicleApproval, setSavingVehicleApproval] = useState(false);
+  const [uploadingVehicleImage, setUploadingVehicleImage] = useState(false);
+  const [editingVehicleFields, setEditingVehicleFields] = useState(false);
+  const [vehicleDraftValues, setVehicleDraftValues] = useState<Record<string, string>>({});
+  const [savingVehicleFields, setSavingVehicleFields] = useState(false);
+  const [vehicleDragOver, setVehicleDragOver] = useState(false);
 
   useEffect(() => {
     if (!session || session.role !== "customer") { navigate("/"); return; }
@@ -301,8 +315,16 @@ const CustomerView = () => {
     setLoading(true);
     loadCustomerUploads(assignment.project_id);
     try {
-      const { data: projectMeta } = await supabase.from("projects").select("id, project_number, customer_name, custom_fields").eq("id", assignment.project_id).maybeSingle();
+      const { data: projectMeta } = await supabase.from("projects").select("id, project_number, customer_name, custom_fields, project_type").eq("id", assignment.project_id).maybeSingle();
       setSelectedProjectMeta(projectMeta || null);
+
+      // If vehicle project, load vehicle data instead of locations
+      if (projectMeta?.project_type === 'fahrzeugbeschriftung') {
+        await loadVehicleData(assignment.project_id, assignment.id);
+        setLoading(false);
+        return;
+      }
+
       const { data: locs, error } = await supabase
         .from("locations")
         .select("id, location_number, location_name, comment, system, label, location_type, guest_info, custom_fields, created_at")
@@ -560,6 +582,153 @@ const CustomerView = () => {
     } finally { setSavingId(null); }
   };
 
+  const loadVehicleData = async (projectId: string, assignmentId: string) => {
+    try {
+      const [
+        { data: imgs },
+        { data: layouts },
+        { data: configs },
+        { data: values },
+        { data: fbs },
+        { data: approval },
+      ] = await Promise.all([
+        supabase.from("vehicle_images").select("*").eq("project_id", projectId).order("created_at"),
+        supabase.from("vehicle_layouts").select("*").eq("project_id", projectId).order("uploaded_at", { ascending: false }).limit(1),
+        supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
+        supabase.from("vehicle_field_values").select("field_key, value").eq("project_id", projectId),
+        supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId).order("created_at"),
+        supabase.from("vehicle_layout_approval").select("*").eq("project_id", projectId).eq("assignment_id", assignmentId).maybeSingle(),
+      ]);
+      setVehicleImages(imgs || []);
+      setVehicleLayout(layouts && layouts.length > 0 ? layouts[0] : null);
+      setVehicleFieldConfigs(configs || []);
+      const vals: Record<string, string> = {};
+      (values || []).forEach((v: any) => { vals[v.field_key] = v.value || ""; });
+      setVehicleFieldValues(vals);
+      setVehicleFeedbacks(fbs || []);
+      setVehicleApproved(!!(approval as any)?.approved);
+    } catch (e) {
+      toast.error("Fehler beim Laden der Fahrzeugdaten");
+    }
+  };
+
+  const saveVehicleFeedback = async () => {
+    const message = vehicleFeedbackDraft.trim();
+    if (!message || !selectedAssignment) return;
+    setSavingVehicleFeedback(true);
+    try {
+      const { data, error } = await supabase.from("vehicle_layout_feedback").insert({
+        project_id: selectedAssignment.project_id,
+        message,
+        author_name: session?.name || "Kunde",
+        author_customer_id: isRealCustomerId(session?.id) ? session!.id : null,
+      }).select().single();
+      if (error) throw error;
+      setVehicleFeedbacks(prev => [...prev, data]);
+      setVehicleFeedbackDraft("");
+      toast.success("Hinweis gespeichert");
+      triggerNotification("comment");
+    } catch { toast.error("Fehler beim Speichern"); }
+    finally { setSavingVehicleFeedback(false); }
+  };
+
+  const toggleVehicleApproval = async () => {
+    if (!selectedAssignment || isLimitedGuestMode) return;
+    const newVal = !vehicleApproved;
+    setSavingVehicleApproval(true);
+    setVehicleApproved(newVal);
+    await supabase.from("vehicle_layout_approval").upsert({
+      project_id: selectedAssignment.project_id,
+      assignment_id: selectedAssignment.id,
+      approved: newVal,
+      approved_at: newVal ? new Date().toISOString() : null,
+    }, { onConflict: "project_id,assignment_id" });
+    if (newVal) triggerNotification("approval");
+    setSavingVehicleApproval(false);
+  };
+
+  const uploadVehicleFiles = async (files: FileList | File[]) => {
+    if (!selectedAssignment) return;
+    const imageFiles = Array.from(files).filter(f => f.type.startsWith("image/"));
+    if (imageFiles.length === 0) { toast.error("Bitte Bilddateien auswählen"); return; }
+    setUploadingVehicleImage(true);
+    let uploaded = 0;
+    for (const file of imageFiles) {
+      try {
+        const path = `vehicle-images/${selectedAssignment.project_id}/${crypto.randomUUID()}`;
+        const { error: upErr } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type });
+        if (upErr) throw upErr;
+        await supabase.from("vehicle_images").insert({
+          project_id: selectedAssignment.project_id,
+          storage_path: path,
+          uploaded_by: session?.name || "Kunde",
+        });
+        uploaded++;
+      } catch {}
+    }
+    setUploadingVehicleImage(false);
+    if (uploaded > 0) {
+      toast.success(`${uploaded} Bild${uploaded > 1 ? "er" : ""} hochgeladen`);
+      await loadVehicleData(selectedAssignment.project_id, selectedAssignment.id);
+    } else {
+      toast.error("Upload fehlgeschlagen");
+    }
+  };
+
+  const handleVehicleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    await uploadVehicleFiles(e.target.files);
+    e.target.value = "";
+  };
+
+  const handleVehicleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setVehicleDragOver(false);
+    if (e.dataTransfer.files.length > 0) await uploadVehicleFiles(e.dataTransfer.files);
+  };
+
+  const saveVehicleFields = async () => {
+    if (!selectedAssignment) return;
+    setSavingVehicleFields(true);
+    try {
+      for (const config of vehicleFieldConfigs) {
+        const value = vehicleDraftValues[config.field_key] || "";
+        await supabase.from("vehicle_field_values").upsert(
+          { project_id: selectedAssignment.project_id, field_key: config.field_key, value, updated_at: new Date().toISOString() },
+          { onConflict: "project_id,field_key" }
+        );
+      }
+      setVehicleFieldValues({ ...vehicleDraftValues });
+      setEditingVehicleFields(false);
+      toast.success("Informationen gespeichert");
+    } catch { toast.error("Fehler beim Speichern"); }
+    finally { setSavingVehicleFields(false); }
+  };
+
+  const renderVehicleFieldInput = (cfg: any, value: string, onChange: (v: string) => void) => {
+    let options: string[] = [];
+    try { options = cfg.field_options ? JSON.parse(cfg.field_options) : []; } catch {}
+    if (cfg.field_type === "textarea") return <Textarea value={value} onChange={e => onChange(e.target.value)} rows={2} className="text-sm" />;
+    if (cfg.field_type === "dropdown") return (
+      <select value={value} onChange={e => onChange(e.target.value)} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+        <option value="">Bitte wählen</option>
+        {options.map((o: string) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    );
+    if (cfg.field_type === "checkbox") return (
+      <div className="flex items-center gap-2 h-9">
+        <input type="checkbox" checked={value === "true"} onChange={e => onChange(e.target.checked ? "true" : "false")} className="h-4 w-4" />
+        <span className="text-sm text-muted-foreground">Ja / Nein</span>
+      </div>
+    );
+    return <Input value={value} onChange={e => onChange(e.target.value)} className="text-sm" />;
+  };
+
+  const getVehiclePublicUrl = (path: string) => {
+    const { data } = supabase.storage.from("project-files").getPublicUrl(path);
+    return data.publicUrl;
+  };
+
   const loadCustomerUploads = async (projectId: string) => {
     const { data } = await supabase.from("customer_uploads").select("*").eq("project_id", projectId).order("created_at", { ascending: false });
     setCustomerUploads(data || []);
@@ -662,6 +831,153 @@ const CustomerView = () => {
           )
         ) : loading ? (
           <p className="text-center text-muted-foreground py-8">Laden...</p>
+        ) : selectedProjectMeta?.project_type === 'fahrzeugbeschriftung' ? (
+          // ── Vehicle project view ──
+          <div className="space-y-5">
+            <div className="flex items-center gap-2 mb-1">
+              <Car className="h-5 w-5 text-primary" />
+              <p className="font-medium">Fahrzeugbeschriftung</p>
+            </div>
+
+            {/* Vehicle Images */}
+            <Card>
+              <CardHeader className="p-4 pb-2"><CardTitle className="text-base">Fahrzeugbilder</CardTitle></CardHeader>
+              <CardContent className="p-4">
+                {vehicleImages.length === 0 && !isLimitedGuestMode ? (
+                  <label
+                    className={`flex flex-col items-center justify-center gap-3 border-2 border-dashed rounded-xl p-8 cursor-pointer transition-colors ${vehicleDragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"}`}
+                    onDragOver={e => { e.preventDefault(); setVehicleDragOver(true); }}
+                    onDragLeave={() => setVehicleDragOver(false)}
+                    onDrop={handleVehicleDrop}
+                  >
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={handleVehicleImageUpload} />
+                    <ImagePlus className="h-10 w-10 text-muted-foreground" />
+                    <div className="text-center">
+                      <p className="text-sm font-medium">Bilder hierher ziehen</p>
+                      <p className="text-xs text-muted-foreground mt-1">oder tippen zum Auswählen — mehrere Bilder möglich</p>
+                    </div>
+                    {uploadingVehicleImage && <p className="text-sm text-primary">Lädt hoch...</p>}
+                  </label>
+                ) : vehicleImages.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">Noch keine Bilder vorhanden.</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      {vehicleImages.map((img: any) => (
+                        <div key={img.id} className="rounded-lg overflow-hidden border bg-muted">
+                          <img src={getVehiclePublicUrl(img.storage_path)} alt={img.caption || "Fahrzeugbild"} className="w-full h-40 object-cover" />
+                          {img.caption && <p className="text-xs text-muted-foreground p-2">{img.caption}</p>}
+                        </div>
+                      ))}
+                    </div>
+                    {!isLimitedGuestMode && (
+                      <label
+                        className="mt-3 flex items-center gap-2 cursor-pointer w-fit"
+                        onDragOver={e => { e.preventDefault(); setVehicleDragOver(true); }}
+                        onDragLeave={() => setVehicleDragOver(false)}
+                        onDrop={handleVehicleDrop}
+                      >
+                        <input type="file" accept="image/*" multiple className="hidden" onChange={handleVehicleImageUpload} disabled={uploadingVehicleImage} />
+                        <Button size="sm" variant="outline" asChild disabled={uploadingVehicleImage}>
+                          <span><ImagePlus className="h-4 w-4 mr-1" />{uploadingVehicleImage ? "Lädt..." : "Weitere Bilder hinzufügen"}</span>
+                        </Button>
+                      </label>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Vehicle Field Values — editable by customer */}
+            {vehicleFieldConfigs.length > 0 && (
+              <Card>
+                <CardHeader className="p-4 pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">Fahrzeuginformationen</CardTitle>
+                    {!isLimitedGuestMode && !editingVehicleFields && (
+                      <Button size="sm" variant="outline" onClick={() => { setVehicleDraftValues({ ...vehicleFieldValues }); setEditingVehicleFields(true); }}>
+                        <Pencil className="h-3 w-3 mr-1" /> Bearbeiten
+                      </Button>
+                    )}
+                    {editingVehicleFields && (
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="ghost" onClick={() => setEditingVehicleFields(false)}>Abbrechen</Button>
+                        <Button size="sm" onClick={saveVehicleFields} disabled={savingVehicleFields}>{savingVehicleFields ? "Speichert..." : "Speichern"}</Button>
+                      </div>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="p-4 space-y-3">
+                  {vehicleFieldConfigs.map((cfg: any) => (
+                    <div key={cfg.field_key} className="space-y-1">
+                      <Label className="text-sm text-muted-foreground">{cfg.field_label}{cfg.is_required ? " *" : ""}</Label>
+                      {editingVehicleFields ? (
+                        renderVehicleFieldInput(cfg, vehicleDraftValues[cfg.field_key] || "", v => setVehicleDraftValues(prev => ({ ...prev, [cfg.field_key]: v })))
+                      ) : (
+                        <p className="text-sm font-medium min-h-[1.25rem]">
+                          {vehicleFieldValues[cfg.field_key]
+                            ? cfg.field_type === "checkbox"
+                              ? vehicleFieldValues[cfg.field_key] === "true" ? "Ja" : "Nein"
+                              : vehicleFieldValues[cfg.field_key]
+                            : <span className="text-muted-foreground italic">–</span>}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Layout */}
+            {vehicleLayout && (
+              <Card>
+                <CardHeader className="p-4 pb-2"><CardTitle className="text-base">Layout / Druckdatei</CardTitle></CardHeader>
+                <CardContent className="p-4 space-y-3">
+                  <a href={getVehiclePublicUrl(vehicleLayout.storage_path)} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 p-3 rounded-lg border bg-muted/20 hover:bg-muted/40 transition-colors">
+                    <FileText className="h-5 w-5 text-primary shrink-0" />
+                    <span className="text-sm font-medium flex-1">{vehicleLayout.file_name}</span>
+                    <Download className="h-4 w-4 text-muted-foreground" />
+                  </a>
+
+                  {/* Layout approval */}
+                  {!isLimitedGuestMode && (
+                    <div className="flex items-center justify-between p-3 rounded-lg border bg-primary/5">
+                      <div>
+                        <p className="text-sm font-medium">{vehicleApproved ? "Layout freigegeben ✓" : "Layout noch nicht freigegeben"}</p>
+                        <p className="text-xs text-muted-foreground">Gib das Layout frei wenn alles passt</p>
+                      </div>
+                      <Button size="sm" variant={vehicleApproved ? "outline" : "default"} onClick={toggleVehicleApproval} disabled={savingVehicleApproval}>
+                        <Check className="h-4 w-4 mr-1" /> {vehicleApproved ? "Freigabe zurücknehmen" : "Layout freigeben"}
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Feedback */}
+                  <div className="space-y-2">
+                    <Label>Hinweise / Korrekturen zum Layout</Label>
+                    {vehicleFeedbacks.length > 0 && (
+                      <div className="space-y-2">
+                        {vehicleFeedbacks.map((fb: any) => (
+                          <div key={fb.id} className="rounded-lg border p-3 bg-muted/20 space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-medium">{fb.author_name}</p>
+                              <span className={`text-xs px-2 py-0.5 rounded ${fb.status === "done" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{fb.status === "done" ? "Umgesetzt" : "Offen"}</span>
+                            </div>
+                            <p className="text-sm whitespace-pre-wrap">{fb.message}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <Textarea placeholder="Hinweis oder Korrektur zum Layout eingeben..." value={vehicleFeedbackDraft} onChange={e => setVehicleFeedbackDraft(e.target.value)} rows={3} />
+                    <Button size="sm" onClick={saveVehicleFeedback} disabled={savingVehicleFeedback || !vehicleFeedbackDraft.trim()}>
+                      <Save className="h-4 w-4 mr-1" />{savingVehicleFeedback ? "Speichert..." : "Hinweis speichern"}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         ) : locations.length === 0 ? (
           <p className="text-center text-muted-foreground py-12">Keine Standorte vorhanden.</p>
         ) : (

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, Ruler, Map } from "lucide-react";
+import { ArrowLeft, Ruler, Map, Car } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { supabase } from "@/integrations/supabase/client";
@@ -30,7 +30,7 @@ interface ProjectFieldConfig {
 
 const NewProject = () => {
   const [projectNumber, setProjectNumber] = useState("");
-  const [projectType, setProjectType] = useState<'aufmass' | 'aufmass_mit_plan'>('aufmass');
+  const [projectType, setProjectType] = useState<'aufmass' | 'aufmass_mit_plan' | 'fahrzeugbeschriftung'>('aufmass');
   const [isCreating, setIsCreating] = useState(false);
   const [prefix, setPrefix] = useState("");
   const [projectFieldConfigs, setProjectFieldConfigs] = useState<ProjectFieldConfig[]>([]);
@@ -60,7 +60,7 @@ const NewProject = () => {
   const filteredProjectFields = useMemo(() => {
     return projectFieldConfigs.filter((f) => {
       if (!f.applies_to || f.applies_to === 'all') return true;
-      return f.applies_to === projectType;
+      return f.applies_to === projectType || f.applies_to === 'fahrzeugbeschriftung';
     });
   }, [projectFieldConfigs, projectType]);
 
@@ -115,8 +115,7 @@ const NewProject = () => {
       }
 
       toast.success("Projekt erstellt");
-      if (projectType === 'aufmass_mit_plan') navigate(`/projects/${newProject.id}/floor-plans/upload`);
-      else navigate(`/projects/${newProject.id}`);
+      navigate(`/projects/${newProject.id}`);
     } catch (error) {
       console.error("Error creating project:", error);
       toast.error("Fehler beim Erstellen des Projekts");
@@ -178,7 +177,7 @@ const NewProject = () => {
             </div>
             <div className="space-y-3">
               <Label>Projekttyp</Label>
-              <RadioGroup value={projectType} onValueChange={(v) => setProjectType(v as 'aufmass' | 'aufmass_mit_plan')} className="grid gap-3">
+              <RadioGroup value={projectType} onValueChange={(v) => setProjectType(v as 'aufmass' | 'aufmass_mit_plan' | 'fahrzeugbeschriftung')} className="grid gap-3">
                 <label htmlFor="type-aufmass" className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${projectType === 'aufmass' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'}`}>
                   <RadioGroupItem value="aufmass" id="type-aufmass" className="mt-0.5" />
                   <div className="flex-1">
@@ -191,6 +190,13 @@ const NewProject = () => {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 font-medium"><Map className="h-4 w-4" /> Aufmaß mit Plan</div>
                     <p className="text-sm text-muted-foreground mt-1">Grundriss-PDF hochladen und Standorte auf dem Plan markieren</p>
+                  </div>
+                </label>
+                <label htmlFor="type-vehicle" className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${projectType === 'fahrzeugbeschriftung' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'}`}>
+                  <RadioGroupItem value="fahrzeugbeschriftung" id="type-vehicle" className="mt-0.5" />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 font-medium"><Car className="h-4 w-4" /> Fahrzeugbeschriftung</div>
+                    <p className="text-sm text-muted-foreground mt-1">Fahrzeugbilder, Informationen und Layout für Kundenfeedback</p>
                   </div>
                 </label>
               </RadioGroup>

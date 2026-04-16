@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
-import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon } from "lucide-react";
+import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -88,6 +88,16 @@ const Admin = () => {
   const [editProjectFieldAppliesTo, setEditProjectFieldAppliesTo] = useState("all");
   const [editFieldRequired, setEditFieldRequired] = useState(false);
   const [editProjectFieldRequired, setEditProjectFieldRequired] = useState(false);
+  const [vehicleFields, setVehicleFields] = useState<FieldConfig[]>([]);
+  const [newVehicleFieldLabel, setNewVehicleFieldLabel] = useState("");
+  const [newVehicleFieldType, setNewVehicleFieldType] = useState<FieldConfig["field_type"]>("text");
+  const [newVehicleFieldOptions, setNewVehicleFieldOptions] = useState("");
+  const [newVehicleFieldRequired, setNewVehicleFieldRequired] = useState(false);
+  const [editingVehicleFieldId, setEditingVehicleFieldId] = useState<string | null>(null);
+  const [editVehicleFieldLabel, setEditVehicleFieldLabel] = useState("");
+  const [editVehicleFieldType, setEditVehicleFieldType] = useState<FieldConfig["field_type"]>("text");
+  const [editVehicleFieldOptions, setEditVehicleFieldOptions] = useState("");
+  const [editVehicleFieldRequired, setEditVehicleFieldRequired] = useState(false);
   // Employee password dialog
   const [passwordDialogEmployee, setPasswordDialogEmployee] = useState<any | null>(null);
   const [dialogPassword, setDialogPassword] = useState("");
@@ -113,7 +123,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadPrefix(); loadViewSettings(); loadLogo(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadPrefix(); loadViewSettings(); loadLogo(); loadVehicleFields(); }
   }, [adminToken]);
 
   useEffect(() => {
@@ -267,6 +277,63 @@ const Admin = () => {
   const deleteProjectField = async (id: string) => {
     try { await invoke("delete_project_field", { fieldId: id }); } catch {}
     loadProjectFields(); toast.success("Projektfeld gelöscht");
+  };
+
+  const loadVehicleFields = async () => {
+    const { data } = await supabase.from("vehicle_field_config").select("*").order("sort_order");
+    setVehicleFields((data || []) as FieldConfig[]);
+  };
+
+  const addVehicleField = async () => {
+    if (!newVehicleFieldLabel.trim()) return;
+    const maxOrder = vehicleFields.length > 0 ? Math.max(...vehicleFields.map(f => f.sort_order)) + 1 : 0;
+    const key = `vfield_${Date.now()}`;
+    const { error } = await supabase.from("vehicle_field_config").insert({
+      field_key: key,
+      field_label: newVehicleFieldLabel.trim(),
+      field_type: newVehicleFieldType,
+      field_options: newVehicleFieldType === "dropdown" && newVehicleFieldOptions.trim()
+        ? JSON.stringify(newVehicleFieldOptions.split(",").map((s: string) => s.trim()).filter(Boolean)) : null,
+      sort_order: maxOrder,
+      is_required: newVehicleFieldRequired,
+    });
+    if (error) { toast.error("Fehler beim Erstellen"); return; }
+    setNewVehicleFieldLabel(""); setNewVehicleFieldOptions(""); setNewVehicleFieldType("text"); setNewVehicleFieldRequired(false);
+    toast.success("Fahrzeugfeld erstellt"); loadVehicleFields();
+  };
+
+  const startEditVehicleField = (field: FieldConfig) => {
+    setEditingVehicleFieldId(field.id);
+    setEditVehicleFieldLabel(field.field_label);
+    setEditVehicleFieldType(field.field_type);
+    setEditVehicleFieldRequired(field.is_required ?? false);
+    try { const parsed = field.field_options ? JSON.parse(field.field_options) : []; setEditVehicleFieldOptions(Array.isArray(parsed) ? parsed.join(", ") : ""); } catch { setEditVehicleFieldOptions(""); }
+  };
+
+  const cancelEditVehicleField = () => {
+    setEditingVehicleFieldId(null); setEditVehicleFieldLabel(""); setEditVehicleFieldType("text"); setEditVehicleFieldOptions(""); setEditVehicleFieldRequired(false);
+  };
+
+  const saveVehicleFieldEdit = async (field: FieldConfig) => {
+    const { error } = await supabase.from("vehicle_field_config").update({
+      field_label: editVehicleFieldLabel.trim() || field.field_label,
+      field_type: editVehicleFieldType,
+      field_options: editVehicleFieldType === "dropdown" && editVehicleFieldOptions.trim()
+        ? JSON.stringify(editVehicleFieldOptions.split(",").map((s: string) => s.trim()).filter(Boolean)) : null,
+      is_required: editVehicleFieldRequired,
+    }).eq("id", field.id);
+    if (error) { toast.error("Fehler beim Speichern"); return; }
+    cancelEditVehicleField(); loadVehicleFields(); toast.success("Fahrzeugfeld aktualisiert");
+  };
+
+  const toggleVehicleField = async (field: FieldConfig) => {
+    await supabase.from("vehicle_field_config").update({ is_active: !field.is_active }).eq("id", field.id);
+    loadVehicleFields();
+  };
+
+  const deleteVehicleField = async (id: string) => {
+    await supabase.from("vehicle_field_config").delete().eq("id", id);
+    loadVehicleFields(); toast.success("Fahrzeugfeld gelöscht");
   };
 
   const loadViewSettings = async () => {
@@ -464,12 +531,13 @@ const Admin = () => {
           <Button variant="outline" onClick={handleLogout}><LogOut className="h-4 w-4 mr-1" /> Abmelden</Button>
         </div>
         <Tabs defaultValue="employees">
-          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-5 h-auto">
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 h-auto">
             <TabsTrigger value="employees" className="text-xs sm:text-sm">Mitarbeiter</TabsTrigger>
             <TabsTrigger value="customers" className="text-xs sm:text-sm">Kunden</TabsTrigger>
             <TabsTrigger value="assignments" className="text-xs sm:text-sm">Zuweisungen</TabsTrigger>
             <TabsTrigger value="projects" className="text-xs sm:text-sm">Projekte</TabsTrigger>
             <TabsTrigger value="settings" className="text-xs sm:text-sm">Einstellungen</TabsTrigger>
+            <TabsTrigger value="vehicle" className="text-xs sm:text-sm">Fahrzeug</TabsTrigger>
           </TabsList>
 
           <TabsContent value="employees" className="space-y-4 mt-4">
@@ -945,6 +1013,73 @@ const Admin = () => {
                     </div>
                   </div>
                   <Button onClick={addField} disabled={!newFieldLabel.trim() || savingField} size="sm"><Plus className="h-4 w-4 mr-1" /> Feld hinzufügen</Button>
+                </div>
+              </CardContent>
+            </Card>
+          <TabsContent value="vehicle" className="space-y-4 mt-4">
+            <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Car className="h-5 w-5" /> Fahrzeugfelder verwalten</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Diese Felder erscheinen bei Projekten vom Typ "Fahrzeugbeschriftung".</p>
+                <div className="space-y-2">
+                  {vehicleFields.map((field) => (
+                    <div key={field.id} className="p-3 border rounded-lg space-y-2">
+                      {editingVehicleFieldId === field.id ? (
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="space-y-1"><Label className="text-xs">Bezeichnung</Label><Input value={editVehicleFieldLabel} onChange={(e) => setEditVehicleFieldLabel(e.target.value)} /></div>
+                          <div className="space-y-1"><Label className="text-xs">Feldtyp</Label>
+                            <Select value={editVehicleFieldType} onValueChange={(v) => setEditVehicleFieldType(v as FieldConfig["field_type"])}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="text">Textfeld</SelectItem>
+                                <SelectItem value="textarea">Textarea</SelectItem>
+                                <SelectItem value="dropdown">Dropdown</SelectItem>
+                                <SelectItem value="checkbox">Checkbox</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {editVehicleFieldType === "dropdown" && <div className="space-y-1 sm:col-span-2"><Label className="text-xs">Optionen (kommagetrennt)</Label><Input value={editVehicleFieldOptions} onChange={(e) => setEditVehicleFieldOptions(e.target.value)} /></div>}
+                          <div className="flex items-center gap-2 pt-1"><Checkbox checked={editVehicleFieldRequired} onCheckedChange={(c) => setEditVehicleFieldRequired(!!c)} /><Label className="text-sm">Pflichtfeld</Label></div>
+                          <div className="flex gap-2 sm:col-span-2">
+                            <Button size="sm" onClick={() => saveVehicleFieldEdit(field)}>Speichern</Button>
+                            <Button size="sm" variant="ghost" onClick={cancelEditVehicleField}>Abbrechen</Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm truncate">{field.field_label} <span className="text-xs text-muted-foreground">({field.field_type}){field.is_required ? " *" : ""}</span></p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Button variant="ghost" size="sm" onClick={() => toggleVehicleField(field)} className={field.is_active ? "text-green-600" : "text-muted-foreground"}>{field.is_active ? "Aktiv" : "Inaktiv"}</Button>
+                            <Button variant="ghost" size="sm" onClick={() => startEditVehicleField(field)}><Pencil className="h-4 w-4" /></Button>
+                            <Button variant="ghost" size="sm" onClick={() => deleteVehicleField(field.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {vehicleFields.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Fahrzeugfelder definiert</p>}
+                </div>
+                <div className="border rounded-lg p-4 space-y-3">
+                  <p className="text-sm font-medium">Neues Fahrzeugfeld</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="space-y-1"><Label className="text-xs">Bezeichnung</Label><Input value={newVehicleFieldLabel} onChange={(e) => setNewVehicleFieldLabel(e.target.value)} /></div>
+                    <div className="space-y-1"><Label className="text-xs">Feldtyp</Label>
+                      <Select value={newVehicleFieldType} onValueChange={(v) => setNewVehicleFieldType(v as FieldConfig["field_type"])}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="text">Textfeld</SelectItem>
+                          <SelectItem value="textarea">Textarea</SelectItem>
+                          <SelectItem value="dropdown">Dropdown</SelectItem>
+                          <SelectItem value="checkbox">Checkbox</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {newVehicleFieldType === "dropdown" && <div className="space-y-1 sm:col-span-2"><Label className="text-xs">Optionen (kommagetrennt)</Label><Input value={newVehicleFieldOptions} onChange={(e) => setNewVehicleFieldOptions(e.target.value)} /></div>}
+                    <div className="flex items-center gap-2 pt-1"><Checkbox checked={newVehicleFieldRequired} onCheckedChange={(c) => setNewVehicleFieldRequired(!!c)} /><Label className="text-sm">Pflichtfeld</Label></div>
+                  </div>
+                  <Button onClick={addVehicleField} size="sm" disabled={!newVehicleFieldLabel.trim()}><Plus className="h-4 w-4 mr-1" /> Fahrzeugfeld hinzufügen</Button>
                 </div>
               </CardContent>
             </Card>

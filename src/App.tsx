@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { getSession } from "@/lib/session";
+import { syncAllToSupabase } from "@/lib/supabaseSync";
 import { supabase } from "@/integrations/supabase/client";
 import Projects from "./pages/Projects";
 import NewProject from "./pages/NewProject";
@@ -23,6 +24,7 @@ import FloorPlanUpload from "./pages/FloorPlanUpload";
 import FloorPlanView from "./pages/FloorPlanView";
 import GuestAccess from "./pages/GuestAccess";
 import GuestProject from "./pages/GuestProject";
+import VehicleDetail from "./pages/VehicleDetail";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -91,7 +93,17 @@ const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; childre
   return <>{children}</>;
 };
 
-const App = () => (
+const App = () => {
+  // When coming back online, sync all pending local changes to Supabase
+  useEffect(() => {
+    const handleOnline = () => {
+      if (getSession()) syncAllToSupabase();
+    };
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, []);
+
+  return (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
@@ -113,6 +125,7 @@ const App = () => (
           <Route path="/projects/:projectId/locations/:locationId/details/:detailId/edit-image" element={<RoleGuard allowedRoles={["admin", "employee"]}><PhotoEditor /></RoleGuard>} />
           <Route path="/projects/:projectId/export" element={<RoleGuard allowedRoles={["admin", "employee"]}><Export /></RoleGuard>} />
           <Route path="/projects/:projectId/floor-plans" element={<RoleGuard allowedRoles={["admin", "employee"]}><FloorPlanView /></RoleGuard>} />
+          <Route path="/projects/:projectId/vehicle" element={<RoleGuard allowedRoles={["admin", "employee"]}><VehicleDetail /></RoleGuard>} />
           <Route path="/projects/:projectId/floor-plans/upload" element={<RoleGuard allowedRoles={["admin", "employee"]}><FloorPlanUpload /></RoleGuard>} />
           {/* Customer routes - /kunde is public login, /customer is protected */}
           <Route path="/kunde" element={<CustomerLogin />} />
@@ -124,6 +137,7 @@ const App = () => (
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
-);
+  );
+};
 
 export default App;

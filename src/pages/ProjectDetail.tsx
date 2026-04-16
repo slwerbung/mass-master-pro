@@ -7,7 +7,7 @@ import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
 import { getSession } from "@/lib/session";
-import { deleteDetailImageFromSupabase, deleteProjectFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, syncProjectToSupabase } from "@/lib/supabaseSync";
+import { deleteDetailImageFromSupabase, deleteProjectFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, syncProjectToSupabase, scheduleSyncProject } from "@/lib/supabaseSync";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -48,6 +48,13 @@ const ProjectDetail = () => {
   const { cameraInput, triggerCamera } = useDirectCamera({
     onCapture: (imageData) => navigate(`/projects/${projectId}/editor`, { state: { imageData } }),
   });
+
+  // Redirect vehicle projects to their dedicated page
+  useEffect(() => {
+    if (project?.projectType === 'fahrzeugbeschriftung') {
+      navigate(`/projects/${projectId}/vehicle`, { replace: true });
+    }
+  }, [project?.projectType, projectId, navigate]);
 
   useEffect(() => {
     const loadFieldConfigs = async () => {
@@ -158,8 +165,8 @@ const ProjectDetail = () => {
     try {
       const updatedProject = { ...project, locations: project.locations.filter((l) => l.id !== locationId) };
       await indexedDBStorage.saveProject(updatedProject);
-      const syncResult = await syncProjectToSupabase(projectId);
       const reloadedProject = await indexedDBStorage.getProject(projectId);
+      scheduleSyncProject(projectId);
       setProject(reloadedProject || updatedProject);
       if (syncResult === 'remote-won') toast.warning("Stand wurde aktualisiert: neuere Online-Version übernommen");
       else toast.success("Standort gelöscht");
@@ -174,8 +181,8 @@ const ProjectDetail = () => {
       await indexedDBStorage.deleteDetailImage(detailImageId);
       await deleteDetailImageFromSupabase(detailImageId);
       if (projectId) {
-        const syncResult = await syncProjectToSupabase(projectId);
         const reloaded = await indexedDBStorage.getProject(projectId, getSession());
+        scheduleSyncProject(projectId);
         if (reloaded) setProject(reloaded);
         if (syncResult === 'remote-won') {
           toast.warning("Stand wurde aktualisiert: neuere Online-Version übernommen");
