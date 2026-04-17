@@ -174,6 +174,18 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
+      // ── Debug: return raw HERO response ──
+      case "debug_query": {
+        const query = `query { project_matches { id project_nr } }`;
+        const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+          body: JSON.stringify({ query }),
+        });
+        const text = await resp.text();
+        return json({ status: resp.status, body: text.slice(0, 2000) });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
