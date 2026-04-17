@@ -22,7 +22,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { adminToken, employeeToken, action, ...params } = body;
 
-    const publicActions = ["sync_projects", "get_project_prefix"];
+    const publicActions = ["sync_projects", "get_project_prefix", "get_integration_config"];
     if (!publicActions.includes(action)) {
       const payload = adminToken ? await verifySessionToken(adminToken, getSessionSecret()) : null;
       if (!payload || payload.role !== "admin" || payload.userId !== "admin") {

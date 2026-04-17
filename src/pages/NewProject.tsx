@@ -56,9 +56,9 @@ const NewProject = () => {
       if (data?.prefix !== undefined) setPrefix(data.prefix);
     }).catch(() => {});
 
-    // Check if HERO integration is active
+    // Check if HERO integration is active (public action, no token needed)
     supabase.functions.invoke("admin-manage", {
-      body: { action: "get_integration_config", adminToken: "" },
+      body: { action: "get_integration_config", adminToken: "public" },
     }).then(({ data }) => {
       if (data?.hero?.enabled) setHeroEnabled(true);
     }).catch(() => {});
