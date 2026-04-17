@@ -315,10 +315,17 @@ const Admin = () => {
     setTestingHero(true);
     setHeroTestResult(null);
     try {
-      const data = await invoke("test_hero_connection");
-      setHeroTestResult({ ok: true, msg: data?.message || "Verbindung erfolgreich" });
+      const { data, error } = await supabase.functions.invoke("admin-manage", {
+        body: { adminToken, action: "test_hero_connection" },
+      });
+      const payload = data || {};
+      if (payload.success) {
+        setHeroTestResult({ ok: true, msg: payload.message || "Verbindung erfolgreich ✓" });
+      } else {
+        setHeroTestResult({ ok: false, msg: payload.error || error?.message || "Verbindung fehlgeschlagen" });
+      }
     } catch (e: any) {
-      setHeroTestResult({ ok: false, msg: e.message || "Verbindung fehlgeschlagen" });
+      setHeroTestResult({ ok: false, msg: e.message || "Unbekannter Fehler" });
     }
     finally { setTestingHero(false); }
   };

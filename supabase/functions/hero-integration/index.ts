@@ -69,8 +69,8 @@ Deno.serve(async (req) => {
         // We fetch recent projects and filter client-side since HERO's search
         // capabilities may be limited - we fetch more and filter
         const query = `
-          query ($search: String) {
-            project_matches(search: $search, limit: 50) {
+          query {
+            project_matches {
               id
               project_nr
               customer {
@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
           }
         `;
 
-        const data = await heroQuery(apiKey, query, search ? { search } : undefined);
+        const data = await heroQuery(apiKey, query);
         const projects = data?.project_matches || [];
 
         // Client-side fulltext filter if HERO doesn't support search param

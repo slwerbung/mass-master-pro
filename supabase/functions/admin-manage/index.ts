@@ -371,17 +371,23 @@ Deno.serve(async (req) => {
       case "test_hero_connection": {
         const { data: keyRow } = await supabase.from("app_config").select("value").eq("key", "hero_api_key").maybeSingle();
         const apiKey = keyRow?.value;
-        if (!apiKey) return json({ error: "Kein API Key hinterlegt" }, 400);
-        const testQuery = `query { contacts(limit: 1) { id } }`;
-        const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-          body: JSON.stringify({ query: testQuery }),
-        });
-        if (!resp.ok) return json({ error: `HERO API Fehler: ${resp.status}` }, 400);
-        const result = await resp.json();
-        if (result.errors) return json({ error: result.errors[0]?.message || "GraphQL Fehler" }, 400);
-        return json({ success: true, message: "Verbindung erfolgreich" });
+        if (!apiKey) return json({ success: false, error: "Kein API Key hinterlegt" });
+        const testQuery = `query { __typename }`;
+        try {
+          const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+            body: JSON.stringify({ query: testQuery }),
+          });
+          const respText = await resp.text();
+          if (!resp.ok) return json({ success: false, error: `HTTP ${resp.status}: ${respText.slice(0, 300)}` });
+          let result: any;
+          try { result = JSON.parse(respText); } catch { return json({ success: false, error: `Ungültige Antwort: ${respText.slice(0, 200)}` }); }
+          if (result.errors?.length) return json({ success: false, error: result.errors[0]?.message });
+          return json({ success: true, message: "Verbindung erfolgreich ✓" });
+        } catch (fetchErr: any) {
+          return json({ success: false, error: `Verbindungsfehler: ${fetchErr.message}` });
+        }
       }
 
       default:
