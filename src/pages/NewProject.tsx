@@ -263,15 +263,9 @@ const NewProject = () => {
                             onClick={() => selectHeroProject(p)}
                             className="w-full text-left px-3 py-2.5 hover:bg-muted/60 border-b last:border-b-0 transition-colors"
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-sm font-semibold">{p.project_nr}</p>
-                              {p.current_project_match_status?.name && (
-                                <span className="text-xs text-muted-foreground shrink-0">{p.current_project_match_status.name}</span>
-                              )}
-                            </div>
+                            <p className="text-sm font-semibold">{p.project_nr}{p.measure?.name ? ` · ${p.measure.name}` : ""}</p>
                             <p className="text-xs text-muted-foreground">
-                              {p.customer?.company_name || [p.customer?.first_name, p.customer?.last_name].filter(Boolean).join(" ")}
-                              {p.address?.city ? ` · ${p.address.city}` : ""}
+                              {p.customer?.company_name || [p.customer?.first_name, p.customer?.last_name].filter(Boolean).join(" ") || "–"}
                             </p>
                           </button>
                         )) : !heroSearching ? (

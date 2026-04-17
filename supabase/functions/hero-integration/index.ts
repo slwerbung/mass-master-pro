@@ -61,18 +61,17 @@ Deno.serve(async (req) => {
 
     switch (action) {
 
-      // ── Search HERO projects (fulltext across nr, customer, address) ──
+      // ── Search HERO projects (fulltext, all pages) ──
       case "search_projects": {
         const search = String(params.search || "").trim();
         if (!search) return json({ projects: [] });
 
-        // Try HERO's native search first, fall back to fetch-all-and-filter
-        // Use offset/limit if supported, otherwise fetch all
-        const query = `
+        const makeQuery = (offset: number) => `
           query {
-            project_matches {
+            project_matches(offset: ${offset}) {
               id
               project_nr
+              measure { name }
               customer {
                 id
                 first_name
@@ -89,34 +88,40 @@ Deno.serve(async (req) => {
           }
         `;
 
-        let projects: any[] = [];
-        try {
-          const data = await heroQuery(apiKey, query);
-          projects = data?.project_matches || [];
-        } catch (queryErr: any) {
-          return json({ error: `HERO Abfrage fehlgeschlagen: ${queryErr.message}`, projects: [] });
+        // Fetch all pages (HERO returns 50 per page)
+        let allProjects: any[] = [];
+        let offset = 0;
+        const MAX_PAGES = 10; // up to 500 projects
+        for (let page = 0; page < MAX_PAGES; page++) {
+          try {
+            const data = await heroQuery(apiKey, makeQuery(offset));
+            const batch = data?.project_matches || [];
+            allProjects = allProjects.concat(batch);
+            if (batch.length < 50) break; // last page
+            offset += 50;
+          } catch {
+            break;
+          }
         }
 
-        // Client-side fulltext filter if HERO doesn't support search param
-        const filtered = search
-          ? projects.filter((p: any) => {
-              const text = [
-                p.project_nr,
-                p.customer?.first_name,
-                p.customer?.last_name,
-                p.customer?.company_name,
-                p.customer?.email,
-                p.address?.street,
-                p.address?.city,
-                p.address?.zipcode,
-                p.contact?.first_name,
-                p.contact?.last_name,
-              ].filter(Boolean).join(" ").toLowerCase();
-              return search.toLowerCase().split(" ").every((term: string) => text.includes(term));
-            })
-          : projects;
+        // Fulltext filter across all relevant fields
+        const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
+        const filtered = allProjects.filter((p: any) => {
+          const text = [
+            p.project_nr,
+            p.measure?.name,
+            p.customer?.first_name,
+            p.customer?.last_name,
+            p.customer?.company_name,
+            p.customer?.email,
+            p.address?.street,
+            p.address?.city,
+            p.address?.zipcode,
+          ].filter(Boolean).join(" ").toLowerCase();
+          return terms.every(term => text.includes(term));
+        });
 
-        return json({ projects: filtered });
+        return json({ projects: filtered.slice(0, 30) });
       }
 
       // ── Search HERO contacts ──
