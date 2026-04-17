@@ -80,17 +80,10 @@ Deno.serve(async (req) => {
                 company_name
                 email
               }
-              contact {
-                first_name
-                last_name
-              }
               address {
                 street
                 city
                 zipcode
-              }
-              current_project_match_status {
-                name
               }
             }
           }
