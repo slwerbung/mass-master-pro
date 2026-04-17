@@ -82,13 +82,22 @@ const NewProject = () => {
     setHeroSearching(true);
     try {
       const session = getSession();
-      const { data, error } = await supabase.functions.invoke("hero-integration", {
+      const { data } = await supabase.functions.invoke("hero-integration", {
         body: { action: "search_projects", search: term, sessionToken: session?.authToken || "valid" },
       });
-      if (!error && data?.projects) setHeroResults(data.projects);
-    } catch {}
-    finally { setHeroSearching(false); }
+      setHeroResults(data?.projects || []);
+    } catch (e: any) {
+      console.warn("HERO search error:", e);
+    } finally { setHeroSearching(false); }
   };
+
+  // Auto-suggest: search while typing (debounced)
+  useEffect(() => {
+    if (!heroEnabled || !heroSearch.trim()) { setHeroResults([]); return; }
+    const timer = setTimeout(() => searchHeroProjects(heroSearch), 350);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroSearch, heroEnabled]);
 
   const selectHeroProject = (project: any) => {
     setHeroProject(project);
@@ -232,45 +241,43 @@ const NewProject = () => {
                     <Button variant="ghost" size="sm" onClick={clearHeroProject}><X className="h-4 w-4" /></Button>
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          placeholder="Projektnr., Kundenname, Adresse..."
-                          value={heroSearch}
-                          onChange={e => { setHeroSearch(e.target.value); setShowHeroSearch(true); }}
-                          onKeyDown={e => e.key === "Enter" && searchHeroProjects(heroSearch)}
-                          className="pl-9"
-                        />
-                      </div>
-                      <Button variant="outline" onClick={() => searchHeroProjects(heroSearch)} disabled={heroSearching}>
-                        {heroSearching ? "Suche..." : "Suchen"}
-                      </Button>
-                    </div>
-                    {showHeroSearch && heroResults.length > 0 && (
-                      <div className="border rounded-lg overflow-hidden shadow-md bg-background max-h-60 overflow-y-auto">
-                        {heroResults.map(p => (
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      placeholder="Tippen zum Suchen: Projektnr., Kundenname, Ort..."
+                      value={heroSearch}
+                      onChange={e => { setHeroSearch(e.target.value); setShowHeroSearch(true); }}
+                      onFocus={() => heroSearch && setShowHeroSearch(true)}
+                      className="pl-9 pr-8"
+                      autoComplete="off"
+                    />
+                    {heroSearching && (
+                      <div className="absolute right-3 top-2.5 h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    )}
+                    {showHeroSearch && heroSearch.length > 0 && (
+                      <div className="absolute z-50 w-full mt-1 border rounded-lg shadow-lg bg-background overflow-hidden max-h-72 overflow-y-auto">
+                        {heroResults.length > 0 ? heroResults.map(p => (
                           <button
                             key={p.id}
+                            type="button"
                             onClick={() => selectHeroProject(p)}
-                            className="w-full text-left px-3 py-2.5 hover:bg-muted/50 border-b last:border-b-0 transition-colors"
+                            className="w-full text-left px-3 py-2.5 hover:bg-muted/60 border-b last:border-b-0 transition-colors"
                           >
-                            <p className="text-sm font-medium">{p.project_nr}
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-semibold">{p.project_nr}</p>
                               {p.current_project_match_status?.name && (
-                                <span className="ml-2 text-xs text-muted-foreground font-normal">· {p.current_project_match_status.name}</span>
+                                <span className="text-xs text-muted-foreground shrink-0">{p.current_project_match_status.name}</span>
                               )}
-                            </p>
+                            </div>
                             <p className="text-xs text-muted-foreground">
                               {p.customer?.company_name || [p.customer?.first_name, p.customer?.last_name].filter(Boolean).join(" ")}
                               {p.address?.city ? ` · ${p.address.city}` : ""}
                             </p>
                           </button>
-                        ))}
+                        )) : !heroSearching ? (
+                          <p className="text-sm text-muted-foreground px-3 py-3">Keine Ergebnisse für „{heroSearch}"</p>
+                        ) : null}
                       </div>
-                    )}
-                    {showHeroSearch && !heroSearching && heroResults.length === 0 && heroSearch && (
-                      <p className="text-xs text-muted-foreground px-1">Keine Projekte gefunden</p>
                     )}
                   </div>
                 )}

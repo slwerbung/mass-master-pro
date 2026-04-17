@@ -64,10 +64,10 @@ Deno.serve(async (req) => {
       // ── Search HERO projects (fulltext across nr, customer, address) ──
       case "search_projects": {
         const search = String(params.search || "").trim();
-        
-        // HERO GraphQL: search across project number, customer name
-        // We fetch recent projects and filter client-side since HERO's search
-        // capabilities may be limited - we fetch more and filter
+        if (!search) return json({ projects: [] });
+
+        // Try HERO's native search first, fall back to fetch-all-and-filter
+        // Use offset/limit if supported, otherwise fetch all
         const query = `
           query {
             project_matches {
@@ -79,12 +79,6 @@ Deno.serve(async (req) => {
                 last_name
                 company_name
                 email
-                phone_home
-                address {
-                  street
-                  city
-                  zipcode
-                }
               }
               contact {
                 first_name
@@ -102,8 +96,13 @@ Deno.serve(async (req) => {
           }
         `;
 
-        const data = await heroQuery(apiKey, query);
-        const projects = data?.project_matches || [];
+        let projects: any[] = [];
+        try {
+          const data = await heroQuery(apiKey, query);
+          projects = data?.project_matches || [];
+        } catch (queryErr: any) {
+          return json({ error: `HERO Abfrage fehlgeschlagen: ${queryErr.message}`, projects: [] });
+        }
 
         // Client-side fulltext filter if HERO doesn't support search param
         const filtered = search
