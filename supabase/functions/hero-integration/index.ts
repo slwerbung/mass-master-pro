@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
     const apiKey = config.get("hero_api_key");
     const enabled = config.get("hero_enabled") === "true";
 
-    if (!apiKey || !enabled) return json({ error: "HERO Integration nicht aktiviert" }, 400);
+    if (!apiKey) return json({ error: "Kein HERO API Key konfiguriert", projects: [], contacts: [] });
 
     switch (action) {
 
@@ -176,14 +176,18 @@ Deno.serve(async (req) => {
 
       // ── Debug: return raw HERO response ──
       case "debug_query": {
-        const query = `query { project_matches { id project_nr } }`;
-        const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-          body: JSON.stringify({ query }),
-        });
-        const text = await resp.text();
-        return json({ status: resp.status, body: text.slice(0, 2000) });
+        try {
+          const query = `query { project_matches { id project_nr } }`;
+          const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+            body: JSON.stringify({ query }),
+          });
+          const text = await resp.text();
+          return json({ status: resp.status, body: text.slice(0, 2000), apiKeyPrefix: apiKey.slice(0, 8) + "..." });
+        } catch (e: any) {
+          return json({ error: e.message, apiKeyPrefix: apiKey.slice(0, 8) + "..." });
+        }
       }
 
       default:

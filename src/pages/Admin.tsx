@@ -1194,12 +1194,16 @@ const Admin = () => {
                     )}
                     {heroHasKey && (
                       <Button variant="ghost" size="sm" onClick={async () => {
-                        const session = getSession();
-                        const { data } = await supabase.functions.invoke("hero-integration", {
-                          body: { action: "debug_query", sessionToken: session?.authToken || "valid" },
-                        });
-                        toast.info("Debug: " + JSON.stringify(data).slice(0, 300));
-                        console.log("HERO debug:", data);
+                        try {
+                          const session = getSession();
+                          const { data, error } = await supabase.functions.invoke("hero-integration", {
+                            body: { action: "debug_query", sessionToken: session?.authToken || "valid" },
+                          });
+                          const result = data || { invokeError: error?.message };
+                          alert("HERO Debug:\n" + JSON.stringify(result, null, 2));
+                        } catch (e: any) {
+                          alert("Fehler: " + e.message);
+                        }
                       }}>
                         Debug
                       </Button>
