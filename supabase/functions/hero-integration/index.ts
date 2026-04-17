@@ -2,8 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 const HERO_GRAPHQL = "https://login.hero-software.de/api/external/v7/graphql";
@@ -15,17 +14,12 @@ function json(data: unknown, status = 200) {
   });
 }
 
-async function heroQuery(apiKey: string, query: string, variables?: Record<string, unknown>) {
+async function heroPost(apiKey: string, query: string) {
   const resp = await fetch(HERO_GRAPHQL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({ query, variables }),
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({ query }),
   });
-  if (!resp.ok) throw new Error(`HERO API HTTP ${resp.status}`);
   const result = await resp.json();
   if (result.errors?.length) throw new Error(result.errors[0].message);
   return result.data;
@@ -40,158 +34,75 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Verify request has a valid session token (employee or admin)
     const body = await req.json();
     const { action, sessionToken, ...params } = body;
 
-    // Basic auth check - must have a session token
-    if (!sessionToken) return json({ error: "Unauthorized" }, 401);
+    if (!sessionToken) return json({ error: "Unauthorized" });
 
-    // Check HERO is configured and enabled
+    // Load API key
     const { data: configRows } = await supabase
-      .from("app_config")
-      .select("key, value")
+      .from("app_config").select("key, value")
       .in("key", ["hero_api_key", "hero_enabled"]);
-
     const config = new Map((configRows || []).map((r: any) => [r.key, r.value]));
     const apiKey = config.get("hero_api_key");
-    const enabled = config.get("hero_enabled") === "true";
-
-    if (!apiKey) return json({ error: "Kein HERO API Key konfiguriert", projects: [], contacts: [] });
+    if (!apiKey) return json({ error: "Kein HERO API Key konfiguriert", projects: [] });
 
     switch (action) {
 
-      // ── Search HERO projects (fulltext, all pages) ──
       case "search_projects": {
         const search = String(params.search || "").trim();
         if (!search) return json({ projects: [] });
 
-        const makeQuery = (offset: number) => `
-          query {
-            project_matches(offset: ${offset}) {
-              id
-              project_nr
-              measure { name }
-              customer {
-                id
-                first_name
-                last_name
-                company_name
-                email
-              }
-              address {
-                street
-                city
-                zipcode
-              }
-            }
-          }
+        const projectFields = `
+          id project_nr
+          customer { id first_name last_name company_name email }
+          address { city }
         `;
 
-        // Fetch all pages (HERO returns 50 per page)
+        // Fetch all pages via offset pagination
         let allProjects: any[] = [];
-        let offset = 0;
-        const MAX_PAGES = 10; // up to 500 projects
-        for (let page = 0; page < MAX_PAGES; page++) {
+        for (let offset = 0; offset <= 1000; offset += 50) {
           try {
-            const data = await heroQuery(apiKey, makeQuery(offset));
+            const data = await heroPost(apiKey, `query { project_matches(offset: ${offset}) { ${projectFields} } }`);
             const batch = data?.project_matches || [];
             allProjects = allProjects.concat(batch);
-            if (batch.length < 50) break; // last page
-            offset += 50;
-          } catch {
-            break;
-          }
+            if (batch.length < 50) break;
+          } catch { break; }
         }
 
-        // Fulltext filter across all relevant fields
-        const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
+        // Fulltext filter
+        const terms = search.toLowerCase().split(" ").filter((t: string) => t.length > 1);
         const filtered = allProjects.filter((p: any) => {
-          const text = [
+          const haystack = [
             p.project_nr,
-            p.measure?.name,
             p.customer?.first_name,
             p.customer?.last_name,
             p.customer?.company_name,
             p.customer?.email,
-            p.address?.street,
             p.address?.city,
-            p.address?.zipcode,
           ].filter(Boolean).join(" ").toLowerCase();
-          return terms.every(term => text.includes(term));
+          return terms.every((term: string) => haystack.includes(term));
         });
 
-        return json({ projects: filtered.slice(0, 30) });
+        return json({ projects: filtered.slice(0, 50), total: allProjects.length });
       }
 
-      // ── Search HERO contacts ──
-      case "search_contacts": {
-        const search = String(params.search || "").trim();
-        const query = `
-          query {
-            contacts(category: "customer", limit: 100) {
-              id
-              nr
-              first_name
-              last_name
-              company_name
-              email
-              phone_home
-              address {
-                street
-                city
-                zipcode
-              }
-            }
-          }
-        `;
-        const data = await heroQuery(apiKey, query);
-        const contacts = data?.contacts || [];
-        const filtered = search
-          ? contacts.filter((c: any) => {
-              const text = [c.first_name, c.last_name, c.company_name, c.email, c.nr]
-                .filter(Boolean).join(" ").toLowerCase();
-              return search.toLowerCase().split(" ").every((term: string) => text.includes(term));
-            })
-          : contacts;
-        return json({ contacts: filtered.slice(0, 20) });
-      }
-
-      // ── Add logbook entry to a HERO project ──
       case "add_logbook_entry": {
         const { heroProjectId, title, text } = params;
-        if (!heroProjectId) return json({ error: "heroProjectId required" }, 400);
+        if (!heroProjectId) return json({ error: "heroProjectId required" });
         const mutation = `
-          mutation ($projectId: ID!, $title: String!, $text: String) {
-            add_logbook_entry(project_match_id: $projectId, custom_title: $title, custom_text: $text) {
-              id
-            }
+          mutation {
+            add_logbook_entry(project_match_id: ${heroProjectId}, custom_title: "${title}", custom_text: "${text || ""}") { id }
           }
         `;
-        await heroQuery(apiKey, mutation, { projectId: heroProjectId, title, text });
+        await heroPost(apiKey, mutation);
         return json({ success: true });
       }
 
-      // ── Debug: return raw HERO response ──
-      case "debug_query": {
-        try {
-          const query = `query { project_matches { id project_nr } }`;
-          const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-            body: JSON.stringify({ query }),
-          });
-          const text = await resp.text();
-          return json({ status: resp.status, body: text.slice(0, 2000), apiKeyPrefix: apiKey.slice(0, 8) + "..." });
-        } catch (e: any) {
-          return json({ error: e.message, apiKeyPrefix: apiKey.slice(0, 8) + "..." });
-        }
-      }
-
       default:
-        return json({ error: `Unknown action: ${action}` }, 400);
+        return json({ error: `Unknown action: ${action}` });
     }
   } catch (e: any) {
-    return json({ error: e.message || "Server error" }, 500);
+    return json({ error: e.message || "Server error" });
   }
 });

@@ -1192,22 +1192,7 @@ const Admin = () => {
                         {testingHero ? "Teste..." : "Verbindung testen"}
                       </Button>
                     )}
-                    {heroHasKey && (
-                      <Button variant="ghost" size="sm" onClick={async () => {
-                        try {
-                          const session = getSession();
-                          const { data, error } = await supabase.functions.invoke("hero-integration", {
-                            body: { action: "debug_query", sessionToken: session?.authToken || "valid" },
-                          });
-                          const result = data || { invokeError: error?.message };
-                          alert("HERO Debug:\n" + JSON.stringify(result, null, 2));
-                        } catch (e: any) {
-                          alert("Fehler: " + e.message);
-                        }
-                      }}>
-                        Debug
-                      </Button>
-                    )}
+
                   </div>
                 </div>
 
