@@ -28,12 +28,6 @@ Deno.serve(async (req) => {
       if (!payload || payload.role !== "admin" || payload.userId !== "admin") {
         return json({ error: "Unauthorized" }, 401);
       }
-    } else {
-      const adminPayload = adminToken ? await verifySessionToken(adminToken, getSessionSecret()) : null;
-      const employeePayload = employeeToken ? await verifySessionToken(employeeToken, getSessionSecret()) : null;
-      if (!adminPayload && !employeePayload) {
-        return json({ error: "Unauthorized" }, 401);
-      }
     }
 
     const supabase = createClient(

@@ -56,10 +56,15 @@ const NewProject = () => {
       if (data?.prefix !== undefined) setPrefix(data.prefix);
     }).catch(() => {});
 
-    // Check if HERO integration is active (public action, no token needed)
-    supabase.functions.invoke("admin-manage", {
-      body: { action: "get_integration_config", adminToken: "public" },
-    }).then(({ data }) => {
+    // Check if HERO integration is active via Edge Function (no auth needed for this check)
+    fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-manage`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+      },
+      body: JSON.stringify({ action: "get_integration_config" }),
+    }).then(r => r.json()).then(data => {
       if (data?.hero?.enabled) setHeroEnabled(true);
     }).catch(() => {});
 
