@@ -263,7 +263,7 @@ const NewProject = () => {
                             onClick={() => selectHeroProject(p)}
                             className="w-full text-left px-3 py-2.5 hover:bg-muted/60 border-b last:border-b-0 transition-colors"
                           >
-                            <p className="text-sm font-semibold">{p.project_nr}{p.measure?.name ? ` · ${p.measure.name}` : ""}</p>
+                            <p className="text-sm font-semibold">{p.project_nr}{p.name ? ` · ${p.name}` : ""}</p>
                             <p className="text-xs text-muted-foreground">
                               {p.customer?.company_name || [p.customer?.first_name, p.customer?.last_name].filter(Boolean).join(" ") || "–"}
                             </p>

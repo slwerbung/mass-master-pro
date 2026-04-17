@@ -54,8 +54,7 @@ Deno.serve(async (req) => {
         if (!search) return json({ projects: [] });
 
         const projectFields = `
-          id project_nr
-          measure { name }
+          id project_nr name
           customer { id first_name last_name company_name email }
           address { city }
         `;
@@ -76,7 +75,7 @@ Deno.serve(async (req) => {
         const filtered = allProjects.filter((p: any) => {
           const haystack = [
             p.project_nr,
-            p.measure?.name,
+            p.name,
             p.customer?.first_name,
             p.customer?.last_name,
             p.customer?.company_name,
