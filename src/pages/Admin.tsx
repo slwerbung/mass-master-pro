@@ -576,14 +576,12 @@ const Admin = () => {
           <Button variant="outline" onClick={handleLogout}><LogOut className="h-4 w-4 mr-1" /> Abmelden</Button>
         </div>
         <Tabs defaultValue="employees">
-          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-7 h-auto">
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-5 h-auto">
             <TabsTrigger value="employees" className="text-xs sm:text-sm">Mitarbeiter</TabsTrigger>
             <TabsTrigger value="customers" className="text-xs sm:text-sm">Kunden</TabsTrigger>
-            <TabsTrigger value="assignments" className="text-xs sm:text-sm">Zuweisungen</TabsTrigger>
-            <TabsTrigger value="projects" className="text-xs sm:text-sm">Projekte</TabsTrigger>
-            <TabsTrigger value="settings" className="text-xs sm:text-sm">Einstellungen</TabsTrigger>
-            <TabsTrigger value="vehicle" className="text-xs sm:text-sm">Fahrzeug</TabsTrigger>
+            <TabsTrigger value="fields" className="text-xs sm:text-sm">Felder</TabsTrigger>
             <TabsTrigger value="integrations" className="text-xs sm:text-sm">Integrationen</TabsTrigger>
+            <TabsTrigger value="settings" className="text-xs sm:text-sm">Einstellungen</TabsTrigger>
           </TabsList>
 
           <TabsContent value="employees" className="space-y-4 mt-4">
@@ -634,29 +632,6 @@ const Admin = () => {
                 </div>
               </CardContent></Card>
 
-          </TabsContent>
-
-          <TabsContent value="customers" className="space-y-4 mt-4">
-            <Card><CardHeader><CardTitle className="text-lg flex items-center gap-2"><Users className="h-5 w-5" /> Kunden verwalten</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex gap-2"><Input placeholder="Name des Kunden" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCustomer()} /><Button onClick={addCustomer} disabled={!newCustomerName.trim()}><Plus className="h-4 w-4 mr-1" /> Hinzufügen</Button></div>
-                <div className="space-y-2">{customers.map((c) => (<div key={c.id} className="flex items-center justify-between p-3 bg-muted rounded-lg"><span className="font-medium">{c.name}</span><Button variant="ghost" size="sm" onClick={() => deleteCustomer(c.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>))}{customers.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Kunden</p>}</div>
-              </CardContent></Card>
-          </TabsContent>
-
-          <TabsContent value="assignments" className="space-y-4 mt-4">
-            <Card><CardHeader><CardTitle className="text-lg flex items-center gap-2"><Link className="h-5 w-5" /> Projekt-Zuweisungen</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="space-y-1"><Label className="text-xs">Kunde</Label><Select value={assignCustomerId} onValueChange={setAssignCustomerId}><SelectTrigger><SelectValue placeholder="Kunde wählen" /></SelectTrigger><SelectContent>{customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent></Select></div>
-                  <div className="space-y-1"><Label className="text-xs">Projekt</Label><Select value={assignProjectId} onValueChange={setAssignProjectId}><SelectTrigger><SelectValue placeholder="Projekt wählen" /></SelectTrigger><SelectContent>{projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.project_number}</SelectItem>)}</SelectContent></Select></div>
-                  <div className="flex items-end"><Button onClick={addAssignment} disabled={!assignCustomerId || !assignProjectId} className="w-full"><Plus className="h-4 w-4 mr-1" /> Zuweisen</Button></div>
-                </div>
-                <div className="space-y-2">{assignments.map((a) => (<div key={a.id} className="flex items-center justify-between p-3 bg-muted rounded-lg"><span className="text-sm"><span className="font-medium">{a.customers?.name}</span>{" → "}<span className="font-medium">{a.projects?.project_number}</span></span><Button variant="ghost" size="sm" onClick={() => deleteAssignment(a.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>))}{assignments.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Zuweisungen</p>}</div>
-              </CardContent></Card>
-          </TabsContent>
-
-          <TabsContent value="projects" className="space-y-4 mt-4">
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2"><FolderOpen className="h-5 w-5" /> Projekt-Zuständigkeiten</CardTitle>
@@ -682,7 +657,6 @@ const Admin = () => {
                               setSelectedProjectAccessId("");
                               setSelectedProjectOwnerId("");
                               setSelectedAdditionalEmployeeId("");
-                              // selectedProjectAssignments is derived, clearing the ID resets it
                             } else {
                               handleProjectSelect(project.id);
                             }
@@ -752,6 +726,26 @@ const Admin = () => {
                 </div>
               </CardContent>
             </Card>
+
+          </TabsContent>
+
+          <TabsContent value="customers" className="space-y-4 mt-4">
+            <Card><CardHeader><CardTitle className="text-lg flex items-center gap-2"><Users className="h-5 w-5" /> Kunden verwalten</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex gap-2"><Input placeholder="Name des Kunden" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCustomer()} /><Button onClick={addCustomer} disabled={!newCustomerName.trim()}><Plus className="h-4 w-4 mr-1" /> Hinzufügen</Button></div>
+                <div className="space-y-2">{customers.map((c) => (<div key={c.id} className="flex items-center justify-between p-3 bg-muted rounded-lg"><span className="font-medium">{c.name}</span><Button variant="ghost" size="sm" onClick={() => deleteCustomer(c.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>))}{customers.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Kunden</p>}</div>
+              </CardContent></Card>
+
+            <Card><CardHeader><CardTitle className="text-lg flex items-center gap-2"><Link className="h-5 w-5" /> Projekt-Zuweisungen</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Ordne Kunden zu Projekten zu, damit sie die jeweiligen Projekte einsehen und Freigaben geben können.</p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="space-y-1"><Label className="text-xs">Kunde</Label><Select value={assignCustomerId} onValueChange={setAssignCustomerId}><SelectTrigger><SelectValue placeholder="Kunde wählen" /></SelectTrigger><SelectContent>{customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><Label className="text-xs">Projekt</Label><Select value={assignProjectId} onValueChange={setAssignProjectId}><SelectTrigger><SelectValue placeholder="Projekt wählen" /></SelectTrigger><SelectContent>{projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.project_number}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="flex items-end"><Button onClick={addAssignment} disabled={!assignCustomerId || !assignProjectId} className="w-full"><Plus className="h-4 w-4 mr-1" /> Zuweisen</Button></div>
+                </div>
+                <div className="space-y-2">{assignments.map((a) => (<div key={a.id} className="flex items-center justify-between p-3 bg-muted rounded-lg"><span className="text-sm"><span className="font-medium">{a.customers?.name}</span>{" → "}<span className="font-medium">{a.projects?.project_number}</span></span><Button variant="ghost" size="sm" onClick={() => deleteAssignment(a.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>))}{assignments.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Zuweisungen</p>}</div>
+              </CardContent></Card>
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-4 mt-4">
@@ -824,6 +818,10 @@ const Admin = () => {
                 </div>
               </CardContent>
             </Card>
+
+          </TabsContent>
+
+          <TabsContent value="fields" className="space-y-4 mt-4">
 
             <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Standortfelder konfigurieren</CardTitle></CardHeader>
@@ -1050,9 +1048,7 @@ const Admin = () => {
                 </div>
               </CardContent>
             </Card>
-          </TabsContent>
 
-          <TabsContent value="vehicle" className="space-y-4 mt-4">
             <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Car className="h-5 w-5" /> Fahrzeugfelder verwalten</CardTitle></CardHeader>
               <CardContent className="space-y-4">
@@ -1120,6 +1116,7 @@ const Admin = () => {
               </CardContent>
             </Card>
           </TabsContent>
+
           <TabsContent value="integrations" className="space-y-4 mt-4">
             <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Plug className="h-5 w-5" /> HERO Software Integration</CardTitle></CardHeader>
@@ -1172,8 +1169,6 @@ const Admin = () => {
                         {testingHero ? "Teste..." : "Verbindung testen"}
                       </Button>
                     )}
-
-
                   </div>
                 </div>
 
