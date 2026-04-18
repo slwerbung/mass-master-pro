@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,11 +15,11 @@ function json(data: unknown, status = 200) {
   });
 }
 
-async function heroPost(apiKey: string, query: string) {
+async function heroPost(apiKey: string, query: string, variables?: Record<string, unknown>) {
   const resp = await fetch(HERO_GRAPHQL, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify(variables ? { query, variables } : { query }),
   });
   const result = await resp.json();
   if (result.errors?.length) throw new Error(result.errors[0].message);
@@ -29,15 +30,24 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    const body = await req.json();
+    const { action, sessionToken, adminToken, employeeToken, ...params } = body;
+
+    // Verify a real signed session token. Accept admin, employee, or the legacy
+    // `sessionToken` field as a fallback (still must be signed).
+    const candidateToken = adminToken || employeeToken || sessionToken;
+    if (!candidateToken || typeof candidateToken !== "string") {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    const payload = await verifySessionToken(candidateToken, getSessionSecret());
+    if (!payload || (payload.role !== "admin" && payload.role !== "employee")) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
-
-    const body = await req.json();
-    const { action, sessionToken, ...params } = body;
-
-    if (!sessionToken) return json({ error: "Unauthorized" });
 
     // Load API key
     const { data: configRows } = await supabase
@@ -63,7 +73,12 @@ Deno.serve(async (req) => {
         let allProjects: any[] = [];
         for (let offset = 0; offset <= 1000; offset += 50) {
           try {
-            const data = await heroPost(apiKey, `query { project_matches(offset: ${offset}) { ${projectFields} } }`);
+            // Use GraphQL variables for the pagination offset
+            const data = await heroPost(
+              apiKey,
+              `query($offset: Int!) { project_matches(offset: $offset) { ${projectFields} } }`,
+              { offset }
+            );
             const batch = data?.project_matches || [];
             allProjects = allProjects.concat(batch);
             if (batch.length < 50) break;
@@ -90,20 +105,26 @@ Deno.serve(async (req) => {
 
       case "add_logbook_entry": {
         const { heroProjectId, title, text } = params;
-        if (!heroProjectId) return json({ error: "heroProjectId required" });
+        const projectIdNum = Number(heroProjectId);
+        if (!Number.isFinite(projectIdNum)) return json({ error: "heroProjectId required" }, 400);
+        // Use GraphQL variables to prevent injection via title/text
         const mutation = `
-          mutation {
-            add_logbook_entry(project_match_id: ${heroProjectId}, custom_title: "${title}", custom_text: "${text || ""}") { id }
+          mutation($projectId: Int!, $title: String!, $text: String) {
+            add_logbook_entry(project_match_id: $projectId, custom_title: $title, custom_text: $text) { id }
           }
         `;
-        await heroPost(apiKey, mutation);
+        await heroPost(apiKey, mutation, {
+          projectId: projectIdNum,
+          title: String(title || "").slice(0, 500),
+          text: text ? String(text).slice(0, 5000) : null,
+        });
         return json({ success: true });
       }
 
       default:
-        return json({ error: `Unknown action: ${action}` });
+        return json({ error: `Unknown action: ${action}` }, 400);
     }
   } catch (e: any) {
-    return json({ error: e.message || "Server error" });
+    return json({ error: e.message || "Server error" }, 500);
   }
 });

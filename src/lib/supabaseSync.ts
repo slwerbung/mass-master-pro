@@ -8,8 +8,12 @@ import { compressImage } from "./imageCompression";
 // ─── Image hash cache ────────────────────────────────────────────────────────
 // Persists to localStorage. Skips re-upload of unchanged images across sessions.
 // Limited to MAX_HASH_ENTRIES to prevent unbounded localStorage growth.
+//
+// v3 (2026-04): Switched from length+snippet fingerprint to real SHA-256.
+// Two images of the same length with similar base64 edges no longer collide.
+// Cache key bump → all users re-sync once, then normal behaviour resumes.
 
-const HASH_CACHE_KEY  = 'mmp_img_hashes_v2';
+const HASH_CACHE_KEY   = 'mmp_img_hashes_v3';
 const MAX_HASH_ENTRIES = 500;
 let _hashCache: Record<string, { fp: string; ts: number }> | null = null;
 
@@ -32,19 +36,29 @@ function persistHashCache() {
   try { localStorage.setItem(HASH_CACHE_KEY, JSON.stringify(cache)); } catch {}
 }
 
-/** Fast fingerprint: length + first 32 chars + last 16 chars. */
-function imageFingerprint(data: string): string {
+/** SHA-256 fingerprint of the base64 payload (async, crypto-safe). */
+async function imageFingerprint(data: string): Promise<string> {
   if (!data) return '';
-  return `${data.length}|${data.slice(0, 32)}|${data.slice(-16)}`;
+  const bytes = new TextEncoder().encode(data);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  // Hex encode – short and stable
+  const view = new Uint8Array(digest);
+  let hex = '';
+  for (let i = 0; i < view.length; i++) hex += view[i].toString(16).padStart(2, '0');
+  return hex;
 }
 
-function isImageSynced(key: string, data: string): boolean {
+async function isImageSynced(key: string, data: string): Promise<boolean> {
+  if (!data) return false;
   const entry = getHashCache()[key];
-  return !!data && !!entry && entry.fp === imageFingerprint(data);
+  if (!entry) return false;
+  const fp = await imageFingerprint(data);
+  return entry.fp === fp;
 }
 
-function markImageSynced(key: string, data: string) {
-  getHashCache()[key] = { fp: imageFingerprint(data), ts: Date.now() };
+async function markImageSynced(key: string, data: string): Promise<void> {
+  const fp = await imageFingerprint(data);
+  getHashCache()[key] = { fp, ts: Date.now() };
   persistHashCache();
 }
 
@@ -143,20 +157,20 @@ async function removeStoragePaths(paths: (string | null | undefined)[]) {
 async function syncImageVariant(locationId: string, imageType: "annotated" | "original", imageData: string): Promise<void> {
   if (!imageData) return;
   const cacheKey = `loc_${locationId}_${imageType}`;
-  if (isImageSynced(cacheKey, imageData)) return;
+  if (await isImageSynced(cacheKey, imageData)) return;
   const path = getLocationImagePath(locationId, imageType);
   const uploaded = await uploadImageToStorage(path, imageData);
   if (!uploaded) return;
-  // Delete existing row first, then insert fresh (no unique constraint in DB)
-  await supabase.from("location_images")
-    .delete()
-    .eq("location_id", locationId)
-    .eq("image_type", imageType);
-  const { error } = await supabase.from("location_images").insert(
-    { location_id: locationId, image_type: imageType, storage_path: path }
+  // Upsert relies on unique constraint (location_id, image_type) added in
+  // migration 20260415150000_location_images_unique_constraint.sql.
+  // This replaces the previous delete-then-insert pattern, which could lose the
+  // row if the connection dropped between the two statements.
+  const { error } = await supabase.from("location_images").upsert(
+    { location_id: locationId, image_type: imageType, storage_path: path },
+    { onConflict: "location_id,image_type" }
   );
   if (error) return;
-  markImageSynced(cacheKey, imageData);
+  await markImageSynced(cacheKey, imageData);
 }
 
 async function syncLocationImages(locationId: string, annotatedImage?: string, originalImage?: string): Promise<void> {
@@ -186,8 +200,10 @@ async function syncDetailImage(detailImage: DetailImage, locationId: string): Pr
   const annotatedData = detailImage.imageData;
   const originalData  = detailImage.originalImageData || detailImage.imageData;
 
-  const annotatedAlreadySynced = isImageSynced(annotatedKey, annotatedData);
-  const originalAlreadySynced  = isImageSynced(originalKey,  originalData);
+  const [annotatedAlreadySynced, originalAlreadySynced] = await Promise.all([
+    isImageSynced(annotatedKey, annotatedData),
+    isImageSynced(originalKey,  originalData),
+  ]);
 
   const annotatedPath = getDetailImagePath(locationId, detailImage.id, 'annotated');
   const originalPath  = getDetailImagePath(locationId, detailImage.id, 'original');
@@ -209,8 +225,8 @@ async function syncDetailImage(detailImage: DetailImage, locationId: string): Pr
   }, { onConflict: "id" });
 
   if (detailUpsertError) return; // Don't mark as synced if DB write failed
-  if (!annotatedAlreadySynced) markImageSynced(annotatedKey, annotatedData);
-  if (!originalAlreadySynced)  markImageSynced(originalKey,  originalData);
+  if (!annotatedAlreadySynced) await markImageSynced(annotatedKey, annotatedData);
+  if (!originalAlreadySynced)  await markImageSynced(originalKey,  originalData);
 }
 
 async function syncDetailImages(locationId: string, detailImages?: DetailImage[]): Promise<void> {
@@ -235,10 +251,10 @@ async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<v
   const cacheKey = `floor_${floorPlan.id}`;
   const path = getFloorPlanPath(projectId, floorPlan.id);
 
-  if (!isImageSynced(cacheKey, floorPlan.imageData)) {
+  if (!(await isImageSynced(cacheKey, floorPlan.imageData))) {
     const uploaded = await uploadImageToStorage(path, floorPlan.imageData);
     if (!uploaded) return;
-    markImageSynced(cacheKey, floorPlan.imageData);
+    await markImageSynced(cacheKey, floorPlan.imageData);
   }
 
   await (supabase as any).from("floor_plans").upsert({

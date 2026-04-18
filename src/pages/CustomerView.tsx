@@ -164,7 +164,7 @@ const CustomerView = () => {
     const { data, error } = await supabase.functions.invoke("customer-data", {
       body: {
         action: "update_guest_info",
-        customerId: session.id,
+        customerToken: session.authToken,
         assignmentId: selectedAssignment.id,
         locationId,
         guestInfo: message,
@@ -532,7 +532,7 @@ const CustomerView = () => {
         const { data, error } = await supabase.functions.invoke("customer-data", {
           body: {
             action: "update_feedback",
-            customerId: session?.id,
+            customerToken: session?.authToken,
             assignmentId: selectedAssignment?.id,
             locationId,
             feedbackId: editId,
@@ -545,7 +545,7 @@ const CustomerView = () => {
         const { data, error } = await supabase.functions.invoke("customer-data", {
           body: {
             action: "create_feedback",
-            customerId: session?.id,
+            customerToken: session?.authToken,
             assignmentId: selectedAssignment?.id,
             locationId,
             message,
@@ -558,7 +558,7 @@ const CustomerView = () => {
         const { data, error } = await supabase.functions.invoke("customer-data", {
           body: {
             action: "create_feedback",
-            customerId: session?.id,
+            customerToken: session?.authToken,
             assignmentId: selectedAssignment?.id,
             locationId,
             message,
@@ -612,7 +612,7 @@ const CustomerView = () => {
         await supabase.from("location_feedback").delete().eq("id", feedbackId);
       } else {
         const { data, error } = await supabase.functions.invoke("customer-data", {
-          body: { action: "delete_feedback", customerId: session?.id, assignmentId, locationId, feedbackId },
+          body: { action: "delete_feedback", customerToken: session?.authToken, assignmentId, locationId, feedbackId },
         });
         if (error || data?.error) throw error || new Error(data?.error);
       }

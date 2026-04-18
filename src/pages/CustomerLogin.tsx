@@ -9,6 +9,17 @@ import { Users } from "lucide-react";
 import { toast } from "sonner";
 import { setSession, getSession } from "@/lib/session";
 
+const SESSION_CACHE_KEY = "session_validation_cache";
+function setLoginCache(role: string, token: string, userId: string) {
+  try {
+    sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
+      key: `${role}:${token}:${userId}`,
+      ts: Date.now(),
+      valid: true,
+    }));
+  } catch {}
+}
+
 const CustomerLogin = () => {
   const navigate = useNavigate();
   const [name, setName] = useState("");
@@ -24,21 +35,34 @@ const CustomerLogin = () => {
     if (!name.trim()) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("customers")
-        .select("id, name")
-        .ilike("name", name.trim())
-        .single();
+      // Validate server-side and get a signed customer token.
+      // UX is unchanged (type name, submit) but the server now issues the token
+      // and customer-data / validate-session require it.
+      const { data, error } = await supabase.functions.invoke("validate-customer", {
+        body: { customerName: name.trim() },
+      });
 
-      if (error || !data) {
-        toast.error("Name nicht gefunden. Bitte wenden Sie sich an Ihren Ansprechpartner.");
-      } else {
-        // Set session BEFORE navigating
-        setSession({ role: "customer", id: data.id, name: data.name });
-        toast.success(`Willkommen, ${data.name}!`);
-        // Small delay to ensure session is written before navigation
-        setTimeout(() => navigate("/customer", { replace: true }), 50);
+      if (error) {
+        toast.error("Verbindungsfehler");
+        return;
       }
+
+      if (!data?.valid || !data?.token || !data?.customer) {
+        toast.error("Name nicht gefunden. Bitte wenden Sie sich an Ihren Ansprechpartner.");
+        return;
+      }
+
+      setSession({
+        role: "customer",
+        id: data.customer.id,
+        name: data.customer.name,
+        authToken: data.token,
+        expiresAt: data.expiresAt,
+      });
+      setLoginCache("customer", data.token, data.customer.id);
+      toast.success(`Willkommen, ${data.customer.name}!`);
+      // Small delay to ensure session is written before navigation
+      setTimeout(() => navigate("/customer", { replace: true }), 50);
     } catch {
       toast.error("Verbindungsfehler");
     } finally {
@@ -64,8 +88,9 @@ const CustomerLogin = () => {
               placeholder="Name eingeben"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+              onKeyDown={(e) => e.key === "Enter" && !loading && handleLogin()}
               autoFocus
+              disabled={loading}
             />
           </div>
           <Button className="w-full" onClick={handleLogin} disabled={!name.trim() || loading}>

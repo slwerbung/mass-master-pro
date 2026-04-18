@@ -86,9 +86,9 @@ const Auth = () => {
   useEffect(() => {
     if (mode === "employee") {
       supabase.from("employees_public" as any).select("id, name").order("name").then(({ data }: any) => setEmployees(data || []));
-    } else if (mode === "customer") {
-      supabase.from("customers").select("id, name").order("name").then(({ data }) => setCustomers(data || []));
     }
+    // mode === "customer" no longer needs to pre-load the list; the name is
+    // matched server-side via validate-customer.
   }, [mode]);
 
   const handleAdminLogin = async (e: React.FormEvent) => {
@@ -191,12 +191,50 @@ const Auth = () => {
     }
   };
 
-  const handleCustomerLogin = () => {
-    const match = customers.find((c) => c.name.toLowerCase() === customerName.trim().toLowerCase());
-    if (!match) { toast.error("Name nicht gefunden. Bitte wenden Sie sich an den Administrator."); return; }
-    setSession({ role: "customer", id: match.id, name: match.name });
-    toast.success(`Angemeldet als ${match.name}`);
-    navigate("/customer");
+  const handleCustomerLogin = async () => {
+    const trimmedName = customerName.trim();
+    if (!trimmedName) return;
+    const rl = checkRateLimit();
+    if (!rl.allowed) {
+      setLockoutSeconds(rl.remainingSeconds || LOCKOUT_MS / 1000);
+      toast.error(`Zu viele Versuche. Bitte warte ${rl.remainingSeconds} Sekunden.`);
+      return;
+    }
+    setLoading(true);
+    try {
+      // Validate against server and get a signed token – UX stays identical
+      // (type name → submit), but customer-data now requires this token.
+      const { data, error } = await supabase.functions.invoke("validate-customer", {
+        body: { customerName: trimmedName },
+      });
+      if (error) { toast.error("Verbindungsfehler"); return; }
+      if (!data?.valid || !data?.token || !data?.customer) {
+        recordFailedAttempt();
+        const newRl = checkRateLimit();
+        if (!newRl.allowed) {
+          setLockoutSeconds(newRl.remainingSeconds || LOCKOUT_MS / 1000);
+          toast.error(`Name nicht gefunden. Login für ${newRl.remainingSeconds} Sekunden gesperrt.`);
+        } else {
+          toast.error("Name nicht gefunden. Bitte wenden Sie sich an den Administrator.");
+        }
+        return;
+      }
+      resetRateLimit();
+      setSession({
+        role: "customer",
+        id: data.customer.id,
+        name: data.customer.name,
+        authToken: data.token,
+        expiresAt: data.expiresAt,
+      });
+      setLoginCache("customer", data.token, data.customer.id);
+      toast.success(`Angemeldet als ${data.customer.name}`);
+      navigate("/customer");
+    } catch {
+      toast.error("Verbindungsfehler");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const isLocked = lockoutSeconds > 0;
@@ -295,9 +333,13 @@ const Auth = () => {
               <div className="space-y-2">
                 <Label htmlFor="customer-name">Ihr Name</Label>
                 <Input id="customer-name" value={customerName} onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Name eingeben" autoFocus onKeyDown={(e) => e.key === "Enter" && handleCustomerLogin()} />
+                  placeholder="Name eingeben" autoFocus disabled={isLocked || loading}
+                  onKeyDown={(e) => e.key === "Enter" && !loading && handleCustomerLogin()} />
               </div>
-              <Button className="w-full" onClick={handleCustomerLogin} disabled={!customerName.trim()}>Weiter</Button>
+              {isLocked && <p className="text-sm text-destructive text-center">Login gesperrt – noch {lockoutSeconds} Sekunden</p>}
+              <Button className="w-full" onClick={handleCustomerLogin} disabled={!customerName.trim() || loading || isLocked}>
+                {loading ? "Prüfe..." : isLocked ? `Gesperrt (${lockoutSeconds}s)` : "Weiter"}
+              </Button>
             </div>
           )}
         </CardContent>

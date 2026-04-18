@@ -1,4 +1,4 @@
-export type SessionRole = "admin" | "employee";
+export type SessionRole = "admin" | "employee" | "customer";
 
 const encoder = new TextEncoder();
 
@@ -23,6 +23,14 @@ async function sign(data: string, secret: string) {
   return toBase64Url(new Uint8Array(sig));
 }
 
+/** Timing-safe string comparison to resist timing attacks. */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 export async function createSessionToken(payload: Record<string, unknown>, secret: string) {
   const body = toBase64Url(encoder.encode(JSON.stringify(payload)));
   const signature = await sign(body, secret);
@@ -33,7 +41,7 @@ export async function verifySessionToken(token: string, secret: string) {
   const [body, signature] = token.split(".");
   if (!body || !signature) return null;
   const expected = await sign(body, secret);
-  if (expected !== signature) return null;
+  if (!timingSafeEqual(expected, signature)) return null;
   try {
     const json = new TextDecoder().decode(fromBase64Url(body));
     const payload = JSON.parse(json) as { exp?: number } & Record<string, unknown>;
@@ -44,6 +52,22 @@ export async function verifySessionToken(token: string, secret: string) {
   }
 }
 
-export function getSessionSecret() {
-  return Deno.env.get("SESSION_SIGNING_SECRET") || Deno.env.get("ADMIN_PASSWORD") || "fallback-session-secret";
+/**
+ * Returns the HMAC signing secret for session tokens.
+ * Requires SESSION_SIGNING_SECRET to be set in the environment.
+ * Throws if missing – never falls back to a hardcoded value.
+ *
+ * To generate one: `openssl rand -hex 32`
+ * Then set in Supabase:
+ *   supabase secrets set SESSION_SIGNING_SECRET=<generated>
+ */
+export function getSessionSecret(): string {
+  const secret = Deno.env.get("SESSION_SIGNING_SECRET");
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "SESSION_SIGNING_SECRET environment variable is not set or too short (min 32 chars). " +
+      "Generate one with: openssl rand -hex 32"
+    );
+  }
+  return secret;
 }

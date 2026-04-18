@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
+import bcrypt from "https://esm.sh/bcryptjs@3.0.2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -129,12 +129,12 @@ Deno.serve(async (req) => {
       let passwordValid = false;
       if (data.guest_password.startsWith("$2")) {
         // bcrypt hash
-        passwordValid = await bcrypt.compare(password, data.guest_password);
+        passwordValid = bcrypt.compareSync(password, data.guest_password);
       } else {
         // Legacy plaintext - compare and upgrade to bcrypt
         passwordValid = data.guest_password === password;
         if (passwordValid) {
-          const hashed = await bcrypt.hash(password);
+          const hashed = bcrypt.hashSync(password, 10);
           await supabase
             .from("projects")
             .update({ guest_password: hashed })

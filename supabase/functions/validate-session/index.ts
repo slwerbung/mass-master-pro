@@ -15,7 +15,13 @@ Deno.serve(async (req) => {
     const { token, role, userId } = await req.json();
     if (!token || !role || !userId) return json({ valid: false }, 400);
     const payload = await verifySessionToken(token, getSessionSecret());
-    const valid = !!payload && payload.role === role && payload.userId === userId;
+    // Token must be validly signed, not expired, and match the role + userId
+    // claimed by the client. Customer tokens are accepted just like admin/employee.
+    const valid = !!payload
+      && typeof payload.role === "string"
+      && ["admin", "employee", "customer"].includes(payload.role)
+      && payload.role === role
+      && payload.userId === userId;
     return json({ valid });
   } catch {
     return json({ valid: false }, 500);

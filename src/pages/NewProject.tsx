@@ -44,14 +44,11 @@ const NewProject = () => {
   const [showHeroSearch, setShowHeroSearch] = useState(false);
 
   useEffect(() => {
-    const session = getSession();
-    const tokenBody: Record<string, string> = { action: "get_project_prefix" };
-    if (session?.authToken) {
-      if (session.role === "admin") tokenBody.adminToken = session.authToken;
-      else tokenBody.employeeToken = session.authToken;
-    }
+    // get_project_prefix and get_integration_config are public actions on admin-manage;
+    // no token needed. Previously we passed an irrelevant employeeToken/adminToken
+    // that was silently ignored for these calls.
     supabase.functions.invoke("admin-manage", {
-      body: tokenBody,
+      body: { action: "get_project_prefix" },
     }).then(({ data }) => {
       if (data?.prefix !== undefined) setPrefix(data.prefix);
     }).catch(() => {});
@@ -79,11 +76,15 @@ const NewProject = () => {
 
   const searchHeroProjects = async (term: string) => {
     if (!term.trim()) { setHeroResults([]); return; }
+    const session = getSession();
+    // hero-integration requires a real signed admin/employee token. No point
+    // calling it without one – the function will return 401.
+    if (!session?.authToken) { setHeroResults([]); return; }
     setHeroSearching(true);
     try {
-      const session = getSession();
+      const tokenField = session.role === "admin" ? "adminToken" : "employeeToken";
       const { data } = await supabase.functions.invoke("hero-integration", {
-        body: { action: "search_projects", search: term, sessionToken: session?.authToken || "valid" },
+        body: { action: "search_projects", search: term, [tokenField]: session.authToken },
       });
       setHeroResults(data?.projects || []);
     } catch (e: any) {

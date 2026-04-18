@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,16 +21,25 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { action, customerId, ...params } = body;
+    const { action, customerToken, ...params } = body;
 
-    if (!customerId) return json({ error: "Missing customerId" }, 400);
+    // Customer must present a signed token. Token's userId is the authoritative
+    // customerId – we never trust a customerId passed in the body anymore.
+    if (!customerToken || typeof customerToken !== "string") {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    const payload = await verifySessionToken(customerToken, getSessionSecret());
+    if (!payload || payload.role !== "customer" || typeof payload.userId !== "string") {
+      return json({ error: "Unauthorized" }, 401);
+    }
+    const customerId = payload.userId;
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Verify customer exists
+    // Verify customer still exists (handles customer deletion mid-session).
     const { data: customer } = await supabase
       .from("customers")
       .select("id")

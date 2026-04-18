@@ -18,7 +18,7 @@ interface AufmassDBSchema extends DBSchema {
     value: {
       id: string;
       projectNumber: string;
-      projectType?: 'aufmass' | 'aufmass_mit_plan';
+      projectType?: 'aufmass' | 'aufmass_mit_plan' | 'fahrzeugbeschriftung';
       customerName?: string;
       customFields?: string;
       employeeId?: string | null;
@@ -132,7 +132,7 @@ function createDB() {
         floorPlanImageStore.createIndex('by-floor-plan', 'floorPlanId');
       }
       if (oldVersion < 5) {
-        const projectStore = oldVersion < 1 ? transaction.objectStore('projects') : transaction.objectStore('projects');
+        const projectStore = transaction.objectStore('projects');
         if (!projectStore.indexNames.contains('by-access-employee')) {
           projectStore.createIndex('by-access-employee', 'accessEmployeeIds', { multiEntry: true });
         }
@@ -224,7 +224,7 @@ function normaliseAccessEmployeeIds(employeeId?: string | null, assignedEmployee
 
 export const indexedDBStorage = {
   // Lightweight: returns only metadata + location count, NO images loaded
-  async getProjectsSummary(session?: Session | null): Promise<{ id: string; projectNumber: string; projectType?: 'aufmass' | 'aufmass_mit_plan'; customerName?: string; customFields?: Record<string, string>; createdAt: Date; locationCount: number }[]> {
+  async getProjectsSummary(session?: Session | null): Promise<{ id: string; projectNumber: string; projectType?: 'aufmass' | 'aufmass_mit_plan' | 'fahrzeugbeschriftung'; customerName?: string; customFields?: Record<string, string>; createdAt: Date; locationCount: number }[]> {
     const db = await getDB();
     const records = await getAccessibleProjectRecords(db, session);
     const result = [];
@@ -448,19 +448,22 @@ export const indexedDBStorage = {
     const db = await getDB();
     const record = await db.get('locations', locationId);
     if (!record) return;
-    
-    const updates: any = {
-      ...record,
-      locationName: data.locationName,
-      comment: data.comment,
-      system: data.system,
-      label: data.label,
-      locationType: data.locationType,
-      customFields: data.customFields ? JSON.stringify(data.customFields) : undefined,
-      guestInfo: data.guestInfo,
-    };
-    if (data.areaMeasurements !== undefined) {
-      updates.areaMeasurements = JSON.stringify(data.areaMeasurements);
+
+    // Only overwrite fields that were explicitly provided. Using `data.X` directly
+    // would turn "field not passed" into "field set to undefined", which wipes
+    // existing values (e.g. employee editing a location would erase guestInfo).
+    const updates: any = { ...record };
+    if (Object.prototype.hasOwnProperty.call(data, 'locationName')) updates.locationName = data.locationName;
+    if (Object.prototype.hasOwnProperty.call(data, 'comment')) updates.comment = data.comment;
+    if (Object.prototype.hasOwnProperty.call(data, 'system')) updates.system = data.system;
+    if (Object.prototype.hasOwnProperty.call(data, 'label')) updates.label = data.label;
+    if (Object.prototype.hasOwnProperty.call(data, 'locationType')) updates.locationType = data.locationType;
+    if (Object.prototype.hasOwnProperty.call(data, 'customFields')) {
+      updates.customFields = data.customFields ? JSON.stringify(data.customFields) : undefined;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'guestInfo')) updates.guestInfo = data.guestInfo;
+    if (Object.prototype.hasOwnProperty.call(data, 'areaMeasurements')) {
+      updates.areaMeasurements = data.areaMeasurements ? JSON.stringify(data.areaMeasurements) : undefined;
     }
     await db.put('locations', updates);
 

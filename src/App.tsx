@@ -62,9 +62,11 @@ const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; childre
   const getInitialState = (): boolean | null => {
     if (!session) return false;
     if (!allowedRoles.includes(session.role)) return false;
-    if (session.role === "customer") return true;
+    // Guest customers have no authToken (they use a separate guest_token in
+    // localStorage for their direct-project access) – allow them through.
+    if (session.role === "customer" && !session.authToken) return true;
     if (!session.authToken) return true;
-    // Try cache synchronously - avoids spinner on every navigation
+    // Try cache synchronously – avoids spinner on every navigation
     const cached = getCachedValidation(session.role, session.authToken, session.id);
     return cached; // null = cache miss, needs async validation
   };
