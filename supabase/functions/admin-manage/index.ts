@@ -140,6 +140,76 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
+      // ---- PROJECT FIELDS ----
+      // Built-in fields (projectNumber, customerName) are protected: they may only
+      // be toggled active/inactive via is_active; label/type/delete are rejected.
+      case "list_project_fields": {
+        const { data, error } = await supabase.from("project_field_config").select("*").order("sort_order");
+        if (error) return json({ error: error.message }, 500);
+        return json({ fields: data });
+      }
+      case "create_project_field": {
+        const fieldKey = String(params.fieldKey || "").trim();
+        if (!fieldKey) return json({ error: "Missing fieldKey" }, 400);
+        // Prevent overwriting protected keys via the create endpoint
+        if (fieldKey === "projectNumber" || fieldKey === "customerName") {
+          return json({ error: "Dieser Feldschlüssel ist reserviert" }, 400);
+        }
+        const { error } = await supabase.from("project_field_config").insert({
+          field_key: fieldKey,
+          field_label: params.fieldLabel,
+          field_type: params.fieldType,
+          field_options: Array.isArray(params.fieldOptions) ? JSON.stringify(params.fieldOptions) : null,
+          sort_order: params.sortOrder ?? 100,
+          is_active: true,
+          applies_to: params.appliesTo || "all",
+          is_required: params.isRequired ?? false,
+        });
+        if (error) return json({ error: error.message }, 400);
+        return json({ success: true });
+      }
+      case "update_project_field": {
+        // Look up the field_key first so we can enforce protection rules
+        const { data: existing } = await supabase
+          .from("project_field_config")
+          .select("field_key")
+          .eq("id", params.fieldId)
+          .maybeSingle();
+        if (!existing) return json({ error: "Feld nicht gefunden" }, 404);
+
+        const changes = { ...(params.changes || {}) };
+        const isProtected = existing.field_key === "projectNumber" || existing.field_key === "customerName";
+        if (isProtected) {
+          // For protected fields only allow toggling is_active. Strip everything else.
+          const allowed: any = {};
+          if (Object.prototype.hasOwnProperty.call(changes, "is_active")) {
+            allowed.is_active = !!changes.is_active;
+          }
+          if (Object.keys(allowed).length === 0) {
+            return json({ error: "Standardfelder können nicht verändert werden" }, 400);
+          }
+          const { error } = await supabase.from("project_field_config").update(allowed).eq("id", params.fieldId);
+          if (error) return json({ error: error.message }, 400);
+          return json({ success: true });
+        }
+        const { error } = await supabase.from("project_field_config").update(changes).eq("id", params.fieldId);
+        if (error) return json({ error: error.message }, 400);
+        return json({ success: true });
+      }
+      case "delete_project_field": {
+        const { data: existing } = await supabase
+          .from("project_field_config")
+          .select("field_key")
+          .eq("id", params.fieldId)
+          .maybeSingle();
+        if (existing?.field_key === "projectNumber" || existing?.field_key === "customerName") {
+          return json({ error: "Standardfelder können nicht gelöscht werden" }, 400);
+        }
+        const { error } = await supabase.from("project_field_config").delete().eq("id", params.fieldId);
+        if (error) return json({ error: error.message }, 400);
+        return json({ success: true });
+      }
+
       // ---- SYNC PROJECTS ----
       case "sync_projects": {
         const projects = params.projects as Array<{

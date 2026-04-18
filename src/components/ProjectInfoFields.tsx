@@ -10,7 +10,10 @@ interface FieldConfig {
 }
 
 export default function ProjectInfoFields({ project, fields }: { project: any; fields: FieldConfig[] }) {
-  const visible = mergeWithDefaultProjectFields(fields || []).filter((f) => f.is_active);
+  // projectNumber is always shown elsewhere (page title, export filename, etc.)
+  // – exclude it here so the info block doesn't repeat it.
+  const visible = mergeWithDefaultProjectFields(fields || [])
+    .filter((f) => f.is_active && f.field_key !== 'projectNumber');
   const rows = visible.map((field) => {
     const value = getProjectFieldValue(project, field.field_key);
     if (value === undefined || value === null || value === '') return null;

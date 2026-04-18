@@ -10,8 +10,21 @@ export interface ProjectFieldConfig {
   applies_to?: string;
 }
 
+/**
+ * Protected built-in fields. They are always present in the config, always
+ * shown on the "new project" form, and cannot be deleted or renamed via the
+ * admin UI. Enforced both on the client (greyed-out rows) and on the server
+ * (admin-manage edge function rejects edits/deletes).
+ */
+export const PROTECTED_PROJECT_FIELD_KEYS = new Set(["projectNumber", "customerName"]);
+
+export function isProtectedProjectField(fieldKey: string): boolean {
+  return PROTECTED_PROJECT_FIELD_KEYS.has(fieldKey);
+}
+
 export const DEFAULT_PROJECT_FIELDS: ProjectFieldConfig[] = [
-  { field_key: "customerName", field_label: "Kunde", field_type: "text", is_active: true, is_required: false, sort_order: 10, applies_to: "all" },
+  { field_key: "projectNumber", field_label: "Projektnummer / Projektname", field_type: "text", is_active: true, is_required: true,  sort_order: 0,  applies_to: "all" },
+  { field_key: "customerName",  field_label: "Kunde",                         field_type: "text", is_active: true, is_required: false, sort_order: 10, applies_to: "all" },
 ];
 
 export function mergeWithDefaultProjectFields<T extends Partial<ProjectFieldConfig>>(fields: T[]): (T & ProjectFieldConfig)[] {
@@ -34,7 +47,8 @@ export function mergeWithDefaultProjectFields<T extends Partial<ProjectFieldConf
 
 export function getProjectFieldValue(project: any, key: string): string | boolean | undefined {
   if (!project) return undefined;
-  if (key === 'customerName') return project.customerName || project.customer_name || undefined;
+  if (key === 'projectNumber') return project.projectNumber || project.project_number || undefined;
+  if (key === 'customerName')  return project.customerName  || project.customer_name  || undefined;
   const custom = project.customFields && typeof project.customFields === 'object' ? project.customFields : (project.custom_fields && typeof project.custom_fields === 'object' ? project.custom_fields : {});
   return custom?.[key];
 }

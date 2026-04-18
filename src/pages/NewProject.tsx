@@ -32,7 +32,6 @@ const NewProject = () => {
   const [projectNumber, setProjectNumber] = useState("");
   const [projectType, setProjectType] = useState<'aufmass' | 'aufmass_mit_plan' | 'fahrzeugbeschriftung'>('aufmass');
   const [isCreating, setIsCreating] = useState(false);
-  const [prefix, setPrefix] = useState("");
   const [projectFieldConfigs, setProjectFieldConfigs] = useState<ProjectFieldConfig[]>([]);
   const [projectFieldValues, setProjectFieldValues] = useState<Record<string, string>>({});
   const navigate = useNavigate();
@@ -44,15 +43,6 @@ const NewProject = () => {
   const [showHeroSearch, setShowHeroSearch] = useState(false);
 
   useEffect(() => {
-    // get_project_prefix and get_integration_config are public actions on admin-manage;
-    // no token needed. Previously we passed an irrelevant employeeToken/adminToken
-    // that was silently ignored for these calls.
-    supabase.functions.invoke("admin-manage", {
-      body: { action: "get_project_prefix" },
-    }).then(({ data }) => {
-      if (data?.prefix !== undefined) setPrefix(data.prefix);
-    }).catch(() => {});
-
     // Check if HERO integration is active
     supabase.functions.invoke("admin-manage", {
       body: { action: "get_integration_config" },
@@ -69,6 +59,9 @@ const NewProject = () => {
 
   const filteredProjectFields = useMemo(() => {
     return projectFieldConfigs.filter((f) => {
+      // projectNumber is rendered as its own dedicated input above, not inside
+      // the "Projektinfos" block – exclude it here to avoid a duplicate field.
+      if (f.field_key === "projectNumber") return false;
       if (!f.applies_to || f.applies_to === 'all') return true;
       return f.applies_to === projectType || f.applies_to === 'fahrzeugbeschriftung';
     });
@@ -105,8 +98,10 @@ const NewProject = () => {
     setShowHeroSearch(false);
     setHeroResults([]);
     setHeroSearch("");
-    // Auto-fill project number and customer name
-    if (project.project_nr) setProjectNumber(project.project_nr.replace(/^[A-Z]+-/i, ""));
+    // Compose "<project_nr> <name>" and drop it into the project number field
+    // as-is (no prefix stripping; HERO returns the full number including WER-).
+    const combined = [project.project_nr, project.name].filter(Boolean).join(" ").trim();
+    if (combined) setProjectNumber(combined);
     const cust = project.customer;
     if (cust) {
       const name = cust.company_name || [cust.first_name, cust.last_name].filter(Boolean).join(" ");
@@ -131,7 +126,7 @@ const NewProject = () => {
 
     setIsCreating(true);
     try {
-      const fullProjectNumber = prefix ? `${prefix}${projectNumber.trim()}` : projectNumber.trim();
+      const fullProjectNumber = projectNumber.trim();
       const session = getSession();
       const projectId = crypto.randomUUID();
       const employeeId = session?.role === "employee" ? session.id : null;
@@ -280,13 +275,10 @@ const NewProject = () => {
             )}
             <div className="space-y-2">
               <Label htmlFor="projectNumber">Projektnummer / Projektname</Label>
-              <div className="flex items-center gap-2">
-                {prefix && <span className="text-lg font-semibold text-muted-foreground px-3 py-2 bg-muted rounded-md">{prefix}</span>}
-                <Input id="projectNumber" type="text" placeholder="2024-001" value={projectNumber}
-                  onChange={(e) => setProjectNumber(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
-                  autoFocus className="text-lg flex-1" disabled={isCreating} />
-              </div>
+              <Input id="projectNumber" type="text" placeholder="z.B. WER-2024-001 Mustermann GmbH" value={projectNumber}
+                onChange={(e) => setProjectNumber(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
+                autoFocus className="text-lg" disabled={isCreating} />
             </div>
             <div className="space-y-3">
               <Label>Projekttyp</Label>

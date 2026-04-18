@@ -220,6 +220,8 @@ const Projects = () => {
     return visibleProjectFields
       .map((field) => {
         const key = field.field_key;
+        // projectNumber is already shown as the card title – skip it here
+        if (key === "projectNumber") return null;
         let value: string | undefined;
         if (key === "customerName") value = project.customerName;
         else value = project.customFields?.[key];
