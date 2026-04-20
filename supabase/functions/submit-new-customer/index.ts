@@ -14,26 +14,52 @@ function esc(s: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
-interface HeroAttempt {
-  ok: boolean;
-  heroId?: string;
-  error?: string;
-  attempt?: string;
-}
-
-// Try a single HERO mutation variant. Returns {ok, heroId} on success,
-// {ok:false, error} on failure. The edge function calls this multiple
-// times with different argument shapes until one works.
-async function tryHeroMutation(
-  apiKey: string,
-  mutation: string,
-  variables: Record<string, unknown>,
-  attemptLabel: string,
-): Promise<HeroAttempt> {
+// HERO's real schema (confirmed via introspection 2026-04-20):
+//
+//   mutation create_contact(findExisting: Boolean, contact: CustomerInput)
+//     returns { id }
+//
+// CustomerInput fields we use:
+//   first_name, last_name, company_name, company_legal_form, title,
+//   email, phone_home, phone_mobile, category, source,
+//   address: AddressInput { street, city, zipcode }
+//
+// findExisting: true means HERO will try to match an existing contact by
+// email/phone before creating a new one - avoids duplicates if the same
+// person submits the form twice.
+async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boolean; heroId?: string; error?: string }> {
   const HERO_API_URL = "https://login.hero-software.de/api/external/v7/graphql";
+
+  const address = (data.street || data.postalCode || data.city) ? {
+    street: data.street || null,
+    zipcode: data.postalCode || null,
+    city: data.city || null,
+  } : null;
+
+  const contact: any = {
+    first_name: data.firstName || null,
+    last_name: data.lastName,
+    company_name: data.companyName || null,
+    company_legal_form: data.legalForm || null,
+    title: data.salutation || null,
+    email: data.email || null,
+    phone_home: data.phone || null,
+    phone_mobile: data.mobile || null,
+    category: "customer",
+    source: "Neukunden-Formular Website",
+    address,
+  };
+
+  const mutation = `
+    mutation CreateContact($contact: CustomerInput, $findExisting: Boolean) {
+      create_contact(contact: $contact, findExisting: $findExisting) { id }
+    }
+  `;
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
+
     const resp = await fetch(HERO_API_URL, {
       method: 'POST',
       signal: controller.signal,
@@ -42,114 +68,32 @@ async function tryHeroMutation(
         'Accept': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({ query: mutation, variables }),
+      body: JSON.stringify({
+        query: mutation,
+        variables: { contact, findExisting: true },
+      }),
     });
     clearTimeout(timeoutId);
 
     const text = await resp.text();
-    console.log(`[${attemptLabel}] HERO HTTP:`, resp.status);
-    console.log(`[${attemptLabel}] HERO Response:`, text.slice(0, 1500));
+    console.log("HERO HTTP:", resp.status);
+    console.log("HERO Response:", text.slice(0, 1500));
 
     if (!resp.ok) {
-      return { ok: false, attempt: attemptLabel, error: `HTTP ${resp.status}` };
+      return { ok: false, error: `HTTP ${resp.status}: ${text.slice(0, 300)}` };
     }
     const result = JSON.parse(text);
-
     if (result.errors?.length) {
-      return {
-        ok: false,
-        attempt: attemptLabel,
-        error: result.errors.map((e: any) => e.message).join("; "),
-      };
+      return { ok: false, error: result.errors.map((e: any) => e.message).join("; ") };
     }
-    // Look for the id in multiple possible shapes
-    const id = result?.data?.create_contact?.id
-      || result?.data?.create_contact?.contact?.id
-      || result?.data?.create_contact?.data?.id;
-    if (id) {
-      return { ok: true, heroId: String(id), attempt: attemptLabel };
+    const id = result?.data?.create_contact?.id;
+    if (!id) {
+      return { ok: false, error: "Keine ID in Antwort: " + JSON.stringify(result.data).slice(0, 300) };
     }
-    return {
-      ok: false,
-      attempt: attemptLabel,
-      error: "Keine ID in Antwort: " + JSON.stringify(result.data).slice(0, 300),
-    };
+    return { ok: true, heroId: String(id) };
   } catch (e: any) {
-    return { ok: false, attempt: attemptLabel, error: e.message || String(e) };
+    return { ok: false, error: e.message || String(e) };
   }
-}
-
-// Build the attribute object that gets used inside the wrapper
-function buildAttributes(data: any) {
-  const address = (data.street || data.postalCode || data.city) ? {
-    street: data.street || null,
-    zipcode: data.postalCode || null,
-    city: data.city || null,
-  } : null;
-
-  return {
-    first_name: data.firstName || null,
-    last_name: data.lastName,
-    company_name: data.companyName || null,
-    email: data.email || null,
-    phone_home: data.phone || null,
-    phone_mobile: data.mobile || null,
-    address,
-  };
-}
-
-async function createHeroContact(apiKey: string, data: any): Promise<HeroAttempt> {
-  // HERO API responded with "Unknown argument first_name on create_contact of
-  // type PartnerMutation" when using top-level named args. This means the
-  // mutation expects the fields wrapped in a single input object. HERO's
-  // public docs show top-level args, but the real schema clearly wants a
-  // wrapper. We try the most likely wrapper names in order.
-
-  const attrs = buildAttributes(data);
-
-  // Attempt 1: `attributes` wrapper (Rails/GraphQL-Ruby convention, also
-  // matches the shape SL Werbung had in their first iteration)
-  const r1 = await tryHeroMutation(
-    apiKey,
-    `mutation CreateContact($attributes: ContactAttributes!) {
-       create_contact(attributes: $attributes) { id }
-     }`,
-    { attributes: attrs },
-    "attributes:ContactAttributes",
-  );
-  if (r1.ok) return r1;
-
-  // Attempt 2: `input` wrapper (Relay convention)
-  const r2 = await tryHeroMutation(
-    apiKey,
-    `mutation CreateContact($input: CreateContactInput!) {
-       create_contact(input: $input) { id }
-     }`,
-    { input: attrs },
-    "input:CreateContactInput",
-  );
-  if (r2.ok) return r2;
-
-  // Attempt 3: `contact` wrapper with ContactInput type
-  const r3 = await tryHeroMutation(
-    apiKey,
-    `mutation CreateContact($contact: ContactInput!) {
-       create_contact(contact: $contact) { id }
-     }`,
-    { contact: attrs },
-    "contact:ContactInput",
-  );
-  if (r3.ok) return r3;
-
-  // All attempts failed - return the most informative error.
-  // We include all three attempt labels and their errors so we know
-  // exactly which field names are wrong next iteration.
-  const combined = [
-    `Versuch 1 (${r1.attempt}): ${r1.error}`,
-    `Versuch 2 (${r2.attempt}): ${r2.error}`,
-    `Versuch 3 (${r3.attempt}): ${r3.error}`,
-  ].join(" | ");
-  return { ok: false, error: combined };
 }
 
 serve(async (req) => {
@@ -178,7 +122,6 @@ serve(async (req) => {
     let heroStatus = "Nicht versucht";
     let heroOk = false;
 
-    // HERO anbinden
     try {
       const supabase = createClient(
         Deno.env.get('SUPABASE_URL')!,
@@ -200,9 +143,9 @@ serve(async (req) => {
         const result = await createHeroContact(apiKey, data);
         if (result.ok) {
           heroOk = true;
-          heroStatus = `Erfolgreich angelegt (ID: ${result.heroId}, Variante: ${result.attempt})`;
+          heroStatus = `Erfolgreich angelegt (HERO-ID: ${result.heroId})`;
         } else {
-          heroStatus = "Alle HERO-Varianten fehlgeschlagen: " + result.error;
+          heroStatus = "HERO-Fehler: " + result.error;
         }
       }
     } catch (heroErr: any) {
