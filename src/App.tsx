@@ -25,6 +25,7 @@ import FloorPlanView from "./pages/FloorPlanView";
 import GuestAccess from "./pages/GuestAccess";
 import GuestProject from "./pages/GuestProject";
 import VehicleDetail from "./pages/VehicleDetail";
+import NewCustomerSignup from "./pages/NewCustomerSignup";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -134,6 +135,8 @@ const App = () => {
           <Route path="/customer" element={<RoleGuard allowedRoles={["customer"]}><CustomerView /></RoleGuard>} />
           <Route path="/guest/:projectId" element={<GuestAccess />} />
           <Route path="/guest/:projectId/view" element={<GuestProject />} />
+          {/* Public new-customer signup form */}
+          <Route path="/neukunde" element={<NewCustomerSignup />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
