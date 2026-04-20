@@ -6,13 +6,150 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// Escape HTML so form input can't break the mail markup
 function esc(s: unknown): string {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+interface HeroAttempt {
+  ok: boolean;
+  heroId?: string;
+  error?: string;
+  attempt?: string;
+}
+
+// Try a single HERO mutation variant. Returns {ok, heroId} on success,
+// {ok:false, error} on failure. The edge function calls this multiple
+// times with different argument shapes until one works.
+async function tryHeroMutation(
+  apiKey: string,
+  mutation: string,
+  variables: Record<string, unknown>,
+  attemptLabel: string,
+): Promise<HeroAttempt> {
+  const HERO_API_URL = "https://login.hero-software.de/api/external/v7/graphql";
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const resp = await fetch(HERO_API_URL, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ query: mutation, variables }),
+    });
+    clearTimeout(timeoutId);
+
+    const text = await resp.text();
+    console.log(`[${attemptLabel}] HERO HTTP:`, resp.status);
+    console.log(`[${attemptLabel}] HERO Response:`, text.slice(0, 1500));
+
+    if (!resp.ok) {
+      return { ok: false, attempt: attemptLabel, error: `HTTP ${resp.status}` };
+    }
+    const result = JSON.parse(text);
+
+    if (result.errors?.length) {
+      return {
+        ok: false,
+        attempt: attemptLabel,
+        error: result.errors.map((e: any) => e.message).join("; "),
+      };
+    }
+    // Look for the id in multiple possible shapes
+    const id = result?.data?.create_contact?.id
+      || result?.data?.create_contact?.contact?.id
+      || result?.data?.create_contact?.data?.id;
+    if (id) {
+      return { ok: true, heroId: String(id), attempt: attemptLabel };
+    }
+    return {
+      ok: false,
+      attempt: attemptLabel,
+      error: "Keine ID in Antwort: " + JSON.stringify(result.data).slice(0, 300),
+    };
+  } catch (e: any) {
+    return { ok: false, attempt: attemptLabel, error: e.message || String(e) };
+  }
+}
+
+// Build the attribute object that gets used inside the wrapper
+function buildAttributes(data: any) {
+  const address = (data.street || data.postalCode || data.city) ? {
+    street: data.street || null,
+    zipcode: data.postalCode || null,
+    city: data.city || null,
+  } : null;
+
+  return {
+    first_name: data.firstName || null,
+    last_name: data.lastName,
+    company_name: data.companyName || null,
+    email: data.email || null,
+    phone_home: data.phone || null,
+    phone_mobile: data.mobile || null,
+    address,
+  };
+}
+
+async function createHeroContact(apiKey: string, data: any): Promise<HeroAttempt> {
+  // HERO API responded with "Unknown argument first_name on create_contact of
+  // type PartnerMutation" when using top-level named args. This means the
+  // mutation expects the fields wrapped in a single input object. HERO's
+  // public docs show top-level args, but the real schema clearly wants a
+  // wrapper. We try the most likely wrapper names in order.
+
+  const attrs = buildAttributes(data);
+
+  // Attempt 1: `attributes` wrapper (Rails/GraphQL-Ruby convention, also
+  // matches the shape SL Werbung had in their first iteration)
+  const r1 = await tryHeroMutation(
+    apiKey,
+    `mutation CreateContact($attributes: ContactAttributes!) {
+       create_contact(attributes: $attributes) { id }
+     }`,
+    { attributes: attrs },
+    "attributes:ContactAttributes",
+  );
+  if (r1.ok) return r1;
+
+  // Attempt 2: `input` wrapper (Relay convention)
+  const r2 = await tryHeroMutation(
+    apiKey,
+    `mutation CreateContact($input: CreateContactInput!) {
+       create_contact(input: $input) { id }
+     }`,
+    { input: attrs },
+    "input:CreateContactInput",
+  );
+  if (r2.ok) return r2;
+
+  // Attempt 3: `contact` wrapper with ContactInput type
+  const r3 = await tryHeroMutation(
+    apiKey,
+    `mutation CreateContact($contact: ContactInput!) {
+       create_contact(contact: $contact) { id }
+     }`,
+    { contact: attrs },
+    "contact:ContactInput",
+  );
+  if (r3.ok) return r3;
+
+  // All attempts failed - return the most informative error.
+  // We include all three attempt labels and their errors so we know
+  // exactly which field names are wrong next iteration.
+  const combined = [
+    `Versuch 1 (${r1.attempt}): ${r1.error}`,
+    `Versuch 2 (${r2.attempt}): ${r2.error}`,
+    `Versuch 3 (${r3.attempt}): ${r3.error}`,
+  ].join(" | ");
+  return { ok: false, error: combined };
 }
 
 serve(async (req) => {
@@ -24,14 +161,14 @@ serve(async (req) => {
 
     // Bot protection
     if (data.honeypot && String(data.honeypot).trim() !== "") {
-      console.warn("Honeypot ausgelöst - als Bot behandelt");
+      console.warn("Honeypot ausgelöst");
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 200,
       });
     }
     if (data.formLoadedAt && Date.now() - Number(data.formLoadedAt) < 3000) {
-      console.warn("Formular zu schnell abgesendet - als Bot behandelt");
+      console.warn("Zu schnell abgesendet");
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 200,
@@ -41,9 +178,7 @@ serve(async (req) => {
     let heroStatus = "Nicht versucht";
     let heroOk = false;
 
-    // 1. HERO API Call
-    // Get the API key from app_config (same place the admin panel writes it,
-    // same place the existing hero-integration function reads from).
+    // HERO anbinden
     try {
       const supabase = createClient(
         Deno.env.get('SUPABASE_URL')!,
@@ -62,87 +197,12 @@ serve(async (req) => {
         heroStatus = "Übersprungen: HERO-Integration ist nicht aktiv oder kein API Key hinterlegt.";
       } else {
         console.log("Versuche HERO-Anbindung...");
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-        // Endpoint URL and schema according to
-        // https://hero-software.de/api-doku/graphql-guide
-        const HERO_API_URL = "https://login.hero-software.de/api/external/v7/graphql";
-
-        // Build address object only if at least one address field is filled
-        const address = (data.street || data.postalCode || data.city) ? {
-          street: data.street || null,
-          zipcode: data.postalCode || null,
-          city: data.city || null,
-        } : null;
-
-        const mutation = `
-          mutation CreateContact(
-            $first_name: String,
-            $last_name: String!,
-            $company_name: String,
-            $email: String,
-            $phone_home: String,
-            $phone_mobile: String,
-            $address: AddressInput,
-            $category: CustomerCategoryEnum
-          ) {
-            create_contact(
-              first_name: $first_name,
-              last_name: $last_name,
-              company_name: $company_name,
-              email: $email,
-              phone_home: $phone_home,
-              phone_mobile: $phone_mobile,
-              address: $address,
-              category: $category
-            ) { id }
-          }
-        `;
-        const variables: any = {
-          first_name: data.firstName || null,
-          last_name: data.lastName,
-          company_name: data.companyName || null,
-          email: data.email || null,
-          phone_home: data.phone || null,
-          phone_mobile: data.mobile || null,
-          address,
-          category: "customer",
-        };
-
-        const heroResponse = await fetch(HERO_API_URL, {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({ query: mutation, variables }),
-        });
-        clearTimeout(timeoutId);
-
-        const heroText = await heroResponse.text();
-        console.log("HERO HTTP Status:", heroResponse.status);
-        console.log("HERO Response (ersten 2000 Zeichen):", heroText.slice(0, 2000));
-
-        if (!heroResponse.ok) {
-          heroStatus = `HTTP ${heroResponse.status}: ${heroText.slice(0, 500)}`;
+        const result = await createHeroContact(apiKey, data);
+        if (result.ok) {
+          heroOk = true;
+          heroStatus = `Erfolgreich angelegt (ID: ${result.heroId}, Variante: ${result.attempt})`;
         } else {
-          let heroResult: any;
-          try { heroResult = JSON.parse(heroText); }
-          catch { heroStatus = "Ungültige HERO-Antwort"; heroResult = null; }
-
-          if (heroResult) {
-            if (heroResult.errors?.length) {
-              heroStatus = "HERO-Fehler: " + JSON.stringify(heroResult.errors);
-            } else if (heroResult.data?.create_contact?.id) {
-              heroOk = true;
-              heroStatus = `Erfolgreich angelegt (ID: ${heroResult.data.create_contact.id})`;
-            } else {
-              heroStatus = "HERO-Antwort enthält keine ID: " + JSON.stringify(heroResult).slice(0, 500);
-            }
-          }
+          heroStatus = "Alle HERO-Varianten fehlgeschlagen: " + result.error;
         }
       }
     } catch (heroErr: any) {
@@ -150,11 +210,10 @@ serve(async (req) => {
       console.log(heroStatus);
     }
 
-    // 2. E-Mail Versand mit ALLEN Formulardaten
+    // Mail senden
     console.log("Sende E-Mail via Resend...");
     const resendKey = Deno.env.get('RESEND_API_KEY')
 
-    // Build address block
     const addressLines: string[] = [];
     if (data.street) addressLines.push(esc(data.street));
     if (data.postalCode || data.city) {
@@ -164,7 +223,6 @@ serve(async (req) => {
     const fullName = [data.salutation, data.firstName, data.lastName]
       .filter(Boolean).map((s: string) => esc(s)).join(" ").trim();
 
-    // Row helper – only show if value exists
     const row = (label: string, value: unknown, isLink?: "mail" | "tel") => {
       if (!value || String(value).trim() === "") return "";
       const v = String(value).trim();
@@ -224,7 +282,7 @@ serve(async (req) => {
         console.error("Resend Fehler:", await mailRes.text());
       }
     } else {
-      console.warn("RESEND_API_KEY nicht gesetzt, Mail wird nicht versendet");
+      console.warn("RESEND_API_KEY nicht gesetzt");
     }
 
     console.log("Prozess abgeschlossen. HERO:", heroStatus);
