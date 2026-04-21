@@ -27,6 +27,22 @@ interface FieldConfig {
   is_required: boolean;
 }
 
+// Compute the next running number for a new location within a project.
+// Robust for mixed-mode projects (old "WER-1234-100" format + new "103"):
+// extracts the trailing integer from each existing locationNumber and
+// returns max + 1. Starts at 100 when the project has no locations yet.
+function nextLocationNumber(existingLocations: Array<{ locationNumber?: string }>): number {
+  let max = 99;
+  for (const loc of existingLocations) {
+    const m = loc.locationNumber?.match(/(\d+)$/);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > max) max = n;
+    }
+  }
+  return max + 1;
+}
+
 const LocationDetails = () => {
   const { projectId, locationId, detailId } = useParams();
   const navigate = useNavigate();
@@ -165,8 +181,8 @@ const LocationDetails = () => {
         const originalImageDataToSave = originalImageDataRef.current || imageDataToSave;
         toast.loading("Bild wird komprimiert...");
         const [compressedImageData, compressedOriginalImageData] = await Promise.all([
-          compressImage(imageDataToSave, 1440, 0.72),
-          compressImage(originalImageDataToSave, 1440, 0.72),
+          compressImage(imageDataToSave, 1600, 0.85),
+          compressImage(originalImageDataToSave, 1600, 0.85),
         ]);
         const targetLocationId = searchParams.get("locationId");
         if (!targetLocationId) { toast.error("Standort nicht gefunden"); return; }
@@ -183,11 +199,11 @@ const LocationDetails = () => {
         if (!project) { toast.error("Projekt nicht gefunden"); setIsSaving(false); return; }
         toast.loading("Bild wird komprimiert...");
         const [compressedImageData, compressedOriginalImageData] = await Promise.all([
-          compressImage(imageDataToSave, 1440, 0.72),
-          compressImage(originalImageDataToSave, 1440, 0.72),
+          compressImage(imageDataToSave, 1600, 0.85),
+          compressImage(originalImageDataToSave, 1600, 0.85),
         ]);
-        const locationNumber = project.locations.length + 1;
-        const fullLocationNumber = `${project.projectNumber}-${100 + locationNumber - 1}`;
+        const locationNumber = nextLocationNumber(project.locations);
+        const fullLocationNumber = String(locationNumber);
         const newLocation: Location = {
           id: presetLocationId || crypto.randomUUID(),
           locationNumber: fullLocationNumber,

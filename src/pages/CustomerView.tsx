@@ -993,7 +993,7 @@ const CustomerView = () => {
             {/* Layout */}
             {vehicleLayout && (
               <Card>
-                <CardHeader className="p-4 pb-2"><CardTitle className="text-base">Layout / Druckdatei</CardTitle></CardHeader>
+                <CardHeader className="p-4 pb-2"><CardTitle className="text-base">Layout / Produktionsdatei</CardTitle></CardHeader>
                 <CardContent className="p-4 space-y-3">
                   <a href={getVehiclePublicUrl(vehicleLayout.storage_path)} target="_blank" rel="noopener noreferrer"
                     className="flex items-center gap-2 p-3 rounded-lg border bg-muted/20 hover:bg-muted/40 transition-colors">
