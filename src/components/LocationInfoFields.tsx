@@ -17,10 +17,18 @@ interface Props {
   customerOnly?: boolean;
   project?: any;
   projectFields?: any[];
+  // When true, the "locationName" field is skipped because the parent
+  // already shows it (e.g. in the card title). Set by LocationCard.
+  hideLocationName?: boolean;
 }
 
-export default function LocationInfoFields({ location, fields, customerOnly = false, project, projectFields = [] }: Props) {
-  const visibleFields = mergeWithDefaultLocationFields(fields).filter((field) => field.is_active && (!customerOnly || field.customer_visible));
+export default function LocationInfoFields({ location, fields, customerOnly = false, project, projectFields = [], hideLocationName = false }: Props) {
+  const visibleFields = mergeWithDefaultLocationFields(fields).filter((field) => {
+    if (!field.is_active) return false;
+    if (customerOnly && !field.customer_visible) return false;
+    if (hideLocationName && field.field_key === "locationName") return false;
+    return true;
+  });
   const visibleProjectFields = mergeWithDefaultProjectFields(projectFields || []).filter((field) => field.is_active);
   if (visibleFields.length === 0 && visibleProjectFields.length === 0) return null;
 

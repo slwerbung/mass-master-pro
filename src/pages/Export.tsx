@@ -380,10 +380,10 @@ const Export = () => {
               col2.push({ label: f.field_label, value: displayVal, pink: false });
             }
           });
-        // Druckdatei
+        // Produktionsdatei
         if (showPrintFiles && printFiles.length > 0) {
           printFiles.forEach((pf: any) => {
-            col2.push({ label: "Druckdatei", value: pf.file_name, pink: true });
+            col2.push({ label: "Produktionsdatei", value: pf.file_name, pink: true });
           });
         }
 

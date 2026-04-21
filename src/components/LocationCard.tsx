@@ -29,6 +29,14 @@ interface FeedbackItem {
 
 const LEGACY_FEEDBACK_PREFIX = "legacy-feedback-";
 
+// Pulls the trailing "running number" out of a full location identifier.
+// E.g. "WER-1234-100" → "100", "WER-1234 Mustermann GmbH-101" → "101".
+// If no dash is present, returns the full string as-is.
+function shortLocationNumber(locationNumber: string): string {
+  const parts = locationNumber.split("-");
+  return parts[parts.length - 1] || locationNumber;
+}
+
 const isFeedbackTableUnavailable = (error: any) => {
   const message = String(error?.message || error?.details || "").toLowerCase();
   return error?.code === "42P01" || error?.code === "PGRST205" || message.includes("location_feedback") || message.includes("could not find the table");
@@ -178,7 +186,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         toast.error("Datenbankfehler: " + dbError.message);
         return;
       }
-      toast.success("Druckdatei hochgeladen ✓");
+      toast.success("Produktionsdatei hochgeladen ✓");
       await loadPdf();
     } catch (err: any) {
       toast.error("Fehler: " + err.message);
@@ -199,8 +207,14 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div className="space-y-1 flex-1 min-w-0">
-            <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
-            {location.locationName && <p className="text-sm text-foreground truncate">{location.locationName}</p>}
+            {/* Title: short running number, plus name if present. The full
+                location number (e.g. WER-1234-100) is redundant here - the
+                project number is already shown at the page top, so just the
+                trailing running number (100, 101, …) is all we need. */}
+            <h3 className="font-semibold text-base md:text-lg truncate">
+              {shortLocationNumber(location.locationNumber)}
+              {location.locationName && <span className="text-muted-foreground font-normal"> – {location.locationName}</span>}
+            </h3>
             <p className="text-xs text-muted-foreground">Erstellt am {formatDateTimeSafe(location.createdAt)}</p>
             {location.areaMeasurements && location.areaMeasurements.length > 0 && (
               <div className="mt-1 p-2 rounded bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 space-y-1">
@@ -225,8 +239,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
                 customFields: location.customFields,
               }}
               fields={fieldConfigs}
-              project={project}
-              projectFields={projectFieldConfigs}
+              hideLocationName
             />
           </div>
           <div className="flex gap-1">
@@ -252,7 +265,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         </div>
 
         <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Druckdatei</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Produktionsdatei</p>
           {showPrintFiles ? (
             pdfUrl && pdfName ? (
               <div className="flex items-center gap-2">
@@ -270,7 +283,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
             ) : (
               <Button size="sm" variant="outline" className="w-full" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}>
                 {uploadingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileUp className="h-4 w-4 mr-2" />}
-                {uploadingPdf ? "Lädt hoch..." : "Druckdatei hochladen"}
+                {uploadingPdf ? "Lädt hoch..." : "Produktionsdatei hochladen"}
               </Button>
             )
           ) : (

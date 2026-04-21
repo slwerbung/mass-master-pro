@@ -457,7 +457,7 @@ const VehicleDetail = () => {
         <Card>
           <CardHeader className="p-4 pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Layout / Druckdatei</CardTitle>
+              <CardTitle className="text-base">Layout / Produktionsdatei</CardTitle>
               <Button size="sm" variant="outline" onClick={() => layoutInputRef.current?.click()} disabled={uploadingLayout}>
                 <Upload className="h-4 w-4 mr-1" />
                 {uploadingLayout ? "Lädt..." : layout ? "Ersetzen" : "Hochladen"}

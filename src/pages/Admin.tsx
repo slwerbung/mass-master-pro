@@ -763,12 +763,12 @@ const Admin = () => {
             <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><FolderOpen className="h-5 w-5" /> Medien-Sichtbarkeit</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">Hier legst du fest, ob Druckdateien und Detailbilder in der internen Ansicht, der Kundenansicht und im jeweiligen PDF-Export sichtbar sind.</p>
+                <p className="text-sm text-muted-foreground">Hier legst du fest, ob Produktionsdateien und Detailbilder in der internen Ansicht, der Kundenansicht und im jeweiligen PDF-Export sichtbar sind.</p>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="rounded-lg border p-3 space-y-3">
                     <p className="text-sm font-medium">Interne Ansicht / Interner Export</p>
                     <div className="flex items-center justify-between gap-3">
-                      <Label htmlFor="internal-print-files">Druckdateien anzeigen</Label>
+                      <Label htmlFor="internal-print-files">Produktionsdateien anzeigen</Label>
                       <Switch id="internal-print-files" checked={viewSettings.internalShowPrintFiles} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, internalShowPrintFiles: checked }))} />
                     </div>
                     <div className="flex items-center justify-between gap-3">
@@ -779,7 +779,7 @@ const Admin = () => {
                   <div className="rounded-lg border p-3 space-y-3">
                     <p className="text-sm font-medium">Kundenansicht / Kunden-Export</p>
                     <div className="flex items-center justify-between gap-3">
-                      <Label htmlFor="customer-print-files">Druckdateien anzeigen</Label>
+                      <Label htmlFor="customer-print-files">Produktionsdateien anzeigen</Label>
                       <Switch id="customer-print-files" checked={viewSettings.customerShowPrintFiles} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, customerShowPrintFiles: checked }))} />
                     </div>
                     <div className="flex items-center justify-between gap-3">
