@@ -177,31 +177,52 @@ const LocationDetails = () => {
         toast.success("Standort aktualisiert");
         navigate(`/projects/${projectId}`);
       } else if (isDetailImage && imageDataRef.current) {
+        // imageData comes from PhotoEditor already compressed (1600x0.88).
+        // originalImageData is the raw camera capture and may be 4000x3000
+        // or larger. Only the latter needs compression here.
+        //
+        // We do this SEQUENTIALLY and null the refs as soon as we've copied
+        // their values out. On Android this prevents the Fabric canvas, the
+        // raw base64 string, and the compression canvas from all coexisting
+        // in RAM at the same time - which was causing the "nicht genügend
+        // Speicherplatz" crash when users added several detail images in
+        // quick succession.
         const imageDataToSave = imageDataRef.current;
-        const originalImageDataToSave = originalImageDataRef.current || imageDataToSave;
-        toast.loading("Bild wird komprimiert...");
-        const [compressedImageData, compressedOriginalImageData] = await Promise.all([
-          compressImage(imageDataToSave, 1600, 0.85),
-          compressImage(originalImageDataToSave, 1600, 0.85),
-        ]);
+        const rawOriginal = originalImageDataRef.current;
+        imageDataRef.current = null;
+        originalImageDataRef.current = null;
+
         const targetLocationId = searchParams.get("locationId");
         if (!targetLocationId) { toast.error("Standort nicht gefunden"); return; }
-        const detailImage = { id: crypto.randomUUID(), imageData: compressedImageData, originalImageData: compressedOriginalImageData, caption: caption.trim() || undefined, createdAt: new Date() };
+
+        toast.loading("Bild wird gespeichert...");
+        const originalImageDataToSave = rawOriginal
+          ? await compressImage(rawOriginal, 1600, 0.85)
+          : imageDataToSave;
+
+        const detailImage = { id: crypto.randomUUID(), imageData: imageDataToSave, originalImageData: originalImageDataToSave, caption: caption.trim() || undefined, createdAt: new Date() };
         await indexedDBStorage.saveDetailImage(targetLocationId, detailImage);
         toast.dismiss();
         toast.success("Detailbild gespeichert");
         navigate(`/projects/${projectId}`);
         scheduleSyncProject(projectId);
       } else if (imageDataRef.current) {
+        // Same principle as the detail-image branch above: skip the
+        // redundant re-compression of imageData (PhotoEditor already did
+        // it) and only compress the raw original, sequentially.
         const imageDataToSave = imageDataRef.current;
-        const originalImageDataToSave = originalImageDataRef.current || imageDataToSave;
+        const rawOriginal = originalImageDataRef.current;
+        imageDataRef.current = null;
+        originalImageDataRef.current = null;
+
         const project = await indexedDBStorage.getProject(projectId);
         if (!project) { toast.error("Projekt nicht gefunden"); setIsSaving(false); return; }
-        toast.loading("Bild wird komprimiert...");
-        const [compressedImageData, compressedOriginalImageData] = await Promise.all([
-          compressImage(imageDataToSave, 1600, 0.85),
-          compressImage(originalImageDataToSave, 1600, 0.85),
-        ]);
+
+        toast.loading("Bild wird gespeichert...");
+        const originalImageDataToSave = rawOriginal
+          ? await compressImage(rawOriginal, 1600, 0.85)
+          : imageDataToSave;
+
         const locationNumber = nextLocationNumber(project.locations);
         const fullLocationNumber = String(locationNumber);
         const newLocation: Location = {
@@ -212,8 +233,8 @@ const LocationDetails = () => {
           system: fieldValues["system"]?.trim() || undefined,
           label: fieldValues["label"]?.trim() || undefined,
           locationType: fieldValues["locationType"]?.trim() || undefined,
-          imageData: compressedImageData,
-          originalImageData: compressedOriginalImageData,
+          imageData: imageDataToSave,
+          originalImageData: originalImageDataToSave,
           createdAt: new Date(),
         };
         const customFields: Record<string, string> = {};
@@ -235,7 +256,24 @@ const LocationDetails = () => {
     } catch (error) {
       toast.dismiss();
       console.error("Error saving:", error);
-      toast.error("Fehler beim Speichern");
+      // Recognize browser-storage-quota errors explicitly so the user
+      // doesn't just see a generic "Fehler beim Speichern" and wonder why.
+      // Both direct DOMException and wrapped errors that mention quota
+      // should trigger the friendly message.
+      const msg = String((error as any)?.message || error || "").toLowerCase();
+      const isQuotaError =
+        (error instanceof DOMException && (error.name === "QuotaExceededError" || error.code === 22)) ||
+        msg.includes("quota") ||
+        msg.includes("not enough space") ||
+        msg.includes("nicht genug");
+      if (isQuotaError) {
+        toast.error(
+          "Speicher voll: nicht genug Platz im Browser. Bitte alte Projekte archivieren oder Browser-Cache leeren, dann erneut versuchen.",
+          { duration: 10000 }
+        );
+      } else {
+        toast.error("Fehler beim Speichern");
+      }
     } finally {
       setIsSaving(false);
     }
