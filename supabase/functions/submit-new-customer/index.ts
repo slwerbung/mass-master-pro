@@ -16,12 +16,17 @@ function esc(s: unknown): string {
 
 const HERO_API_URL = "https://login.hero-software.de/api/external/v7/graphql";
 
-// HERO schema (introspected 2026-04-20):
-//   create_contact(contact: CustomerInput, findExisting: Boolean) { id }
+// HERO represents "Firma vs. Person" via a Boolean called is_contact_person,
+// NOT a type enum. We discovered this via schema introspection - confirmed
+// by the Customer type having a first-class `is_contact_person: Boolean`
+// field alongside `contacts: [Customer]` and `parent_customer_id: Int`
+// (which together enable linking Ansprechpartner to companies).
 //
-// We set type="company" when a company name is given so HERO stores
-// it as a business contact, not as a private person. category stays
-// "customer" (customer vs. supplier vs. interessent).
+// For our signup form we take the pragmatic route: one Customer record per
+// submission. When a company name is present, we mark the record as a
+// business (is_contact_person=false) and fold the contact-person name into
+// first_name/last_name on the same record. HERO's UI then shows it as a
+// "Firma" with the person as the Ansprechpartner.
 async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boolean; heroId?: string; error?: string }> {
   const address = (data.street || data.postalCode || data.city) ? {
     street: data.street || null,
@@ -29,10 +34,13 @@ async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boole
     city: data.city || null,
   } : null;
 
-  const contactType = data.companyName?.trim() ? "company" : "person";
+  const hasCompany = !!data.companyName?.trim();
 
   const contact: any = {
-    type: contactType,
+    // The Boolean that actually controls Firma/Person display in HERO.
+    // hasCompany -> Firma, !hasCompany -> Privatperson.
+    is_contact_person: !hasCompany,
+
     first_name: data.firstName || null,
     last_name: data.lastName,
     company_name: data.companyName || null,
@@ -57,7 +65,6 @@ async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boole
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
-
     const resp = await fetch(HERO_API_URL, {
       method: 'POST',
       signal: controller.signal,
@@ -85,47 +92,6 @@ async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boole
   }
 }
 
-// Read the contact back after create, so we can verify which fields HERO
-// actually stored (e.g. whether company_legal_form was accepted). This
-// is a diagnostic call - the result only goes to the log, not to the user.
-async function verifyHeroContact(apiKey: string, heroId: string) {
-  const query = `
-    query ReadContact($id: Int!) {
-      partner(id: $id) {
-        id
-        type
-        category
-        first_name
-        last_name
-        company_name
-        company_legal_form
-        title
-        email
-        phone_home
-        phone_mobile
-        source
-      }
-    }
-  `;
-  try {
-    const resp = await fetch(HERO_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ query, variables: { id: parseInt(heroId, 10) } }),
-    });
-    const text = await resp.text();
-    console.log("=== HERO READ-BACK (was hat HERO gespeichert?) ===");
-    console.log(text.slice(0, 2000));
-    console.log("=== END READ-BACK ===");
-  } catch (e: any) {
-    console.log("Read-back fehlgeschlagen (ignoriert):", e.message || e);
-  }
-}
-
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
@@ -145,8 +111,6 @@ serve(async (req) => {
 
     let heroStatus = "Nicht versucht";
     let heroOk = false;
-    let heroIdForReadback: string | undefined;
-    let apiKeyForReadback: string | undefined;
 
     try {
       const supabase = createClient(
@@ -170,8 +134,6 @@ serve(async (req) => {
         if (result.ok) {
           heroOk = true;
           heroStatus = `Erfolgreich angelegt (HERO-ID: ${result.heroId})`;
-          heroIdForReadback = result.heroId;
-          apiKeyForReadback = apiKey;
         } else {
           heroStatus = "HERO-Fehler: " + result.error;
         }
@@ -181,26 +143,18 @@ serve(async (req) => {
       console.log(heroStatus);
     }
 
-    // Diagnostic read-back - confirms what HERO actually stored
-    if (heroIdForReadback && apiKeyForReadback) {
-      await verifyHeroContact(apiKeyForReadback, heroIdForReadback);
-    }
-
-    // === Mail-Versand mit viel Logging ===
+    // Mail-Versand
     console.log("=== MAIL-VERSAND START ===");
     const resendKey = Deno.env.get('RESEND_API_KEY')
 
     if (!resendKey) {
-      console.error("!!! RESEND_API_KEY FEHLT - Keine Mail versendet !!!");
+      console.error("!!! RESEND_API_KEY FEHLT !!!");
     } else {
-      console.log("RESEND_API_KEY gefunden (Länge:", resendKey.length, ", beginnt mit:", resendKey.slice(0, 6) + "...)");
-
       const addressLines: string[] = [];
       if (data.street) addressLines.push(esc(data.street));
       if (data.postalCode || data.city) {
         addressLines.push(esc([data.postalCode, data.city].filter(Boolean).join(" ")));
       }
-
       const fullName = [data.salutation, data.firstName, data.lastName]
         .filter(Boolean).map((s: string) => esc(s)).join(" ").trim();
 
@@ -254,10 +208,7 @@ serve(async (req) => {
         mailPayload.reply_to = data.email;
       }
 
-      console.log("Mail-Payload: from='" + mailPayload.from + "' to='" + mailPayload.to + "' subject='" + subject + "'");
-
       try {
-        console.log("Rufe Resend API auf...");
         const mailRes = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
@@ -269,12 +220,8 @@ serve(async (req) => {
         const mailText = await mailRes.text();
         console.log("Resend HTTP:", mailRes.status);
         console.log("Resend Response:", mailText);
-
-        if (!mailRes.ok) {
-          console.error("!!! RESEND FEHLER !!! HTTP " + mailRes.status + ": " + mailText);
-        } else {
-          console.log("=== MAIL ERFOLGREICH VERSENDET ===");
-        }
+        if (!mailRes.ok) console.error("!!! RESEND FEHLER !!! HTTP " + mailRes.status + ": " + mailText);
+        else console.log("=== MAIL ERFOLGREICH VERSENDET ===");
       } catch (mailErr: any) {
         console.error("!!! RESEND AUSNAHME !!!", mailErr.message || mailErr);
       }
