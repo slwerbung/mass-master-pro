@@ -91,6 +91,12 @@ const NewCustomerSignup = () => {
   const [formLoadedAt] = useState<number>(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // Track which fields have validation errors. After the first submit
+  // attempt, errors update live as the user types (the relevant entry
+  // gets cleared when the field becomes valid) so they see the fix
+  // take effect immediately instead of having to re-submit to check.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
 
   const [companyName, setCompanyName] = useState("");
   const [legalForm, setLegalForm] = useState("");
@@ -145,21 +151,49 @@ const NewCustomerSignup = () => {
     setAddressSuggestions([]);
   };
 
+  // Central validator - returns a map of field -> error message.
+  // Empty map means the form is valid.
+  const validate = (): Record<string, string> => {
+    const e: Record<string, string> = {};
+    if (!lastName.trim()) e.lastName = "Bitte Nachname eingeben";
+    if (!email.trim()) {
+      e.email = "Bitte E-Mail eingeben";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) {
+      e.email = "Keine gültige E-Mail-Adresse (Beispiel: name@firma.de)";
+    }
+    if (!phone.trim()) e.phone = "Bitte Telefonnummer eingeben";
+    if (!consent) e.consent = "Bitte der Datenschutzerklärung zustimmen";
+    return e;
+  };
+
+  // After the first submit attempt, re-run validation every time any
+  // relevant field changes - this makes errors disappear as the user
+  // fixes them, without waiting for another submit click.
+  useEffect(() => {
+    if (!hasAttemptedSubmit) return;
+    setErrors(validate());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastName, email, phone, consent, hasAttemptedSubmit]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
 
-    // Client-side validation (server validates again)
-    if (!lastName.trim()) { toast.error("Bitte Nachname eingeben"); return; }
-    if (!email.trim()) { toast.error("Bitte E-Mail eingeben"); return; }
-    // Tighter email check than HTML5 type=email gives us. Must have a
-    // dot after the @ (rejects stuff like "foo@bar") and no spaces.
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) {
-      toast.error("Bitte eine gültige E-Mail-Adresse eingeben (z.B. name@firma.de)");
+    setHasAttemptedSubmit(true);
+    const validationErrors = validate();
+    setErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) {
+      // Focus the first invalid field so the user is taken right to it -
+      // especially helpful on mobile where the user might not see the
+      // error without scrolling.
+      const firstBadField = Object.keys(validationErrors)[0];
+      const el = document.getElementById(firstBadField);
+      if (el) {
+        el.focus();
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
       return;
     }
-    if (!phone.trim()) { toast.error("Bitte Telefonnummer eingeben"); return; }
-    if (!consent) { toast.error("Bitte der Datenschutzerklärung zustimmen"); return; }
 
     setSubmitting(true);
     try {
@@ -288,15 +322,18 @@ const NewCustomerSignup = () => {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="lastName">Nachname *</Label>
-                    <Input id="lastName" value={lastName} onChange={(e) => setLastName(e.target.value)} autoComplete="family-name" required />
+                    <Input id="lastName" value={lastName} onChange={(e) => setLastName(e.target.value)} autoComplete="family-name" required aria-invalid={!!errors.lastName} className={errors.lastName ? "border-red-500 focus-visible:ring-red-500" : ""} />
+                    {errors.lastName && <p className="text-sm text-red-600">{errors.lastName}</p>}
                   </div>
                   <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="email">E-Mail *</Label>
-                    <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
+                    <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required aria-invalid={!!errors.email} className={errors.email ? "border-red-500 focus-visible:ring-red-500" : ""} />
+                    {errors.email && <p className="text-sm text-red-600">{errors.email}</p>}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="phone">Telefon *</Label>
-                    <Input id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" required />
+                    <Input id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" required aria-invalid={!!errors.phone} className={errors.phone ? "border-red-500 focus-visible:ring-red-500" : ""} />
+                    {errors.phone && <p className="text-sm text-red-600">{errors.phone}</p>}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="mobile">Mobil</Label>
@@ -357,11 +394,12 @@ const NewCustomerSignup = () => {
               {/* DSGVO-Consent */}
               <div className="pt-2 border-t">
                 <div className="flex items-start gap-2">
-                  <Checkbox id="consent" checked={consent} onCheckedChange={(c) => setConsent(!!c)} />
+                  <Checkbox id="consent" checked={consent} onCheckedChange={(c) => setConsent(!!c)} aria-invalid={!!errors.consent} className={errors.consent ? "border-red-500 data-[state=unchecked]:border-red-500" : ""} />
                   <Label htmlFor="consent" className="text-sm leading-relaxed cursor-pointer">
                     Ich habe die <a href="https://www.slwerbung.de/datenschutz" target="_blank" rel="noreferrer" className="underline text-primary">Datenschutzerklärung</a> gelesen und bin mit der Verarbeitung meiner Daten einverstanden. *
                   </Label>
                 </div>
+                {errors.consent && <p className="text-sm text-red-600 mt-2">{errors.consent}</p>}
               </div>
 
               <Button type="submit" size="lg" className="w-full" disabled={submitting}>
