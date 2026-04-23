@@ -3,7 +3,7 @@ import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, Upload, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check } from "lucide-react";
 import { Location } from "@/types/project";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
@@ -75,6 +75,10 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
   const { cameraInput: detailCameraInput, triggerCamera: triggerDetailCamera } = useDirectCamera({
     onCapture: (imageData) => navigate(`/projects/${projectId}/editor?detail=true&locationId=${location.id}`, { state: { imageData } }),
+  });
+  const { cameraInput: detailUploadInput, triggerCamera: triggerDetailUpload } = useDirectCamera({
+    onCapture: (imageData) => navigate(`/projects/${projectId}/editor?detail=true&locationId=${location.id}`, { state: { imageData } }),
+    uploadMode: true,
   });
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState<string | null>(null);
@@ -354,12 +358,35 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           </div>
         )}
 
-        {showDetailImages && (<Button variant="outline" size="sm" className="w-full" onClick={() => { if (isMobile) { triggerDetailCamera(); } else { navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`); } }}>
-          <ImagePlus className="h-4 w-4 mr-2" /> Detailbild hinzufügen
-        </Button>)}
+        {showDetailImages && (
+          <div className="grid grid-cols-[1fr_auto] gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (isMobile) triggerDetailCamera();
+                else navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`);
+              }}
+            >
+              <ImagePlus className="h-4 w-4 mr-2" /> Detailbild aufnehmen
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              title="Bild hochladen"
+              onClick={() => {
+                if (isMobile) triggerDetailUpload();
+                else navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}&mode=upload`);
+              }}
+            >
+              <Upload className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </CardContent>
 
       {detailCameraInput}
+      {detailUploadInput}
       <input ref={pdfInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,.ai,.eps" onChange={handlePrintFileUpload} className="hidden" />
     </Card>
   );
