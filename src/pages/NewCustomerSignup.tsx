@@ -152,6 +152,12 @@ const NewCustomerSignup = () => {
     // Client-side validation (server validates again)
     if (!lastName.trim()) { toast.error("Bitte Nachname eingeben"); return; }
     if (!email.trim()) { toast.error("Bitte E-Mail eingeben"); return; }
+    // Tighter email check than HTML5 type=email gives us. Must have a
+    // dot after the @ (rejects stuff like "foo@bar") and no spaces.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) {
+      toast.error("Bitte eine gültige E-Mail-Adresse eingeben (z.B. name@firma.de)");
+      return;
+    }
     if (!phone.trim()) { toast.error("Bitte Telefonnummer eingeben"); return; }
     if (!consent) { toast.error("Bitte der Datenschutzerklärung zustimmen"); return; }
 
