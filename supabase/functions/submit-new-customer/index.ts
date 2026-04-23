@@ -27,7 +27,15 @@ function buildHeroContact(data: any, stripEmail: boolean) {
 
   const hasCompany = !!data.companyName?.trim();
 
+  // HERO's `type` field is a free-text String that its UI checks
+  // verbatim - "commercial" for businesses, "private" for individuals.
+  // Discovered by reading back an existing Firma contact and seeing
+  // type: "commercial" there, while newly-created contacts with no
+  // explicit type defaulted to "private".
+  const contactType = hasCompany ? "commercial" : "private";
+
   return {
+    type: contactType,
     is_contact_person: !hasCompany,
     first_name: data.firstName || null,
     last_name: data.lastName,
