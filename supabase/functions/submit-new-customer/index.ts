@@ -14,29 +14,25 @@ function esc(s: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
-// HERO's real schema (confirmed via introspection 2026-04-20):
-//
-//   mutation create_contact(findExisting: Boolean, contact: CustomerInput)
-//     returns { id }
-//
-// CustomerInput fields we use:
-//   first_name, last_name, company_name, company_legal_form, title,
-//   email, phone_home, phone_mobile, category, source,
-//   address: AddressInput { street, city, zipcode }
-//
-// findExisting: true means HERO will try to match an existing contact by
-// email/phone before creating a new one - avoids duplicates if the same
-// person submits the form twice.
-async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boolean; heroId?: string; error?: string }> {
-  const HERO_API_URL = "https://login.hero-software.de/api/external/v7/graphql";
+const HERO_API_URL = "https://login.hero-software.de/api/external/v7/graphql";
 
+// HERO schema (introspected 2026-04-20):
+//   create_contact(contact: CustomerInput, findExisting: Boolean) { id }
+//
+// We set type="company" when a company name is given so HERO stores
+// it as a business contact, not as a private person. category stays
+// "customer" (customer vs. supplier vs. interessent).
+async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boolean; heroId?: string; error?: string }> {
   const address = (data.street || data.postalCode || data.city) ? {
     street: data.street || null,
     zipcode: data.postalCode || null,
     city: data.city || null,
   } : null;
 
+  const contactType = data.companyName?.trim() ? "company" : "person";
+
   const contact: any = {
+    type: contactType,
     first_name: data.firstName || null,
     last_name: data.lastName,
     company_name: data.companyName || null,
@@ -49,6 +45,8 @@ async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boole
     source: "Neukunden-Formular Website",
     address,
   };
+
+  console.log("HERO-Payload (contact):", JSON.stringify(contact, null, 2));
 
   const mutation = `
     mutation CreateContact($contact: CustomerInput, $findExisting: Boolean) {
@@ -68,10 +66,7 @@ async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boole
         'Accept': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        query: mutation,
-        variables: { contact, findExisting: true },
-      }),
+      body: JSON.stringify({ query: mutation, variables: { contact, findExisting: true } }),
     });
     clearTimeout(timeoutId);
 
@@ -79,20 +74,55 @@ async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boole
     console.log("HERO HTTP:", resp.status);
     console.log("HERO Response:", text.slice(0, 1500));
 
-    if (!resp.ok) {
-      return { ok: false, error: `HTTP ${resp.status}: ${text.slice(0, 300)}` };
-    }
+    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}: ${text.slice(0, 300)}` };
     const result = JSON.parse(text);
-    if (result.errors?.length) {
-      return { ok: false, error: result.errors.map((e: any) => e.message).join("; ") };
-    }
+    if (result.errors?.length) return { ok: false, error: result.errors.map((e: any) => e.message).join("; ") };
     const id = result?.data?.create_contact?.id;
-    if (!id) {
-      return { ok: false, error: "Keine ID in Antwort: " + JSON.stringify(result.data).slice(0, 300) };
-    }
+    if (!id) return { ok: false, error: "Keine ID in Antwort: " + JSON.stringify(result.data).slice(0, 300) };
     return { ok: true, heroId: String(id) };
   } catch (e: any) {
     return { ok: false, error: e.message || String(e) };
+  }
+}
+
+// Read the contact back after create, so we can verify which fields HERO
+// actually stored (e.g. whether company_legal_form was accepted). This
+// is a diagnostic call - the result only goes to the log, not to the user.
+async function verifyHeroContact(apiKey: string, heroId: string) {
+  const query = `
+    query ReadContact($id: Int!) {
+      partner(id: $id) {
+        id
+        type
+        category
+        first_name
+        last_name
+        company_name
+        company_legal_form
+        title
+        email
+        phone_home
+        phone_mobile
+        source
+      }
+    }
+  `;
+  try {
+    const resp = await fetch(HERO_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ query, variables: { id: parseInt(heroId, 10) } }),
+    });
+    const text = await resp.text();
+    console.log("=== HERO READ-BACK (was hat HERO gespeichert?) ===");
+    console.log(text.slice(0, 2000));
+    console.log("=== END READ-BACK ===");
+  } catch (e: any) {
+    console.log("Read-back fehlgeschlagen (ignoriert):", e.message || e);
   }
 }
 
@@ -106,21 +136,17 @@ serve(async (req) => {
     // Bot protection
     if (data.honeypot && String(data.honeypot).trim() !== "") {
       console.warn("Honeypot ausgelöst");
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200,
-      });
+      return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 });
     }
     if (data.formLoadedAt && Date.now() - Number(data.formLoadedAt) < 3000) {
       console.warn("Zu schnell abgesendet");
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200,
-      });
+      return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 });
     }
 
     let heroStatus = "Nicht versucht";
     let heroOk = false;
+    let heroIdForReadback: string | undefined;
+    let apiKeyForReadback: string | undefined;
 
     try {
       const supabase = createClient(
@@ -144,6 +170,8 @@ serve(async (req) => {
         if (result.ok) {
           heroOk = true;
           heroStatus = `Erfolgreich angelegt (HERO-ID: ${result.heroId})`;
+          heroIdForReadback = result.heroId;
+          apiKeyForReadback = apiKey;
         } else {
           heroStatus = "HERO-Fehler: " + result.error;
         }
@@ -153,36 +181,46 @@ serve(async (req) => {
       console.log(heroStatus);
     }
 
-    // Mail senden
-    console.log("Sende E-Mail via Resend...");
-    const resendKey = Deno.env.get('RESEND_API_KEY')
-
-    const addressLines: string[] = [];
-    if (data.street) addressLines.push(esc(data.street));
-    if (data.postalCode || data.city) {
-      addressLines.push(esc([data.postalCode, data.city].filter(Boolean).join(" ")));
+    // Diagnostic read-back - confirms what HERO actually stored
+    if (heroIdForReadback && apiKeyForReadback) {
+      await verifyHeroContact(apiKeyForReadback, heroIdForReadback);
     }
 
-    const fullName = [data.salutation, data.firstName, data.lastName]
-      .filter(Boolean).map((s: string) => esc(s)).join(" ").trim();
+    // === Mail-Versand mit viel Logging ===
+    console.log("=== MAIL-VERSAND START ===");
+    const resendKey = Deno.env.get('RESEND_API_KEY')
 
-    const row = (label: string, value: unknown, isLink?: "mail" | "tel") => {
-      if (!value || String(value).trim() === "") return "";
-      const v = String(value).trim();
-      let cell = esc(v);
-      if (isLink === "mail") cell = `<a href="mailto:${esc(v)}">${esc(v)}</a>`;
-      if (isLink === "tel")  cell = `<a href="tel:${esc(v)}">${esc(v)}</a>`;
-      return `<tr>
-        <td style="padding:6px 16px 6px 0;color:#666;vertical-align:top;white-space:nowrap">${esc(label)}</td>
-        <td style="padding:6px 0;vertical-align:top">${cell}</td>
-      </tr>`;
-    };
+    if (!resendKey) {
+      console.error("!!! RESEND_API_KEY FEHLT - Keine Mail versendet !!!");
+    } else {
+      console.log("RESEND_API_KEY gefunden (Länge:", resendKey.length, ", beginnt mit:", resendKey.slice(0, 6) + "...)");
 
-    const heroBadge = heroOk
-      ? `<p style="margin:0 0 20px;padding:10px 14px;background:#e8f5e9;color:#2e7d32;border-radius:6px;font-size:14px"><strong>✓ In HERO angelegt.</strong> ${esc(heroStatus.replace(/^Erfolgreich angelegt /, ""))}</p>`
-      : `<p style="margin:0 0 20px;padding:10px 14px;background:#ffebee;color:#c62828;border-radius:6px;font-size:14px"><strong>✗ HERO-Anlage fehlgeschlagen.</strong><br><span style="font-size:12px">${esc(heroStatus)}</span><br><span style="font-size:12px;color:#666">Bitte manuell in HERO anlegen.</span></p>`;
+      const addressLines: string[] = [];
+      if (data.street) addressLines.push(esc(data.street));
+      if (data.postalCode || data.city) {
+        addressLines.push(esc([data.postalCode, data.city].filter(Boolean).join(" ")));
+      }
 
-    const html = `<!DOCTYPE html>
+      const fullName = [data.salutation, data.firstName, data.lastName]
+        .filter(Boolean).map((s: string) => esc(s)).join(" ").trim();
+
+      const row = (label: string, value: unknown, isLink?: "mail" | "tel") => {
+        if (!value || String(value).trim() === "") return "";
+        const v = String(value).trim();
+        let cell = esc(v);
+        if (isLink === "mail") cell = `<a href="mailto:${esc(v)}">${esc(v)}</a>`;
+        if (isLink === "tel")  cell = `<a href="tel:${esc(v)}">${esc(v)}</a>`;
+        return `<tr>
+          <td style="padding:6px 16px 6px 0;color:#666;vertical-align:top;white-space:nowrap">${esc(label)}</td>
+          <td style="padding:6px 0;vertical-align:top">${cell}</td>
+        </tr>`;
+      };
+
+      const heroBadge = heroOk
+        ? `<p style="margin:0 0 20px;padding:10px 14px;background:#e8f5e9;color:#2e7d32;border-radius:6px;font-size:14px"><strong>✓ In HERO angelegt.</strong> ${esc(heroStatus.replace(/^Erfolgreich angelegt /, ""))}</p>`
+        : `<p style="margin:0 0 20px;padding:10px 14px;background:#ffebee;color:#c62828;border-radius:6px;font-size:14px"><strong>✗ HERO-Anlage fehlgeschlagen.</strong><br><span style="font-size:12px">${esc(heroStatus)}</span><br><span style="font-size:12px;color:#666">Bitte manuell in HERO anlegen.</span></p>`;
+
+      const html = `<!DOCTYPE html>
 <html><body style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:620px;margin:0 auto;padding:20px">
   <h2 style="margin:0 0 16px;color:#111">Neukunden-Anfrage</h2>
   ${heroBadge}
@@ -202,30 +240,44 @@ serve(async (req) => {
   </p>
 </body></html>`;
 
-    const subject = heroOk
-      ? `Neukunde: ${data.companyName || data.lastName} ✓`
-      : `Neukunde: ${data.companyName || data.lastName} (HERO-Fehler)`;
+      const subject = heroOk
+        ? `Neukunde: ${data.companyName || data.lastName} ✓`
+        : `Neukunde: ${data.companyName || data.lastName} (HERO-Fehler)`;
 
-    if (resendKey) {
-      const mailRes = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${resendKey}`,
-        },
-        body: JSON.stringify({
-          from: 'onboarding@resend.dev',
-          to: 'info@slwerbung.de',
-          reply_to: data.email || undefined,
-          subject,
-          html,
-        }),
-      });
-      if (!mailRes.ok) {
-        console.error("Resend Fehler:", await mailRes.text());
+      const mailPayload: any = {
+        from: 'onboarding@resend.dev',
+        to: 'info@slwerbung.de',
+        subject,
+        html,
+      };
+      if (data.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
+        mailPayload.reply_to = data.email;
       }
-    } else {
-      console.warn("RESEND_API_KEY nicht gesetzt");
+
+      console.log("Mail-Payload: from='" + mailPayload.from + "' to='" + mailPayload.to + "' subject='" + subject + "'");
+
+      try {
+        console.log("Rufe Resend API auf...");
+        const mailRes = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${resendKey}`,
+          },
+          body: JSON.stringify(mailPayload),
+        });
+        const mailText = await mailRes.text();
+        console.log("Resend HTTP:", mailRes.status);
+        console.log("Resend Response:", mailText);
+
+        if (!mailRes.ok) {
+          console.error("!!! RESEND FEHLER !!! HTTP " + mailRes.status + ": " + mailText);
+        } else {
+          console.log("=== MAIL ERFOLGREICH VERSENDET ===");
+        }
+      } catch (mailErr: any) {
+        console.error("!!! RESEND AUSNAHME !!!", mailErr.message || mailErr);
+      }
     }
 
     console.log("Prozess abgeschlossen. HERO:", heroStatus);
