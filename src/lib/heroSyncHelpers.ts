@@ -1,41 +1,25 @@
 // Helpers around queuing HERO uploads. Handles:
-//   - Checking if HERO integration is active (fire-and-forget)
 //   - Extracting the HERO project_match id from a project's customFields
 //   - Converting a data-URL or base64 image to a Blob
 //
 // Callers in the UI (LocationDetails, Export) use these so they don't
-// have to know about the queue schema or config lookups.
+// have to know about the queue schema.
+//
+// NOTE on "is HERO active?": We do NOT consult app_config from the client.
+// That table is protected by RLS and anon users can't read it. Instead we
+// use a signal that IS visible to the client: the project's
+// __hero_project_id custom field. If that's present, someone at some
+// point linked this project to HERO - so mirroring its images makes
+// sense. The edge function hero-upload-proxy does the real auth check
+// with service-role credentials; if HERO got disabled later, it returns
+// an error and the worker drops the item.
 
 import { indexedDBStorage } from "./indexedDBStorage";
 import { pokeHeroUploadWorker } from "./heroUploadWorker";
-import { supabase } from "@/integrations/supabase/client";
 
 interface ProjectLike {
   id: string;
   customFields?: Record<string, string>;
-}
-
-// Cached because it's read on every enqueue; refreshed once per 60s.
-let cachedConfig: { enabled: boolean; checkedAt: number } | null = null;
-const CONFIG_CACHE_MS = 60_000;
-
-export async function isHeroSyncActive(): Promise<boolean> {
-  if (cachedConfig && Date.now() - cachedConfig.checkedAt < CONFIG_CACHE_MS) {
-    return cachedConfig.enabled;
-  }
-  try {
-    const { data } = await supabase
-      .from("app_config")
-      .select("key, value")
-      .in("key", ["hero_api_key", "hero_enabled"]);
-    const cfg = new Map((data || []).map((r: any) => [r.key, r.value]));
-    const enabled = cfg.get("hero_enabled") === "true" && !!cfg.get("hero_api_key");
-    cachedConfig = { enabled, checkedAt: Date.now() };
-    return enabled;
-  } catch (e) {
-    console.warn("isHeroSyncActive: config read failed", e);
-    return false;
-  }
 }
 
 export function getHeroProjectMatchId(project: ProjectLike | null | undefined): number | null {
@@ -61,9 +45,8 @@ export function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([bytes], { type: mime });
 }
 
-// Central enqueue helper. Skips silently if HERO isn't configured or the
-// project isn't linked. This is intentional - callers shouldn't have to
-// branch on sync state.
+// Central enqueue helper. Skips silently if the project isn't linked to
+// HERO. Callers shouldn't have to branch on sync state.
 export async function enqueueHeroUploadIfLinked(params: {
   project: ProjectLike;
   uploadType: "location_image" | "location_image_original" | "detail_image" | "detail_image_original" | "aufmass_pdf";
@@ -72,7 +55,6 @@ export async function enqueueHeroUploadIfLinked(params: {
   locationId?: string;
   detailImageId?: string;
 }): Promise<void> {
-  if (!(await isHeroSyncActive())) return;
   const heroProjectMatchId = getHeroProjectMatchId(params.project);
   if (!heroProjectMatchId) return; // Project not linked to HERO - nothing to do
 
