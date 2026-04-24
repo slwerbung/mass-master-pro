@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { getSession } from "@/lib/session";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
+import { startHeroUploadWorker } from "@/lib/heroUploadWorker";
 import { supabase } from "@/integrations/supabase/client";
 import Projects from "./pages/Projects";
 import NewProject from "./pages/NewProject";
@@ -104,6 +105,12 @@ const App = () => {
     };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
+  }, []);
+
+  // Background worker that drains the HERO upload queue. Starts once on
+  // app mount; if the queue has no items it idles cheaply.
+  useEffect(() => {
+    startHeroUploadWorker();
   }, []);
 
   return (

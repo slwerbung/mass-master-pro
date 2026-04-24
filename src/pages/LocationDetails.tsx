@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
 import { supabase } from "@/integrations/supabase/client";
 import { scheduleSyncProject } from "@/lib/supabaseSync";
+import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers";
 
 interface FieldConfig {
   id: string;
@@ -202,6 +203,33 @@ const LocationDetails = () => {
 
         const detailImage = { id: crypto.randomUUID(), imageData: imageDataToSave, originalImageData: originalImageDataToSave, caption: caption.trim() || undefined, createdAt: new Date() };
         await indexedDBStorage.saveDetailImage(targetLocationId, detailImage);
+
+        // Mirror to HERO if project is linked. Fire-and-forget: the
+        // queue write is fast (~1ms), actual upload happens in the
+        // background worker without blocking this save flow.
+        const projectForHero = await indexedDBStorage.getProject(projectId);
+        if (projectForHero) {
+          const baseName = `detail-${detailImage.id.slice(0, 8)}`;
+          await enqueueHeroUploadIfLinked({
+            project: projectForHero,
+            uploadType: "detail_image",
+            blob: dataUrlToBlob(imageDataToSave),
+            filename: `${baseName}.jpg`,
+            locationId: targetLocationId,
+            detailImageId: detailImage.id,
+          });
+          if (rawOriginal) {
+            await enqueueHeroUploadIfLinked({
+              project: projectForHero,
+              uploadType: "detail_image_original",
+              blob: dataUrlToBlob(originalImageDataToSave),
+              filename: `${baseName}-original.jpg`,
+              locationId: targetLocationId,
+              detailImageId: detailImage.id,
+            });
+          }
+        }
+
         toast.dismiss();
         toast.success("Detailbild gespeichert");
         navigate(`/projects/${projectId}`);
@@ -247,6 +275,28 @@ const LocationDetails = () => {
         }
         project.locations.push(newLocation);
         await indexedDBStorage.saveProject(project);
+
+        // Mirror to HERO if project is linked. Uses the short location
+        // number (e.g. "100") in the filename so uploads are easy to
+        // identify in HERO's file list.
+        const baseName = `standort-${fullLocationNumber}`;
+        await enqueueHeroUploadIfLinked({
+          project,
+          uploadType: "location_image",
+          blob: dataUrlToBlob(imageDataToSave),
+          filename: `${baseName}.jpg`,
+          locationId: newLocation.id,
+        });
+        if (rawOriginal) {
+          await enqueueHeroUploadIfLinked({
+            project,
+            uploadType: "location_image_original",
+            blob: dataUrlToBlob(originalImageDataToSave),
+            filename: `${baseName}-original.jpg`,
+            locationId: newLocation.id,
+          });
+        }
+
         toast.dismiss();
         toast.success("Standort gespeichert");
         if (floorPlanId) navigate(`/projects/${projectId}/floor-plans`);
