@@ -97,10 +97,31 @@ interface AufmassDBSchema extends DBSchema {
     };
     indexes: { 'by-floor-plan': string };
   };
+  // Outgoing uploads to HERO. Written to from Location/Detail/Export flows,
+  // drained by HeroUploadWorker running in the background. Blobs are kept
+  // here until the upload succeeds, so we survive offline + page reloads.
+  'hero-upload-queue': {
+    key: string;
+    value: {
+      id: string;
+      projectId: string;
+      heroProjectMatchId: number | null;
+      uploadType: 'location_image' | 'location_image_original' | 'detail_image' | 'detail_image_original' | 'aufmass_pdf';
+      locationId?: string;
+      detailImageId?: string;
+      blob: Blob;
+      filename: string;
+      attempts: number;
+      nextAttemptAt: number;   // epoch ms - worker picks items where this <= Date.now()
+      lastError: string | null;
+      createdAt: number;       // epoch ms
+    };
+    indexes: { 'by-next-attempt': number; 'by-project': string };
+  };
 }
 
 const DB_NAME = 'aufmass-db';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 let dbInstance: IDBPDatabase<AufmassDBSchema> | null = null;
 
@@ -136,6 +157,12 @@ function createDB() {
         if (!projectStore.indexNames.contains('by-access-employee')) {
           projectStore.createIndex('by-access-employee', 'accessEmployeeIds', { multiEntry: true });
         }
+      }
+      if (oldVersion < 7) {
+        // Background upload queue for HERO integration. See HeroUploadWorker.
+        const queueStore = db.createObjectStore('hero-upload-queue', { keyPath: 'id' });
+        queueStore.createIndex('by-next-attempt', 'nextAttemptAt');
+        queueStore.createIndex('by-project', 'projectId');
       }
     },
   });
@@ -745,6 +772,75 @@ export const indexedDBStorage = {
     } catch (e) {
       console.warn('Failed to clear IndexedDB', e);
     }
+  },
+
+  // === HERO Upload Queue ===
+  // All operations are best-effort and should never throw back to the
+  // caller's UI flow - a failing queue write must not prevent a location
+  // from being saved. Errors are logged.
+
+  async enqueueHeroUpload(item: Omit<AufmassDBSchema['hero-upload-queue']['value'], 'attempts' | 'nextAttemptAt' | 'lastError' | 'createdAt'>): Promise<void> {
+    try {
+      const db = await getDB();
+      const now = Date.now();
+      await db.put('hero-upload-queue', {
+        ...item,
+        attempts: 0,
+        nextAttemptAt: now,
+        lastError: null,
+        createdAt: now,
+      });
+    } catch (e) {
+      console.warn('enqueueHeroUpload failed', e);
+    }
+  },
+
+  async getDueHeroUploads(limit = 5): Promise<AufmassDBSchema['hero-upload-queue']['value'][]> {
+    const db = await getDB();
+    const now = Date.now();
+    // Items due for a retry: nextAttemptAt <= now. We use the index and
+    // stop once items are in the future.
+    const results: AufmassDBSchema['hero-upload-queue']['value'][] = [];
+    const tx = db.transaction('hero-upload-queue', 'readonly');
+    const idx = tx.store.index('by-next-attempt');
+    let cursor = await idx.openCursor();
+    while (cursor && results.length < limit) {
+      if (cursor.value.nextAttemptAt <= now) {
+        results.push(cursor.value);
+      }
+      cursor = await cursor.continue();
+    }
+    await tx.done;
+    return results;
+  },
+
+  async updateHeroUploadAttempt(id: string, nextAttemptAt: number, error: string | null): Promise<void> {
+    const db = await getDB();
+    const tx = db.transaction('hero-upload-queue', 'readwrite');
+    const existing = await tx.store.get(id);
+    if (existing) {
+      await tx.store.put({
+        ...existing,
+        attempts: existing.attempts + 1,
+        nextAttemptAt,
+        lastError: error,
+      });
+    }
+    await tx.done;
+  },
+
+  async deleteHeroUpload(id: string): Promise<void> {
+    const db = await getDB();
+    await db.delete('hero-upload-queue', id);
+  },
+
+  async countPendingHeroUploads(): Promise<{ total: number; failed: number }> {
+    const db = await getDB();
+    const all = await db.getAll('hero-upload-queue');
+    return {
+      total: all.length,
+      failed: all.filter(x => x.attempts >= 5).length,
+    };
   },
 };
 
