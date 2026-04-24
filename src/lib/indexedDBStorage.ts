@@ -106,7 +106,7 @@ interface AufmassDBSchema extends DBSchema {
       id: string;
       projectId: string;
       heroProjectMatchId: number | null;
-      uploadType: 'location_image' | 'location_image_original' | 'detail_image' | 'detail_image_original' | 'aufmass_pdf';
+      uploadType: 'location_image' | 'location_image_original' | 'detail_image' | 'detail_image_original' | 'aufmass_pdf' | 'vehicle_image' | 'vehicle_layout' | 'vehicle_measured_image' | 'vehicle_measured_image_original';
       locationId?: string;
       detailImageId?: string;
       blob: Blob;

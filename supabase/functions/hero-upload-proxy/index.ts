@@ -32,14 +32,20 @@ type UploadType =
   | "location_image_original"
   | "detail_image"
   | "detail_image_original"
-  | "aufmass_pdf";
+  | "aufmass_pdf"
+  | "vehicle_image"
+  | "vehicle_layout"
+  | "vehicle_measured_image"
+  | "vehicle_measured_image_original";
 
 // Which HERO mutation to use once the file is uploaded.
-// PDFs go via upload_document so HERO stores them as a proper document
-// that can be previewed and downloaded. Images go via upload_image so
-// they show in the project's image gallery.
+// PDFs and similar documents go via upload_document so HERO stores them
+// as proper documents that can be previewed and downloaded. Images go
+// via upload_image so they show in the project's image gallery.
+// vehicle_layout is treated as a document since it's usually a PDF or
+// non-photo design file; vehicle_image is a regular photo.
 function isDocumentType(t: UploadType): boolean {
-  return t === "aufmass_pdf";
+  return t === "aufmass_pdf" || t === "vehicle_layout";
 }
 
 async function heroUploadFile(apiKey: string, file: Blob, filename: string): Promise<{ ok: true; uuid: string } | { ok: false; error: string }> {

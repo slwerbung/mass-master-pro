@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
+import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers";
 
 interface VehicleFieldConfig {
   id: string;
@@ -31,6 +32,19 @@ interface VehicleImage {
   id: string;
   project_id: string;
   storage_path: string;
+  caption: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
+// Bemaßte Bilder - images-with-drawings. Stored in a separate table
+// so they stay employee-only (hidden from customer approval view) and
+// don't get mixed with the regular vehicle_images gallery.
+interface VehicleMeasuredImage {
+  id: string;
+  project_id: string;
+  storage_path: string;
+  original_storage_path: string | null;
   caption: string | null;
   uploaded_by: string | null;
   created_at: string;
@@ -57,7 +71,12 @@ interface FeedbackItem {
 const VehicleDetail = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const session = getSession();
+  // Only employees see the "Bilder bemaßt" section. Customers accessing
+  // the page via guest link won't have a session, and even if they do,
+  // the role check below keeps the section hidden.
+  const isEmployee = session && (session.role === "admin" || session.role === "employee");
 
   const [project, setProject] = useState<any>(null);
   const [fieldConfigs, setFieldConfigs] = useState<VehicleFieldConfig[]>([]);
@@ -65,10 +84,13 @@ const VehicleDetail = () => {
   const [editingFields, setEditingFields] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [images, setImages] = useState<VehicleImage[]>([]);
+  const [measuredImages, setMeasuredImages] = useState<VehicleMeasuredImage[]>([]);
+  const [measuredImageUrls, setMeasuredImageUrls] = useState<Record<string, string>>({});
   const [layout, setLayout] = useState<VehicleLayout | null>(null);
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingMeasured, setUploadingMeasured] = useState(false);
   const [uploadingLayout, setUploadingLayout] = useState(false);
   const [savingFields, setSavingFields] = useState(false);
   const [editingCaptionId, setEditingCaptionId] = useState<string | null>(null);
@@ -83,6 +105,83 @@ const VehicleDetail = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
+  // When PhotoEditor navigates back with measured-image data in location.state,
+  // upload both variants (bemaßt + original) to Supabase Storage and insert a
+  // row into vehicle_measured_images. Also mirror both to HERO. This runs only
+  // once per navigation via a state check; clearing history.state prevents
+  // re-upload on tab focus/remount.
+  useEffect(() => {
+    const state = location.state as { measuredImageData?: string; measuredOriginalImageData?: string } | null;
+    if (!state?.measuredImageData || !projectId) return;
+
+    const upload = async () => {
+      setUploadingMeasured(true);
+      try {
+        const uuid = crypto.randomUUID();
+        const bemasstPath = `vehicle-measured-images/${projectId}/${uuid}-bemasst.jpg`;
+        const bemasstBlob = dataUrlToBlob(state.measuredImageData!);
+        const { error: upErr1 } = await supabase.storage
+          .from("project-files")
+          .upload(bemasstPath, bemasstBlob, { contentType: "image/jpeg" });
+        if (upErr1) throw upErr1;
+
+        let originalPath: string | null = null;
+        let originalBlob: Blob | null = null;
+        if (state.measuredOriginalImageData && state.measuredOriginalImageData !== state.measuredImageData) {
+          originalPath = `vehicle-measured-images/${projectId}/${uuid}-original.jpg`;
+          originalBlob = dataUrlToBlob(state.measuredOriginalImageData);
+          const { error: upErr2 } = await supabase.storage
+            .from("project-files")
+            .upload(originalPath, originalBlob, { contentType: "image/jpeg" });
+          if (upErr2) throw upErr2;
+        }
+
+        const { error: dbErr } = await supabase.from("vehicle_measured_images").insert({
+          project_id: projectId,
+          storage_path: bemasstPath,
+          original_storage_path: originalPath,
+          uploaded_by: session?.name || "Mitarbeiter",
+        });
+        if (dbErr) throw dbErr;
+
+        // Mirror to HERO - two separate queue items so we get both the
+        // bemaßt version (primary reference) and the untouched original
+        // (for context) into HERO's gallery.
+        if (project) {
+          const projShim = {
+            id: project.id,
+            customFields: project.custom_fields || project.customFields,
+          };
+          await enqueueHeroUploadIfLinked({
+            project: projShim,
+            uploadType: "vehicle_measured_image",
+            blob: bemasstBlob,
+            filename: `bemasst-${uuid.slice(0, 8)}.jpg`,
+          });
+          if (originalBlob) {
+            await enqueueHeroUploadIfLinked({
+              project: projShim,
+              uploadType: "vehicle_measured_image_original",
+              blob: originalBlob,
+              filename: `bemasst-${uuid.slice(0, 8)}-original.jpg`,
+            });
+          }
+        }
+
+        toast.success("Bemaßtes Bild gespeichert");
+        // Strip state so this effect doesn't re-fire on focus/remount.
+        window.history.replaceState({}, "");
+        await loadAll();
+      } catch (e: any) {
+        toast.error("Fehler beim Speichern: " + (e.message || String(e)));
+      } finally {
+        setUploadingMeasured(false);
+      }
+    };
+    upload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, projectId]);
+
   const loadAll = async () => {
     setIsLoading(true);
     try {
@@ -91,6 +190,7 @@ const VehicleDetail = () => {
         { data: configs },
         { data: values },
         { data: imgs },
+        { data: measured },
         { data: layouts },
         { data: fbs },
       ] = await Promise.all([
@@ -98,6 +198,11 @@ const VehicleDetail = () => {
         supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
         supabase.from("vehicle_field_values").select("field_key, value").eq("project_id", projectId!),
         supabase.from("vehicle_images").select("*").eq("project_id", projectId!).order("created_at"),
+        // Measured (bemaßt) images are employee-only in the UI, but the
+        // query itself isn't gated - the render logic hides the section
+        // if !isEmployee. Fetching them anyway is cheap and keeps the
+        // code path identical regardless of who's viewing.
+        supabase.from("vehicle_measured_images").select("*").eq("project_id", projectId!).order("created_at"),
         supabase.from("vehicle_layouts").select("*").eq("project_id", projectId!).order("uploaded_at", { ascending: false }).limit(1),
         supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId!).order("created_at"),
       ]);
@@ -108,8 +213,20 @@ const VehicleDetail = () => {
       (values || []).forEach((v: any) => { vals[v.field_key] = v.value || ""; });
       setFieldValues(vals);
       setImages((imgs || []) as VehicleImage[]);
+      setMeasuredImages((measured || []) as VehicleMeasuredImage[]);
       setLayout(layouts && layouts.length > 0 ? (layouts[0] as VehicleLayout) : null);
       setFeedbacks((fbs || []) as FeedbackItem[]);
+
+      // Pre-generate signed URLs so the <img> tags can render right away
+      // without each needing its own fetch when the section appears.
+      const urlMap: Record<string, string> = {};
+      for (const m of measured || []) {
+        const { data: signed } = await supabase.storage
+          .from("project-files")
+          .createSignedUrl(m.storage_path, 3600);
+        if (signed?.signedUrl) urlMap[m.id] = signed.signedUrl;
+      }
+      setMeasuredImageUrls(urlMap);
     } catch (e) {
       toast.error("Fehler beim Laden");
     } finally {
@@ -144,6 +261,21 @@ const VehicleDetail = () => {
         });
         if (dbError) { lastError = dbError.message; continue; }
         uploaded++;
+
+        // Mirror to HERO. The project row we loaded uses snake_case,
+        // so adapt it to the camelCase shape enqueueHeroUploadIfLinked
+        // expects. Skipped silently if project isn't linked to HERO.
+        if (project) {
+          await enqueueHeroUploadIfLinked({
+            project: {
+              id: project.id,
+              customFields: project.custom_fields || project.customFields,
+            },
+            uploadType: "vehicle_image",
+            blob: file,
+            filename: `fahrzeug-${file.name}`,
+          });
+        }
       } catch (e: any) { lastError = e?.message || "Unbekannter Fehler"; }
     }
     setUploadingImage(false);
@@ -193,6 +325,21 @@ const VehicleDetail = () => {
         file_name: file.name,
       });
       if (dbError) throw dbError;
+
+      // Mirror to HERO - treated as a document so it appears in HERO's
+      // documents section, not the photo gallery.
+      if (project) {
+        await enqueueHeroUploadIfLinked({
+          project: {
+            id: project.id,
+            customFields: project.custom_fields || project.customFields,
+          },
+          uploadType: "vehicle_layout",
+          blob: file,
+          filename: `layout-${file.name}`,
+        });
+      }
+
       toast.success("Layout hochgeladen");
       loadAll();
     } catch (err: any) {
@@ -414,6 +561,54 @@ const VehicleDetail = () => {
             )}
           </CardContent>
         </Card>
+
+        {/* Bemaßte Bilder — employee-only section. Opens the camera flow
+            with ?vehicle=true, which routes back here after editing with
+            both the edited and original image variants. Customers and
+            guest-link users don't see this at all. */}
+        {isEmployee && (
+          <Card>
+            <CardHeader className="p-4 pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Bilder bemaßt</CardTitle>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => navigate(`/projects/${projectId}/camera?vehicle=true`)}
+                  disabled={uploadingMeasured}
+                >
+                  <ImagePlus className="h-4 w-4 mr-1" />
+                  {uploadingMeasured ? "Lädt..." : "Bild aufnehmen"}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4">
+              {measuredImages.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  Noch keine bemaßten Bilder. Über die Kamera aufnehmen und im Editor bemaßen.
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {measuredImages.map(m => (
+                    <div key={m.id} className="relative rounded-lg overflow-hidden border bg-muted">
+                      {measuredImageUrls[m.id] ? (
+                        <img
+                          src={measuredImageUrls[m.id]}
+                          alt="Bemaßtes Bild"
+                          className="w-full h-40 object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-40 flex items-center justify-center text-xs text-muted-foreground">
+                          Lädt...
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Vehicle Information */}
         {fieldConfigs.length > 0 && (

@@ -49,7 +49,7 @@ export function dataUrlToBlob(dataUrl: string): Blob {
 // HERO. Callers shouldn't have to branch on sync state.
 export async function enqueueHeroUploadIfLinked(params: {
   project: ProjectLike;
-  uploadType: "location_image" | "location_image_original" | "detail_image" | "detail_image_original" | "aufmass_pdf";
+  uploadType: "location_image" | "location_image_original" | "detail_image" | "detail_image_original" | "aufmass_pdf" | "vehicle_image" | "vehicle_layout" | "vehicle_measured_image" | "vehicle_measured_image_original";
   blob: Blob;
   filename: string;
   locationId?: string;

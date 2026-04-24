@@ -396,6 +396,19 @@ const PhotoEditor = () => {
           const detailParam = searchParams.get("detail");
           const locationIdParam = searchParams.get("locationId");
           const floorPlanParam = searchParams.get("floorPlan");
+          const vehicleParam = searchParams.get("vehicle");
+
+          // Vehicle measured image path: route back to VehicleDetail
+          // rather than LocationDetails. VehicleDetail picks the two
+          // image variants out of location.state and uploads them to
+          // Supabase Storage + vehicle_measured_images table.
+          if (vehicleParam === "true") {
+            navigate(`/projects/${projectId}/vehicle`, {
+              state: { measuredImageData: dataUrl, measuredOriginalImageData: imageDataState },
+            });
+            return;
+          }
+
           let query = "";
           if (detailParam === "true" && locationIdParam) query = `?detail=true&locationId=${locationIdParam}`;
           else if (floorPlanParam && locationIdParam) query = `?floorPlan=${floorPlanParam}&locationId=${locationIdParam}`;

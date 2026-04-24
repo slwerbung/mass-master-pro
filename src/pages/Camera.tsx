@@ -13,6 +13,7 @@ const Camera = () => {
   const detailLocationId = searchParams.get("locationId");
   const floorPlanId = searchParams.get("floorPlan");
   const presetLocationId = searchParams.get("locationId");
+  const isVehicle = searchParams.get("vehicle") === "true";
   const mode = searchParams.get("mode"); // "upload" or default (camera)
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -93,7 +94,9 @@ const Camera = () => {
   const navigateToEditor = (imageData: string) => {
     stopStream();
     let query = "";
-    if (isDetail && detailLocationId) {
+    if (isVehicle) {
+      query = `?vehicle=true`;
+    } else if (isDetail && detailLocationId) {
       query = `?detail=true&locationId=${detailLocationId}`;
     } else if (floorPlanId && presetLocationId) {
       query = `?floorPlan=${floorPlanId}&locationId=${presetLocationId}`;
