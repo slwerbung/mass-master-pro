@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, FileImage, FileText, Download, Archive, Loader2 } from "lucide-react";
+import { ArrowLeft, FileImage, FileText, Download, Archive, Loader2, Upload, CheckCircle2 } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
@@ -33,6 +33,7 @@ import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/proje
 import { supabase } from "@/integrations/supabase/client";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
+import { enqueueHeroUploadIfLinked, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 
 type FieldConfig = {
   id?: string;
@@ -62,6 +63,7 @@ const Export = () => {
   const [printFilesByLocation, setPrintFilesByLocation] = useState<Record<string, any[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [downloadingPDF, setDownloadingPDF] = useState(false);
+  const [uploadingToHero, setUploadingToHero] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadingImages, setDownloadingImages] = useState<Record<string, boolean>>({});
   const [pdfOptions, setPdfOptions] = useState<PDFExportOptions>(defaultPDFOptions);
@@ -262,16 +264,15 @@ const Export = () => {
     }
   };
 
-  const exportAsPDF = async () => {
-    if (!project) return;
-
-    setDownloadingPDF(true);
-    try {
-      // Querformat für Standortseiten
-      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-      const dateStr = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
-      const customerOnly = pdfOptions.mode === "customer";
-      const visibleFields = getVisibleFields(customerOnly);
+  // Internal: builds the PDF and returns a Blob. Shared between "download"
+  // and "upload to HERO" actions so we only have one place that knows how
+  // to render the document.
+  const buildPDFBlob = async (customerOnly: boolean): Promise<{ blob: Blob; filename: string }> => {
+    if (!project) throw new Error("Kein Projekt geladen");
+    // Querformat für Standortseiten
+    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const dateStr = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
+    const visibleFields = getVisibleFields(customerOnly);
 
       const locationPageMap: Record<string, number> = {};
       const floorPlanPageMap: Record<string, number> = {};
@@ -424,7 +425,18 @@ const Export = () => {
       }
 
       const pdfBlob = pdf.output("blob");
-      const success = await downloadBlob(pdfBlob, `${project.projectNumber}_${customerOnly ? "Kundenexport" : "InternerExport"}.pdf`);
+      const filename = `${project.projectNumber}_${customerOnly ? "Kundenexport" : "InternerExport"}.pdf`;
+      return { blob: pdfBlob, filename };
+  };
+
+  // User action: generate PDF and trigger download in the browser.
+  const exportAsPDF = async () => {
+    if (!project) return;
+    setDownloadingPDF(true);
+    try {
+      const customerOnly = pdfOptions.mode === "customer";
+      const { blob, filename } = await buildPDFBlob(customerOnly);
+      const success = await downloadBlob(blob, filename);
       if (success) toast.success("PDF wird heruntergeladen");
       else toast.error("PDF-Download fehlgeschlagen");
     } catch (error) {
@@ -432,6 +444,29 @@ const Export = () => {
       toast.error("Fehler beim PDF-Export");
     } finally {
       setDownloadingPDF(false);
+    }
+  };
+
+  // User action: generate PDF and queue it for upload to HERO. Only
+  // visible when the project is linked to HERO (see button below).
+  const uploadPDFToHero = async () => {
+    if (!project) return;
+    setUploadingToHero(true);
+    try {
+      const customerOnly = pdfOptions.mode === "customer";
+      const { blob, filename } = await buildPDFBlob(customerOnly);
+      await enqueueHeroUploadIfLinked({
+        project,
+        uploadType: "aufmass_pdf",
+        blob,
+        filename,
+      });
+      toast.success("Aufmaß-PDF wird zu HERO übertragen...");
+    } catch (error) {
+      console.error("HERO PDF upload error:", error);
+      toast.error("Fehler bei der HERO-Übertragung");
+    } finally {
+      setUploadingToHero(false);
     }
   };
 
@@ -462,6 +497,14 @@ const Export = () => {
             <Button onClick={exportAsPDF} disabled={downloadingPDF} className="w-full mt-4">
               {downloadingPDF ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />} PDF herunterladen
             </Button>
+            {/* Only shown when the project is linked to HERO. For projects
+                without HERO integration (local-only) this button would be
+                useless and confusing, so it's hidden entirely. */}
+            {getHeroProjectMatchId(project) && (
+              <Button onClick={uploadPDFToHero} disabled={uploadingToHero} variant="outline" className="w-full mt-2">
+                {uploadingToHero ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />} PDF nach HERO senden
+              </Button>
+            )}
           </CardContent>
         </Card>
 

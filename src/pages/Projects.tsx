@@ -14,6 +14,7 @@ import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { StorageIndicator } from "@/components/StorageIndicator";
+import { HeroSyncIndicator } from "@/components/HeroSyncIndicator";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
@@ -292,6 +293,7 @@ const Projects = () => {
         </div>
 
         <StorageIndicator />
+        <HeroSyncIndicator />
 
         {projects.length > 0 && !selectionMode && (
           <div className="flex justify-end">
