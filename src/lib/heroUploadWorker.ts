@@ -29,13 +29,22 @@ const BACKOFF_STEPS = [1_000, 10_000, 60_000, 300_000, 1_800_000];
 
 let running = false;
 let stopRequested = false;
+// Reentrancy guard: set to true while processOne() is active. Prevents
+// two parallel ticks from picking up the same queue item. Every call to
+// pokeHeroUploadWorker() or a focus/online event can trigger a tick, so
+// without this guard the same item gets uploaded multiple times.
+let tickInProgress = false;
+// If a poke arrives while a tick is running, we remember it and kick
+// another tick as soon as the current one finishes. That way the worker
+// stays promptly responsive without allowing concurrent runs.
+let pokePending = false;
 
 async function processOne(): Promise<boolean> {
   // Returns true if we processed an item (so we should tick again soon),
   // false if the queue was empty/we should idle.
-  const due = await indexedDBStorage.getDueHeroUploads(1);
-  if (due.length === 0) return false;
+  const due = await indexedDBStorage.getDueHeroUploads(5);
   const item = due[0];
+  if (!item) return false;
 
   // Skip permanently-failed items - they stay in the queue for visibility
   // but the worker won't touch them again. User/admin can retry manually.
@@ -93,18 +102,39 @@ async function scheduleRetry(id: string, currentAttempts: number, error: string)
 async function tick() {
   if (stopRequested) return;
 
+  // Mutex: only ONE tick may run at a time. If a poke arrives while a
+  // tick is active, we remember it and re-run once this one finishes.
+  // This prevents the concrete bug where two pokes in quick succession
+  // (e.g. enqueueing two images back-to-back) caused the same queue item
+  // to be picked up and uploaded twice.
+  if (tickInProgress) {
+    pokePending = true;
+    return;
+  }
+  tickInProgress = true;
+
   // Pause gracefully while offline - we'll wake up on the online event.
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    tickInProgress = false;
     scheduleNext(TICK_IDLE_MS);
     return;
   }
 
   try {
     const processed = await processOne();
+    tickInProgress = false;
+    // If a poke arrived mid-tick, handle it now so the worker stays
+    // responsive without allowing concurrent runs.
+    if (pokePending) {
+      pokePending = false;
+      tick();
+      return;
+    }
     scheduleNext(processed ? TICK_BUSY_MS : TICK_IDLE_MS);
   } catch (e) {
     // Catch-all so a bug here never kills the worker loop
     console.warn("HeroUploadWorker tick error", e);
+    tickInProgress = false;
     scheduleNext(TICK_IDLE_MS);
   }
 }

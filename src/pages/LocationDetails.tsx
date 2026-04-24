@@ -209,7 +209,13 @@ const LocationDetails = () => {
         // background worker without blocking this save flow.
         const projectForHero = await indexedDBStorage.getProject(projectId);
         if (projectForHero) {
-          const baseName = `detail-${detailImage.id.slice(0, 8)}`;
+          // Filename uses short location number (e.g. "100") plus a
+          // per-detail sequence number, so HERO's file list stays
+          // readable. "WER-1234-100" -> "100"; no dash -> whole string.
+          const parentLoc = projectForHero.locations.find(l => l.id === targetLocationId);
+          const locShort = parentLoc?.locationNumber?.split("-").pop() || "unbekannt";
+          const detailIndex = (parentLoc?.detailImages?.length ?? 0) + 1;
+          const baseName = `standort-${locShort}-detail-${detailIndex}`;
           await enqueueHeroUploadIfLinked({
             project: projectForHero,
             uploadType: "detail_image",
