@@ -578,13 +578,19 @@ const VehicleDetail = () => {
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   {measuredImages.map(m => (
-                    <div key={m.id} className="relative rounded-lg overflow-hidden border bg-muted">
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => navigate(`/projects/${projectId}/vehicle/measured/${m.id}/edit-image`)}
+                      className="relative rounded-lg overflow-hidden border bg-muted hover:ring-2 hover:ring-primary focus:outline-none focus:ring-2 focus:ring-primary text-left"
+                      title="Zum Weiterbearbeiten antippen"
+                    >
                       <img
                         src={getPublicUrl(m.storage_path)}
                         alt="Bemaßtes Bild"
                         className="w-full h-40 object-cover"
                       />
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}

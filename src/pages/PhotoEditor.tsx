@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { createMeasurementGroup } from "@/lib/measurement";
 import { createAreaMeasurementGroup } from "@/lib/areaMeasurement";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
+import { supabase } from "@/integrations/supabase/client";
+import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers";
 import MeasurementInputDialog from "@/components/MeasurementInputDialog";
 import AreaMeasurementDialog from "@/components/AreaMeasurementDialog";
 import { compressImage } from "@/lib/imageCompression";
@@ -14,7 +16,7 @@ import { compressImage } from "@/lib/imageCompression";
 type Tool = "select" | "draw" | "text" | "measure" | "area";
 
 const PhotoEditor = () => {
-  const { projectId, locationId, detailId } = useParams();
+  const { projectId, locationId, detailId, measuredId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -38,8 +40,12 @@ const PhotoEditor = () => {
   const pinchStateRef = useRef<{ initialDistance: number; initialZoom: number; isPinching: boolean }>({ initialDistance: 0, initialZoom: 1, isPinching: false });
   const suppressTapUntilRef = useRef(0);
 
-  const isReEdit = !!locationId;
+  const isReEdit = !!locationId || !!measuredId;
   const isDetailReEdit = !!detailId;
+  // Vehicle "Bilder bemaßt" re-edit: load image from Supabase Storage
+  // (not IndexedDB like the Aufmaß flow), and on save update the same
+  // database row + storage path instead of inserting a new row.
+  const isVehicleMeasuredReEdit = !!measuredId;
 
   const pushHistoryState = useCallback((canvas: FabricCanvas) => {
     if (isRestoringHistoryRef.current) return;
@@ -72,7 +78,34 @@ const PhotoEditor = () => {
     const loadImage = async () => {
       setLoading(true);
       try {
-        if (isDetailReEdit && locationId) {
+        if (isVehicleMeasuredReEdit && measuredId && projectId) {
+          // Load the bemaßt (drawn-on) image from Supabase Storage and
+          // use it as the canvas background. User will draw further
+          // strokes on top — same UX as detail re-edit in Aufmaß.
+          const { data: row, error } = await supabase
+            .from("vehicle_measured_images")
+            .select("storage_path")
+            .eq("id", measuredId)
+            .maybeSingle();
+          if (error || !row) {
+            toast.error("Bemaßtes Bild nicht gefunden");
+            navigate(`/projects/${projectId}/vehicle`);
+            return;
+          }
+          // Convert the public URL to a data URL the Fabric canvas can
+          // load synchronously. fetch->blob->FileReader pattern matches
+          // what compressImage and other paths in the app already do.
+          const { data: pub } = supabase.storage.from("project-files").getPublicUrl(row.storage_path);
+          const resp = await fetch(pub.publicUrl);
+          const blob = await resp.blob();
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          setImageDataState(dataUrl);
+        } else if (isDetailReEdit && locationId) {
           const details = await indexedDBStorage.getDetailImagesByLocation(locationId);
           const detail = details.find(d => d.id === detailId);
           if (detail) setImageDataState(detail.imageData);
@@ -90,7 +123,7 @@ const PhotoEditor = () => {
       } finally { setLoading(false); }
     };
     loadImage();
-  }, [isReEdit, isDetailReEdit, locationId, detailId, projectId, navigate, imageDataState]);
+  }, [isReEdit, isDetailReEdit, isVehicleMeasuredReEdit, locationId, detailId, measuredId, projectId, navigate, imageDataState]);
 
   useEffect(() => {
     if (!imageDataState || !canvasRef.current) return;
@@ -372,7 +405,50 @@ const PhotoEditor = () => {
 
         if (isReEdit && projectId) {
           try {
-            if (isDetailReEdit && detailId) {
+            if (isVehicleMeasuredReEdit && measuredId) {
+              // Update the existing storage object in place (upsert: true
+              // overwrites the same path so the row keeps its references).
+              const { data: row } = await supabase
+                .from("vehicle_measured_images")
+                .select("storage_path, project_id")
+                .eq("id", measuredId)
+                .maybeSingle();
+              if (!row) throw new Error("Bemaßtes Bild nicht gefunden");
+
+              const blob = dataUrlToBlob(dataUrl);
+              const { error: upErr } = await supabase.storage
+                .from("project-files")
+                .upload(row.storage_path, blob, { contentType: "image/jpeg", upsert: true });
+              if (upErr) throw upErr;
+
+              // The database row's storage_path stays the same since we
+              // overwrote the file in place, but bumping a touched-at via
+              // a no-op update keeps the row's updated_at fresh if there
+              // were such a column. Skipping for now since the schema
+              // doesn't have one.
+
+              // Mirror to HERO. Original isn't re-uploaded - users only
+              // edit the bemaßt version, the original in HERO is still
+              // valid. Filename includes a timestamp so it doesn't
+              // collide with prior uploads of this same image.
+              const { data: proj } = await supabase
+                .from("projects")
+                .select("id, custom_fields")
+                .eq("id", row.project_id)
+                .maybeSingle();
+              if (proj) {
+                await enqueueHeroUploadIfLinked({
+                  project: { id: proj.id, customFields: proj.custom_fields as any },
+                  uploadType: "vehicle_measured_image",
+                  blob,
+                  filename: `bemasst-${measuredId.slice(0, 8)}-rev-${Date.now()}.jpg`,
+                });
+              }
+
+              toast.success("Bemaßtes Bild aktualisiert");
+              navigate(`/projects/${projectId}/vehicle`);
+              return;
+            } else if (isDetailReEdit && detailId) {
               await indexedDBStorage.updateDetailImage(detailId, dataUrl);
               toast.success("Detailbild aktualisiert");
             } else if (locationId) {
