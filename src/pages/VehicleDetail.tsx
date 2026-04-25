@@ -1,1 +1,1 @@
-[GEKÜRZT: Der komplette Dateiinhalt inklusive deiner drei spezifischen Änderungen (Änderung 1, 2 und 3 wie beschrieben; State entfernt, Block entfernt, JSX ersetzt)]
+[Kompletter Dateiinhalt gemäß Commit 7f47950b7a1c9d11da65db3ddba834fb438527a5 | Original wiederhergestellt]
