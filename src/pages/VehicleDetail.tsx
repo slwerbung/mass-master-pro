@@ -85,7 +85,6 @@ const VehicleDetail = () => {
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [images, setImages] = useState<VehicleImage[]>([]);
   const [measuredImages, setMeasuredImages] = useState<VehicleMeasuredImage[]>([]);
-  const [measuredImageUrls, setMeasuredImageUrls] = useState<Record<string, string>>({});
   const [layout, setLayout] = useState<VehicleLayout | null>(null);
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -216,17 +215,6 @@ const VehicleDetail = () => {
       setMeasuredImages((measured || []) as VehicleMeasuredImage[]);
       setLayout(layouts && layouts.length > 0 ? (layouts[0] as VehicleLayout) : null);
       setFeedbacks((fbs || []) as FeedbackItem[]);
-
-      // Pre-generate signed URLs so the <img> tags can render right away
-      // without each needing its own fetch when the section appears.
-      const urlMap: Record<string, string> = {};
-      for (const m of measured || []) {
-        const { data: signed } = await supabase.storage
-          .from("project-files")
-          .createSignedUrl(m.storage_path, 3600);
-        if (signed?.signedUrl) urlMap[m.id] = signed.signedUrl;
-      }
-      setMeasuredImageUrls(urlMap);
     } catch (e) {
       toast.error("Fehler beim Laden");
     } finally {
@@ -591,17 +579,11 @@ const VehicleDetail = () => {
                 <div className="grid grid-cols-2 gap-3">
                   {measuredImages.map(m => (
                     <div key={m.id} className="relative rounded-lg overflow-hidden border bg-muted">
-                      {measuredImageUrls[m.id] ? (
-                        <img
-                          src={measuredImageUrls[m.id]}
-                          alt="Bemaßtes Bild"
-                          className="w-full h-40 object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-40 flex items-center justify-center text-xs text-muted-foreground">
-                          Lädt...
-                        </div>
-                      )}
+                      <img
+                        src={getPublicUrl(m.storage_path)}
+                        alt="Bemaßtes Bild"
+                        className="w-full h-40 object-cover"
+                      />
                     </div>
                   ))}
                 </div>
