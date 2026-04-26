@@ -263,7 +263,7 @@ const Projects = () => {
         // projectNumber is already shown as the card title – skip it here
         if (key === "projectNumber") return null;
         let value: string | undefined;
-        if (key === "customerName") value = project.customerName;
+        if (key === "customerName") return null; // Customer is rendered prominently above, not as a small info row
         else value = project.customFields?.[key];
         value = typeof value === "string" ? value.trim() : value;
         if (!value) return null;
@@ -474,9 +474,11 @@ const Projects = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-4 pt-0 space-y-2">
-                  <p className="text-sm text-muted-foreground">
-                    {project.locationCount} Standort{project.locationCount !== 1 ? "e" : ""}
-                  </p>
+                  {project.customerName && (
+                    <p className="text-base font-medium text-foreground break-words">
+                      {project.customerName}
+                    </p>
+                  )}
                   {getProjectInfoRows(project).length > 0 && (
                     <div className="space-y-1.5 pt-1">
                       {getProjectInfoRows(project).map((row) => (
