@@ -349,6 +349,13 @@ serve(async (req) => {
     }
 
     // ---- Create app project ----
+    // Pre-generate the project ID so we can use it as user_id - the column
+    // is NOT NULL but for anonymous customer-form submissions there's no
+    // real user. Using the project's own ID matches the fallback pattern
+    // already used in supabaseSync (line ~505) and means the project is
+    // not "owned" by any specific employee, which is the right semantics
+    // here - it gets sorted into the general queue for whoever picks it up.
+    const newProjectId = crypto.randomUUID();
     // Generate next project number. Simple lookup of max numeric suffix from
     // existing projects starting with "WER-". Not bullet-proof against parallel
     // submits but good enough for a low-volume web form.
@@ -390,6 +397,8 @@ serve(async (req) => {
     const { data: project, error: projError } = await supabase
       .from("projects")
       .insert({
+        id: newProjectId,
+        user_id: newProjectId,
         project_number: projectNumber,
         project_type: "fahrzeugbeschriftung",
         customer_name: body.signupData
