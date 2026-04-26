@@ -358,6 +358,25 @@ const VehicleDetail = () => {
     }
   };
 
+  // Bemaßt-image cleanup: removes both the edited and original storage
+  // files (if present) plus the DB row. Does not delete the HERO copy -
+  // that has to be cleaned up manually in HERO if needed, since we don't
+  // track HERO file IDs locally. This matches the existing deleteImage
+  // pattern (no HERO cleanup there either).
+  const deleteMeasuredImage = async (m: VehicleMeasuredImage) => {
+    if (!confirm("Bemaßtes Bild wirklich löschen?")) return;
+    try {
+      const paths = [m.storage_path];
+      if (m.original_storage_path) paths.push(m.original_storage_path);
+      await supabase.storage.from("project-files").remove(paths);
+      await supabase.from("vehicle_measured_images").delete().eq("id", m.id);
+      setMeasuredImages(prev => prev.filter(x => x.id !== m.id));
+      toast.success("Bemaßtes Bild gelöscht");
+    } catch {
+      toast.error("Fehler beim Löschen");
+    }
+  };
+
   const deleteLayout = async () => {
     if (!layout) return;
     try {
@@ -587,19 +606,32 @@ const VehicleDetail = () => {
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   {measuredImages.map(m => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => navigate(`/projects/${projectId}/vehicle/measured/${m.id}/edit-image`)}
-                      className="relative rounded-lg overflow-hidden border bg-muted hover:ring-2 hover:ring-primary focus:outline-none focus:ring-2 focus:ring-primary text-left"
-                      title="Zum Weiterbearbeiten antippen"
-                    >
-                      <img
-                        src={getPublicUrl(m.storage_path)}
-                        alt="Bemaßtes Bild"
-                        className="w-full h-40 object-cover"
-                      />
-                    </button>
+                    <div key={m.id} className="relative group">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/projects/${projectId}/vehicle/measured/${m.id}/edit-image`)}
+                        className="block w-full rounded-lg overflow-hidden border bg-muted hover:ring-2 hover:ring-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                        title="Zum Weiterbearbeiten antippen"
+                      >
+                        <img
+                          src={getPublicUrl(m.storage_path)}
+                          alt="Bemaßtes Bild"
+                          className="w-full h-40 object-cover"
+                        />
+                      </button>
+                      {/* Trash overlay - stopPropagation prevents the
+                          parent button's onClick (which would open the
+                          editor) from firing along with the delete. */}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="absolute top-1 right-1 h-7 w-7 p-0 bg-background/80 hover:bg-background text-destructive shadow"
+                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); deleteMeasuredImage(m); }}
+                        title="Bild löschen"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   ))}
                 </div>
               )}
