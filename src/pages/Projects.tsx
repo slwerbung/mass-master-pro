@@ -13,7 +13,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
-import { StorageIndicator } from "@/components/StorageIndicator";
 import { HeroSyncIndicator } from "@/components/HeroSyncIndicator";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
@@ -332,7 +331,6 @@ const Projects = () => {
           )}
         </div>
 
-        <StorageIndicator />
         <HeroSyncIndicator />
 
         {projects.length > 0 && !selectionMode && (
@@ -427,13 +425,8 @@ const Projects = () => {
                     )}
                     <FolderOpen className="h-5 w-5 text-primary" />
                     <span className="truncate">{project.projectNumber}</span>
-                    {!project.isLocal && (
-                      <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded ml-auto shrink-0">
-                        Nur online
-                      </span>
-                    )}
                     {project.archivedAt && (
-                      <span className={`text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded shrink-0 ${!project.isLocal ? "" : "ml-auto"}`}>
+                      <span className="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded ml-auto shrink-0">
                         Archiviert
                       </span>
                     )}
