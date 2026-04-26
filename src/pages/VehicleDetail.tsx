@@ -146,10 +146,19 @@ const VehicleDetail = () => {
         // Mirror to HERO - two separate queue items so we get both the
         // bemaßt version (primary reference) and the untouched original
         // (for context) into HERO's gallery.
-        if (project) {
+        // We re-fetch the project here rather than relying on the
+        // `project` state because both useEffects (loadAll, this upload)
+        // race - the upload effect can finish before loadAll completes,
+        // leaving project still null and silently skipping the HERO sync.
+        const { data: projForHero } = await supabase
+          .from("projects")
+          .select("id, custom_fields")
+          .eq("id", projectId)
+          .maybeSingle();
+        if (projForHero) {
           const projShim = {
-            id: project.id,
-            customFields: project.custom_fields || project.customFields,
+            id: projForHero.id,
+            customFields: projForHero.custom_fields as any,
           };
           await enqueueHeroUploadIfLinked({
             project: projShim,
