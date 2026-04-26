@@ -406,8 +406,13 @@ const PhotoEditor = () => {
         if (isReEdit && projectId) {
           try {
             if (isVehicleMeasuredReEdit && measuredId) {
-              // Update the existing storage object in place (upsert: true
-              // overwrites the same path so the row keeps its references).
+              // Strategy: upload to a brand new path, update the DB row
+              // to point at it, then best-effort delete the old file.
+              // We don't use upsert because the storage UPDATE policies
+              // here block re-uploading to an existing path with anon
+              // credentials. Going the new-path route also gives us a
+              // tiny safety net: if the DB update fails after the
+              // upload, the old image is still there and intact.
               const { data: row } = await supabase
                 .from("vehicle_measured_images")
                 .select("storage_path, project_id")
@@ -416,16 +421,27 @@ const PhotoEditor = () => {
               if (!row) throw new Error("Bemaßtes Bild nicht gefunden");
 
               const blob = dataUrlToBlob(dataUrl);
+              const newPath = `vehicle-measured-images/${row.project_id}/${crypto.randomUUID()}-bemasst.jpg`;
               const { error: upErr } = await supabase.storage
                 .from("project-files")
-                .upload(row.storage_path, blob, { contentType: "image/jpeg", upsert: true });
+                .upload(newPath, blob, { contentType: "image/jpeg" });
               if (upErr) throw upErr;
 
-              // The database row's storage_path stays the same since we
-              // overwrote the file in place, but bumping a touched-at via
-              // a no-op update keeps the row's updated_at fresh if there
-              // were such a column. Skipping for now since the schema
-              // doesn't have one.
+              // Point the DB row at the new file
+              const { error: updErr } = await supabase
+                .from("vehicle_measured_images")
+                .update({ storage_path: newPath })
+                .eq("id", measuredId);
+              if (updErr) throw updErr;
+
+              // Best-effort delete of the old file. If this fails, we
+              // log and move on - a stale file in storage isn't worth
+              // failing the user-facing save flow over.
+              const oldPath = row.storage_path;
+              if (oldPath && oldPath !== newPath) {
+                supabase.storage.from("project-files").remove([oldPath])
+                  .catch(e => console.warn("Old file cleanup failed:", e));
+              }
 
               // Mirror to HERO. Original isn't re-uploaded - users only
               // edit the bemaßt version, the original in HERO is still
