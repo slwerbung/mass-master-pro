@@ -27,6 +27,7 @@ import GuestAccess from "./pages/GuestAccess";
 import GuestProject from "./pages/GuestProject";
 import VehicleDetail from "./pages/VehicleDetail";
 import NewCustomerSignup from "./pages/NewCustomerSignup";
+import VehicleInquiry from "./pages/VehicleInquiry";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -145,6 +146,7 @@ const App = () => {
           <Route path="/guest/:projectId/view" element={<GuestProject />} />
           {/* Public new-customer signup form */}
           <Route path="/neukunde" element={<NewCustomerSignup />} />
+          <Route path="/fahrzeug-anfrage" element={<VehicleInquiry />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
