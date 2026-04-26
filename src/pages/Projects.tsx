@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw, Trash2, CheckSquare, X } from "lucide-react";
+import { Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw, Trash2, CheckSquare, X, Archive, ArchiveRestore } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -23,12 +23,13 @@ import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
 interface ProjectListItem {
   id: string;
   projectNumber: string;
-  projectType?: "aufmass" | "aufmass_mit_plan";
+  projectType?: "aufmass" | "aufmass_mit_plan" | "fahrzeugbeschriftung";
   customerName?: string;
   customFields?: Record<string, string>;
   createdAt: Date;
   locationCount: number;
   isLocal: boolean;
+  archivedAt?: Date | null;
 }
 
 interface ProjectFieldConfig {
@@ -48,6 +49,11 @@ const Projects = () => {
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
   const [projectFieldConfig, setProjectFieldConfig] = useState<ProjectFieldConfig[]>([]);
+  // Filter state. typeFilter "all" shows every type; the per-type tabs
+  // narrow the list. showArchived toggles the archive view - default
+  // off so the main view stays uncluttered.
+  const [typeFilter, setTypeFilter] = useState<"all" | "aufmass" | "aufmass_mit_plan" | "fahrzeugbeschriftung">("all");
+  const [showArchived, setShowArchived] = useState(false);
   const navigate = useNavigate();
   const session = getSession();
   const syncDoneRef = useRef(false);
@@ -77,7 +83,7 @@ const Projects = () => {
     try {
       await indexedDBStorage.migrateFromLocalStorage();
 
-      const projectQuery = supabase.from("projects").select("id, project_number, project_type, customer_name, custom_fields, created_at, employee_id").order("created_at", { ascending: false });
+      const projectQuery = supabase.from("projects").select("id, project_number, project_type, customer_name, custom_fields, created_at, employee_id, archived_at").order("created_at", { ascending: false });
 
       const [ownedResult, assignedResult, localSummary] = await Promise.all([
         session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery,
@@ -93,7 +99,7 @@ const Projects = () => {
         if (assignedIds.length > 0) {
           const { data: assignedProjects } = await supabase
             .from('projects')
-            .select('id, project_number, project_type, customer_name, custom_fields, created_at, employee_id')
+            .select('id, project_number, project_type, customer_name, custom_fields, created_at, employee_id, archived_at')
             .in('id', assignedIds)
             .order('created_at', { ascending: false });
           const mergedRemote = new Map<string, any>();
@@ -118,6 +124,7 @@ const Projects = () => {
           createdAt: new Date(sp.created_at),
           locationCount: local?.locationCount ?? 0,
           isLocal: !!local,
+          archivedAt: sp.archived_at ? new Date(sp.archived_at) : null,
         };
       });
 
@@ -204,6 +211,39 @@ const Projects = () => {
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+  };
+
+  // --- Archive logic ---
+  // Setting archived_at to a timestamp (or NULL) is a soft delete - the
+  // project is hidden from the default view but stays intact and can
+  // come back via the archive tab. The pg_cron job in the migration
+  // does the same with `now()` for projects untouched 90+ days.
+  const archiveProject = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ archived_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+      toast.success("Projekt archiviert");
+      await loadProjects(false);
+    } catch (e: any) {
+      toast.error("Fehler beim Archivieren: " + e.message);
+    }
+  };
+
+  const unarchiveProject = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ archived_at: null })
+        .eq("id", id);
+      if (error) throw error;
+      toast.success("Projekt reaktiviert");
+      await loadProjects(false);
+    } catch (e: any) {
+      toast.error("Fehler beim Reaktivieren: " + e.message);
+    }
   };
 
   const exitSelectionMode = () => {
@@ -304,30 +344,75 @@ const Projects = () => {
           </div>
         )}
 
-        {projects.length === 0 ? (
-          <Card className="text-center py-12">
-            <CardContent>
-              <FolderOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <p className="text-muted-foreground">Noch keine Projekte vorhanden.</p>
-              <Button className="mt-4" onClick={() => navigate("/projects/new")}>
-                <Plus className="mr-2 h-4 w-4" /> Erstes Projekt erstellen
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {projects.map((project) => (
-              <Card
-                key={project.id}
-                className={`cursor-pointer hover:shadow-md transition-shadow ${
-                  selectionMode && selectedIds.has(project.id) ? "ring-2 ring-primary" : ""
-                }`}
-                onClick={() => {
-                  if (selectionMode) {
-                    toggleSelection(project.id);
-                  } else {
-                    navigate(`/projects/${project.id}`);
-                  }
+        {/* Filter bar: type tabs + archive toggle. Shown above the list
+            but below the action header. Counts are derived from the
+            already-loaded projects so switching tabs is instant. */}
+        {(() => {
+          // Compute counts and filtered list inside an IIFE so the JSX
+          // stays declarative and we don't need extra useMemo plumbing
+          // for what's essentially a cheap array filter.
+          const counts = {
+            all: projects.filter(p => !p.archivedAt).length,
+            aufmass: projects.filter(p => !p.archivedAt && p.projectType === "aufmass").length,
+            aufmass_mit_plan: projects.filter(p => !p.archivedAt && p.projectType === "aufmass_mit_plan").length,
+            fahrzeugbeschriftung: projects.filter(p => !p.archivedAt && p.projectType === "fahrzeugbeschriftung").length,
+            archived: projects.filter(p => p.archivedAt).length,
+          };
+          const visibleProjects = projects.filter(p => {
+            if (showArchived) return !!p.archivedAt;
+            if (p.archivedAt) return false;
+            if (typeFilter === "all") return true;
+            return p.projectType === typeFilter;
+          });
+          return (
+            <>
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <Button size="sm" variant={!showArchived && typeFilter === "all" ? "default" : "outline"} onClick={() => { setShowArchived(false); setTypeFilter("all"); }}>
+                  Alle ({counts.all})
+                </Button>
+                <Button size="sm" variant={!showArchived && typeFilter === "aufmass" ? "default" : "outline"} onClick={() => { setShowArchived(false); setTypeFilter("aufmass"); }}>
+                  Aufmaß ({counts.aufmass})
+                </Button>
+                <Button size="sm" variant={!showArchived && typeFilter === "aufmass_mit_plan" ? "default" : "outline"} onClick={() => { setShowArchived(false); setTypeFilter("aufmass_mit_plan"); }}>
+                  Aufmaß mit Plan ({counts.aufmass_mit_plan})
+                </Button>
+                <Button size="sm" variant={!showArchived && typeFilter === "fahrzeugbeschriftung" ? "default" : "outline"} onClick={() => { setShowArchived(false); setTypeFilter("fahrzeugbeschriftung"); }}>
+                  Fahrzeug ({counts.fahrzeugbeschriftung})
+                </Button>
+                <div className="flex-1" />
+                <Button size="sm" variant={showArchived ? "default" : "outline"} onClick={() => setShowArchived(!showArchived)}>
+                  Archiv ({counts.archived})
+                </Button>
+              </div>
+
+              {visibleProjects.length === 0 ? (
+                <Card className="text-center py-12">
+                  <CardContent>
+                    <FolderOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                    <p className="text-muted-foreground">
+                      {showArchived ? "Keine archivierten Projekte." : projects.length === 0 ? "Noch keine Projekte vorhanden." : "Keine Projekte in dieser Kategorie."}
+                    </p>
+                    {!showArchived && projects.length === 0 && (
+                      <Button className="mt-4" onClick={() => navigate("/projects/new")}>
+                        <Plus className="mr-2 h-4 w-4" /> Erstes Projekt erstellen
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {visibleProjects.map((project) => (
+                    <Card
+                      key={project.id}
+                      className={`cursor-pointer hover:shadow-md transition-shadow ${
+                        selectionMode && selectedIds.has(project.id) ? "ring-2 ring-primary" : ""
+                      } ${project.archivedAt ? "opacity-60" : ""}`}
+                      onClick={() => {
+                        if (selectionMode) {
+                          toggleSelection(project.id);
+                        } else {
+                          navigate(`/projects/${project.id}`);
+                        }
                 }}
               >
                 <CardHeader className="p-4 pb-2">
@@ -347,17 +432,47 @@ const Projects = () => {
                         Nur online
                       </span>
                     )}
+                    {project.archivedAt && (
+                      <span className={`text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded shrink-0 ${!project.isLocal ? "" : "ml-auto"}`}>
+                        Archiviert
+                      </span>
+                    )}
                     {!selectionMode && (
-                      <button
-                        className="ml-auto shrink-0 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                        title="Projekt löschen"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          confirmDelete([project.id]);
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <div className="ml-auto shrink-0 flex items-center gap-1">
+                        {project.archivedAt ? (
+                          <button
+                            className="p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                            title="Reaktivieren"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              unarchiveProject(project.id);
+                            }}
+                          >
+                            <ArchiveRestore className="h-4 w-4" />
+                          </button>
+                        ) : (
+                          <button
+                            className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors"
+                            title="Archivieren"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              archiveProject(project.id);
+                            }}
+                          >
+                            <Archive className="h-4 w-4" />
+                          </button>
+                        )}
+                        <button
+                          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                          title="Projekt löschen"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            confirmDelete([project.id]);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     )}
                   </CardTitle>
                   <CardDescription className="flex items-center gap-1 text-xs">
@@ -381,9 +496,12 @@ const Projects = () => {
                   )}
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        )}
+                  ))}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
