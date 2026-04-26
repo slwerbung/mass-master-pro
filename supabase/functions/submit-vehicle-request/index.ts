@@ -50,7 +50,7 @@ interface FormData {
 
 // ---- HERO operations ----
 
-async function heroSearchContactByEmail(apiKey: string, email: string): Promise<{ id: number; isContactPerson: boolean; parentCustomerId: number } | null> {
+async function heroSearchContactByEmail(apiKey: string, email: string): Promise<{ id: number; isContactPerson: boolean; parentCustomerId: number; displayName: string } | null> {
   // contacts(search) does substring matching across fields. We additionally
   // filter the response to require an exact email hit, since "info@x.de"
   // matched against name fields could otherwise return false positives.
@@ -61,6 +61,10 @@ async function heroSearchContactByEmail(apiKey: string, email: string): Promise<
         email
         is_contact_person
         parent_customer_id
+        full_name
+        company_name
+        first_name
+        last_name
       }
     }
   `;
@@ -74,10 +78,18 @@ async function heroSearchContactByEmail(apiKey: string, email: string): Promise<
     const contacts = data?.data?.contacts || [];
     const hit = contacts.find((c: any) => (c.email || "").toLowerCase() === email.toLowerCase());
     if (!hit) return null;
+    // Pick the most useful display name: full_name if HERO computed one,
+    // else company_name, else assembled first+last.
+    const displayName =
+      hit.full_name ||
+      hit.company_name ||
+      [hit.first_name, hit.last_name].filter(Boolean).join(" ") ||
+      "";
     return {
       id: hit.id,
       isContactPerson: !!hit.is_contact_person,
       parentCustomerId: hit.parent_customer_id || 0,
+      displayName,
     };
   } catch (e) {
     console.warn("heroSearchContactByEmail failed", e);
@@ -129,16 +141,18 @@ async function heroCreateContact(apiKey: string, signup: NonNullable<FormData["s
   }
 }
 
-async function heroCreateProject(apiKey: string, customerId: number, projectTitle: string, projectNr: string): Promise<{ id: number } | { error: string }> {
+async function heroCreateProject(apiKey: string, customerId: number, projectTitle: string): Promise<{ id: number; nr: string } | { error: string }> {
+  // We do NOT pass project_nr - HERO assigns its own number, which is the
+  // source of truth. Otherwise we'd risk collisions with existing HERO
+  // projects in the same numbering range.
   const projectMatch: any = {
     customer_id: customerId,
     project_title: projectTitle,
-    project_nr: projectNr,
     partner_source: "Fahrzeug-Anfrage Website",
   };
   const mutation = `
     mutation CreateProject($project_match: ProjectMatchInput) {
-      create_project_match(project_match: $project_match) { id }
+      create_project_match(project_match: $project_match) { id project_nr }
     }
   `;
   try {
@@ -149,9 +163,9 @@ async function heroCreateProject(apiKey: string, customerId: number, projectTitl
     });
     const data = await resp.json();
     if (data.errors?.length) return { error: data.errors.map((e: any) => e.message).join("; ") };
-    const id = data?.data?.create_project_match?.id;
-    if (!id) return { error: "Keine ID in HERO-Projekt-Antwort" };
-    return { id: parseInt(String(id), 10) };
+    const created = data?.data?.create_project_match;
+    if (!created?.id) return { error: "Keine ID in HERO-Projekt-Antwort: " + JSON.stringify(data?.data) };
+    return { id: parseInt(String(created.id), 10), nr: created.project_nr || "" };
   } catch (e: any) {
     return { error: e.message || String(e) };
   }
@@ -326,11 +340,13 @@ serve(async (req) => {
     // ---- HERO contact match (if enabled) ----
     let heroCustomerId: number | null = null;
     let heroError: string | null = null;
+    let heroCustomerName: string = "";
 
     if (heroEnabled) {
       const match = await heroSearchContactByEmail(heroApiKey, body.email.trim());
       if (match) {
         heroCustomerId = match.id;
+        heroCustomerName = match.displayName;
       } else {
         // No HERO match. We need signup data to create a new customer.
         if (!body.signupData?.lastName) {
@@ -348,44 +364,61 @@ serve(async (req) => {
       }
     }
 
+    // Fallback display name from signup data if HERO didn't give us one
+    const displayCustomerName = heroCustomerName || (body.signupData
+      ? [body.signupData.firstName, body.signupData.lastName].filter(Boolean).join(" ") ||
+        body.signupData.companyName ||
+        ""
+      : "");
+
+    // ---- HERO project FIRST (so we can use its assigned number) ----
+    let heroProjectId: number | null = null;
+    let projectNumber: string = "";
+    if (heroEnabled && heroCustomerId) {
+      // Title is "Fahrzeugbeschriftung - <Customer>", which gives the
+      // employee a useful preview in HERO's project list. Falls back to
+      // a generic title if we somehow have no name.
+      const projTitle = displayCustomerName
+        ? `Fahrzeugbeschriftung - ${displayCustomerName}`
+        : "Fahrzeugbeschriftung (Webformular)";
+      const result = await heroCreateProject(heroApiKey, heroCustomerId, projTitle);
+      if ("error" in result) {
+        heroError = (heroError ? heroError + "; " : "") + `Projekt-Anlage: ${result.error}`;
+      } else {
+        heroProjectId = result.id;
+        projectNumber = result.nr;
+      }
+    }
+
+    // Fallback project number when HERO is off or failed.
+    // Only used in those two cases; when HERO works we take its number
+    // verbatim above to avoid collisions with HERO's own numbering.
+    if (!projectNumber) {
+      const { data: latestProjects } = await supabase
+        .from("projects")
+        .select("project_number")
+        .ilike("project_number", "WER-%")
+        .order("project_number", { ascending: false })
+        .limit(50);
+      let nextNumber = 1;
+      for (const p of latestProjects || []) {
+        const m = /^WER-(\d+)/.exec(p.project_number);
+        if (m) {
+          const n = parseInt(m[1], 10);
+          if (n >= nextNumber) nextNumber = n + 1;
+        }
+      }
+      projectNumber = `WER-${nextNumber}`;
+    }
+
     // ---- Create app project ----
     // Pre-generate the project ID so we can use it as user_id - the column
     // is NOT NULL but for anonymous customer-form submissions there's no
     // real user. Using the project's own ID matches the fallback pattern
-    // already used in supabaseSync (line ~505) and means the project is
-    // not "owned" by any specific employee, which is the right semantics
-    // here - it gets sorted into the general queue for whoever picks it up.
+    // already used in supabaseSync.
+    // employee_id is left NULL - this is what marks the project as
+    // "Nicht zugewiesen" so it shows up in that filter.
     const newProjectId = crypto.randomUUID();
-    // Generate next project number. Simple lookup of max numeric suffix from
-    // existing projects starting with "WER-". Not bullet-proof against parallel
-    // submits but good enough for a low-volume web form.
-    const { data: latestProjects } = await supabase
-      .from("projects")
-      .select("project_number")
-      .ilike("project_number", "WER-%")
-      .order("project_number", { ascending: false })
-      .limit(50);
-    let nextNumber = 1;
-    for (const p of latestProjects || []) {
-      const m = /^WER-(\d+)/.exec(p.project_number);
-      if (m) {
-        const n = parseInt(m[1], 10);
-        if (n >= nextNumber) nextNumber = n + 1;
-      }
-    }
-    const projectNumber = `WER-${nextNumber}`;
-
-    // ---- HERO project (if customer matched/created) ----
-    let heroProjectId: number | null = null;
-    if (heroEnabled && heroCustomerId) {
-      const projTitle = `Fahrzeugbeschriftung ${projectNumber}`;
-      const result = await heroCreateProject(heroApiKey, heroCustomerId, projTitle, projectNumber);
-      if ("error" in result) {
-        heroError = `Projekt-Anlage: ${result.error}`;
-      } else {
-        heroProjectId = result.id;
-      }
-    }
 
     // Build customFields with HERO link if present
     const customFields: Record<string, string> = {};
@@ -399,11 +432,10 @@ serve(async (req) => {
       .insert({
         id: newProjectId,
         user_id: newProjectId,
+        employee_id: null,
         project_number: projectNumber,
         project_type: "fahrzeugbeschriftung",
-        customer_name: body.signupData
-          ? [body.signupData.firstName, body.signupData.lastName].filter(Boolean).join(" ") || body.signupData.companyName || null
-          : null,
+        customer_name: displayCustomerName || null,
         custom_fields: customFields,
       })
       .select()

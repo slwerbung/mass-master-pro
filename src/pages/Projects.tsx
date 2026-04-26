@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw, Trash2, CheckSquare, X, Archive, ArchiveRestore } from "lucide-react";
+import { Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw, Trash2, CheckSquare, X, Archive, ArchiveRestore, UserPlus } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -29,6 +29,7 @@ interface ProjectListItem {
   locationCount: number;
   isLocal: boolean;
   archivedAt?: Date | null;
+  employeeId?: string | null;
 }
 
 interface ProjectFieldConfig {
@@ -50,9 +51,12 @@ const Projects = () => {
   const [projectFieldConfig, setProjectFieldConfig] = useState<ProjectFieldConfig[]>([]);
   // Filter state. typeFilter "all" shows every type; the per-type tabs
   // narrow the list. showArchived toggles the archive view - default
-  // off so the main view stays uncluttered.
+  // off so the main view stays uncluttered. showUnassigned shows only
+  // projects with employee_id IS NULL - typically customer-form
+  // submissions waiting to be picked up by an employee.
   const [typeFilter, setTypeFilter] = useState<"all" | "aufmass" | "aufmass_mit_plan" | "fahrzeugbeschriftung">("all");
   const [showArchived, setShowArchived] = useState(false);
+  const [showUnassigned, setShowUnassigned] = useState(false);
   const navigate = useNavigate();
   const session = getSession();
   const syncDoneRef = useRef(false);
@@ -82,10 +86,18 @@ const Projects = () => {
     try {
       await indexedDBStorage.migrateFromLocalStorage();
 
-      const projectQuery = supabase.from("projects").select("id, project_number, project_type, customer_name, custom_fields, created_at, employee_id, archived_at").order("created_at", { ascending: false });
+      // For employees: show their own projects PLUS unassigned ones
+      // (employee_id IS NULL). That way customer-form submissions show
+      // up in the queue and any employee can grab them.
+      const projectQuery = supabase
+        .from("projects")
+        .select("id, project_number, project_type, customer_name, custom_fields, created_at, employee_id, archived_at")
+        .order("created_at", { ascending: false });
 
       const [ownedResult, assignedResult, localSummary] = await Promise.all([
-        session?.role === "employee" ? projectQuery.eq("employee_id", session.id) : projectQuery,
+        session?.role === "employee"
+          ? projectQuery.or(`employee_id.eq.${session.id},employee_id.is.null`)
+          : projectQuery,
         session?.role === "employee"
           ? (supabase as any).from('project_employee_assignments').select('project_id').eq('employee_id', session.id)
           : Promise.resolve({ data: [] }),
@@ -124,6 +136,7 @@ const Projects = () => {
           locationCount: local?.locationCount ?? 0,
           isLocal: !!local,
           archivedAt: sp.archived_at ? new Date(sp.archived_at) : null,
+          employeeId: sp.employee_id || null,
         };
       });
 
@@ -245,6 +258,25 @@ const Projects = () => {
     }
   };
 
+  // Take ownership of an unassigned project (typically a customer-form
+  // submission). Sets employee_id to the current employee, so it leaves
+  // the "Nicht zugewiesen" pile and shows up in the employee's personal
+  // queue. Admins can also use this if they want to claim something.
+  const claimProject = async (id: string) => {
+    if (!session?.id) return;
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ employee_id: session.id })
+        .eq("id", id);
+      if (error) throw error;
+      toast.success("Projekt übernommen");
+      await loadProjects(false);
+    } catch (e: any) {
+      toast.error("Fehler beim Übernehmen: " + e.message);
+    }
+  };
+
   const exitSelectionMode = () => {
     setSelectionMode(false);
     setSelectedIds(new Set());
@@ -354,31 +386,36 @@ const Projects = () => {
             aufmass: projects.filter(p => !p.archivedAt && p.projectType === "aufmass").length,
             aufmass_mit_plan: projects.filter(p => !p.archivedAt && p.projectType === "aufmass_mit_plan").length,
             fahrzeugbeschriftung: projects.filter(p => !p.archivedAt && p.projectType === "fahrzeugbeschriftung").length,
+            unassigned: projects.filter(p => !p.archivedAt && !p.employeeId).length,
             archived: projects.filter(p => p.archivedAt).length,
           };
           const visibleProjects = projects.filter(p => {
             if (showArchived) return !!p.archivedAt;
             if (p.archivedAt) return false;
+            if (showUnassigned) return !p.employeeId;
             if (typeFilter === "all") return true;
             return p.projectType === typeFilter;
           });
           return (
             <>
               <div className="flex flex-wrap items-center gap-2 mb-4">
-                <Button size="sm" variant={!showArchived && typeFilter === "all" ? "default" : "outline"} onClick={() => { setShowArchived(false); setTypeFilter("all"); }}>
+                <Button size="sm" variant={!showArchived && !showUnassigned && typeFilter === "all" ? "default" : "outline"} onClick={() => { setShowArchived(false); setShowUnassigned(false); setTypeFilter("all"); }}>
                   Alle ({counts.all})
                 </Button>
-                <Button size="sm" variant={!showArchived && typeFilter === "aufmass" ? "default" : "outline"} onClick={() => { setShowArchived(false); setTypeFilter("aufmass"); }}>
+                <Button size="sm" variant={!showArchived && !showUnassigned && typeFilter === "aufmass" ? "default" : "outline"} onClick={() => { setShowArchived(false); setShowUnassigned(false); setTypeFilter("aufmass"); }}>
                   Aufmaß ({counts.aufmass})
                 </Button>
-                <Button size="sm" variant={!showArchived && typeFilter === "aufmass_mit_plan" ? "default" : "outline"} onClick={() => { setShowArchived(false); setTypeFilter("aufmass_mit_plan"); }}>
+                <Button size="sm" variant={!showArchived && !showUnassigned && typeFilter === "aufmass_mit_plan" ? "default" : "outline"} onClick={() => { setShowArchived(false); setShowUnassigned(false); setTypeFilter("aufmass_mit_plan"); }}>
                   Aufmaß mit Plan ({counts.aufmass_mit_plan})
                 </Button>
-                <Button size="sm" variant={!showArchived && typeFilter === "fahrzeugbeschriftung" ? "default" : "outline"} onClick={() => { setShowArchived(false); setTypeFilter("fahrzeugbeschriftung"); }}>
+                <Button size="sm" variant={!showArchived && !showUnassigned && typeFilter === "fahrzeugbeschriftung" ? "default" : "outline"} onClick={() => { setShowArchived(false); setShowUnassigned(false); setTypeFilter("fahrzeugbeschriftung"); }}>
                   Fahrzeug ({counts.fahrzeugbeschriftung})
                 </Button>
+                <Button size="sm" variant={showUnassigned ? "default" : "outline"} onClick={() => { setShowArchived(false); setShowUnassigned(!showUnassigned); }}>
+                  Nicht zugewiesen ({counts.unassigned})
+                </Button>
                 <div className="flex-1" />
-                <Button size="sm" variant={showArchived ? "default" : "outline"} onClick={() => setShowArchived(!showArchived)}>
+                <Button size="sm" variant={showArchived ? "default" : "outline"} onClick={() => { setShowArchived(!showArchived); setShowUnassigned(false); }}>
                   Archiv ({counts.archived})
                 </Button>
               </div>
@@ -430,8 +467,25 @@ const Projects = () => {
                         Archiviert
                       </span>
                     )}
+                    {!project.archivedAt && !project.employeeId && (
+                      <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded ml-auto shrink-0">
+                        Nicht zugewiesen
+                      </span>
+                    )}
                     {!selectionMode && (
-                      <div className="ml-auto shrink-0 flex items-center gap-1">
+                      <div className={`shrink-0 flex items-center gap-1 ${(project.archivedAt || !project.employeeId) ? "" : "ml-auto"}`}>
+                        {!project.archivedAt && !project.employeeId && session?.id && (
+                          <button
+                            className="p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                            title="Übernehmen"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              claimProject(project.id);
+                            }}
+                          >
+                            <UserPlus className="h-4 w-4" />
+                          </button>
+                        )}
                         {project.archivedAt ? (
                           <button
                             className="p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
