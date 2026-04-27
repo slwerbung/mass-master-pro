@@ -176,7 +176,15 @@ async function heroCreateContact(apiKey: string, signup: NonNullable<FormData["s
   }
 }
 
-async function heroCreateProject(apiKey: string, customerId: number, projectTitle: string, opts: { measureId?: number; typeId?: number } = {}): Promise<{ id: number; nr: string } | { error: string; raw?: any }> {
+// HERO IDs derived from inspecting an existing project (WER-1640):
+// - measure_id 6619 = "Werbetechnik" (the only Gewerk this account uses)
+// - type_id 181    = the project type WER-1640 used. Reusing it here gives
+//                    Fahrzeugbeschriftungen the same workflow shape as
+//                    other projects coming from the app.
+const HERO_MEASURE_ID = 6619;
+const HERO_TYPE_ID = 181;
+
+async function heroCreateProject(apiKey: string, customerId: number, projectTitle: string): Promise<{ id: number; nr: string } | { error: string; raw?: any }> {
   // HERO's docs show the create_project_match mutation expects a nested
   // `project` object (with customer_id, measure_id, address) PLUS top-
   // level fields like project_title, partner_source, type_id, step_id.
@@ -189,12 +197,12 @@ async function heroCreateProject(apiKey: string, customerId: number, projectTitl
   const projectMatch: any = {
     project_title: projectTitle,
     partner_source: "Fahrzeug-Anfrage Website",
+    type_id: HERO_TYPE_ID,
     project: {
       customer_id: customerId,
+      measure_id: HERO_MEASURE_ID,
     },
   };
-  if (opts.measureId) projectMatch.project.measure_id = opts.measureId;
-  if (opts.typeId) projectMatch.type_id = opts.typeId;
 
   const mutation = `
     mutation CreateProject($project_match: ProjectMatchInput) {
@@ -351,9 +359,6 @@ function escapeHtml(s: string): string {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405, headers: corsHeaders });
 
   try {
@@ -379,6 +384,10 @@ serve(async (req) => {
         q = `query { measures { id name } }`;
       } else if (body._debug === "project_types") {
         q = `query { project_types { id name steps { id name } } }`;
+      } else if (body._debug === "schema") {
+        // List all root query fields so we can find the right names
+        // for measures/gewerke and project_types in this HERO instance.
+        q = `query { __schema { queryType { fields { name args { name } } } } }`;
       } else {
         return new Response(JSON.stringify({ error: "Unknown _debug mode. Use existing|measures|project_types" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
