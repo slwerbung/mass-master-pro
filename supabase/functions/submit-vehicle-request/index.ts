@@ -176,15 +176,26 @@ async function heroCreateContact(apiKey: string, signup: NonNullable<FormData["s
   }
 }
 
-async function heroCreateProject(apiKey: string, customerId: number, projectTitle: string): Promise<{ id: number; nr: string } | { error: string }> {
-  // We do NOT pass project_nr - HERO assigns its own number, which is the
-  // source of truth. Otherwise we'd risk collisions with existing HERO
-  // projects in the same numbering range.
+async function heroCreateProject(apiKey: string, customerId: number, projectTitle: string, opts: { measureId?: number; typeId?: number } = {}): Promise<{ id: number; nr: string } | { error: string; raw?: any }> {
+  // HERO's docs show the create_project_match mutation expects a nested
+  // `project` object (with customer_id, measure_id, address) PLUS top-
+  // level fields like project_title, partner_source, type_id, step_id.
+  // Our earlier attempt put customer_id at the top level and HERO rejected
+  // with a generic "Internal server error".
+  //
+  // ProjectMatchInput as seen in introspection didn't show `project` -
+  // HERO's schema is incomplete here, but the docs (and live behavior)
+  // confirm this is the right shape.
   const projectMatch: any = {
-    customer_id: customerId,
     project_title: projectTitle,
     partner_source: "Fahrzeug-Anfrage Website",
+    project: {
+      customer_id: customerId,
+    },
   };
+  if (opts.measureId) projectMatch.project.measure_id = opts.measureId;
+  if (opts.typeId) projectMatch.type_id = opts.typeId;
+
   const mutation = `
     mutation CreateProject($project_match: ProjectMatchInput) {
       create_project_match(project_match: $project_match) { id project_nr }
@@ -197,7 +208,12 @@ async function heroCreateProject(apiKey: string, customerId: number, projectTitl
       body: JSON.stringify({ query: mutation, variables: { project_match: projectMatch } }),
     });
     const data = await resp.json();
-    if (data.errors?.length) return { error: data.errors.map((e: any) => e.message).join("; ") };
+    if (data.errors?.length) {
+      return {
+        error: data.errors.map((e: any) => e.message).join("; "),
+        raw: data.errors,
+      };
+    }
     const created = data?.data?.create_project_match;
     if (!created?.id) return { error: "Keine ID in HERO-Projekt-Antwort: " + JSON.stringify(data?.data) };
     return { id: parseInt(String(created.id), 10), nr: created.project_nr || "" };
@@ -335,11 +351,46 @@ function escapeHtml(s: string): string {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405, headers: corsHeaders });
 
   try {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const body: FormData = await req.json();
+    const body: any = await req.json();
+
+    // Debug mode: send { "_debug": "measures" | "project_types" | "existing", "id"?: N }
+    // Returns raw HERO data without any side effects. Helps figure out
+    // schema details when create_project_match returns generic errors.
+    if (body._debug) {
+      const { data: cfg } = await supabase.from("app_config").select("value").eq("key", "hero_api_key").maybeSingle();
+      const apiKey = cfg?.value;
+      if (!apiKey) return new Response(JSON.stringify({ error: "No HERO key" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      let q = "";
+      let vars: any = {};
+      if (body._debug === "existing") {
+        const id = body.id;
+        if (!id) return new Response(JSON.stringify({ error: "Pass id" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        q = `query($ids: [Int]) { project_matches(ids: $ids) { id project_nr project_title partner_source current_project_match_status_id type_id partner_id created project { id customer_id measure_id address { street city zipcode } } } }`;
+        vars = { ids: [parseInt(String(id), 10)] };
+      } else if (body._debug === "measures") {
+        q = `query { measures { id name } }`;
+      } else if (body._debug === "project_types") {
+        q = `query { project_types { id name steps { id name } } }`;
+      } else {
+        return new Response(JSON.stringify({ error: "Unknown _debug mode. Use existing|measures|project_types" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const r = await fetch(HERO_GRAPHQL_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ query: q, variables: vars }),
+      });
+      const text = await r.text();
+      return new Response(text, { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
 
     // Honeypot - bots tend to fill all fields
     if (body.website) {
@@ -434,7 +485,7 @@ serve(async (req) => {
         ? `Fahrzeugbeschriftung - ${displayCustomerName}`
         : "Fahrzeugbeschriftung (Webformular)";
       const result = await heroCreateProject(heroApiKey, heroCustomerId, projTitle);
-      debug.heroCreateProject = "error" in result ? { error: result.error } : { id: result.id, nr: result.nr };
+      debug.heroCreateProject = "error" in result ? { error: result.error, raw: (result as any).raw } : { id: result.id, nr: result.nr };
       if ("error" in result) {
         heroError = (heroError ? heroError + "; " : "") + `Projekt-Anlage: ${result.error}`;
       } else {
