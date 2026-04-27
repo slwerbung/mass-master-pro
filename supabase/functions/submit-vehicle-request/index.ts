@@ -176,57 +176,75 @@ async function heroCreateContact(apiKey: string, signup: NonNullable<FormData["s
   }
 }
 
-// HERO IDs derived from inspecting an existing project (WER-1640):
-// - measure_id 6619 = "Werbetechnik" (the only Gewerk this account uses)
-// - type_id 181    = the project type WER-1640 used. Reusing it here gives
-//                    Fahrzeugbeschriftungen the same workflow shape as
-//                    other projects coming from the app.
-const HERO_MEASURE_ID = 6619;
-const HERO_TYPE_ID = 181;
+// HERO Lead API endpoint - much simpler than GraphQL create_project_match.
+// HERO docs: https://support.hero-software.de/.../Lead-API
+// This single endpoint handles email matching, customer creation if needed,
+// and project creation in one shot. We use it instead of the GraphQL path
+// because GraphQL create_project_match requires internal IDs we don't
+// reliably know and threw "InvalidPrimaryKeyException" with various combos.
+const HERO_LEAD_URL = "https://login.hero-software.de/api/v1/Projects/create";
 
-async function heroCreateProject(apiKey: string, customerId: number, projectTitle: string): Promise<{ id: number; nr: string } | { error: string; raw?: any }> {
-  // HERO's docs show the create_project_match mutation expects a nested
-  // `project` object (with customer_id, measure_id, address) PLUS top-
-  // level fields like project_title, partner_source, type_id, step_id.
-  // Our earlier attempt put customer_id at the top level and HERO rejected
-  // with a generic "Internal server error".
-  //
-  // ProjectMatchInput as seen in introspection didn't show `project` -
-  // HERO's schema is incomplete here, but the docs (and live behavior)
-  // confirm this is the right shape.
-  const projectMatch: any = {
-    project_title: projectTitle,
-    partner_source: "Fahrzeug-Anfrage Website",
-    type_id: HERO_TYPE_ID,
-    project: {
-      customer_id: customerId,
-      measure_id: HERO_MEASURE_ID,
-    },
-  };
+// Measure short code: shows up in HERO project numbers as e.g. "WER-1640".
+// We use "WER" (Werbetechnik) since it's the only Gewerk this account has.
+const HERO_MEASURE_SHORT = "WER";
 
-  const mutation = `
-    mutation CreateProject($project_match: ProjectMatchInput) {
-      create_project_match(project_match: $project_match) { id project_nr }
-    }
-  `;
-  try {
-    const resp = await fetch(HERO_GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query: mutation, variables: { project_match: projectMatch } }),
-    });
-    const data = await resp.json();
-    if (data.errors?.length) {
-      return {
-        error: data.errors.map((e: any) => e.message).join("; "),
-        raw: data.errors,
+async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
+  email: string;
+  signupData?: FormData["signupData"];
+  partnerNotes?: string;
+}): Promise<{ id: number | null; nr: string; ok: boolean; raw: any }> {
+  const customer: any = { email: opts.email };
+  let address: any = null;
+  if (opts.signupData) {
+    if (opts.signupData.salutation) customer.title = opts.signupData.salutation;
+    if (opts.signupData.firstName) customer.first_name = opts.signupData.firstName;
+    if (opts.signupData.lastName) customer.last_name = opts.signupData.lastName;
+    if (opts.signupData.companyName) customer.company_name = opts.signupData.companyName;
+    if (opts.signupData.phone) customer.phone_home = opts.signupData.phone;
+    if (opts.signupData.mobile) customer.phone_mobile = opts.signupData.mobile;
+    if (opts.signupData.street || opts.signupData.zip || opts.signupData.city) {
+      address = {
+        street: opts.signupData.street || "",
+        city: opts.signupData.city || "",
+        zipcode: opts.signupData.zip || "",
+        country_code: "DE",
       };
     }
-    const created = data?.data?.create_project_match;
-    if (!created?.id) return { error: "Keine ID in HERO-Projekt-Antwort: " + JSON.stringify(data?.data) };
-    return { id: parseInt(String(created.id), 10), nr: created.project_nr || "" };
+  }
+
+  const payload: any = {
+    measure: HERO_MEASURE_SHORT,
+    customer,
+    project_match: {
+      partner_source: "Fahrzeug-Anfrage Website",
+      partner_notes: opts.partnerNotes || "Anfrage für Fahrzeugbeschriftung über das Webformular",
+    },
+  };
+  if (address) payload.address = address;
+
+  try {
+    const resp = await fetch(HERO_LEAD_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    // Lead API responds with { status: "success", project: { id, ... } } on
+    // success, or { status: "error", message: "..." } on failure.
+    if (data?.status !== "success") {
+      return { id: null, nr: "", ok: false, raw: data };
+    }
+    // Extract project id and project number - the exact response shape isn't
+    // 100% documented, so we look at common spots.
+    const projId = data?.project?.id ?? data?.project_id ?? null;
+    const projNr = data?.project?.nr ?? data?.project?.project_nr ?? data?.project_nr ?? "";
+    return { id: projId ? parseInt(String(projId), 10) : null, nr: projNr, ok: true, raw: data };
   } catch (e: any) {
-    return { error: e.message || String(e) };
+    return { id: null, nr: "", ok: false, raw: { error: e.message || String(e) } };
   }
 }
 
@@ -384,10 +402,97 @@ serve(async (req) => {
         q = `query { measures { id name } }`;
       } else if (body._debug === "project_types") {
         q = `query { project_types { id name steps { id name } } }`;
+      } else if (body._debug === "project_types_simple") {
+        // project_types without steps - in case "steps" isn't the right
+        // sub-field name in this account.
+        q = `query { project_types { id name } }`;
+      } else if (body._debug === "project_match_full") {
+        // Full WER-1640 project_match including all status/step refs - so
+        // we can replicate them exactly when creating new projects.
+        const id = body.id;
+        if (!id) return new Response(JSON.stringify({ error: "Pass id" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        q = `query($ids: [Int]) { project_matches(ids: $ids) { id project_nr type_id current_project_match_status_id partner_id project { id customer_id measure_id current_project_status_id } } }`;
+        vars = { ids: [parseInt(String(id), 10)] };
+      } else if (body._debug === "create_test") {
+        // Try creating a project with different field combinations to
+        // narrow down which one HERO accepts. body.variant picks one:
+        // - "minimal":     just project_title + project.customer_id
+        // - "no_measure":  drop measure_id
+        // - "with_address": include a dummy address object
+        // - "as_match":    customer_id at top level (old broken style, sanity check)
+        const variant = body.variant || "minimal";
+        const customerId = body.customer_id || 1095708;
+
+        let projectMatch: any;
+        if (variant === "minimal") {
+          projectMatch = {
+            project_title: "Debug-Test minimal",
+            project: { customer_id: customerId },
+          };
+        } else if (variant === "no_measure") {
+          projectMatch = {
+            project_title: "Debug-Test no_measure",
+            project: { customer_id: customerId },
+          };
+        } else if (variant === "with_address") {
+          projectMatch = {
+            project_title: "Debug-Test with_address",
+            project: {
+              customer_id: customerId,
+              measure_id: 6619,
+              address: { street: "Test 1", city: "Stuttgart", zipcode: "70173" },
+            },
+          };
+        } else if (variant === "as_match") {
+          projectMatch = {
+            project_title: "Debug-Test as_match",
+            customer_id: customerId,
+          };
+        } else if (variant === "with_measure") {
+          projectMatch = {
+            project_title: "Debug-Test with_measure",
+            project: {
+              customer_id: customerId,
+              measure_id: 6619,
+            },
+          };
+        } else {
+          return new Response(JSON.stringify({ error: "Unknown variant" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        q = `mutation T($pm: ProjectMatchInput) { create_project_match(project_match: $pm) { id project_nr } }`;
+        vars = { pm: projectMatch };
       } else if (body._debug === "schema") {
         // List all root query fields so we can find the right names
         // for measures/gewerke and project_types in this HERO instance.
         q = `query { __schema { queryType { fields { name args { name } } } } }`;
+      } else if (body._debug === "contact") {
+        // Inspect a single contact's full data structure - we need this
+        // to find the actual customer_id that HERO expects in the project
+        // creation mutation. The contact's own id might not be it.
+        const id = body.id;
+        if (!id) return new Response(JSON.stringify({ error: "Pass id" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        q = `query($ids: [Int]) { contacts(ids: $ids) { id full_name company_name email is_contact_person parent_customer_id type } }`;
+        vars = { ids: [parseInt(String(id), 10)] };
+      } else if (body._debug === "contact_type") {
+        // Introspect Contact type to see all its fields - maybe there's
+        // a customer_id distinct from id.
+        q = `query { __type(name: "Contact") { name fields { name type { name kind ofType { name } } } } }`;
+      } else if (body._debug === "project_input") {
+        // Schema for the inner ProjectInput - lets us see what customer_id
+        // is supposed to refer to (Customer? Contact?)
+        q = `query { __type(name: "ProjectInput") { name inputFields { name type { name kind ofType { name } } } } }`;
+      } else if (body._debug === "project_full") {
+        // Fetch the existing project's full data including its customer
+        // record - maybe there's a Customer entity nested under Project.
+        const id = body.id;
+        if (!id) return new Response(JSON.stringify({ error: "Pass id" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        q = `query($ids: [Int]) { project_matches(ids: $ids) { id project { id customer_id customer { id full_name company_name email type } } } }`;
+        vars = { ids: [parseInt(String(id), 10)] };
+      } else if (body._debug === "customer_input") {
+        // Look at CustomerInput shape - we use this in create_contact and
+        // the field naming might give clues.
+        q = `query { __type(name: "Customer") { name fields { name type { name kind ofType { name } } } } }`;
       } else {
         return new Response(JSON.stringify({ error: "Unknown _debug mode. Use existing|measures|project_types" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
@@ -435,46 +540,38 @@ serve(async (req) => {
     const fieldLabels: Record<string, string> = {};
     (fieldConfigs || []).forEach((f: any) => { fieldLabels[f.field_key] = f.field_label; });
 
-    // ---- HERO contact match (if enabled) ----
-    let heroCustomerId: number | null = null;
+    // ---- HERO contact match (just for "needs_signup" detection) ----
+    // We still match the email up-front: if HERO doesn't know the address
+    // and the form hasn't collected signup details, we ask the user for
+    // them. The actual project creation goes through the Lead API which
+    // handles match-or-create internally - but it would still create an
+    // empty contact if we didn't pre-collect the name etc.
     let heroError: string | null = null;
     let heroCustomerName: string = "";
-    // Debug accumulator: Surfaced in the response so we can diagnose
-    // without relying on log-channel scraping in the dashboard.
+    let foundExistingContact = false;
     const debug: any = {};
 
     if (heroEnabled) {
       const match = await heroSearchContactByEmail(heroApiKey, body.email.trim());
       debug.heroSearch = match ? { id: match.id, isContactPerson: match.isContactPerson, parentCustomerId: match.parentCustomerId, displayName: match.displayName } : null;
       if (match) {
-        // HERO requires the project to be attached to the COMPANY record,
-        // not the contact person. If we matched a contact person, swap to
-        // the parent customer for both the project link and the displayed
-        // customer name. The display name from the contact person row
-        // (e.g. "Herr Timo Wittek") is wrong here - we want "Autohaus
-        // Toepner" or whatever the company is called.
+        foundExistingContact = true;
+        // Display name preference: parent company > the contact's own name
         if (match.isContactPerson && match.parentCustomerId) {
           const parent = await heroFetchContact(heroApiKey, match.parentCustomerId);
           debug.heroParent = parent;
-          heroCustomerId = match.parentCustomerId;
           heroCustomerName = parent?.displayName || match.displayName;
         } else {
-          heroCustomerId = match.id;
           heroCustomerName = match.displayName;
         }
       } else {
-        // No HERO match. We need signup data to create a new customer.
+        // No HERO match - we need signup data so the Lead API can create
+        // a usable customer record (otherwise it'd just have an email).
         if (!body.signupData?.lastName) {
           return new Response(JSON.stringify({ ok: false, needs_signup: true }), {
             status: 200,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
-        }
-        const created = await heroCreateContact(heroApiKey, body.signupData, body.email.trim());
-        if ("error" in created) {
-          heroError = `Kontakt-Anlage: ${created.error}`;
-        } else {
-          heroCustomerId = created.id;
         }
       }
     }
@@ -486,17 +583,27 @@ serve(async (req) => {
         ""
       : "");
 
-    // ---- HERO project FIRST (so we can use its assigned number) ----
+    // ---- Create HERO project via Lead API ----
+    // The Lead API auto-matches the email and either reuses or creates a
+    // customer record. We pass signup data when we have it - HERO uses
+    // it only if creating a new contact, ignored if matching existing.
     let heroProjectId: number | null = null;
     let projectNumber: string = "";
-    if (heroEnabled && heroCustomerId) {
-      const projTitle = displayCustomerName
-        ? `Fahrzeugbeschriftung - ${displayCustomerName}`
-        : "Fahrzeugbeschriftung (Webformular)";
-      const result = await heroCreateProject(heroApiKey, heroCustomerId, projTitle);
-      debug.heroCreateProject = "error" in result ? { error: result.error, raw: (result as any).raw } : { id: result.id, nr: result.nr };
-      if ("error" in result) {
-        heroError = (heroError ? heroError + "; " : "") + `Projekt-Anlage: ${result.error}`;
+    if (heroEnabled) {
+      const fieldDescriptions = Object.entries(body.vehicleFields || {})
+        .filter(([_, v]) => v && String(v).trim())
+        .map(([k, v]) => `${fieldLabels[k] || k}: ${v}`)
+        .join("\n");
+      const partnerNotes = `Anfrage über das Webformular von ${body.email.trim()}.\n\n${fieldDescriptions}`;
+
+      const result = await heroCreateProjectViaLeadAPI(heroApiKey, {
+        email: body.email.trim(),
+        signupData: foundExistingContact ? undefined : body.signupData,
+        partnerNotes,
+      });
+      debug.heroCreateProject = { ok: result.ok, id: result.id, nr: result.nr, raw: result.raw };
+      if (!result.ok) {
+        heroError = `Projekt-Anlage: ${JSON.stringify(result.raw)}`;
       } else {
         heroProjectId = result.id;
         projectNumber = result.nr;
@@ -504,8 +611,6 @@ serve(async (req) => {
     }
 
     // Fallback project number when HERO is off or failed.
-    // Only used in those two cases; when HERO works we take its number
-    // verbatim above to avoid collisions with HERO's own numbering.
     if (!projectNumber) {
       const { data: latestProjects } = await supabase
         .from("projects")
@@ -525,15 +630,8 @@ serve(async (req) => {
     }
 
     // ---- Create app project ----
-    // Pre-generate the project ID so we can use it as user_id - the column
-    // is NOT NULL but for anonymous customer-form submissions there's no
-    // real user. Using the project's own ID matches the fallback pattern
-    // already used in supabaseSync.
-    // employee_id is left NULL - this is what marks the project as
-    // "Nicht zugewiesen" so it shows up in that filter.
     const newProjectId = crypto.randomUUID();
 
-    // Build customFields with HERO link if present
     const customFields: Record<string, string> = {};
     if (heroProjectId) {
       customFields.__hero_project_id = String(heroProjectId);
