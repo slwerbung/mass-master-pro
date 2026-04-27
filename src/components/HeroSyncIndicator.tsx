@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { Upload, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Upload, AlertCircle, X } from "lucide-react";
+import { toast } from "sonner";
 
 /**
  * Small status tile showing how many HERO uploads are pending in the
@@ -14,6 +15,15 @@ import { Upload, AlertCircle, CheckCircle2 } from "lucide-react";
 export const HeroSyncIndicator = () => {
   const [counts, setCounts] = useState<{ total: number; failed: number } | null>(null);
 
+  const refresh = async () => {
+    try {
+      const c = await indexedDBStorage.countPendingHeroUploads();
+      setCounts(c);
+    } catch {
+      // ignore - queue reads failing isn't worth surfacing to the user
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
@@ -21,7 +31,7 @@ export const HeroSyncIndicator = () => {
         const c = await indexedDBStorage.countPendingHeroUploads();
         if (!cancelled) setCounts(c);
       } catch {
-        // ignore - queue reads failing isn't worth surfacing to the user
+        // ignore
       }
     };
     poll();
@@ -31,6 +41,16 @@ export const HeroSyncIndicator = () => {
       window.clearInterval(interval);
     };
   }, []);
+
+  const dismissFailed = async () => {
+    try {
+      const n = await indexedDBStorage.dismissFailedHeroUploads();
+      toast.success(n === 1 ? "1 Eintrag verworfen" : `${n} Einträge verworfen`);
+      refresh();
+    } catch {
+      toast.error("Verwerfen fehlgeschlagen");
+    }
+  };
 
   if (!counts || counts.total === 0) return null;
 
@@ -53,15 +73,23 @@ export const HeroSyncIndicator = () => {
         </div>
       )}
       {hasFailures && (
-        <div className="flex items-center gap-3 p-3 bg-destructive/10 rounded-lg text-sm">
-          <AlertCircle className="h-5 w-5 flex-shrink-0 text-destructive" />
-          <div className="min-w-0">
+        <div className="flex items-start gap-3 p-3 bg-destructive/10 rounded-lg text-sm">
+          <AlertCircle className="h-5 w-5 flex-shrink-0 text-destructive mt-0.5" />
+          <div className="min-w-0 flex-1">
             <div className="font-medium text-destructive">HERO-Upload fehlgeschlagen</div>
             <div className="text-muted-foreground">
               {counts.failed} {counts.failed === 1 ? "Datei konnte" : "Dateien konnten"} nicht zu HERO übertragen werden.
               Bitte manuell hochladen.
             </div>
           </div>
+          <button
+            type="button"
+            onClick={dismissFailed}
+            title="Fehlermeldung verwerfen"
+            className="flex-shrink-0 p-1 -m-1 rounded hover:bg-destructive/20 text-destructive transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
     </div>

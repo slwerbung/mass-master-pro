@@ -842,6 +842,27 @@ export const indexedDBStorage = {
       failed: all.filter(x => x.attempts >= 5).length,
     };
   },
+
+  // Remove all permanently-failed items (attempts >= 5) from the queue.
+  // Used by the "Verwerfen" button on the HERO sync indicator to clear
+  // stuck items that won't recover - typically because the target HERO
+  // project was deleted, the item belonged to test data, or auth has
+  // changed since the item was queued. Returns the number removed.
+  async dismissFailedHeroUploads(): Promise<number> {
+    const db = await getDB();
+    const tx = db.transaction('hero-upload-queue', 'readwrite');
+    const store = tx.objectStore('hero-upload-queue');
+    const all = await store.getAll();
+    let removed = 0;
+    for (const item of all) {
+      if (item.attempts >= 5) {
+        await store.delete(item.id);
+        removed++;
+      }
+    }
+    await tx.done;
+    return removed;
+  },
 };
 
 // Format bytes to human readable
