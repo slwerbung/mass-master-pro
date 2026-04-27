@@ -162,6 +162,11 @@ const NewCustomerSignup = () => {
       e.email = "Keine gültige E-Mail-Adresse (Beispiel: name@firma.de)";
     }
     if (!phone.trim()) e.phone = "Bitte Telefonnummer eingeben";
+    // Address fields are mandatory because HERO rejects new contacts
+    // without a postal address ("Fehlende Postleitzahl" etc.).
+    if (!street.trim()) e.street = "Bitte Straße eingeben";
+    if (!postalCode.trim()) e.postalCode = "Bitte Postleitzahl eingeben";
+    if (!city.trim()) e.city = "Bitte Ort eingeben";
     if (!consent) e.consent = "Bitte der Datenschutzerklärung zustimmen";
     return e;
   };
@@ -173,7 +178,7 @@ const NewCustomerSignup = () => {
     if (!hasAttemptedSubmit) return;
     setErrors(validate());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastName, email, phone, consent, hasAttemptedSubmit]);
+  }, [lastName, email, phone, street, postalCode, city, consent, hasAttemptedSubmit]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -347,7 +352,7 @@ const NewCustomerSignup = () => {
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Adresse</h2>
                 <div className="grid gap-4 sm:grid-cols-[2fr_1fr_2fr]">
                   <div className="space-y-2 sm:col-span-3 relative">
-                    <Label htmlFor="street">Straße &amp; Hausnummer</Label>
+                    <Label htmlFor="street">Straße &amp; Hausnummer *</Label>
                     <Input
                       id="street"
                       value={street}
@@ -356,7 +361,11 @@ const NewCustomerSignup = () => {
                       onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
                       autoComplete="street-address"
                       placeholder="Beispielstraße 12"
+                      required
+                      aria-invalid={!!errors.street}
+                      className={errors.street ? "border-red-500 focus-visible:ring-red-500" : ""}
                     />
+                    {errors.street && <p className="text-sm text-red-600">{errors.street}</p>}
                     {showSuggestions && (addressSuggestions.length > 0 || loadingSuggestions) && (
                       <div className="absolute z-50 w-full mt-1 border rounded-lg shadow-lg bg-background overflow-hidden max-h-72 overflow-y-auto">
                         {loadingSuggestions && (
@@ -381,12 +390,31 @@ const NewCustomerSignup = () => {
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="postalCode">PLZ</Label>
-                    <Input id="postalCode" value={postalCode} onChange={(e) => setPostalCode(e.target.value)} autoComplete="postal-code" inputMode="numeric" />
+                    <Label htmlFor="postalCode">PLZ *</Label>
+                    <Input
+                      id="postalCode"
+                      value={postalCode}
+                      onChange={(e) => setPostalCode(e.target.value)}
+                      autoComplete="postal-code"
+                      inputMode="numeric"
+                      required
+                      aria-invalid={!!errors.postalCode}
+                      className={errors.postalCode ? "border-red-500 focus-visible:ring-red-500" : ""}
+                    />
+                    {errors.postalCode && <p className="text-sm text-red-600">{errors.postalCode}</p>}
                   </div>
                   <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor="city">Ort</Label>
-                    <Input id="city" value={city} onChange={(e) => setCity(e.target.value)} autoComplete="address-level2" />
+                    <Label htmlFor="city">Ort *</Label>
+                    <Input
+                      id="city"
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      autoComplete="address-level2"
+                      required
+                      aria-invalid={!!errors.city}
+                      className={errors.city ? "border-red-500 focus-visible:ring-red-500" : ""}
+                    />
+                    {errors.city && <p className="text-sm text-red-600">{errors.city}</p>}
                   </div>
                 </div>
               </div>
