@@ -220,6 +220,7 @@ async function heroCreateProjectGraphQL(apiKey: string, opts: {
   customerId: number;
   partnerNotes: string;
   address: { street?: string; city?: string; zipcode?: string };
+  projectTitle?: string;
 }): Promise<{ id: number; nr: string } | { error: string; raw?: any }> {
   // For existing HERO contacts. Lead-API can't be used here because it
   // creates a new contact even when the email matches. We build the
@@ -238,6 +239,9 @@ async function heroCreateProjectGraphQL(apiKey: string, opts: {
       },
     },
   };
+  // project_title is optional - HERO defaults to "<project_nr> | <customer>"
+  // when empty. We only set it when we have something useful.
+  if (opts.projectTitle) projectMatch.project_title = opts.projectTitle;
   const mutation = `
     mutation CreateProject($project_match: ProjectMatchInput) {
       create_project_match(project_match: $project_match) { id project_nr }
@@ -268,6 +272,7 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
   email: string;
   signupData?: FormData["signupData"];
   partnerNotes?: string;
+  projectTitle?: string;
 }): Promise<{ id: number | null; nr: string; ok: boolean; raw: any }> {
   // Used only for new leads (HERO didn't recognize the email). For
   // existing contacts we use heroCreateProjectGraphQL instead, since
@@ -320,7 +325,33 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
       return { id: null, nr: "", ok: false, raw: data };
     }
     const projId = data?.id ?? data?.project?.id ?? data?.project_id ?? null;
-    return { id: projId ? parseInt(String(projId), 10) : null, nr: "", ok: true, raw: data };
+    const projectMatchId = projId ? parseInt(String(projId), 10) : null;
+
+    // Lead API doesn't accept project_title; if we have one, set it
+    // afterwards via update_project_match GraphQL mutation. Best-effort -
+    // failure here doesn't fail the whole flow, just leaves HERO's
+    // default title (e.g. "WER-1750 | Mustermann").
+    if (projectMatchId && opts.projectTitle) {
+      try {
+        const updateMutation = `
+          mutation Upd($pm: ProjectMatchInput) {
+            update_project_match(project_match: $pm) { id }
+          }
+        `;
+        await fetch(HERO_GRAPHQL_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            query: updateMutation,
+            variables: { pm: { id: projectMatchId, project_title: opts.projectTitle } },
+          }),
+        });
+      } catch (e) {
+        console.warn("project_title update failed", e);
+      }
+    }
+
+    return { id: projectMatchId, nr: "", ok: true, raw: data };
   } catch (e: any) {
     return { id: null, nr: "", ok: false, raw: { error: e.message || String(e) } };
   }
@@ -427,7 +458,7 @@ async function sendNotificationEmail(opts: {
     : "";
 
   const heroBlock = opts.heroProjectId
-    ? `<p style="color:#0a0;margin-top:16px">✓ HERO-Projekt angelegt: ID ${opts.heroProjectId}</p>`
+    ? `<p style="color:#0a0;margin-top:16px">✓ HERO-Projekt angelegt: <a href="https://login.hero-software.de/partner/Projects/view/${opts.heroProjectId}" style="color:#1976d2">Projekt in HERO öffnen</a> (ID ${opts.heroProjectId})</p>`
     : opts.heroError
     ? `<p style="background:#fff3cd;padding:12px;border-radius:6px;color:#856404">⚠ HERO-Anlage fehlgeschlagen: ${escapeHtml(opts.heroError)}<br>App-Projekt wurde trotzdem angelegt.</p>`
     : "";
@@ -704,12 +735,27 @@ serve(async (req) => {
         .join("\n");
       const partnerNotes = `Anfrage über das Webformular von ${body.email.trim()}.\n\n${fieldDescriptions}`;
 
+      // Project title comes from the form values: prefer Kennzeichen,
+      // fall back to Hersteller, else stay empty. Match labels case-
+      // insensitively since admins might have typed them differently
+      // ("KFZ-Kennzeichen", "kennzeichen", etc.).
+      const findValueByLabel = (...needles: string[]): string => {
+        for (const [key, val] of Object.entries(body.vehicleFields || {})) {
+          if (!val || !String(val).trim()) continue;
+          const label = (fieldLabels[key] || key).toLowerCase();
+          if (needles.some(n => label.includes(n))) return String(val).trim();
+        }
+        return "";
+      };
+      const projectTitle = findValueByLabel("kennzeichen") || findValueByLabel("hersteller") || "";
+
       if (foundExistingContact && heroCustomerIdForProject && heroCustomerAddress?.zipcode) {
         // GraphQL path: existing contact, use stored address
         const result = await heroCreateProjectGraphQL(heroApiKey, {
           customerId: heroCustomerIdForProject,
           partnerNotes,
           address: heroCustomerAddress,
+          projectTitle,
         });
         debug.heroCreateProject = "error" in result
           ? { path: "graphql", ok: false, error: result.error, raw: (result as any).raw }
@@ -726,6 +772,7 @@ serve(async (req) => {
           email: body.email.trim(),
           signupData: body.signupData,
           partnerNotes,
+          projectTitle,
         });
         debug.heroCreateProject = { path: "lead", ok: result.ok, id: result.id, raw: result.raw };
         if (!result.ok) {
