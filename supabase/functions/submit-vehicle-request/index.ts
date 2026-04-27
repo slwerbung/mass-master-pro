@@ -50,9 +50,12 @@ interface FormData {
 
 // ---- HERO operations ----
 
-async function heroFetchContact(apiKey: string, contactId: number): Promise<{ id: number; displayName: string } | null> {
+async function heroFetchContact(apiKey: string, contactId: number): Promise<{ id: number; displayName: string; address?: { street?: string; city?: string; zipcode?: string } } | null> {
   // Fetch a single contact by id - used to load the company record after
-  // we matched a contact person and need the firm's display name.
+  // we matched a contact person and need the firm's display name + address.
+  // The Lead API requires an address with at least a zipcode, so we pull
+  // the customer's stored address from HERO when re-using an existing
+  // contact rather than asking the user to type it again.
   const query = `
     query Get($ids: [Int]) {
       contacts(ids: $ids) {
@@ -61,6 +64,11 @@ async function heroFetchContact(apiKey: string, contactId: number): Promise<{ id
         company_name
         first_name
         last_name
+        address {
+          street
+          city
+          zipcode
+        }
       }
     }
   `;
@@ -78,14 +86,19 @@ async function heroFetchContact(apiKey: string, contactId: number): Promise<{ id
       hit.full_name ||
       [hit.first_name, hit.last_name].filter(Boolean).join(" ") ||
       "";
-    return { id: hit.id, displayName };
+    const address = hit.address ? {
+      street: hit.address.street || undefined,
+      city: hit.address.city || undefined,
+      zipcode: hit.address.zipcode || undefined,
+    } : undefined;
+    return { id: hit.id, displayName, address };
   } catch (e) {
     console.warn("heroFetchContact failed", e);
     return null;
   }
 }
 
-async function heroSearchContactByEmail(apiKey: string, email: string): Promise<{ id: number; isContactPerson: boolean; parentCustomerId: number; displayName: string } | null> {
+async function heroSearchContactByEmail(apiKey: string, email: string): Promise<{ id: number; isContactPerson: boolean; parentCustomerId: number; displayName: string; address?: { street?: string; city?: string; zipcode?: string } } | null> {
   // contacts(search) does substring matching across fields. We additionally
   // filter the response to require an exact email hit, since "info@x.de"
   // matched against name fields could otherwise return false positives.
@@ -100,6 +113,11 @@ async function heroSearchContactByEmail(apiKey: string, email: string): Promise<
         company_name
         first_name
         last_name
+        address {
+          street
+          city
+          zipcode
+        }
       }
     }
   `;
@@ -120,11 +138,17 @@ async function heroSearchContactByEmail(apiKey: string, email: string): Promise<
       hit.company_name ||
       [hit.first_name, hit.last_name].filter(Boolean).join(" ") ||
       "";
+    const address = hit.address ? {
+      street: hit.address.street || undefined,
+      city: hit.address.city || undefined,
+      zipcode: hit.address.zipcode || undefined,
+    } : undefined;
     return {
       id: hit.id,
       isContactPerson: !!hit.is_contact_person,
       parentCustomerId: hit.parent_customer_id || 0,
       displayName,
+      address,
     };
   } catch (e) {
     console.warn("heroSearchContactByEmail failed", e);
@@ -191,6 +215,7 @@ const HERO_MEASURE_SHORT = "WER";
 async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
   email: string;
   signupData?: FormData["signupData"];
+  existingAddress?: { street?: string; city?: string; zipcode?: string };
   partnerNotes?: string;
 }): Promise<{ id: number | null; nr: string; ok: boolean; raw: any }> {
   const customer: any = { email: opts.email };
@@ -210,6 +235,20 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
         country_code: "DE",
       };
     }
+  }
+  // For existing HERO contacts without provided signup data, pull the
+  // address from the contact record - the Lead API requires at least a
+  // zipcode and will reject the request with "Fehlende Postleitzahl" if
+  // we omit it. Existing contacts' address fields stay unchanged on
+  // HERO's side (verified by behavior - Lead API only updates if values
+  // differ).
+  if (!address && opts.existingAddress?.zipcode) {
+    address = {
+      street: opts.existingAddress.street || "",
+      city: opts.existingAddress.city || "",
+      zipcode: opts.existingAddress.zipcode,
+      country_code: "DE",
+    };
   }
 
   const payload: any = {
@@ -548,21 +587,26 @@ serve(async (req) => {
     // empty contact if we didn't pre-collect the name etc.
     let heroError: string | null = null;
     let heroCustomerName: string = "";
+    let heroCustomerAddress: { street?: string; city?: string; zipcode?: string } | undefined;
     let foundExistingContact = false;
     const debug: any = {};
 
     if (heroEnabled) {
       const match = await heroSearchContactByEmail(heroApiKey, body.email.trim());
-      debug.heroSearch = match ? { id: match.id, isContactPerson: match.isContactPerson, parentCustomerId: match.parentCustomerId, displayName: match.displayName } : null;
+      debug.heroSearch = match ? { id: match.id, isContactPerson: match.isContactPerson, parentCustomerId: match.parentCustomerId, displayName: match.displayName, hasAddress: !!match.address?.zipcode } : null;
       if (match) {
         foundExistingContact = true;
-        // Display name preference: parent company > the contact's own name
+        // Display name + address preference: parent company > the matched
+        // contact. The parent record holds the canonical address, which the
+        // Lead API needs (it requires at least a zipcode).
         if (match.isContactPerson && match.parentCustomerId) {
           const parent = await heroFetchContact(heroApiKey, match.parentCustomerId);
           debug.heroParent = parent;
           heroCustomerName = parent?.displayName || match.displayName;
+          heroCustomerAddress = parent?.address || match.address;
         } else {
           heroCustomerName = match.displayName;
+          heroCustomerAddress = match.address;
         }
       } else {
         // No HERO match - we need signup data so the Lead API can create
@@ -599,6 +643,7 @@ serve(async (req) => {
       const result = await heroCreateProjectViaLeadAPI(heroApiKey, {
         email: body.email.trim(),
         signupData: foundExistingContact ? undefined : body.signupData,
+        existingAddress: heroCustomerAddress,
         partnerNotes,
       });
       debug.heroCreateProject = { ok: result.ok, id: result.id, nr: result.nr, raw: result.raw };
