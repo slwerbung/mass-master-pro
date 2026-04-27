@@ -212,12 +212,66 @@ const HERO_LEAD_URL = "https://login.hero-software.de/api/v1/Projects/create";
 // We use "WER" (Werbetechnik) since it's the only Gewerk this account has.
 const HERO_MEASURE_SHORT = "WER";
 
+// HERO measure ID for "Werbetechnik" (the only Gewerk this account uses).
+// Discovered by inspecting WER-1640 in HERO.
+const HERO_MEASURE_ID = 6619;
+
+async function heroCreateProjectGraphQL(apiKey: string, opts: {
+  customerId: number;
+  partnerNotes: string;
+  address: { street?: string; city?: string; zipcode?: string };
+}): Promise<{ id: number; nr: string } | { error: string; raw?: any }> {
+  // For existing HERO contacts. Lead-API can't be used here because it
+  // creates a new contact even when the email matches. We build the
+  // mutation exactly as HERO docs prescribe: nested project.{customer_id,
+  // measure_id, address}. The address is required - omitting it triggers
+  // an InvalidPrimaryKeyException with a misleading error message.
+  const projectMatch: any = {
+    partner_notes: opts.partnerNotes,
+    project: {
+      customer_id: opts.customerId,
+      measure_id: HERO_MEASURE_ID,
+      address: {
+        street: opts.address.street || "",
+        city: opts.address.city || "",
+        zipcode: opts.address.zipcode || "",
+      },
+    },
+  };
+  const mutation = `
+    mutation CreateProject($project_match: ProjectMatchInput) {
+      create_project_match(project_match: $project_match) { id project_nr }
+    }
+  `;
+  try {
+    const resp = await fetch(HERO_GRAPHQL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ query: mutation, variables: { project_match: projectMatch } }),
+    });
+    const data = await resp.json();
+    if (data.errors?.length) {
+      return {
+        error: data.errors.map((e: any) => e.message).join("; "),
+        raw: data.errors,
+      };
+    }
+    const created = data?.data?.create_project_match;
+    if (!created?.id) return { error: "Keine ID in HERO-Antwort: " + JSON.stringify(data?.data) };
+    return { id: parseInt(String(created.id), 10), nr: created.project_nr || "" };
+  } catch (e: any) {
+    return { error: e.message || String(e) };
+  }
+}
+
 async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
   email: string;
   signupData?: FormData["signupData"];
-  existingAddress?: { street?: string; city?: string; zipcode?: string };
   partnerNotes?: string;
 }): Promise<{ id: number | null; nr: string; ok: boolean; raw: any }> {
+  // Used only for new leads (HERO didn't recognize the email). For
+  // existing contacts we use heroCreateProjectGraphQL instead, since
+  // Lead API would create a duplicate contact.
   const customer: any = { email: opts.email };
   let address: any = null;
   if (opts.signupData) {
@@ -235,20 +289,6 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
         country_code: "DE",
       };
     }
-  }
-  // For existing HERO contacts without provided signup data, pull the
-  // address from the contact record - the Lead API requires at least a
-  // zipcode and will reject the request with "Fehlende Postleitzahl" if
-  // we omit it. Existing contacts' address fields stay unchanged on
-  // HERO's side (verified by behavior - Lead API only updates if values
-  // differ).
-  if (!address && opts.existingAddress?.zipcode) {
-    address = {
-      street: opts.existingAddress.street || "",
-      city: opts.existingAddress.city || "",
-      zipcode: opts.existingAddress.zipcode,
-      country_code: "DE",
-    };
   }
 
   const payload: any = {
@@ -272,18 +312,36 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
       body: JSON.stringify(payload),
     });
     const data = await resp.json();
-    // Lead API responds with { status: "success", project: { id, ... } } on
-    // success, or { status: "error", message: "..." } on failure.
+    // Lead API responds with { status: "success", id: <project_match_id> }
+    // on success, or { status: "error", message: "..." } on failure.
+    // Note: it does NOT return project_nr - we need to fetch that
+    // separately if we want to show it as the app's project number.
     if (data?.status !== "success") {
       return { id: null, nr: "", ok: false, raw: data };
     }
-    // Extract project id and project number - the exact response shape isn't
-    // 100% documented, so we look at common spots.
-    const projId = data?.project?.id ?? data?.project_id ?? null;
-    const projNr = data?.project?.nr ?? data?.project?.project_nr ?? data?.project_nr ?? "";
-    return { id: projId ? parseInt(String(projId), 10) : null, nr: projNr, ok: true, raw: data };
+    const projId = data?.id ?? data?.project?.id ?? data?.project_id ?? null;
+    return { id: projId ? parseInt(String(projId), 10) : null, nr: "", ok: true, raw: data };
   } catch (e: any) {
     return { id: null, nr: "", ok: false, raw: { error: e.message || String(e) } };
+  }
+}
+
+async function heroFetchProjectNr(apiKey: string, projectMatchId: number): Promise<string> {
+  // The Lead API doesn't return the project number it assigned, only the
+  // internal project_match id. Pull project_nr in a second call so we
+  // can surface it as the app's project number.
+  const query = `query($ids: [Int]) { project_matches(ids: $ids) { id project_nr } }`;
+  try {
+    const resp = await fetch(HERO_GRAPHQL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ query, variables: { ids: [projectMatchId] } }),
+    });
+    const data = await resp.json();
+    return data?.data?.project_matches?.[0]?.project_nr || "";
+  } catch (e) {
+    console.warn("heroFetchProjectNr failed", e);
+    return "";
   }
 }
 
@@ -588,6 +646,7 @@ serve(async (req) => {
     let heroError: string | null = null;
     let heroCustomerName: string = "";
     let heroCustomerAddress: { street?: string; city?: string; zipcode?: string } | undefined;
+    let heroCustomerIdForProject: number | null = null;
     let foundExistingContact = false;
     const debug: any = {};
 
@@ -596,17 +655,19 @@ serve(async (req) => {
       debug.heroSearch = match ? { id: match.id, isContactPerson: match.isContactPerson, parentCustomerId: match.parentCustomerId, displayName: match.displayName, hasAddress: !!match.address?.zipcode } : null;
       if (match) {
         foundExistingContact = true;
-        // Display name + address preference: parent company > the matched
-        // contact. The parent record holds the canonical address, which the
-        // Lead API needs (it requires at least a zipcode).
+        // Display name + address + project linkage: parent company > the
+        // matched contact. The parent record holds the canonical address
+        // and is what HERO expects as customer_id for project_match.
         if (match.isContactPerson && match.parentCustomerId) {
           const parent = await heroFetchContact(heroApiKey, match.parentCustomerId);
           debug.heroParent = parent;
           heroCustomerName = parent?.displayName || match.displayName;
           heroCustomerAddress = parent?.address || match.address;
+          heroCustomerIdForProject = match.parentCustomerId;
         } else {
           heroCustomerName = match.displayName;
           heroCustomerAddress = match.address;
+          heroCustomerIdForProject = match.id;
         }
       } else {
         // No HERO match - we need signup data so the Lead API can create
@@ -627,10 +688,13 @@ serve(async (req) => {
         ""
       : "");
 
-    // ---- Create HERO project via Lead API ----
-    // The Lead API auto-matches the email and either reuses or creates a
-    // customer record. We pass signup data when we have it - HERO uses
-    // it only if creating a new contact, ignored if matching existing.
+    // ---- Create HERO project: hybrid approach ----
+    // Existing HERO contact -> use GraphQL create_project_match so we
+    //   reuse the contact instead of duplicating it. Lead API would create
+    //   a new contact even when the email matches, which is wrong.
+    // New contact (no HERO match) -> use Lead API. It handles contact
+    //   creation + project creation in one go and is HERO's intended
+    //   path for web-form leads.
     let heroProjectId: number | null = null;
     let projectNumber: string = "";
     if (heroEnabled) {
@@ -640,18 +704,48 @@ serve(async (req) => {
         .join("\n");
       const partnerNotes = `Anfrage über das Webformular von ${body.email.trim()}.\n\n${fieldDescriptions}`;
 
-      const result = await heroCreateProjectViaLeadAPI(heroApiKey, {
-        email: body.email.trim(),
-        signupData: foundExistingContact ? undefined : body.signupData,
-        existingAddress: heroCustomerAddress,
-        partnerNotes,
-      });
-      debug.heroCreateProject = { ok: result.ok, id: result.id, nr: result.nr, raw: result.raw };
-      if (!result.ok) {
-        heroError = `Projekt-Anlage: ${JSON.stringify(result.raw)}`;
+      if (foundExistingContact && heroCustomerIdForProject && heroCustomerAddress?.zipcode) {
+        // GraphQL path: existing contact, use stored address
+        const result = await heroCreateProjectGraphQL(heroApiKey, {
+          customerId: heroCustomerIdForProject,
+          partnerNotes,
+          address: heroCustomerAddress,
+        });
+        debug.heroCreateProject = "error" in result
+          ? { path: "graphql", ok: false, error: result.error, raw: (result as any).raw }
+          : { path: "graphql", ok: true, id: result.id, nr: result.nr };
+        if ("error" in result) {
+          heroError = `Projekt-Anlage (GraphQL): ${result.error}`;
+        } else {
+          heroProjectId = result.id;
+          projectNumber = result.nr;
+        }
+      } else if (!foundExistingContact && body.signupData) {
+        // Lead-API path: new lead with signup data
+        const result = await heroCreateProjectViaLeadAPI(heroApiKey, {
+          email: body.email.trim(),
+          signupData: body.signupData,
+          partnerNotes,
+        });
+        debug.heroCreateProject = { path: "lead", ok: result.ok, id: result.id, raw: result.raw };
+        if (!result.ok) {
+          heroError = `Projekt-Anlage (Lead): ${JSON.stringify(result.raw)}`;
+        } else {
+          heroProjectId = result.id;
+          if (heroProjectId) {
+            projectNumber = await heroFetchProjectNr(heroApiKey, heroProjectId);
+            debug.heroProjectNr = projectNumber;
+          }
+        }
       } else {
-        heroProjectId = result.id;
-        projectNumber = result.nr;
+        // Edge case: existing contact found but no address available.
+        // We could ask the user to type one, but that breaks the flow
+        // for the common case. Instead we surface a clear error and
+        // fall back to local-only project creation.
+        heroError = foundExistingContact
+          ? "Existierender HERO-Kontakt hat keine PLZ - keine Projekt-Anlage möglich"
+          : "Keine HERO-Anbindung möglich (weder bekannter Kontakt noch Neukundendaten)";
+        debug.heroCreateProject = { skipped: true, reason: heroError };
       }
     }
 
