@@ -484,7 +484,7 @@ async function sendNotificationEmail(opts: {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.resendApiKey}` },
     body: JSON.stringify({
-      from: "Mass Master Pro <onboarding@resend.dev>",
+      from: "FAHRZEUG-ANFRAGE <onboarding@resend.dev>",
       to: ["info@slwerbung.de"],
       subject: `Fahrzeug-Anfrage: ${opts.email}`,
       html,

@@ -81,6 +81,13 @@ const VehicleInquiry = () => {
     if (needsSignup) {
       if (!lastName.trim()) e.lastName = "Bitte Nachname eingeben";
       if (!phone.trim() && !mobile.trim()) e.phone = "Bitte mindestens eine Telefonnummer eingeben";
+      // Address is mandatory for new contacts because HERO's Lead API
+      // refuses to create contacts without a postal address ("Fehlende
+      // Postleitzahl"). Existing customers don't need this since we re-
+      // use their stored HERO address.
+      if (!street.trim()) e.street = "Bitte Straße eingeben";
+      if (!zip.trim()) e.zip = "Bitte Postleitzahl eingeben";
+      if (!city.trim()) e.city = "Bitte Ort eingeben";
     }
     return e;
   };
@@ -90,7 +97,7 @@ const VehicleInquiry = () => {
     if (!hasAttempted) return;
     setErrors(validate());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [email, lastName, phone, mobile, consent, needsSignup, hasAttempted]);
+  }, [email, lastName, phone, mobile, street, zip, city, consent, needsSignup, hasAttempted]);
 
   // ---- Image handling ----
   const compressImage = async (file: File): Promise<string> => {
@@ -387,16 +394,44 @@ const VehicleInquiry = () => {
                     </div>
                     {errors.phone && <p className="text-sm text-red-600 sm:col-span-2 -mt-3">{errors.phone}</p>}
                     <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor="street">Straße &amp; Hausnummer</Label>
-                      <Input id="street" value={street} onChange={e => setStreet(e.target.value)} autoComplete="street-address" />
+                      <Label htmlFor="street">Straße &amp; Hausnummer *</Label>
+                      <Input
+                        id="street"
+                        value={street}
+                        onChange={e => setStreet(e.target.value)}
+                        autoComplete="street-address"
+                        required
+                        aria-invalid={!!errors.street}
+                        className={errors.street ? "border-red-500" : ""}
+                      />
+                      {errors.street && <p className="text-sm text-red-600">{errors.street}</p>}
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="zip">PLZ</Label>
-                      <Input id="zip" value={zip} onChange={e => setZip(e.target.value)} autoComplete="postal-code" />
+                      <Label htmlFor="zip">PLZ *</Label>
+                      <Input
+                        id="zip"
+                        value={zip}
+                        onChange={e => setZip(e.target.value)}
+                        autoComplete="postal-code"
+                        inputMode="numeric"
+                        required
+                        aria-invalid={!!errors.zip}
+                        className={errors.zip ? "border-red-500" : ""}
+                      />
+                      {errors.zip && <p className="text-sm text-red-600">{errors.zip}</p>}
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="city">Ort</Label>
-                      <Input id="city" value={city} onChange={e => setCity(e.target.value)} autoComplete="address-level2" />
+                      <Label htmlFor="city">Ort *</Label>
+                      <Input
+                        id="city"
+                        value={city}
+                        onChange={e => setCity(e.target.value)}
+                        autoComplete="address-level2"
+                        required
+                        aria-invalid={!!errors.city}
+                        className={errors.city ? "border-red-500" : ""}
+                      />
+                      {errors.city && <p className="text-sm text-red-600">{errors.city}</p>}
                     </div>
                   </div>
                 </div>
