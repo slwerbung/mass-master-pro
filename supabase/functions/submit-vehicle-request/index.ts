@@ -50,6 +50,41 @@ interface FormData {
 
 // ---- HERO operations ----
 
+async function heroFetchContact(apiKey: string, contactId: number): Promise<{ id: number; displayName: string } | null> {
+  // Fetch a single contact by id - used to load the company record after
+  // we matched a contact person and need the firm's display name.
+  const query = `
+    query Get($ids: [Int]) {
+      contacts(ids: $ids) {
+        id
+        full_name
+        company_name
+        first_name
+        last_name
+      }
+    }
+  `;
+  try {
+    const resp = await fetch(HERO_GRAPHQL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ query, variables: { ids: [contactId] } }),
+    });
+    const data = await resp.json();
+    const hit = data?.data?.contacts?.[0];
+    if (!hit) return null;
+    const displayName =
+      hit.company_name ||
+      hit.full_name ||
+      [hit.first_name, hit.last_name].filter(Boolean).join(" ") ||
+      "";
+    return { id: hit.id, displayName };
+  } catch (e) {
+    console.warn("heroFetchContact failed", e);
+    return null;
+  }
+}
+
 async function heroSearchContactByEmail(apiKey: string, email: string): Promise<{ id: number; isContactPerson: boolean; parentCustomerId: number; displayName: string } | null> {
   // contacts(search) does substring matching across fields. We additionally
   // filter the response to require an exact email hit, since "info@x.de"
@@ -319,15 +354,18 @@ serve(async (req) => {
       });
     }
 
-    // Read config: HERO + Resend
+    // Read config: HERO from app_config, Resend from edge function secrets.
+    // The Resend key lives in env (Deno.env) because that matches the
+    // existing submit-new-customer pattern - both functions can share the
+    // same RESEND_API_KEY secret without duplicating it in the database.
     const { data: configRows } = await supabase
       .from("app_config")
       .select("key, value")
-      .in("key", ["hero_api_key", "hero_enabled", "resend_api_key"]);
+      .in("key", ["hero_api_key", "hero_enabled"]);
     const cfg = new Map((configRows || []).map((r: any) => [r.key, r.value]));
     const heroApiKey = cfg.get("hero_api_key");
     const heroEnabled = cfg.get("hero_enabled") === "true" && !!heroApiKey;
-    const resendApiKey = cfg.get("resend_api_key");
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
 
     // Read vehicle field labels for the notification email
     const { data: fieldConfigs } = await supabase
@@ -341,12 +379,29 @@ serve(async (req) => {
     let heroCustomerId: number | null = null;
     let heroError: string | null = null;
     let heroCustomerName: string = "";
+    // Debug accumulator: Surfaced in the response so we can diagnose
+    // without relying on log-channel scraping in the dashboard.
+    const debug: any = {};
 
     if (heroEnabled) {
       const match = await heroSearchContactByEmail(heroApiKey, body.email.trim());
+      debug.heroSearch = match ? { id: match.id, isContactPerson: match.isContactPerson, parentCustomerId: match.parentCustomerId, displayName: match.displayName } : null;
       if (match) {
-        heroCustomerId = match.id;
-        heroCustomerName = match.displayName;
+        // HERO requires the project to be attached to the COMPANY record,
+        // not the contact person. If we matched a contact person, swap to
+        // the parent customer for both the project link and the displayed
+        // customer name. The display name from the contact person row
+        // (e.g. "Herr Timo Wittek") is wrong here - we want "Autohaus
+        // Toepner" or whatever the company is called.
+        if (match.isContactPerson && match.parentCustomerId) {
+          const parent = await heroFetchContact(heroApiKey, match.parentCustomerId);
+          debug.heroParent = parent;
+          heroCustomerId = match.parentCustomerId;
+          heroCustomerName = parent?.displayName || match.displayName;
+        } else {
+          heroCustomerId = match.id;
+          heroCustomerName = match.displayName;
+        }
       } else {
         // No HERO match. We need signup data to create a new customer.
         if (!body.signupData?.lastName) {
@@ -375,13 +430,11 @@ serve(async (req) => {
     let heroProjectId: number | null = null;
     let projectNumber: string = "";
     if (heroEnabled && heroCustomerId) {
-      // Title is "Fahrzeugbeschriftung - <Customer>", which gives the
-      // employee a useful preview in HERO's project list. Falls back to
-      // a generic title if we somehow have no name.
       const projTitle = displayCustomerName
         ? `Fahrzeugbeschriftung - ${displayCustomerName}`
         : "Fahrzeugbeschriftung (Webformular)";
       const result = await heroCreateProject(heroApiKey, heroCustomerId, projTitle);
+      debug.heroCreateProject = "error" in result ? { error: result.error } : { id: result.id, nr: result.nr };
       if ("error" in result) {
         heroError = (heroError ? heroError + "; " : "") + `Projekt-Anlage: ${result.error}`;
       } else {
@@ -515,6 +568,15 @@ serve(async (req) => {
         project_number: projectNumber,
         hero_project_id: heroProjectId,
         hero_error: heroError,
+        // Diagnostics: helps us see end-to-end status on the client when
+        // logs are inaccessible. Safe to expose - no secrets, only public
+        // status flags.
+        debug: {
+          ...debug,
+          heroEnabled,
+          resendApiKeyPresent: !!resendApiKey,
+          customerName: displayCustomerName,
+        },
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
