@@ -36,7 +36,16 @@ async function createHeroContact(apiKey: string, data: any): Promise<{ ok: boole
     city: data.city || null,
   } : null;
 
+  // HERO distinguishes commercial vs private contacts via the `type`
+  // field, and uses `is_contact_person` to mark whether a record is
+  // a person attached to a parent company. Without these two fields
+  // HERO defaults to creating an "Ansprechpartner" (contact person)
+  // even when we provide company_name - which is wrong for our case
+  // where every signup creates a new top-level customer record.
+  const hasCompany = !!data.companyName?.trim();
   const contact: any = {
+    type: hasCompany ? "commercial" : "private",
+    is_contact_person: false,
     first_name: data.firstName || null,
     last_name: data.lastName,
     company_name: data.companyName || null,
