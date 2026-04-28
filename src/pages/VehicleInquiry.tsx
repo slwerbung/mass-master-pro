@@ -23,6 +23,7 @@ interface VehicleFieldConfig {
   field_key: string;
   field_label: string;
   is_active: boolean;
+  is_required: boolean;
   sort_order: number;
 }
 
@@ -65,7 +66,7 @@ const VehicleInquiry = () => {
     (async () => {
       const { data } = await supabase
         .from("vehicle_field_config")
-        .select("field_key, field_label, is_active, sort_order")
+        .select("field_key, field_label, is_active, is_required, sort_order")
         .eq("is_active", true)
         .order("sort_order", { ascending: true });
       setFieldConfigs((data || []) as VehicleFieldConfig[]);
@@ -78,6 +79,14 @@ const VehicleInquiry = () => {
     if (!email.trim()) e.email = "Bitte E-Mail eingeben";
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) e.email = "Keine gültige E-Mail-Adresse";
     if (!consent) e.consent = "Bitte der Datenschutzerklärung zustimmen";
+    // Required-flagged fields from vehicle_field_config. Picking these
+    // up automatically means the admin can flip a field's is_required in
+    // settings and the public form respects it without a code change.
+    for (const f of fieldConfigs) {
+      if (f.is_required && !(fieldValues[f.field_key] || "").trim()) {
+        e[`field-${f.field_key}`] = `Bitte ${f.field_label} eingeben`;
+      }
+    }
     if (needsSignup) {
       if (!lastName.trim()) e.lastName = "Bitte Nachname eingeben";
       if (!phone.trim() && !mobile.trim()) e.phone = "Bitte mindestens eine Telefonnummer eingeben";
@@ -97,7 +106,7 @@ const VehicleInquiry = () => {
     if (!hasAttempted) return;
     setErrors(validate());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [email, lastName, phone, mobile, street, zip, city, consent, needsSignup, hasAttempted]);
+  }, [email, lastName, phone, mobile, street, zip, city, consent, needsSignup, hasAttempted, fieldValues, fieldConfigs]);
 
   // ---- Image handling ----
   const compressImage = async (file: File): Promise<string> => {
@@ -286,16 +295,26 @@ const VehicleInquiry = () => {
               {fieldConfigs.length > 0 && (
                 <div className="space-y-4 pt-2">
                   <h3 className="font-medium">Fahrzeug-Daten</h3>
-                  {fieldConfigs.map(f => (
-                    <div key={f.field_key} className="space-y-2">
-                      <Label htmlFor={`field-${f.field_key}`}>{f.field_label}</Label>
-                      <Input
-                        id={`field-${f.field_key}`}
-                        value={fieldValues[f.field_key] || ""}
-                        onChange={e => setFieldValues(p => ({ ...p, [f.field_key]: e.target.value }))}
-                      />
-                    </div>
-                  ))}
+                  {fieldConfigs.map(f => {
+                    const errKey = `field-${f.field_key}`;
+                    const fieldErr = errors[errKey];
+                    return (
+                      <div key={f.field_key} className="space-y-2">
+                        <Label htmlFor={errKey}>
+                          {f.field_label}{f.is_required && " *"}
+                        </Label>
+                        <Input
+                          id={errKey}
+                          value={fieldValues[f.field_key] || ""}
+                          onChange={e => setFieldValues(p => ({ ...p, [f.field_key]: e.target.value }))}
+                          required={f.is_required}
+                          aria-invalid={!!fieldErr}
+                          className={fieldErr ? "border-red-500 focus-visible:ring-red-500" : ""}
+                        />
+                        {fieldErr && <p className="text-sm text-red-600">{fieldErr}</p>}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 

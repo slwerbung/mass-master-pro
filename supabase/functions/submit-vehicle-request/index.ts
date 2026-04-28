@@ -736,18 +736,26 @@ serve(async (req) => {
       const partnerNotes = `Anfrage über das Webformular von ${body.email.trim()}.\n\n${fieldDescriptions}`;
 
       // Project title comes from the form values: prefer Kennzeichen,
-      // fall back to Hersteller, else stay empty. Match labels case-
-      // insensitively since admins might have typed them differently
-      // ("KFZ-Kennzeichen", "kennzeichen", etc.).
-      const findValueByLabel = (...needles: string[]): string => {
+      // fall back to Hersteller, else stay empty. We match against both
+      // the field_key and the field_label, lowercased - so even if the
+      // admin renamed the label, the key likely still contains the
+      // original German term.
+      const findValueByLabelOrKey = (...needles: string[]): string => {
         for (const [key, val] of Object.entries(body.vehicleFields || {})) {
           if (!val || !String(val).trim()) continue;
-          const label = (fieldLabels[key] || key).toLowerCase();
-          if (needles.some(n => label.includes(n))) return String(val).trim();
+          const label = (fieldLabels[key] || "").toLowerCase();
+          const k = key.toLowerCase();
+          if (needles.some(n => label.includes(n) || k.includes(n))) return String(val).trim();
         }
         return "";
       };
-      const projectTitle = findValueByLabel("kennzeichen") || findValueByLabel("hersteller") || "";
+      // Aliases: kennzeichen + nummernschild, hersteller + marke
+      const projectTitle =
+        findValueByLabelOrKey("kennzeichen", "nummernschild") ||
+        findValueByLabelOrKey("hersteller", "marke") ||
+        "";
+      debug.projectTitle = projectTitle;
+      debug.fieldLabels = fieldLabels;
 
       if (foundExistingContact && heroCustomerIdForProject && heroCustomerAddress?.zipcode) {
         // GraphQL path: existing contact, use stored address
