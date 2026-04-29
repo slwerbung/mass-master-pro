@@ -1120,7 +1120,14 @@ const CustomerView = () => {
 
             <div className="space-y-4">
               {sortedLocations.map((loc) => {
+                // Picture preference depends on viewer:
+                //  - direct-link guest -> original (raw photo, no markup)
+                //  - logged-in customer -> annotated (drawn-on for approval)
+                // Falls back the other way if the preferred type is missing
+                // so we never end up showing nothing when one variant exists.
+                const original = images.find((i: any) => i.location_id === loc.id && i.image_type === "original");
                 const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
+                const displayImage = isLimitedGuestMode ? (original || annotated) : (annotated || original);
                 const pdfEntries = images.filter((i: any) => i.location_id === loc.id && i.image_type === "pdf");
                 const locationFeedback = feedbacks[loc.id] || [];
                 const isApproved = !!approvals[loc.id];
@@ -1143,9 +1150,9 @@ const CustomerView = () => {
                       </div>
                     </CardHeader>
                     <CardContent className="p-4 space-y-4">
-                      {annotated && (
+                      {displayImage && (
                         <div className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[180px]">
-                          <img src={getSignedImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-auto max-h-[70vh] object-contain" />
+                          <img src={getSignedImageUrl(displayImage.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-auto max-h-[70vh] object-contain" />
                         </div>
                       )}
 
