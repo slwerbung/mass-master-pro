@@ -29,7 +29,12 @@ Deno.serve(async (req) => {
     // - get_logo returns the company logo, which by definition is meant to
     //   be visible to anyone (customers, public form visitors, guests). Logo
     //   uploads/changes still require admin auth via set_logo.
-    const publicActions = ["get_project_prefix", "get_integration_config", "get_logo"];
+    // - get_privacy_url is read by every customer-facing form so the
+    //   Datenschutz-link on the consent checkbox can be rendered. Setting
+    //   the URL still requires admin auth via set_privacy_url.
+    // - get_legal_info returns the responsible-party data shown on the
+    //   built-in /datenschutz page; it is meant to be public.
+    const publicActions = ["get_project_prefix", "get_integration_config", "get_logo", "get_privacy_url", "get_legal_info"];
     if (!publicActions.includes(action)) {
       const payload = adminToken ? await verifySessionToken(adminToken, getSessionSecret()) : null;
       if (!payload || payload.role !== "admin" || payload.userId !== "admin") {
@@ -390,6 +395,48 @@ Deno.serve(async (req) => {
         const logoData = params.logoData ?? null;
         if (logoData && logoData.length > 2_000_000) return json({ error: "Logo zu groß (max. 1.5 MB)" }, 400);
         const { error } = await supabase.from("app_config").upsert({ key: "company_logo", value: logoData });
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+      case "get_privacy_url": {
+        // Public action - the URL is read by every customer-facing form
+        // (no auth) so it can render the Datenschutz-link on the consent
+        // checkbox. Returns null when nothing is configured; the form
+        // then falls back to a sensible default.
+        const { data } = await supabase.from("app_config").select("value").eq("key", "privacy_policy_url").maybeSingle();
+        return json({ url: data?.value ?? null });
+      }
+      case "set_privacy_url": {
+        // Admin-only action. Allow empty string to clear the value.
+        const url = (params.url ?? "").trim();
+        if (url && !/^https?:\/\//i.test(url)) {
+          return json({ error: "URL muss mit http:// oder https:// beginnen" }, 400);
+        }
+        const { error } = await supabase.from("app_config").upsert({ key: "privacy_policy_url", value: url || null });
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+      case "get_legal_info": {
+        // Public action - the values are needed by the built-in privacy
+        // policy page (/datenschutz) which is publicly accessible. We
+        // store as a single JSON blob to keep the schema simple and
+        // avoid one round-trip per field.
+        const { data } = await supabase.from("app_config").select("value").eq("key", "legal_info").maybeSingle();
+        let parsed: any = null;
+        if (data?.value) {
+          try { parsed = JSON.parse(data.value); } catch { parsed = null; }
+        }
+        return json({ info: parsed });
+      }
+      case "set_legal_info": {
+        // Admin-only. Stores the responsible-party details as JSON.
+        // We don't validate strictly because the user knows their own
+        // company data better than we do; we just keep length under a
+        // reasonable cap to prevent abuse.
+        const info = params.info ?? {};
+        const serialized = JSON.stringify(info);
+        if (serialized.length > 5000) return json({ error: "Eingabe zu lang" }, 400);
+        const { error } = await supabase.from("app_config").upsert({ key: "legal_info", value: serialized });
         if (error) return json({ error: error.message }, 500);
         return json({ success: true });
       }

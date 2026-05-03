@@ -63,6 +63,18 @@ const Admin = () => {
   const [savingAdminPassword, setSavingAdminPassword] = useState(false);
   const [companyLogo, setCompanyLogo] = useState<string | null>(null);
   const [savingLogo, setSavingLogo] = useState(false);
+  const [privacyUrl, setPrivacyUrl] = useState("");
+  const [savingPrivacyUrl, setSavingPrivacyUrl] = useState(false);
+  const [legalInfo, setLegalInfo] = useState({
+    companyName: "",
+    representative: "",
+    street: "",
+    zip: "",
+    city: "",
+    email: "",
+    phone: "",
+  });
+  const [savingLegalInfo, setSavingLegalInfo] = useState(false);
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [projectFields, setProjectFields] = useState<FieldConfig[]>([]);
   const [newFieldLabel, setNewFieldLabel] = useState("");
@@ -131,7 +143,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadVehicleFields(); loadIntegrations(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadVehicleFields(); loadIntegrations(); }
   }, [adminToken]);
 
   useEffect(() => {
@@ -190,6 +202,48 @@ const Admin = () => {
     const reader = new FileReader();
     reader.onload = () => saveLogo(reader.result as string);
     reader.readAsDataURL(file);
+  };
+
+  const loadPrivacyUrl = async () => {
+    try {
+      const data = await invoke("get_privacy_url");
+      setPrivacyUrl(data?.url ?? "");
+    } catch {}
+  };
+
+  const savePrivacyUrl = async () => {
+    setSavingPrivacyUrl(true);
+    try {
+      await invoke("set_privacy_url", { url: privacyUrl.trim() });
+      toast.success("Datenschutz-Link gespeichert");
+    } catch (e: any) { toast.error(e.message || "Fehler beim Speichern"); }
+    setSavingPrivacyUrl(false);
+  };
+
+  const loadLegalInfo = async () => {
+    try {
+      const data = await invoke("get_legal_info");
+      if (data?.info) {
+        setLegalInfo({
+          companyName: data.info.companyName || "",
+          representative: data.info.representative || "",
+          street: data.info.street || "",
+          zip: data.info.zip || "",
+          city: data.info.city || "",
+          email: data.info.email || "",
+          phone: data.info.phone || "",
+        });
+      }
+    } catch {}
+  };
+
+  const saveLegalInfo = async () => {
+    setSavingLegalInfo(true);
+    try {
+      await invoke("set_legal_info", { info: legalInfo });
+      toast.success("Verantwortlicher gespeichert");
+    } catch (e: any) { toast.error(e.message || "Fehler beim Speichern"); }
+    setSavingLegalInfo(false);
   };
 
   const loadFields = async () => {
@@ -816,6 +870,109 @@ const Admin = () => {
                     )}
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Datenschutzerklärung</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Diese URL wird in den öffentlichen Formularen (Neukunden-Anmeldung, Fahrzeug-Anfrage)
+                  bei der Datenschutz-Zustimmung verlinkt. Wenn leer, wird die in der App eingebaute
+                  Datenschutzerklärung unter <code className="text-xs">/datenschutz</code> verwendet.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="privacy-url">Eigene URL zur Datenschutzerklärung (optional)</Label>
+                  <Input
+                    id="privacy-url"
+                    type="url"
+                    placeholder="https://www.firma.de/datenschutz"
+                    value={privacyUrl}
+                    onChange={(e) => setPrivacyUrl(e.target.value)}
+                  />
+                </div>
+                <Button onClick={savePrivacyUrl} disabled={savingPrivacyUrl}>
+                  {savingPrivacyUrl ? "Speichert..." : "Speichern"}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Verantwortliche/r (für Datenschutz)</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Diese Daten werden in der eingebauten Datenschutzerklärung als Verantwortliche/r
+                  nach Art. 13 DSGVO genannt. Erforderlich, wenn keine eigene Datenschutz-URL hinterlegt ist.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="legal-company">Firmenname</Label>
+                    <Input
+                      id="legal-company"
+                      value={legalInfo.companyName}
+                      onChange={(e) => setLegalInfo({ ...legalInfo, companyName: e.target.value })}
+                      placeholder="SL Werbung GmbH"
+                    />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="legal-rep">Vertreten durch (optional)</Label>
+                    <Input
+                      id="legal-rep"
+                      value={legalInfo.representative}
+                      onChange={(e) => setLegalInfo({ ...legalInfo, representative: e.target.value })}
+                      placeholder="Max Mustermann (Geschäftsführer)"
+                    />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="legal-street">Straße &amp; Hausnummer</Label>
+                    <Input
+                      id="legal-street"
+                      value={legalInfo.street}
+                      onChange={(e) => setLegalInfo({ ...legalInfo, street: e.target.value })}
+                      placeholder="Beispielstraße 12"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="legal-zip">PLZ</Label>
+                    <Input
+                      id="legal-zip"
+                      value={legalInfo.zip}
+                      onChange={(e) => setLegalInfo({ ...legalInfo, zip: e.target.value })}
+                      placeholder="71364"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="legal-city">Ort</Label>
+                    <Input
+                      id="legal-city"
+                      value={legalInfo.city}
+                      onChange={(e) => setLegalInfo({ ...legalInfo, city: e.target.value })}
+                      placeholder="Winnenden"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="legal-email">E-Mail</Label>
+                    <Input
+                      id="legal-email"
+                      type="email"
+                      value={legalInfo.email}
+                      onChange={(e) => setLegalInfo({ ...legalInfo, email: e.target.value })}
+                      placeholder="info@firma.de"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="legal-phone">Telefon (optional)</Label>
+                    <Input
+                      id="legal-phone"
+                      value={legalInfo.phone}
+                      onChange={(e) => setLegalInfo({ ...legalInfo, phone: e.target.value })}
+                      placeholder="07191 12345"
+                    />
+                  </div>
+                </div>
+                <Button onClick={saveLegalInfo} disabled={savingLegalInfo}>
+                  {savingLegalInfo ? "Speichert..." : "Speichern"}
+                </Button>
               </CardContent>
             </Card>
 
