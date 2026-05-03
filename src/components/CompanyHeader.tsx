@@ -1,7 +1,7 @@
 import { CompanyLogo } from "./CompanyLogo";
 
 /**
- * Full-width header bar with the company logo on the left.
+ * Full-width header bar with the company logo centered.
  *
  * Used at the top of customer-facing pages (public forms, guest views,
  * customer portal) to give them a consistent, website-like appearance
@@ -17,7 +17,7 @@ import { CompanyLogo } from "./CompanyLogo";
 export const CompanyHeader = () => {
   return (
     <header className="w-full bg-background border-b border-border">
-      <div className="container max-w-5xl mx-auto px-4 py-3 flex items-center">
+      <div className="container max-w-5xl mx-auto px-4 py-3 flex items-center justify-center">
         <CompanyLogo className="max-h-10 w-auto" />
       </div>
     </header>
