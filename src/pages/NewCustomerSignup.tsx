@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CheckCircle2, Loader2 } from "lucide-react";
+import { CompanyLogo } from "@/components/CompanyLogo";
 import { toast } from "sonner";
 
 // All German legal forms (Rechtsformen), including non-profits and public bodies.
@@ -235,19 +236,22 @@ const NewCustomerSignup = () => {
   if (submitted) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Card className="w-full max-w-lg">
-          <CardContent className="pt-8 pb-8 text-center space-y-4">
-            <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto" />
-            <h1 className="text-2xl font-semibold">Vielen Dank!</h1>
-            <p className="text-muted-foreground">
-              Ihre Anfrage ist bei uns eingegangen. Wir melden uns in Kürze bei Ihnen.
-            </p>
-            <p className="text-sm text-muted-foreground pt-4">
-              SL Werbung<br />
-              <a href="mailto:info@slwerbung.de" className="text-primary hover:underline">info@slwerbung.de</a>
-            </p>
-          </CardContent>
-        </Card>
+        <div className="w-full max-w-lg space-y-6">
+          <CompanyLogo wrapperClassName="flex justify-center" className="max-h-20 w-auto" />
+          <Card>
+            <CardContent className="pt-8 pb-8 text-center space-y-4">
+              <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto" />
+              <h1 className="text-2xl font-semibold">Vielen Dank!</h1>
+              <p className="text-muted-foreground">
+                Ihre Anfrage ist bei uns eingegangen. Wir melden uns in Kürze bei Ihnen.
+              </p>
+              <p className="text-sm text-muted-foreground pt-4">
+                SL Werbung<br />
+                <a href="mailto:info@slwerbung.de" className="text-primary hover:underline">info@slwerbung.de</a>
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
@@ -255,6 +259,7 @@ const NewCustomerSignup = () => {
   return (
     <div className="min-h-screen bg-background">
       <div className="container max-w-2xl mx-auto px-4 py-8 md:py-12">
+        <CompanyLogo wrapperClassName="flex justify-center mb-6" className="max-h-20 w-auto" />
         <div className="text-center mb-8">
           <h1 className="text-3xl md:text-4xl font-bold mb-2">Neukunden-Anmeldung</h1>
           <p className="text-muted-foreground">

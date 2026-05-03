@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check, Trash2, Upload, Download, Car, ImagePlus } from "lucide-react";
 import { format } from "date-fns";
+import { CompanyLogo } from "@/components/CompanyLogo";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { toast } from "sonner";
@@ -842,6 +843,7 @@ const CustomerView = () => {
   return (
     <div className="min-h-screen bg-background">
       <div className="container max-w-3xl mx-auto p-4 md:p-6 space-y-6">
+        <CompanyLogo wrapperClassName="flex justify-center pt-2" className="max-h-16 w-auto" />
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             {selectedAssignment && (

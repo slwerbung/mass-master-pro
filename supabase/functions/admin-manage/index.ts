@@ -22,10 +22,14 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { adminToken, employeeToken, action, ...params } = body;
 
-    // get_project_prefix is read by NewProject (any logged-in user) and get_integration_config
-    // returns only a boolean (whether integrations are enabled) — both are safe as public.
-    // sync_projects is now admin-only; it was never called from the client in the first place.
-    const publicActions = ["get_project_prefix", "get_integration_config"];
+    // Public actions don't require admin auth:
+    // - get_project_prefix is read by NewProject (any logged-in user)
+    // - get_integration_config returns only a boolean (whether integrations
+    //   are enabled)
+    // - get_logo returns the company logo, which by definition is meant to
+    //   be visible to anyone (customers, public form visitors, guests). Logo
+    //   uploads/changes still require admin auth via set_logo.
+    const publicActions = ["get_project_prefix", "get_integration_config", "get_logo"];
     if (!publicActions.includes(action)) {
       const payload = adminToken ? await verifySessionToken(adminToken, getSessionSecret()) : null;
       if (!payload || payload.role !== "admin" || payload.userId !== "admin") {

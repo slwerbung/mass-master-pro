@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ImagePlus, X, Loader2, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { CompanyLogo } from "@/components/CompanyLogo";
 
 // Public-facing form for customers to request vehicle lettering. Submits
 // via the submit-vehicle-request edge function, which:
@@ -231,19 +232,22 @@ const VehicleInquiry = () => {
   if (submitted) {
     return (
       <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
-        <Card className="max-w-lg w-full">
-          <CardContent className="pt-8 pb-8 text-center space-y-4">
-            <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto" />
-            <h2 className="text-2xl font-bold">Anfrage erhalten</h2>
-            <p className="text-muted-foreground">
-              Vielen Dank! Ihre Anfrage wurde übermittelt und unter der Projektnummer
-              <strong> {submitted.projectNumber}</strong> registriert.
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Wir melden uns zeitnah bei Ihnen unter der angegebenen E-Mail-Adresse.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="max-w-lg w-full space-y-6">
+          <CompanyLogo wrapperClassName="flex justify-center" className="max-h-20 w-auto" />
+          <Card>
+            <CardContent className="pt-8 pb-8 text-center space-y-4">
+              <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto" />
+              <h2 className="text-2xl font-bold">Anfrage erhalten</h2>
+              <p className="text-muted-foreground">
+                Vielen Dank! Ihre Anfrage wurde übermittelt und unter der Projektnummer
+                <strong> {submitted.projectNumber}</strong> registriert.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Wir melden uns zeitnah bei Ihnen unter der angegebenen E-Mail-Adresse.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
@@ -251,6 +255,7 @@ const VehicleInquiry = () => {
   return (
     <div className="min-h-screen bg-muted/30 py-8 px-4">
       <div className="max-w-2xl mx-auto">
+        <CompanyLogo wrapperClassName="flex justify-center mb-6" className="max-h-20 w-auto" />
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold mb-2">Anfrage Fahrzeugbeschriftung</h1>
           <p className="text-muted-foreground">
