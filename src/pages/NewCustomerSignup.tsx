@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { CompanyHeader } from "@/components/CompanyHeader";
+import { PrivacyLink } from "@/components/PrivacyLink";
 import { toast } from "sonner";
 
 // All German legal forms (Rechtsformen), including non-profits and public bodies.
@@ -429,7 +430,7 @@ const NewCustomerSignup = () => {
                 <div className="flex items-start gap-2">
                   <Checkbox id="consent" checked={consent} onCheckedChange={(c) => setConsent(!!c)} aria-invalid={!!errors.consent} className={errors.consent ? "border-red-500 data-[state=unchecked]:border-red-500" : ""} />
                   <Label htmlFor="consent" className="text-sm leading-relaxed cursor-pointer">
-                    Ich habe die <a href="https://www.slwerbung.de/datenschutz" target="_blank" rel="noreferrer" className="underline text-primary">Datenschutzerklärung</a> gelesen und bin mit der Verarbeitung meiner Daten einverstanden. *
+                    Ich habe die <PrivacyLink /> gelesen und bin mit der Verarbeitung meiner Daten einverstanden. *
                   </Label>
                 </div>
                 {errors.consent && <p className="text-sm text-red-600 mt-2">{errors.consent}</p>}
