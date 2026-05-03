@@ -243,7 +243,7 @@ const Auth = () => {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Aufmaß-App</CardTitle>
+          <CardTitle className="text-2xl">Captfix</CardTitle>
           <CardDescription>{mode === "select" ? "Bitte wählen Sie Ihre Rolle" : ""}</CardDescription>
         </CardHeader>
         <CardContent>
