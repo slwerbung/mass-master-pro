@@ -9,6 +9,7 @@ import { ImagePlus, X, Loader2, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { CompanyHeader } from "@/components/CompanyHeader";
+import { PrivacyLink } from "@/components/PrivacyLink";
 
 // Public-facing form for customers to request vehicle lettering. Submits
 // via the submit-vehicle-request edge function, which:
@@ -472,7 +473,7 @@ const VehicleInquiry = () => {
                     className={errors.consent ? "border-red-500 data-[state=unchecked]:border-red-500" : ""}
                   />
                   <Label htmlFor="consent" className="text-sm leading-relaxed cursor-pointer">
-                    Ich habe die <a href="https://www.slwerbung.de/datenschutz" target="_blank" rel="noreferrer" className="underline text-primary">Datenschutzerklärung</a> gelesen und bin mit der Verarbeitung meiner Daten einverstanden. *
+                    Ich habe die <PrivacyLink /> gelesen und bin mit der Verarbeitung meiner Daten einverstanden. *
                   </Label>
                 </div>
                 {errors.consent && <p className="text-sm text-red-600 mt-2">{errors.consent}</p>}
