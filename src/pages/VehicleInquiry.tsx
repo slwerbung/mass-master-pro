@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ImagePlus, X, Loader2, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { CompanyLogo } from "@/components/CompanyLogo";
+import { CompanyHeader } from "@/components/CompanyHeader";
 
 // Public-facing form for customers to request vehicle lettering. Submits
 // via the submit-vehicle-request edge function, which:
@@ -231,10 +231,10 @@ const VehicleInquiry = () => {
   // ---- Success view ----
   if (submitted) {
     return (
-      <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
-        <div className="max-w-lg w-full space-y-6">
-          <CompanyLogo wrapperClassName="flex justify-center" className="max-h-20 w-auto" />
-          <Card>
+      <div className="min-h-screen bg-muted/30">
+        <CompanyHeader />
+        <div className="flex items-center justify-center p-4 pt-12">
+          <Card className="max-w-lg w-full">
             <CardContent className="pt-8 pb-8 text-center space-y-4">
               <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto" />
               <h2 className="text-2xl font-bold">Anfrage erhalten</h2>
@@ -253,15 +253,16 @@ const VehicleInquiry = () => {
   }
 
   return (
-    <div className="min-h-screen bg-muted/30 py-8 px-4">
-      <div className="max-w-2xl mx-auto">
-        <CompanyLogo wrapperClassName="flex justify-center mb-6" className="max-h-20 w-auto" />
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">Anfrage Fahrzeugbeschriftung</h1>
-          <p className="text-muted-foreground">
-            Schicken Sie uns die Daten zu Ihrem Fahrzeug — wir melden uns zur Beratung.
-          </p>
-        </div>
+    <div className="min-h-screen bg-muted/30">
+      <CompanyHeader />
+      <div className="py-8 px-4">
+        <div className="max-w-2xl mx-auto">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold mb-2">Anfrage Fahrzeugbeschriftung</h1>
+            <p className="text-muted-foreground">
+              Schicken Sie uns die Daten zu Ihrem Fahrzeug — wir melden uns zur Beratung.
+            </p>
+          </div>
 
         <Card>
           <CardHeader>
@@ -484,6 +485,7 @@ const VehicleInquiry = () => {
             </form>
           </CardContent>
         </Card>
+        </div>
       </div>
     </div>
   );

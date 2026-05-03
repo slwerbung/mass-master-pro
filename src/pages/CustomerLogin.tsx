@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Users } from "lucide-react";
 import { toast } from "sonner";
 import { setSession, getSession } from "@/lib/session";
-import { CompanyLogo } from "@/components/CompanyLogo";
+import { CompanyHeader } from "@/components/CompanyHeader";
 
 const SESSION_CACHE_KEY = "session_validation_cache";
 function setLoginCache(role: string, token: string, userId: string) {
@@ -72,10 +72,10 @@ const CustomerLogin = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-sm space-y-6">
-        <CompanyLogo wrapperClassName="flex justify-center" className="max-h-20 w-auto" />
-        <Card>
+    <div className="min-h-screen bg-background">
+      <CompanyHeader />
+      <div className="flex items-center justify-center p-4 pt-12">
+        <Card className="w-full max-w-sm">
           <CardHeader className="text-center space-y-2">
             <div className="mx-auto bg-primary/10 rounded-full p-3 w-fit">
               <Users className="h-8 w-8 text-primary" />
