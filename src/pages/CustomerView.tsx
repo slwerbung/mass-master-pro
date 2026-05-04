@@ -491,19 +491,39 @@ const CustomerView = () => {
 
   const getSignedImageUrl = (path: string): string => signedUrlCache[path] || "";
 
-  const triggerNotification = async (changeType: "approval" | "comment") => {
+  // Customer notifications use 3 event types, throttled server-side:
+  //   - first_action: any approval or comment, sent once per assignment
+  //   - comment: a new comment was added (4h throttle on the server)
+  //   - completion: all locations approved (recomputed on the server)
+  // We always call first_action when something happens (cheap, server
+  // dedupes), call "comment" only on actual comment events, and call
+  // "completion" optimistically on any approval - the server checks
+  // whether everything is really approved before sending a mail.
+  const triggerNotification = async (event: "first_action" | "comment" | "completion") => {
     if (!selectedAssignment || isLimitedGuestMode) return;
     try {
       await supabase.functions.invoke("send-notification", {
         body: {
           assignmentId: selectedAssignment.id,
-          customerName: session?.name || "Unbekannt",
-          projectNumber: selectedAssignment.projects?.project_number || "",
-          changeType,
+          event,
         },
       });
     } catch (e) {
       console.warn("Notification failed (non-fatal):", e);
+    }
+  };
+
+  // Reset completion_sent_at when an unapproval happens, so the next
+  // time everything is re-approved we send another completion mail.
+  const resetCompletionSent = async () => {
+    if (!selectedAssignment) return;
+    try {
+      await supabase
+        .from("customer_notifications")
+        .update({ completion_sent_at: null })
+        .eq("assignment_id", selectedAssignment.id);
+    } catch (e) {
+      console.warn("Reset completion_sent_at failed:", e);
     }
   };
 
@@ -585,6 +605,7 @@ const CustomerView = () => {
       setDraftFeedback((prev) => ({ ...prev, [locationId]: "" }));
       setEditingFeedbackId((prev) => ({ ...prev, [locationId]: null }));
       toast.success("Hinweis gespeichert");
+      triggerNotification("first_action");
       triggerNotification("comment");
     } catch (error) {
       console.error("saveFeedback failed", error);
@@ -670,6 +691,7 @@ const CustomerView = () => {
       setVehicleFeedbacks(prev => [...prev, data]);
       setVehicleFeedbackDraft("");
       toast.success("Hinweis gespeichert");
+      triggerNotification("first_action");
       triggerNotification("comment");
     } catch { toast.error("Fehler beim Speichern"); }
     finally { setSavingVehicleFeedback(false); }
@@ -686,7 +708,12 @@ const CustomerView = () => {
       approved: newVal,
       approved_at: newVal ? new Date().toISOString() : null,
     }, { onConflict: "project_id,assignment_id" });
-    if (newVal) triggerNotification("approval");
+    if (newVal) {
+      triggerNotification("first_action");
+      triggerNotification("completion");
+    } else {
+      resetCompletionSent();
+    }
     setSavingVehicleApproval(false);
   };
 
@@ -813,7 +840,12 @@ const CustomerView = () => {
       location_id: locationId, assignment_id: selectedAssignment.id,
       approved, approved_at: approved ? new Date().toISOString() : null,
     }, { onConflict: "location_id,assignment_id" });
-    if (approved) triggerNotification("approval");
+    if (approved) {
+      triggerNotification("first_action");
+      triggerNotification("completion");
+    } else {
+      resetCompletionSent();
+    }
   };
 
   const approveAll = async (approved: boolean) => {
@@ -827,7 +859,12 @@ const CustomerView = () => {
       approved, approved_at: approved ? new Date().toISOString() : null,
     }));
     await supabase.from("location_approvals").upsert(rows, { onConflict: "location_id,assignment_id" });
-    if (approved) triggerNotification("approval");
+    if (approved) {
+      triggerNotification("first_action");
+      triggerNotification("completion");
+    } else {
+      resetCompletionSent();
+    }
     toast.success(approved ? "Alle Standorte freigegeben" : "Alle Freigaben zurückgenommen");
     setSavingApprovals(false);
   };
