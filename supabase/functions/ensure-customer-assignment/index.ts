@@ -1,4 +1,22 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createSessionToken, getSessionSecret } from "../_shared/session.ts";
+
+/**
+ * Ensures a customer record + project assignment exist for a given name
+ * and project, then issues a customer session token. Used both by the
+ * regular /kunde login flow (when a known customer signs in) and by the
+ * direct-link flow (when an unknown visitor opens a project link and
+ * provides their name).
+ *
+ * Behavior is idempotent: if the customer name already matches an
+ * existing record, that one is reused; if the assignment already exists,
+ * nothing happens. A new session token is always returned so the
+ * frontend can run as the authenticated customer afterwards.
+ *
+ * The token returned is the same format issued by validate-customer, so
+ * the rest of the app sees no difference between a "real" customer login
+ * and a direct-link login - both have full customer rights afterwards.
+ */
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,6 +50,7 @@ Deno.serve(async (req) => {
     let customerId: string;
     let customerDisplayName = normalizedName;
 
+    // Step 1: Find or create customer (case-insensitive name match).
     const { data: existingCustomer } = await supabase
       .from("customers")
       .select("id, name")
@@ -47,19 +66,40 @@ Deno.serve(async (req) => {
         .insert({ name: normalizedName })
         .select("id, name")
         .single();
-      if (createError || !createdCustomer) return json({ error: createError?.message || "Could not create customer" }, 500);
+      if (createError || !createdCustomer) {
+        return json({ error: createError?.message || "Could not create customer" }, 500);
+      }
       customerId = createdCustomer.id;
       customerDisplayName = createdCustomer.name;
     }
 
+    // Step 2: Ensure assignment (idempotent upsert).
     const { error: assignmentError } = await supabase
       .from("customer_project_assignments")
-      .upsert({ customer_id: customerId, project_id: projectId }, { onConflict: "customer_id,project_id", ignoreDuplicates: true });
-
+      .upsert(
+        { customer_id: customerId, project_id: projectId },
+        { onConflict: "customer_id,project_id", ignoreDuplicates: true }
+      );
     if (assignmentError) return json({ error: assignmentError.message }, 500);
 
-    return json({ success: true, customer: { id: customerId, name: customerDisplayName } });
-  } catch {
+    // Step 3: Issue a customer session token (12h validity, same as
+    // validate-customer). With this token the client can call
+    // customer-data and other authenticated endpoints just like a
+    // regular customer login.
+    const exp = Math.floor(Date.now() / 1000) + 60 * 60 * 12;
+    const token = await createSessionToken(
+      { role: "customer", userId: customerId, exp },
+      getSessionSecret()
+    );
+
+    return json({
+      success: true,
+      customer: { id: customerId, name: customerDisplayName },
+      token,
+      expiresAt: new Date(exp * 1000).toISOString(),
+    });
+  } catch (e: any) {
+    console.error("ensure-customer-assignment failed:", e);
     return json({ error: "Server error" }, 500);
   }
 });
