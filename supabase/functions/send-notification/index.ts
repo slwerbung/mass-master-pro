@@ -49,7 +49,11 @@ Deno.serve(async (req) => {
         method: "POST",
         headers: { "Authorization": `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: "Aufmass App <noreply@slwerbung.de>",
+          // Sender on the verified captfix.app domain. No reply_to is set
+          // because this is an internal team notification - if the
+          // recipient hits "Reply" they should fall through to the
+          // notifications mailbox (or our default behavior), not bounce.
+          from: "Captfix <notifications@captfix.app>",
           to: ["info@slwerbung.de"],
           subject: `Kundenaktivität: ${customerName} – Projekt ${projectNumber}`,
           html: `

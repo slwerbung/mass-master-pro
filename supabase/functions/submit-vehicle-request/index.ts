@@ -484,8 +484,15 @@ async function sendNotificationEmail(opts: {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.resendApiKey}` },
     body: JSON.stringify({
-      from: "FAHRZEUG-ANFRAGE <onboarding@resend.dev>",
+      // From-address must use the verified captfix.app domain so Resend
+      // accepts the send. The display name "FAHRZEUG-ANFRAGE" makes the
+      // mail recognizable in the inbox.
+      from: "FAHRZEUG-ANFRAGE <notifications@captfix.app>",
       to: ["info@slwerbung.de"],
+      // Reply-To routes "Reply" clicks to the actual sender of the
+      // inquiry, so the team can respond directly to the customer
+      // without copy-pasting addresses.
+      reply_to: opts.email,
       subject: `Fahrzeug-Anfrage: ${opts.email}`,
       html,
     }),
