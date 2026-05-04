@@ -65,22 +65,33 @@ const GuestAccess = () => {
     setLoading(true);
     try {
       const trimmedName = guestName.trim();
-      let customerId = `guest:${trimmedName}`;
-      let customerName = trimmedName;
 
       const { data, error } = await supabase.functions.invoke("ensure-customer-assignment", {
         body: { projectId, customerName: trimmedName },
       });
 
-      if (!error && data?.customer?.id) {
-        customerId = data.customer.id;
-        customerName = data.customer.name || trimmedName;
-      } else {
-        console.warn("ensure-customer-assignment unavailable, falling back to direct guest project access", error || data);
+      if (error || !data?.success || !data?.token || !data?.customer?.id) {
+        toast.error("Anmeldung fehlgeschlagen");
+        return;
       }
 
+      const customerId = data.customer.id;
+      const customerName = data.customer.name || trimmedName;
+
+      // Store the customer name for next visit so we can prefill it.
       localStorage.setItem("guest_name", customerName);
-      setSession({ role: "customer", id: customerId, name: customerName });
+
+      // Set up a full customer session - same shape as the regular
+      // /kunde login. From here on the app treats this user like any
+      // other logged-in customer; no more "limited guest" mode.
+      setSession({
+        role: "customer",
+        id: customerId,
+        name: customerName,
+        authToken: data.token,
+        expiresAt: data.expiresAt,
+      });
+
       navigate(`/customer?project=${projectId}`, { replace: true });
     } catch {
       toast.error("Fehler beim Anmelden");

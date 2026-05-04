@@ -144,7 +144,16 @@ const CustomerView = () => {
 
   const getSelectedProjectId = () => selectedAssignment?.project_id || directProjectId || null;
   const isDirectGuestMode = !!selectedAssignment?.direct || (!!directProjectId && !assignments.some((a) => a.project_id === directProjectId));
-  const isLimitedGuestMode = isDirectGuestMode && !isRealCustomerId(session?.id);
+  // We removed the "limited guest" mode in favor of a unified flow:
+  // every direct-link visitor now logs in via /guest/:projectId, gets a
+  // proper customer record + assignment + auth token via
+  // ensure-customer-assignment, and then uses the same code paths as
+  // any other logged-in customer. This flag is kept as a constant so
+  // existing UI guards (`!isLimitedGuestMode && ...`) still type-check;
+  // they just always evaluate to true now. A follow-up cleanup pass
+  // will remove the now-dead branches in update-guest-info and the
+  // guest-data fallbacks.
+  const isLimitedGuestMode = false;
 
   const saveLegacyFeedback = async (locationId: string, message: string) => {
     const projectId = getSelectedProjectId();
@@ -499,14 +508,26 @@ const CustomerView = () => {
   // dedupes), call "comment" only on actual comment events, and call
   // "completion" optimistically on any approval - the server checks
   // whether everything is really approved before sending a mail.
+  //
+  // Works for both modes (logged-in customer AND direct-link guest)
+  // as long as we can resolve an assignment_id. For pure-token guests
+  // without any matching assignment we silently skip - those are
+  // typically people who got a one-off link and we don't track them.
+  const resolveAssignmentId = (): string | null => {
+    if (selectedAssignment?.id) return selectedAssignment.id;
+    if (directProjectId) {
+      const match = assignments.find(a => a.project_id === directProjectId);
+      if (match) return match.id;
+    }
+    return null;
+  };
+
   const triggerNotification = async (event: "first_action" | "comment" | "completion") => {
-    if (!selectedAssignment || isLimitedGuestMode) return;
+    const assignmentId = resolveAssignmentId();
+    if (!assignmentId) return;
     try {
       await supabase.functions.invoke("send-notification", {
-        body: {
-          assignmentId: selectedAssignment.id,
-          event,
-        },
+        body: { assignmentId, event },
       });
     } catch (e) {
       console.warn("Notification failed (non-fatal):", e);
@@ -516,12 +537,13 @@ const CustomerView = () => {
   // Reset completion_sent_at when an unapproval happens, so the next
   // time everything is re-approved we send another completion mail.
   const resetCompletionSent = async () => {
-    if (!selectedAssignment) return;
+    const assignmentId = resolveAssignmentId();
+    if (!assignmentId) return;
     try {
       await supabase
         .from("customer_notifications")
         .update({ completion_sent_at: null })
-        .eq("assignment_id", selectedAssignment.id);
+        .eq("assignment_id", assignmentId);
     } catch (e) {
       console.warn("Reset completion_sent_at failed:", e);
     }
