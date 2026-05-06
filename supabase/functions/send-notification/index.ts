@@ -95,22 +95,52 @@ Deno.serve(async (req) => {
         updateFields.last_comment_sent_at = now.toISOString();
       }
     } else if (event === "completion") {
-      // Re-check completion status server-side: count locations vs
-      // approvals. We want to fire only when the assignment is *now*
-      // fully approved AND we haven't yet sent a completion mail for
-      // this transition (i.e. completion_sent_at is null - which the
-      // frontend resets when an unapproval happens).
-      const { count: totalLocs } = await supabase
-        .from("locations")
-        .select("id", { count: "exact", head: true })
-        .eq("project_id", projectId);
-      const { count: approvedCount } = await supabase
-        .from("location_approvals")
-        .select("id", { count: "exact", head: true })
-        .eq("assignment_id", assignmentId)
-        .eq("approved", true);
-      const allApproved = (totalLocs || 0) > 0 && (totalLocs || 0) === (approvedCount || 0);
-      if (allApproved && !existing?.completion_sent_at) {
+      // Re-check completion status server-side. Two project types need
+      // different definitions of "complete":
+      //
+      //   - Standort projects: every location must have an approved
+      //     entry in location_approvals. If a location has no approval
+      //     row OR is set to approved=false, the project is incomplete.
+      //
+      //   - Fahrzeug projects: there is exactly one vehicle_layout per
+      //     project, and completion means the vehicle_layout_approval
+      //     row exists with approved=true.
+      //
+      // We pick the path based on the project's type. We fire the mail
+      // only when the project is *now* fully approved AND we haven't
+      // yet sent a completion mail for this transition (i.e.
+      // completion_sent_at is null - the frontend resets it when an
+      // unapproval happens).
+      const { data: projData } = await supabase
+        .from("projects")
+        .select("project_type")
+        .eq("id", projectId)
+        .maybeSingle();
+      const projectType = (projData?.project_type as string) || "standort";
+
+      let isComplete = false;
+      if (projectType === "fahrzeug") {
+        const { data: vehicleApproval } = await supabase
+          .from("vehicle_layout_approval")
+          .select("approved")
+          .eq("project_id", projectId)
+          .eq("assignment_id", assignmentId)
+          .maybeSingle();
+        isComplete = !!vehicleApproval?.approved;
+      } else {
+        const { count: totalLocs } = await supabase
+          .from("locations")
+          .select("id", { count: "exact", head: true })
+          .eq("project_id", projectId);
+        const { count: approvedCount } = await supabase
+          .from("location_approvals")
+          .select("id", { count: "exact", head: true })
+          .eq("assignment_id", assignmentId)
+          .eq("approved", true);
+        isComplete = (totalLocs || 0) > 0 && (totalLocs || 0) === (approvedCount || 0);
+      }
+
+      if (isComplete && !existing?.completion_sent_at) {
         shouldSend = true;
         updateFields.completion_sent_at = now.toISOString();
       }
@@ -164,7 +194,7 @@ function buildMail(event: EventType, ctx: { customerName: string; projectNumber:
   // Plain-but-clear team mails. Always include a link to the project
   // (in the app) so the team member can click and inspect what happened.
   // The subject prefix tells at a glance which type of activity it is.
-  const projectUrl = `https://mass-master-pro.vercel.app/projects/${ctx.projectId}`;
+  const projectUrl = `https://captfix.app/projects/${ctx.projectId}`;
   const linkBlock = `<p style="margin-top:20px"><a href="${projectUrl}" style="background:#0E73E8;color:white;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:500">Projekt öffnen</a></p>`;
   const footer = `<hr style="margin:24px 0;border:none;border-top:1px solid #eee"><p style="color:#888;font-size:12px;margin:0">Diese Benachrichtigung wurde von Captfix automatisch erstellt.</p>`;
 
@@ -191,13 +221,14 @@ function buildMail(event: EventType, ctx: { customerName: string; projectNumber:
       `,
     };
   }
-  // completion
+  // completion - explicit "Freigegeben" wording so the subject and the
+  // body both make clear that the customer formally signed off.
   return {
-    subject: `Freigegeben: ${ctx.customerName} - Projekt ${ctx.projectNumber}`,
+    subject: `FREIGEGEBEN: ${ctx.customerName} - Projekt ${ctx.projectNumber}`,
     html: `
-      <h2 style="margin:0 0 12px;color:#0a8443">Projekt komplett freigegeben</h2>
-      <p><strong>${escapeHtml(ctx.customerName)}</strong> hat alle Standorte des Projekts <strong>${escapeHtml(ctx.projectNumber)}</strong> freigegeben.</p>
-      <p>Das Projekt kann in Produktion gehen.</p>
+      <h2 style="margin:0 0 12px;color:#0a8443">Projekt freigegeben</h2>
+      <p style="font-size:16px"><strong>${escapeHtml(ctx.customerName)}</strong> hat das Projekt <strong>${escapeHtml(ctx.projectNumber)}</strong> freigegeben.</p>
+      <p>Alle relevanten Inhalte wurden vom Kunden bestätigt. Das Projekt kann jetzt in Produktion gehen.</p>
       ${linkBlock}
       ${footer}
     `,

@@ -67,6 +67,20 @@ const Auth = () => {
   const [loading, setLoading] = useState(false);
   const [lockoutSeconds, setLockoutSeconds] = useState(0);
 
+  // Where to send the user after a successful login. Comes from the
+  // ?next=... query parameter set by RoleGuard when an unauthenticated
+  // user tries to open a protected page (e.g. clicking a "Projekt
+  // öffnen" link in a notification email). We only honor app-internal
+  // paths to prevent open-redirect attacks.
+  const getPostLoginTarget = (defaultPath: string): string => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const next = params.get("next");
+      if (next && next.startsWith("/") && !next.startsWith("//")) return next;
+    } catch {}
+    return defaultPath;
+  };
+
   // Countdown timer for lockout display
   useEffect(() => {
     if (lockoutSeconds <= 0) return;
@@ -77,10 +91,11 @@ const Auth = () => {
   useEffect(() => {
     const session = getSession();
     if (session) {
-      if (session.role === "admin") navigate("/admin");
-      else if (session.role === "employee") navigate("/projects");
-      else if (session.role === "customer") navigate("/customer");
+      if (session.role === "admin") navigate(getPostLoginTarget("/admin"));
+      else if (session.role === "employee") navigate(getPostLoginTarget("/projects"));
+      else if (session.role === "customer") navigate(getPostLoginTarget("/customer"));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
 
   useEffect(() => {
@@ -116,7 +131,7 @@ const Auth = () => {
         setSession({ role: "admin", id: "admin", name: "Admin", authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("admin", data.token, "admin");
         toast.success("Als Admin angemeldet");
-        navigate("/admin");
+        navigate(getPostLoginTarget("/admin"));
       }
     } catch { toast.error("Verbindungsfehler"); }
     setLoading(false);
@@ -142,7 +157,7 @@ const Auth = () => {
         setSession({ role: "employee", id: emp.id, name: emp.name, authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("employee", data.token, emp.id);
         toast.success(`Angemeldet als ${emp.name}`);
-        navigate("/projects");
+        navigate(getPostLoginTarget("/projects"));
       } else {
         toast.error("Login fehlgeschlagen");
       }
@@ -172,7 +187,7 @@ const Auth = () => {
         setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name, authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("employee", data.token, selectedEmployee.id);
         toast.success(`Angemeldet als ${selectedEmployee.name}`);
-        navigate("/projects");
+        navigate(getPostLoginTarget("/projects"));
       } else {
         recordFailedAttempt();
         const newRl = checkRateLimit();
@@ -229,7 +244,7 @@ const Auth = () => {
       });
       setLoginCache("customer", data.token, data.customer.id);
       toast.success(`Angemeldet als ${data.customer.name}`);
-      navigate("/customer");
+      navigate(getPostLoginTarget("/customer"));
     } catch {
       toast.error("Verbindungsfehler");
     } finally {

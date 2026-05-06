@@ -100,18 +100,22 @@ const CustomerView = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // When the user arrives via /guest/:projectId/view -> /customer?project=...,
+  // the customer-data load path normally returns the assignment (because
+  // ensure-customer-assignment was called by GuestAccess and it created
+  // both the customer and the assignment). If for some reason the
+  // assignment isn't loaded yet but we have a directProjectId, this
+  // effect picks the matching assignment so the rest of the app sees a
+  // selectedAssignment and runs the normal customer flow - same as a
+  // user who clicked through from the assignment list.
   useEffect(() => {
     if (!directProjectId || selectedAssignment) return;
     const match = assignments.find((a) => a.project_id === directProjectId);
     if (match) {
       loadLocations(match);
-      return;
-    }
-    if (guestToken) {
-      loadDirectGuestProject(directProjectId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignments, directProjectId, selectedAssignment, guestToken]);
+  }, [assignments, directProjectId, selectedAssignment]);
 
   const visibleFields = useMemo(() => mergeWithDefaultLocationFields(fields).filter((f) => f.is_active && f.customer_visible), [fields]);
   const visibleProjectFields = useMemo(() => mergeWithDefaultProjectFields(projectFields).filter((f) => f.is_active), [projectFields]);
@@ -222,10 +226,6 @@ const CustomerView = () => {
       }
 
       setAssignments(loadedAssignments);
-
-      if ((!loadedAssignments || loadedAssignments.length === 0) && directProjectId && guestToken) {
-        await loadDirectGuestProject(directProjectId);
-      }
     } catch (error) {
       console.error(error);
       toast.error("Fehler beim Laden");
