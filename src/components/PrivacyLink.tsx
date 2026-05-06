@@ -56,13 +56,15 @@ export const PrivacyLink = ({
     return () => { cancelled = true; };
   }, []);
 
-  const isExternal = /^https?:\/\//i.test(url);
-
+  // Always open in a new tab. Even for the in-app /datenschutz page —
+  // when this link sits inside a form (vehicle inquiry, signup), opening
+  // in the same tab would discard any data the user has already entered.
+  // A new tab is the safe default in form contexts.
   return (
     <a
       href={url}
-      target={isExternal ? "_blank" : undefined}
-      rel={isExternal ? "noreferrer" : undefined}
+      target="_blank"
+      rel="noreferrer"
       className={className}
     >
       {children}
