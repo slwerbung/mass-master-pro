@@ -152,6 +152,61 @@ Deno.serve(async (req) => {
       return json({ skipped: true, reason: "throttled or already sent" });
     }
 
+<<<<<<< Updated upstream
+=======
+    // Resolve recipient based on configured notification settings.
+    //
+    // Per-event setting from app_config decides:
+    //   - enabled? if not, skip
+    //   - target = "global"           -> use global email
+    //   - target = "assigned_employee" -> use the project owner's email,
+    //                                     falling back to global if the
+    //                                     employee has no email
+    //
+    // If we end up with no recipient address at all, we silently skip -
+    // having the feature configured but no email set should not crash
+    // the customer-facing flow.
+    const [globalEmailRow, settingsRow, projectRow] = await Promise.all([
+      supabase.from("app_config").select("value").eq("key", "notification_global_email").maybeSingle(),
+      supabase.from("app_config").select("value").eq("key", "notification_settings").maybeSingle(),
+      supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle(),
+    ]);
+
+    const globalEmail = (globalEmailRow.data?.value || "").trim();
+    let parsedSettings: any = {};
+    if (settingsRow.data?.value) {
+      try { parsedSettings = JSON.parse(settingsRow.data.value) || {}; } catch { parsedSettings = {}; }
+    }
+    const eventSetting = parsedSettings[event] || { enabled: false, target: "global" };
+
+    if (!eventSetting.enabled) {
+      // Event type is turned off in admin settings - return silently.
+      // We still record nothing since shouldSend was already true above
+      // (so throttle timestamps won't be set, which is correct: we did
+      // not actually send a mail).
+      return json({ skipped: true, reason: "event disabled in settings" });
+    }
+
+    let recipientEmail: string | null = null;
+    if (eventSetting.target === "assigned_employee" && projectRow.data?.employee_id) {
+      const { data: emp } = await supabase
+        .from("employees")
+        .select("email")
+        .eq("id", projectRow.data.employee_id)
+        .maybeSingle();
+      recipientEmail = (emp?.email || "").trim() || null;
+    }
+    // Fallback to global if no specific recipient (or target was "global"
+    // to begin with). globalEmail may itself be empty - we check below.
+    if (!recipientEmail) {
+      recipientEmail = globalEmail || null;
+    }
+
+    if (!recipientEmail) {
+      return json({ skipped: true, reason: "no recipient configured" });
+    }
+
+>>>>>>> Stashed changes
     // Compose mail.
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
     if (!RESEND_API_KEY) {
@@ -165,7 +220,11 @@ Deno.serve(async (req) => {
       headers: { "Authorization": `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         from: "Captfix <notifications@captfix.app>",
+<<<<<<< Updated upstream
         to: ["info@slwerbung.de"],
+=======
+        to: [recipientEmail],
+>>>>>>> Stashed changes
         subject,
         html,
       }),
@@ -183,7 +242,11 @@ Deno.serve(async (req) => {
       ...updateFields,
     }, { onConflict: "assignment_id" });
 
+<<<<<<< Updated upstream
     return json({ sent: true, event });
+=======
+    return json({ sent: true, event, recipient: recipientEmail });
+>>>>>>> Stashed changes
   } catch (e: any) {
     console.error(e);
     return json({ error: "Server error", details: e.message }, 500);

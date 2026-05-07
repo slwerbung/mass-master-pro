@@ -250,6 +250,7 @@ Deno.serve(async (req) => {
         const employees = (data || []).map(emp => ({
           id: emp.id,
           name: emp.name,
+          email: emp.email || null,
           created_at: emp.created_at,
           hasPassword: !!emp.password_hash,
         }));
@@ -260,12 +261,30 @@ Deno.serve(async (req) => {
         if (params.password && String(params.password).trim()) {
           insertData.password_hash = bcrypt.hashSync(String(params.password).trim(), 10);
         }
+        if (params.email && String(params.email).trim()) {
+          insertData.email = String(params.email).trim();
+        }
         const { data, error } = await supabase.from("employees").insert(insertData).select().single();
         if (error) return json({ error: error.message }, 400);
-        return json({ employee: { id: data.id, name: data.name, created_at: data.created_at, hasPassword: !!data.password_hash } });
+        return json({ employee: { id: data.id, name: data.name, email: data.email || null, created_at: data.created_at, hasPassword: !!data.password_hash } });
       }
       case "delete_employee": {
         const { error } = await supabase.from("employees").delete().eq("id", params.employeeId);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+      case "set_employee_email": {
+        // Sets or clears the email of an employee. Empty/null clears it.
+        // We do a basic format check so we don't store obvious garbage,
+        // but rely on the user (admin) to enter a real address.
+        const employeeId = params.employeeId;
+        const raw = params.email;
+        if (!employeeId) return json({ error: "employeeId required" }, 400);
+        const trimmed = (raw ?? "").toString().trim();
+        if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+          return json({ error: "Ungültige E-Mail-Adresse" }, 400);
+        }
+        const { error } = await supabase.from("employees").update({ email: trimmed || null }).eq("id", employeeId);
         if (error) return json({ error: error.message }, 500);
         return json({ success: true });
       }
@@ -440,6 +459,51 @@ Deno.serve(async (req) => {
         if (error) return json({ error: error.message }, 500);
         return json({ success: true });
       }
+<<<<<<< Updated upstream
+=======
+      case "get_notification_settings": {
+        // Returns the global recipient email and per-event settings
+        // (enabled + target). Admin-only because these settings affect
+        // operational behavior; non-admins don't need to see them.
+        const [{ data: emailRow }, { data: settingsRow }] = await Promise.all([
+          supabase.from("app_config").select("value").eq("key", "notification_global_email").maybeSingle(),
+          supabase.from("app_config").select("value").eq("key", "notification_settings").maybeSingle(),
+        ]);
+        let settings: any = null;
+        if (settingsRow?.value) {
+          try { settings = JSON.parse(settingsRow.value); } catch { settings = null; }
+        }
+        return json({
+          globalEmail: emailRow?.value || null,
+          settings: settings || {},
+        });
+      }
+      case "set_notification_settings": {
+        // Admin-only. Persists the global email + the per-event
+        // settings (each event is { enabled: bool, target: "global" |
+        // "assigned_employee" }). We accept partial input so the UI
+        // can save just what changed.
+        const updates: { key: string; value: string | null }[] = [];
+        if ("globalEmail" in params) {
+          const trimmed = (params.globalEmail ?? "").toString().trim();
+          if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+            return json({ error: "Ungültige E-Mail-Adresse" }, 400);
+          }
+          updates.push({ key: "notification_global_email", value: trimmed || null });
+        }
+        if ("settings" in params) {
+          const settings = params.settings ?? {};
+          const serialized = JSON.stringify(settings);
+          if (serialized.length > 5000) return json({ error: "Settings zu groß" }, 400);
+          updates.push({ key: "notification_settings", value: serialized });
+        }
+        for (const u of updates) {
+          const { error } = await supabase.from("app_config").upsert(u);
+          if (error) return json({ error: error.message }, 500);
+        }
+        return json({ success: true });
+      }
+>>>>>>> Stashed changes
       case "get_employee_name": {
         const { data } = await supabase.from("employees").select("name").eq("id", params.employeeId).maybeSingle();
         return json({ name: data?.name ?? null });
