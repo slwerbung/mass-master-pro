@@ -28,6 +28,7 @@ import GuestProject from "./pages/GuestProject";
 import VehicleDetail from "./pages/VehicleDetail";
 import NewCustomerSignup from "./pages/NewCustomerSignup";
 import VehicleInquiry from "./pages/VehicleInquiry";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -94,7 +95,16 @@ const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; childre
   }, [validated, session?.role, session?.authToken, session?.id]);
 
   if (validated === null) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Sitzung wird geprüft...</div>;
-  if (!validated) return <Navigate to="/" replace />;
+  if (!validated) {
+    // Preserve the path + search the user was trying to reach so we can
+    // redirect them back after login. Without this, somebody clicking a
+    // direct project link in a notification email lands on /auth, logs
+    // in, and ends up on /projects (the list) - having lost the link.
+    const target = window.location.pathname + window.location.search;
+    const isHome = target === "/" || target === "/auth";
+    const next = isHome ? "" : `?next=${encodeURIComponent(target)}`;
+    return <Navigate to={`/${next}`} replace />;
+  }
   return <>{children}</>;
 };
 
@@ -147,6 +157,7 @@ const App = () => {
           {/* Public new-customer signup form */}
           <Route path="/neukunde" element={<NewCustomerSignup />} />
           <Route path="/fahrzeug-anfrage" element={<VehicleInquiry />} />
+          <Route path="/datenschutz" element={<PrivacyPolicy />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

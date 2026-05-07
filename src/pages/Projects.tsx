@@ -319,7 +319,7 @@ const Projects = () => {
       <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-foreground">Aufmaß App</h1>
+            <h1 className="text-2xl md:text-3xl font-bold text-foreground">Captfix</h1>
             <p className="text-muted-foreground mt-1 text-sm md:text-base">
               {session?.name ? `Angemeldet als ${session.name}` : "Projekte verwalten"}
             </p>

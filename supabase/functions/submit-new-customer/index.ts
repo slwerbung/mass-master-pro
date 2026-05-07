@@ -223,11 +223,10 @@ serve(async (req) => {
           'Authorization': `Bearer ${resendKey}`,
         },
         body: JSON.stringify({
-          // From-display-name "NEUKUNDE" makes the mail stand out in the
-          // inbox so it doesn't get lost. The email address has to stay
-          // on a verified resend.dev domain since we haven't set up a
-          // custom domain yet.
-          from: 'NEUKUNDE <onboarding@resend.dev>',
+          // From-address uses the verified captfix.app domain. The display
+          // name "NEUKUNDE" makes the mail stand out in the team inbox so
+          // it doesn't get lost in noise.
+          from: 'NEUKUNDE <notifications@captfix.app>',
           to: 'info@slwerbung.de',
           reply_to: data.email || undefined,
           subject,
