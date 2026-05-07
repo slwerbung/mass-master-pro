@@ -29,6 +29,7 @@ import VehicleDetail from "./pages/VehicleDetail";
 import NewCustomerSignup from "./pages/NewCustomerSignup";
 import VehicleInquiry from "./pages/VehicleInquiry";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
+import LabelPrint from "./pages/LabelPrint";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -136,6 +137,7 @@ const App = () => {
           <Route path="/projects" element={<RoleGuard allowedRoles={["admin", "employee"]}><Projects /></RoleGuard>} />
           <Route path="/projects/new" element={<RoleGuard allowedRoles={["admin", "employee"]}><NewProject /></RoleGuard>} />
           <Route path="/projects/customers" element={<RoleGuard allowedRoles={["admin", "employee"]}><CustomerManage /></RoleGuard>} />
+          <Route path="/etiketten" element={<RoleGuard allowedRoles={["admin", "employee"]}><LabelPrint /></RoleGuard>} />
           <Route path="/projects/:projectId" element={<RoleGuard allowedRoles={["admin", "employee"]}><ProjectDetail /></RoleGuard>} />
           <Route path="/projects/:projectId/camera" element={<RoleGuard allowedRoles={["admin", "employee"]}><Camera /></RoleGuard>} />
           <Route path="/projects/:projectId/editor" element={<RoleGuard allowedRoles={["admin", "employee"]}><PhotoEditor /></RoleGuard>} />

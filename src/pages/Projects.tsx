@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw, Trash2, CheckSquare, X, Archive, ArchiveRestore, UserPlus } from "lucide-react";
+import { Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw, Trash2, CheckSquare, X, Archive, ArchiveRestore, UserPlus, Tag } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -352,6 +352,9 @@ const Projects = () => {
               
               <Button size="lg" variant="outline" onClick={() => navigate("/projects/customers")} title="Kunden verwalten">
                 <Users className="h-5 w-5" />
+              </Button>
+              <Button size="lg" variant="outline" onClick={() => navigate("/etiketten")} title="Lager-Etiketten drucken">
+                <Tag className="h-5 w-5" />
               </Button>
               <Button size="lg" variant="outline" onClick={syncToSupabase} disabled={isSyncing} title="Synchronisieren">
                 <RefreshCw className={`h-5 w-5 ${isSyncing ? "animate-spin" : ""}`} />
