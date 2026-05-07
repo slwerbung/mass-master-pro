@@ -15,9 +15,9 @@ export default defineConfig(() => ({
       registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "robots.txt"],
       manifest: {
-        name: "Aufmaß App - Professionelle Aufmaßerfassung",
-        short_name: "Aufmaß App",
-        description: "Professionelle Aufmaß-App für Smartphones - Projekte verwalten, fotografieren, annotieren und exportieren",
+        name: "Captfix - Aufmaß, Workflows, Kundenportal",
+        short_name: "Captfix",
+        description: "Captfix - der Operations-Hub für Werbetechnik-Betriebe. Aufmaß erfassen, Projekte verwalten, mit Kunden teilen.",
         theme_color: "#ffffff",
         background_color: "#ffffff",
         display: "standalone",
@@ -40,6 +40,13 @@ export default defineConfig(() => ({
         ]
       },
       workbox: {
+        // Default 2 MiB. Our main bundle is currently > 2 MiB because we
+        // ship pdf.js + html2canvas + chart libs together. Bumping to 5 MiB
+        // lets the service worker precache the full bundle so the app
+        // works fully offline. Long-term: code-split via dynamic imports
+        // (pdf editor, charts) to bring the entry chunk back under 2 MiB
+        // and remove this override.
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ["**/*.{js,css,html,ico,png,svg,jpg,jpeg}"],
         runtimeCaching: [
           {
