@@ -5,48 +5,45 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Search, Printer, ArrowLeft, Loader2 } from "lucide-react";
+import { Search, FileDown, ArrowLeft, Loader2 } from "lucide-react";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
 import QRCode from "qrcode";
+import { jsPDF } from "jspdf";
 
 /**
- * Lager-Etikett Druck-Werkzeug.
+ * Lager-Etikett Druck-Werkzeug (v3 - PDF-basiert).
  *
  * Ablauf:
  *   1) Mitarbeiter sucht ein HERO-Projekt.
- *   2) Klick auf ein Suchergebnis übernimmt Projektnummer, Name, Kunde
- *      und HERO-ID.
+ *   2) Klick übernimmt Projektnummer, Name, Kunde, HERO-ID.
  *   3) Größe wählen (klein 102x59mm / groß 159x104mm, beide Querformat).
- *   4) Drucken-Button öffnet Browser-Druckdialog. Beim ersten Mal Dymo
- *      auswählen + Skalierung "Tatsächliche Größe", danach merkt Chrome
- *      sich die Auswahl - jeder weitere Druck ist nur 1x Enter.
+ *   4) "PDF erstellen" generiert ein PDF mit der exakten Etiketten-
+ *      größe als Seitenformat. Das PDF wird heruntergeladen UND in
+ *      einem neuen Tab geöffnet. Druck erfolgt dann aus dem
+ *      PDF-Viewer/Browser - dort gibt's verlässlichere Druckoptionen
+ *      als window.print().
  *
- * QR-Code unten rechts verlinkt auf das HERO-Projekt
- * (login.hero-software.de/partner/Projects/view/<id>). Mobiles Scannen
- * öffnet entweder die Browser-Seite oder die HERO-App (je nach Setup
- * des scannenden Geräts).
+ * Das PDF ist später auch das Format, das in HERO als Lageretikett
+ * dokumentiert wird (Schritt 2, separat).
  *
- * Layout-Anpassungen ggü. erster Iteration:
- *   - Dymo-typischer 1.5 mm Druckrand wird respektiert (Inhalt bleibt
- *     innerhalb)
- *   - Schwarzer Bereich in 3 separate Blöcke geteilt (Name, Nummer,
- *     Kunde), durch dünne weiße Spalten getrennt
- *   - Datum-Footer kompakt (4mm)
- *   - QR-Code im rechten Bereich des Datumstreifens
- *   - Schrift: Barlow (DIN-nah, Google Font)
+ * Layout:
+ *   - Außenrand: 1.5mm (Dymo unbedruckbarer Bereich)
+ *   - Innen-Rahmen: drei schwarze Blöcke übereinander mit dünnen
+ *     weißen Spalten
+ *   - Footer-Streifen (~10mm) mit Datum links und QR-Code rechts
+ *   - Schwarze Blöcke haben Innen-Padding, sodass Text nicht
+ *     bündig am Rand klebt
  */
 
 type LabelSize = "klein" | "gross";
 
 const LABEL_SIZES: Record<LabelSize, { wMm: number; hMm: number; label: string }> = {
-  // Querformat: Breite > Höhe
   klein: { wMm: 102, hMm: 59, label: "Lager-Etikett klein (59 × 102 mm)" },
   gross: { wMm: 159, hMm: 104, label: "Lager-Etikett groß (104 × 159 mm)" },
 };
 
-// Unbedruckbarer Rand auf Dymo LabelWriter. ~1.5 mm an allen Seiten ist
-// ein sicherer Wert für die meisten Modelle (4XL, 450, 550, 5XL).
+// Dymo unbedruckbarer Rand
 const DYMO_MARGIN_MM = 1.5;
 
 type HeroProject = {
@@ -72,19 +69,17 @@ const LabelPrint = () => {
   const [heroSearching, setHeroSearching] = useState(false);
   const [selectedProject, setSelectedProject] = useState<HeroProject | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
+  const [generating, setGenerating] = useState(false);
 
-  // Datum + Uhrzeit aktualisieren wir minutenweise damit der Aufdruck
-  // bei längerem Stehen aktuell bleibt.
   const [now, setNow] = useState<Date>(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(t);
   }, []);
 
-  // QR-Code generieren, sobald ein Projekt ausgewählt ist. Erzeugt eine
-  // PNG Data-URL mit hoher Auflösung (für scharfen Druck). Ecke L
-  // (Error correction Low) reicht hier - keine wahrscheinliche
-  // Verschmutzung in der Innenlagerung.
+  // QR-Code generieren bei Auswahl. Höhere Auflösung damit's beim PDF-
+  // Embed scharf bleibt - jsPDF skaliert das PNG nur auf die mm-Größe,
+  // also lieber großzügig groß rendern.
   useEffect(() => {
     if (!selectedProject) {
       setQrDataUrl("");
@@ -92,9 +87,9 @@ const LabelPrint = () => {
     }
     const url = heroProjectUrl(selectedProject.id);
     QRCode.toDataURL(url, {
-      errorCorrectionLevel: "L",
+      errorCorrectionLevel: "M",
       margin: 0,
-      width: 320,
+      width: 600,
       color: { dark: "#000000", light: "#ffffff" },
     })
       .then(setQrDataUrl)
@@ -160,67 +155,72 @@ const LabelPrint = () => {
     setSelectedProject(null);
   };
 
-  const handlePrint = () => {
+  const generatePdf = async () => {
     if (!selectedProject) {
       toast.error("Erst ein Projekt auswählen");
       return;
     }
-    // Auto-Print: Kurz timeout damit der Browser den Render-Pass abschließt
-    // (besonders die QR-Image-Ladung), dann window.print(). Chrome merkt
-    // sich Drucker + Format zwischen Aufrufen, sodass nach dem ersten
-    // Setup ein einziges Enter reicht.
-    setTimeout(() => window.print(), 50);
+    setGenerating(true);
+    try {
+      const sz = LABEL_SIZES[size];
+      const pdf = buildLabelPdf({
+        widthMm: sz.wMm,
+        heightMm: sz.hMm,
+        projectNumber,
+        projectName,
+        customerName,
+        dateString,
+        qrDataUrl,
+      });
+
+      // Filename: Projektnummer-Lager-yymmdd.pdf, Sonderzeichen safe
+      const safeNr = projectNumber.replace(/[^a-zA-Z0-9-_]/g, "_") || "etikett";
+      const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
+      const filename = `Lageretikett_${safeNr}_${datePart}.pdf`;
+
+      // Blob holen für duale Aktion: Tab öffnen + Download
+      const blob = pdf.output("blob");
+      const blobUrl = URL.createObjectURL(blob);
+
+      // 1) Neuer Tab mit Vorschau (Browser zeigt PDF inline)
+      window.open(blobUrl, "_blank");
+
+      // 2) Download anstoßen über versteckten Anchor.
+      //    Beide Aktionen mit gleicher Blob-URL nutzbar.
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // Blob-URL nach kurzer Zeit freigeben (geben dem Browser Zeit, den
+      // Tab zu öffnen und den Download zu starten).
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch (e: any) {
+      console.error(e);
+      toast.error(e?.message || "PDF-Erstellung fehlgeschlagen");
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const sz = LABEL_SIZES[size];
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Barlow font from Google Fonts. Loaded inline so we don't need
-          a project-wide tailwind/CSS edit just for this page. */}
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
       <link
         href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;700;800&display=swap"
         rel="stylesheet"
       />
-
       <style>{`
         .label-font { font-family: 'Barlow', 'Helvetica Neue', Helvetica, Arial, sans-serif; }
-        @media screen {
-          .print-only-label { display: none; }
-          .label-print-area {
-            margin: 0 auto;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-            border: 1px solid hsl(var(--border));
-          }
-        }
-        @media print {
-          @page {
-            size: ${sz.wMm}mm ${sz.hMm}mm;
-            margin: 0;
-          }
-          html, body {
-            margin: 0 !important;
-            padding: 0 !important;
-            background: white !important;
-          }
-          body * { visibility: hidden !important; }
-          .print-only-label, .print-only-label * { visibility: visible !important; }
-          .print-only-label {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: ${sz.wMm}mm !important;
-            height: ${sz.hMm}mm !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-          .print-only-label .label-print-area {
-            box-shadow: none !important;
-            border: none !important;
-            margin: 0 !important;
-          }
+        .label-preview {
+          margin: 0 auto;
+          box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+          border: 1px solid hsl(var(--border));
         }
       `}</style>
 
@@ -319,16 +319,16 @@ const LabelPrint = () => {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">3. Vorschau & Drucken</CardTitle>
+            <CardTitle className="text-lg">3. Vorschau & PDF erstellen</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="text-sm text-muted-foreground">
-              Vorschau im Maßstab 1:1. Beim ersten Druck im Dialog Dymo auswählen
-              und Skalierung "Tatsächliche Größe" / 100% setzen. Chrome merkt
-              sich die Auswahl - danach genügt 1× Enter.
+              Vorschau im Maßstab 1:1. Klick auf "PDF erstellen" öffnet das
+              fertige Etikett in einem neuen Tab und startet gleichzeitig den
+              Download. Das PDF hat genau die Etiketten-Größe als Seitenformat.
             </div>
 
-            <LabelArea
+            <LabelPreview
               widthMm={sz.wMm}
               heightMm={sz.hMm}
               projectNumber={projectNumber}
@@ -339,34 +339,22 @@ const LabelPrint = () => {
             />
 
             <div className="flex gap-2">
-              <Button onClick={handlePrint} disabled={!selectedProject} size="lg">
-                <Printer className="h-4 w-4 mr-2" /> Drucken
+              <Button onClick={generatePdf} disabled={!selectedProject || generating} size="lg">
+                {generating ? (
+                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Erstelle...</>
+                ) : (
+                  <><FileDown className="h-4 w-4 mr-2" /> PDF erstellen</>
+                )}
               </Button>
             </div>
           </CardContent>
         </Card>
       </div>
-
-      {/* Druck-Element: bleibt im Layout, ist aber per CSS auf dem
-          Bildschirm versteckt. Im Print-Mode wird nur dieses sichtbar. */}
-      {selectedProject && (
-        <div className="print-only-label" aria-hidden>
-          <LabelArea
-            widthMm={sz.wMm}
-            heightMm={sz.hMm}
-            projectNumber={projectNumber}
-            projectName={projectName}
-            customerName={customerName}
-            dateString={dateString}
-            qrDataUrl={qrDataUrl}
-          />
-        </div>
-      )}
     </div>
   );
 };
 
-/* ---------- Label rendering ---------- */
+/* ---------- HTML Preview (visual only - PDF is generated separately) ---------- */
 
 type LabelData = {
   widthMm: number;
@@ -378,7 +366,7 @@ type LabelData = {
   qrDataUrl: string;
 };
 
-const LabelArea = ({
+const LabelPreview = ({
   widthMm,
   heightMm,
   projectNumber,
@@ -387,57 +375,13 @@ const LabelArea = ({
   dateString,
   qrDataUrl,
 }: LabelData) => {
-  // Layout (Querformat, Werte in mm):
-  //
-  //   +---------------------------------------------+   <- Außenrahmen = Etikett
-  //   |                                             |
-  //   |  +---------------------------------------+  |   <- Innenrahmen
-  //   |  | [schwarzer Block: Projektname]        |  |     respektiert Dymo-Rand
-  //   |  +---------------------------------------+  |     (1.5mm) und Spalt
-  //   |  | [schwarzer Block: PROJEKTNUMMER GROß] |  |
-  //   |  +---------------------------------------+  |
-  //   |  | [schwarzer Block: Kundenname]         |  |
-  //   |  +---------------------------------------+  |
-  //   |  | Datum/Uhrzeit              [QR-Code]  |  |
-  //   |  +---------------------------------------+  |
-  //   |                                             |
-  //   +---------------------------------------------+
-  //
-  // Größen sind anteilig zur Höhe. Das skaliert klein/groß automatisch.
-  //
-  // Wichtig: alle Maße in mm, damit Bildschirmvorschau und Druck identisch
-  // aussehen.
-
-  const isLarge = widthMm >= 150;
-
-  // Spalte zwischen den schwarzen Blöcken (sichtbares Weiß).
-  const gap = isLarge ? 1.5 : 1.0;
-
-  // Footer-Zeile mit Datum + QR
-  const footerH = isLarge ? 12 : 8;
-
-  // Verfügbarer Innenraum nach Dymo-Margins
-  const innerW = widthMm - 2 * DYMO_MARGIN_MM;
-  const innerH = heightMm - 2 * DYMO_MARGIN_MM;
-
-  // Höhen der drei schwarzen Blöcke. Mittlerer (Projektnummer) bekommt
-  // den Großteil, oben und unten je ein schmalerer Block.
-  // Verbleibende Höhe für Blocks = innerH - footerH - 2*gap (zwischen 3 Blöcken)
-  const blocksTotal = innerH - footerH - 3 * gap;
-  const blockNumber = blocksTotal * 0.55;
-  const blockSide = blocksTotal * 0.225; // jeweils Name + Kunde
-
-  // Schriftgrößen: skaliert mit Block-Höhe für saubere Optik
-  const fontProjectNr = `${Math.min(blockNumber * 0.85, isLarge ? 36 : 22)}mm`;
-  const fontSide = `${Math.min(blockSide * 0.7, isLarge ? 7 : 5)}mm`;
-  const fontFooter = `${Math.min(footerH * 0.45, isLarge ? 4 : 3)}mm`;
-
-  // QR-Code passt in den Footer (etwas größer als Schrift)
-  const qrSize = footerH - 1; // 1mm Padding oben/unten
+  // Identical layout-math to buildLabelPdf below, just rendered as HTML
+  // for screen preview. Both should produce visually the same output.
+  const layout = computeLayout(widthMm, heightMm);
 
   return (
     <div
-      className="label-print-area label-font"
+      className="label-preview label-font"
       style={{
         width: `${widthMm}mm`,
         height: `${heightMm}mm`,
@@ -451,86 +395,51 @@ const LabelArea = ({
           position: "absolute",
           top: `${DYMO_MARGIN_MM}mm`,
           left: `${DYMO_MARGIN_MM}mm`,
-          width: `${innerW}mm`,
-          height: `${innerH}mm`,
+          width: `${layout.innerW}mm`,
+          height: `${layout.innerH}mm`,
           display: "flex",
           flexDirection: "column",
-          gap: `${gap}mm`,
+          gap: `${layout.gap}mm`,
         }}
       >
-        {/* Block 1: Projektname */}
-        <div
-          style={{
-            height: `${blockSide}mm`,
-            background: "black",
-            color: "white",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: fontSide,
-            fontWeight: 700,
-            letterSpacing: "0.01em",
-            padding: "0 2mm",
-            overflow: "hidden",
-            whiteSpace: "nowrap",
-            textOverflow: "ellipsis",
-            boxSizing: "border-box",
-          }}
+        <BlackBlock
+          heightMm={layout.blockSide}
+          fontMm={layout.fontSide}
+          weight={700}
+          paddingMm={layout.blockPadX}
         >
           {projectName || "\u00A0"}
-        </div>
+        </BlackBlock>
 
-        {/* Block 2: Projektnummer (zentral & groß) */}
-        <div
-          style={{
-            height: `${blockNumber}mm`,
-            background: "black",
-            color: "white",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: fontProjectNr,
-            fontWeight: 800,
-            lineHeight: 1,
-            letterSpacing: "-0.01em",
-          }}
+        <BlackBlock
+          heightMm={layout.blockNumber}
+          fontMm={layout.fontNumber}
+          weight={800}
+          paddingMm={layout.blockPadX}
+          tightLineHeight
         >
           {projectNumber || "\u00A0"}
-        </div>
+        </BlackBlock>
 
-        {/* Block 3: Kunde */}
-        <div
-          style={{
-            height: `${blockSide}mm`,
-            background: "black",
-            color: "white",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: fontSide,
-            fontWeight: 700,
-            letterSpacing: "0.01em",
-            padding: "0 2mm",
-            overflow: "hidden",
-            whiteSpace: "nowrap",
-            textOverflow: "ellipsis",
-            boxSizing: "border-box",
-          }}
+        <BlackBlock
+          heightMm={layout.blockSide}
+          fontMm={layout.fontSide}
+          weight={700}
+          paddingMm={layout.blockPadX}
         >
           {customerName || "\u00A0"}
-        </div>
+        </BlackBlock>
 
-        {/* Footer: Datum links, QR rechts */}
         <div
           style={{
-            height: `${footerH}mm`,
+            height: `${layout.footerH}mm`,
             background: "white",
             color: "black",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "0 1mm",
-            fontSize: fontFooter,
+            padding: `0 ${layout.blockPadX}mm`,
+            fontSize: `${layout.fontFooter}mm`,
             fontWeight: 500,
             boxSizing: "border-box",
           }}
@@ -541,8 +450,8 @@ const LabelArea = ({
               src={qrDataUrl}
               alt="QR"
               style={{
-                width: `${qrSize}mm`,
-                height: `${qrSize}mm`,
+                width: `${layout.qrSize}mm`,
+                height: `${layout.qrSize}mm`,
                 objectFit: "contain",
               }}
             />
@@ -552,5 +461,202 @@ const LabelArea = ({
     </div>
   );
 };
+
+const BlackBlock = ({
+  heightMm,
+  fontMm,
+  weight,
+  paddingMm,
+  tightLineHeight,
+  children,
+}: {
+  heightMm: number;
+  fontMm: number;
+  weight: number;
+  paddingMm: number;
+  tightLineHeight?: boolean;
+  children: React.ReactNode;
+}) => (
+  <div
+    style={{
+      height: `${heightMm}mm`,
+      background: "black",
+      color: "white",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: `${fontMm}mm`,
+      fontWeight: weight,
+      lineHeight: tightLineHeight ? 1 : 1.1,
+      letterSpacing: tightLineHeight ? "-0.01em" : "0.01em",
+      padding: `0 ${paddingMm}mm`,
+      overflow: "hidden",
+      whiteSpace: "nowrap",
+      textOverflow: "ellipsis",
+      boxSizing: "border-box",
+    }}
+  >
+    {children}
+  </div>
+);
+
+/* ---------- Layout math (shared between preview and PDF) ---------- */
+
+type Layout = {
+  innerW: number;
+  innerH: number;
+  gap: number;
+  footerH: number;
+  blockSide: number;
+  blockNumber: number;
+  blockPadX: number;
+  qrSize: number;
+  fontNumber: number;
+  fontSide: number;
+  fontFooter: number;
+};
+
+function computeLayout(widthMm: number, heightMm: number): Layout {
+  const isLarge = widthMm >= 150;
+
+  // Verfügbarer Innenraum nach Dymo-Margins
+  const innerW = widthMm - 2 * DYMO_MARGIN_MM;
+  const innerH = heightMm - 2 * DYMO_MARGIN_MM;
+
+  // Spalt zwischen den schwarzen Blöcken (sichtbares Weiß)
+  const gap = isLarge ? 1.8 : 1.2;
+
+  // Footer-Streifen für Datum + QR. Etwas größer als zuvor, damit der
+  // QR-Code lesbar bleibt - im Footer-Innenraum sitzt der QR.
+  const footerH = isLarge ? 16 : 11;
+
+  // Drei schwarze Blöcke teilen sich den restlichen Raum, mit gap
+  // zwischen ihnen UND zum Footer.
+  const blocksTotal = innerH - footerH - 3 * gap;
+  const blockNumber = blocksTotal * 0.55;
+  const blockSide = blocksTotal * 0.225;
+
+  // Innen-Padding der Blöcke - der Text läuft NICHT bündig an den Rand
+  const blockPadX = isLarge ? 6 : 4;
+
+  // QR-Code: nutzt die volle Footer-Höhe abzüglich kleinem Padding
+  const qrSize = footerH - 1.5;
+
+  // Schriftgrößen anteilig zur Block-Höhe. Die Projektnummer-Schrift
+  // hat eine Obergrenze (sonst wird sie absurd groß bei langen
+  // Etiketten), die beiden Side-Blöcke sind kleiner.
+  const fontNumber = Math.min(blockNumber * 0.85, isLarge ? 32 : 20);
+  const fontSide = Math.min(blockSide * 0.7, isLarge ? 7 : 5);
+  const fontFooter = Math.min(footerH * 0.4, isLarge ? 4 : 3);
+
+  return { innerW, innerH, gap, footerH, blockSide, blockNumber, blockPadX, qrSize, fontNumber, fontSide, fontFooter };
+}
+
+/* ---------- PDF generation ---------- */
+
+function buildLabelPdf(d: LabelData): jsPDF {
+  // PDF-Seitengröße = exakte Etikettengröße in mm. jsPDF macht
+  // anschließend alles in mm-Einheiten, sodass die Layout-Mathematik
+  // direkt 1:1 abgebildet werden kann.
+  const pdf = new jsPDF({
+    orientation: d.widthMm > d.heightMm ? "landscape" : "portrait",
+    unit: "mm",
+    format: [d.widthMm, d.heightMm],
+    compress: true,
+  });
+
+  // jsPDF default font is Helvetica - close enough to Barlow for the
+  // PDF output. Loading custom fonts in jsPDF requires base64-embedding
+  // the TTF, which is overkill for storage labels. Helvetica bold gives
+  // a clean condensed-DIN-like look.
+  pdf.setFont("helvetica", "bold");
+
+  const layout = computeLayout(d.widthMm, d.heightMm);
+
+  // Origin der Inhaltsfläche (innerhalb Dymo-Margins)
+  const ox = DYMO_MARGIN_MM;
+  const oy = DYMO_MARGIN_MM;
+
+  // Block 1: Projektname (oben)
+  const block1Y = oy;
+  drawBlackTextBlock(pdf, ox, block1Y, layout.innerW, layout.blockSide, d.projectName, layout.fontSide, layout.blockPadX, "bold");
+
+  // Block 2: Projektnummer (mittig, groß)
+  const block2Y = block1Y + layout.blockSide + layout.gap;
+  drawBlackTextBlock(pdf, ox, block2Y, layout.innerW, layout.blockNumber, d.projectNumber, layout.fontNumber, layout.blockPadX, "bold");
+
+  // Block 3: Kunde (unten)
+  const block3Y = block2Y + layout.blockNumber + layout.gap;
+  drawBlackTextBlock(pdf, ox, block3Y, layout.innerW, layout.blockSide, d.customerName, layout.fontSide, layout.blockPadX, "bold");
+
+  // Footer: Datum + QR
+  const footerY = block3Y + layout.blockSide + layout.gap;
+
+  // Datum (links)
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(0, 0, 0);
+  pdf.setFontSize(mmToPt(layout.fontFooter));
+  // Vertikal mittig im Footer-Streifen ausrichten
+  const dateBaselineY = footerY + layout.footerH / 2 + mmToPt(layout.fontFooter) * 0.35 / 2.83465;
+  pdf.text(d.dateString, ox + layout.blockPadX, dateBaselineY, { baseline: "middle" });
+
+  // QR-Code (rechts)
+  if (d.qrDataUrl) {
+    const qrX = ox + layout.innerW - layout.qrSize - layout.blockPadX;
+    const qrY = footerY + (layout.footerH - layout.qrSize) / 2;
+    try {
+      pdf.addImage(d.qrDataUrl, "PNG", qrX, qrY, layout.qrSize, layout.qrSize, undefined, "FAST");
+    } catch (e) {
+      console.warn("QR-Embed fehlgeschlagen:", e);
+    }
+  }
+
+  return pdf;
+}
+
+function drawBlackTextBlock(
+  pdf: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  text: string,
+  fontMm: number,
+  padX: number,
+  weight: "normal" | "bold"
+) {
+  // Schwarzer gefüllter Rechteck
+  pdf.setFillColor(0, 0, 0);
+  pdf.rect(x, y, w, h, "F");
+
+  if (!text) return;
+
+  // Weiße Schrift, mittig
+  pdf.setTextColor(255, 255, 255);
+  pdf.setFont("helvetica", weight);
+  pdf.setFontSize(mmToPt(fontMm));
+
+  // Text horizontal zentriert in der mittleren x-Position
+  const centerX = x + w / 2;
+  const centerY = y + h / 2;
+
+  // Falls der Text breiter ist als der verfügbare Platz, dynamisch
+  // verkleinern statt clipping
+  const availableWidth = w - 2 * padX;
+  let actualFontMm = fontMm;
+  let textWidthMm = pdf.getTextWidth(text);
+  while (textWidthMm > availableWidth && actualFontMm > 1) {
+    actualFontMm -= 0.5;
+    pdf.setFontSize(mmToPt(actualFontMm));
+    textWidthMm = pdf.getTextWidth(text);
+  }
+
+  pdf.text(text, centerX, centerY, { align: "center", baseline: "middle" });
+}
+
+// jsPDF wants pt for setFontSize. 1mm = 2.83465 pt
+function mmToPt(mm: number): number {
+  return mm * 2.83465;
+}
 
 export default LabelPrint;
