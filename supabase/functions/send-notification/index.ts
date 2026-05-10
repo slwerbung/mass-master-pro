@@ -80,11 +80,13 @@ Deno.serve(async (req) => {
     const updateFields: Record<string, any> = {};
 
     if (event === "first_action") {
-      // Send only if we never sent a first_action notification yet.
-      if (!existing?.first_action_sent_at) {
-        shouldSend = true;
-        updateFields.first_action_sent_at = now.toISOString();
-      }
+      // Removed by design: previously sent a generic "Kunde ist aktiv
+      // geworden" mail on the first comment/approval. That mail had no
+      // useful detail beyond what the specific event mails (comment,
+      // completion) already deliver. We keep the event branch so the
+      // frontend can still call it without crashing - it simply
+      // resolves to a silent no-op.
+      return json({ skipped: true, reason: "first_action is no-op now" });
     } else if (event === "comment") {
       // Send if no previous comment notification or if it's older than
       // the throttle window.
@@ -152,8 +154,6 @@ Deno.serve(async (req) => {
       return json({ skipped: true, reason: "throttled or already sent" });
     }
 
-<<<<<<< Updated upstream
-=======
     // Resolve recipient based on configured notification settings.
     //
     // Per-event setting from app_config decides:
@@ -206,7 +206,6 @@ Deno.serve(async (req) => {
       return json({ skipped: true, reason: "no recipient configured" });
     }
 
->>>>>>> Stashed changes
     // Compose mail.
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
     if (!RESEND_API_KEY) {
@@ -220,11 +219,7 @@ Deno.serve(async (req) => {
       headers: { "Authorization": `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         from: "Captfix <notifications@captfix.app>",
-<<<<<<< Updated upstream
-        to: ["info@slwerbung.de"],
-=======
         to: [recipientEmail],
->>>>>>> Stashed changes
         subject,
         html,
       }),
@@ -242,11 +237,7 @@ Deno.serve(async (req) => {
       ...updateFields,
     }, { onConflict: "assignment_id" });
 
-<<<<<<< Updated upstream
-    return json({ sent: true, event });
-=======
     return json({ sent: true, event, recipient: recipientEmail });
->>>>>>> Stashed changes
   } catch (e: any) {
     console.error(e);
     return json({ error: "Server error", details: e.message }, 500);
@@ -254,44 +245,34 @@ Deno.serve(async (req) => {
 });
 
 function buildMail(event: EventType, ctx: { customerName: string; projectNumber: string; projectId: string }): { subject: string; html: string } {
-  // Plain-but-clear team mails. Always include a link to the project
-  // (in the app) so the team member can click and inspect what happened.
-  // The subject prefix tells at a glance which type of activity it is.
+  // Schlanke Mails: kurzer Hinweis + Button zum Projekt. Keine
+  // detaillierten Inhalte (Kommentar-Texte, Standort-Listen) - der
+  // Empfänger soll direkt im Projekt nachschauen, da steht alles
+  // ordentlich. Das hält die Mails klein und vermeidet, dass
+  // sensitiver Kundenkommentar irgendwo in Mail-Logs auftaucht.
   const projectUrl = `https://captfix.app/projects/${ctx.projectId}`;
   const linkBlock = `<p style="margin-top:20px"><a href="${projectUrl}" style="background:#0E73E8;color:white;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:500">Projekt öffnen</a></p>`;
   const footer = `<hr style="margin:24px 0;border:none;border-top:1px solid #eee"><p style="color:#888;font-size:12px;margin:0">Diese Benachrichtigung wurde von Captfix automatisch erstellt.</p>`;
 
-  if (event === "first_action") {
-    return {
-      subject: `Aktivität: ${ctx.customerName} - Projekt ${ctx.projectNumber}`,
-      html: `
-        <h2 style="margin:0 0 12px">Kunde ist aktiv geworden</h2>
-        <p><strong>${escapeHtml(ctx.customerName)}</strong> hat in Projekt <strong>${escapeHtml(ctx.projectNumber)}</strong> erstmals eine Aktion durchgeführt (Freigabe oder Kommentar).</p>
-        ${linkBlock}
-        ${footer}
-      `,
-    };
-  }
   if (event === "comment") {
     return {
-      subject: `Kommentar: ${ctx.customerName} - Projekt ${ctx.projectNumber}`,
+      subject: `Neuer Kommentar: ${ctx.customerName} – Projekt ${ctx.projectNumber}`,
       html: `
-        <h2 style="margin:0 0 12px">Neue Kommentare im Projekt</h2>
-        <p><strong>${escapeHtml(ctx.customerName)}</strong> hat in Projekt <strong>${escapeHtml(ctx.projectNumber)}</strong> Kommentare hinzugefügt.</p>
-        <p style="color:#666;font-size:14px">Hinweis: Folgekommentare innerhalb der nächsten ${COMMENT_THROTTLE_HOURS} Stunden werden nicht erneut gemeldet.</p>
+        <h2 style="margin:0 0 12px">Neuer Kommentar im Projekt</h2>
+        <p><strong>${escapeHtml(ctx.customerName)}</strong> hat in Projekt <strong>${escapeHtml(ctx.projectNumber)}</strong> einen Hinweis oder Kommentar hinterlassen.</p>
+        <p style="color:#666;font-size:14px">Den Inhalt findest du im Projekt. Folgekommentare innerhalb der nächsten ${COMMENT_THROTTLE_HOURS} Stunden werden nicht erneut gemeldet.</p>
         ${linkBlock}
         ${footer}
       `,
     };
   }
-  // completion - explicit "Freigegeben" wording so the subject and the
-  // body both make clear that the customer formally signed off.
+  // completion
   return {
-    subject: `FREIGEGEBEN: ${ctx.customerName} - Projekt ${ctx.projectNumber}`,
+    subject: `FREIGEGEBEN: ${ctx.customerName} – Projekt ${ctx.projectNumber}`,
     html: `
       <h2 style="margin:0 0 12px;color:#0a8443">Projekt freigegeben</h2>
-      <p style="font-size:16px"><strong>${escapeHtml(ctx.customerName)}</strong> hat das Projekt <strong>${escapeHtml(ctx.projectNumber)}</strong> freigegeben.</p>
-      <p>Alle relevanten Inhalte wurden vom Kunden bestätigt. Das Projekt kann jetzt in Produktion gehen.</p>
+      <p style="font-size:16px"><strong>${escapeHtml(ctx.customerName)}</strong> hat das Projekt <strong>${escapeHtml(ctx.projectNumber)}</strong> komplett freigegeben.</p>
+      <p>Das Projekt kann jetzt in Produktion gehen.</p>
       ${linkBlock}
       ${footer}
     `,

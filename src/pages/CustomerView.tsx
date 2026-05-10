@@ -392,7 +392,7 @@ const CustomerView = () => {
           supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
           supabase.from("location_approvals").select("location_id, approved").eq("assignment_id", assignment.id).in("location_id", locationIds),
           (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at"),
-          supabase.from("detail_images").select("id, location_id, caption, annotated_path, created_at").in("location_id", locationIds).order("created_at", { ascending: true }),
+          supabase.from("detail_images").select("id, location_id, caption, annotated_path, original_path, created_at").in("location_id", locationIds).order("created_at", { ascending: true }),
         ]);
 
         const pdfEntries = (pdfs || []).map((p: any) => ({ location_id: p.location_id, image_type: "pdf", storage_path: p.storage_path, file_name: p.file_name, id: p.id }));
@@ -1181,14 +1181,7 @@ const CustomerView = () => {
 
             <div className="space-y-4">
               {sortedLocations.map((loc) => {
-                // Picture preference depends on viewer:
-                //  - direct-link guest -> original (raw photo, no markup)
-                //  - logged-in customer -> annotated (drawn-on for approval)
-                // Falls back the other way if the preferred type is missing
-                // so we never end up showing nothing when one variant exists.
                 const original = images.find((i: any) => i.location_id === loc.id && i.image_type === "original");
-                const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
-                const displayImage = isLimitedGuestMode ? (original || annotated) : (annotated || original);
                 const pdfEntries = images.filter((i: any) => i.location_id === loc.id && i.image_type === "pdf");
                 const locationFeedback = feedbacks[loc.id] || [];
                 const isApproved = !!approvals[loc.id];
@@ -1211,9 +1204,9 @@ const CustomerView = () => {
                       </div>
                     </CardHeader>
                     <CardContent className="p-4 space-y-4">
-                      {displayImage && (
+                      {original && (
                         <div className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[180px]">
-                          <img src={getSignedImageUrl(displayImage.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-auto max-h-[70vh] object-contain" />
+                          <img src={getSignedImageUrl(original.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-auto max-h-[70vh] object-contain" />
                         </div>
                       )}
 
@@ -1245,7 +1238,7 @@ const CustomerView = () => {
                           <div className="grid grid-cols-2 gap-2">
                             {(detailImagesByLocation[loc.id] || []).map((detail: any) => (
                               <div key={detail.id} className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[120px]">
-                                <img src={getSignedImageUrl(detail.annotated_path)} alt={detail.caption || "Detailbild"} className="w-full h-auto max-h-[220px] object-contain" />
+                                <img src={getSignedImageUrl(detail.original_path || detail.annotated_path)} alt={detail.caption || "Detailbild"} className="w-full h-auto max-h-[220px] object-contain" />
                               </div>
                             ))}
                           </div>
