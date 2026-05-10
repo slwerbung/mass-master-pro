@@ -1181,7 +1181,24 @@ const CustomerView = () => {
 
             <div className="space-y-4">
               {sortedLocations.map((loc) => {
-                const original = images.find((i: any) => i.location_id === loc.id && i.image_type === "original");
+                // Try the location_images metadata table first. If that
+                // table has no row for this location/image_type (which
+                // happens for older locations whose images were uploaded
+                // to storage but never registered in the metadata table),
+                // we fall back to the deterministic storage path that the
+                // sync code uses: `images/<locationId>/original` and
+                // `images/<locationId>/annotated`. The actual file is
+                // always at one of these two paths.
+                const originalRow = images.find((i: any) => i.location_id === loc.id && i.image_type === "original");
+                const annotatedRow = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
+                const originalPath = originalRow?.storage_path || `images/${loc.id}/original`;
+                const annotatedPath = annotatedRow?.storage_path || `images/${loc.id}/annotated`;
+                // Prefer original (unannotated) - that's what the customer
+                // should see. If only annotated exists, we still don't
+                // show it because annotation is internal info; the
+                // customer view intentionally hides bemaßte Bilder.
+                const mainImagePath = originalPath;
+
                 const pdfEntries = images.filter((i: any) => i.location_id === loc.id && i.image_type === "pdf");
                 const locationFeedback = feedbacks[loc.id] || [];
                 const isApproved = !!approvals[loc.id];
@@ -1204,11 +1221,20 @@ const CustomerView = () => {
                       </div>
                     </CardHeader>
                     <CardContent className="p-4 space-y-4">
-                      {original && (
-                        <div className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[180px]">
-                          <img src={getSignedImageUrl(original.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-auto max-h-[70vh] object-contain" />
-                        </div>
-                      )}
+                      <div className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[180px]">
+                        <img
+                          src={getSignedImageUrl(mainImagePath)}
+                          alt={`Standort ${loc.location_number}`}
+                          className="w-full h-auto max-h-[70vh] object-contain"
+                          onError={(e) => {
+                            // Falls die Datei wirklich nicht existiert
+                            // (z.B. ganz altes Standort ohne Sync),
+                            // verstecken wir den Container, statt einen
+                            // gebrochenen Bild-Platzhalter zu zeigen.
+                            (e.currentTarget.parentElement as HTMLElement | null)?.style.setProperty("display", "none");
+                          }}
+                        />
+                      </div>
 
                       {visibleFields.length > 0 && (
                         <LocationInfoFields location={loc} fields={visibleFields} customerOnly project={selectedProjectMeta} projectFields={visibleProjectFields} />
