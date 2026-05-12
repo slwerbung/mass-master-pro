@@ -113,10 +113,24 @@ async function heroAssignImage(apiKey: string, uuid: string, projectMatchId: num
   }
 }
 
-async function heroAssignDocument(apiKey: string, uuid: string, projectMatchId: number, filename: string): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
-  // upload_document needs a CustomerDocumentInput alongside the uuid.
-  // Minimum shape is filename + project assignment. HERO auto-fills the
-  // rest (upload date, size, detected mimetype).
+async function heroAssignDocument(apiKey: string, uuid: string, projectMatchId: number, _filename: string, documentTypeId: number | null): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  // upload_document needs a CustomerDocumentInput. According to HERO docs:
+  //   document: { document_type_id: 26 }
+  //
+  // The `filename` field we used to send is NOT part of CustomerDocumentInput
+  // and causes the mutation to error. The actual filename is recorded
+  // during the initial file-upload step (multipart upload to
+  // /FileUploads/upload).
+  //
+  // If documentTypeId is null, we still attempt the upload without
+  // it - HERO might accept an empty doc-object and auto-pick a default
+  // type, or it might error. Either way the error surfaces in logs so
+  // the admin can pick a doc_type in the settings and retry.
+  const doc: Record<string, unknown> = {};
+  if (documentTypeId && Number.isFinite(documentTypeId)) {
+    doc.document_type_id = documentTypeId;
+  }
+
   const mutation = `
     mutation AssignDoc($doc: CustomerDocumentInput!, $uuid: String!, $targetId: Int!) {
       upload_document(document: $doc, file_upload_uuid: $uuid, target: project_match, target_id: $targetId) { id }
@@ -133,7 +147,7 @@ async function heroAssignDocument(apiKey: string, uuid: string, projectMatchId: 
       body: JSON.stringify({
         query: mutation,
         variables: {
-          doc: { filename },
+          doc,
           uuid,
           targetId: projectMatchId,
         },
@@ -184,6 +198,13 @@ serve(async (req) => {
     const uploadType = form.get("uploadType") as UploadType | null;
     const heroProjectMatchId = form.get("heroProjectMatchId") as string | null;
     const filename = (form.get("filename") as string | null) || "upload.bin";
+    // Optional: HERO document_type_id. Sent by the client based on
+    // configured doc-type for the given uploadType (admin picks in the
+    // Integrations tab). Null/missing means we send an empty
+    // CustomerDocumentInput and let HERO use its default - which may
+    // fail depending on HERO account config.
+    const documentTypeIdRaw = form.get("documentTypeId") as string | null;
+    const documentTypeId = documentTypeIdRaw && /^\d+$/.test(documentTypeIdRaw) ? parseInt(documentTypeIdRaw, 10) : null;
 
     if (!file) {
       return new Response(JSON.stringify({ ok: false, error: "Kein File im Request", step: "input" }), {
@@ -205,7 +226,7 @@ serve(async (req) => {
       });
     }
 
-    console.log(`HERO-Upload: type=${uploadType} projectMatch=${projectMatchIdInt} filename=${filename} size=${file.size}`);
+    console.log(`HERO-Upload: type=${uploadType} projectMatch=${projectMatchIdInt} filename=${filename} size=${file.size} docTypeId=${documentTypeId ?? "none"}`);
 
     // Step 1: upload file
     const uploadRes = await heroUploadFile(apiKey, file, filename);
@@ -218,7 +239,7 @@ serve(async (req) => {
 
     // Step 2: assign to project_match (image or document mutation)
     const assign = isDocumentType(uploadType)
-      ? await heroAssignDocument(apiKey, uploadRes.uuid, projectMatchIdInt, filename)
+      ? await heroAssignDocument(apiKey, uploadRes.uuid, projectMatchIdInt, filename, documentTypeId)
       : await heroAssignImage(apiKey, uploadRes.uuid, projectMatchIdInt);
 
     if (!assign.ok) {

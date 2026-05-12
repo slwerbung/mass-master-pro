@@ -121,6 +121,69 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
+      case "list_document_types": {
+        // Returns the document_types configured in the HERO account.
+        // Used by the admin UI to populate a dropdown so admins can
+        // pick which type our auto-uploaded files (Aufmaß-PDF,
+        // Lager-Etiketten) should be filed as. HERO requires the
+        // document_type_id when assigning an uploaded file via
+        // upload_document mutation - without it the upload silently
+        // fails with "Field 'filename' is not defined" type errors.
+        //
+        // We try the most likely query name first and fall back if
+        // HERO's schema doesn't match. Since we don't have public
+        // schema docs, this is a best-effort attempt.
+        try {
+          const data = await heroPost(apiKey, `
+            query {
+              document_types {
+                id
+                name
+              }
+            }
+          `);
+          const types = data?.document_types || [];
+          return json({ types });
+        } catch (e: any) {
+          // If document_types query doesn't exist, return empty list
+          // and the error for diagnostic purposes.
+          return json({ types: [], error: e.message || String(e) });
+        }
+      }
+
+      case "introspect_type": {
+        // Diagnostic helper: returns the shape of a HERO GraphQL type.
+        // Useful when an upload/mutation fails and we need to see what
+        // fields HERO really expects. Example:
+        //   introspect_type({ typeName: "CustomerDocumentInput" })
+        // returns inputFields with the real field names.
+        const typeName = String(params.typeName || "").trim();
+        if (!typeName) return json({ error: "typeName required" }, 400);
+        const query = `
+          query IntrospectType($name: String!) {
+            __type(name: $name) {
+              name
+              kind
+              description
+              fields {
+                name
+                description
+                type { name kind ofType { name kind ofType { name kind } } }
+              }
+              inputFields {
+                name
+                description
+                defaultValue
+                type { name kind ofType { name kind ofType { name kind } } }
+              }
+              enumValues { name description }
+            }
+          }
+        `;
+        const data = await heroPost(apiKey, query, { name: typeName });
+        return json({ type: data?.__type || null });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

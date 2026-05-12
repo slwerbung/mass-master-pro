@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
-import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle, Mail } from "lucide-react";
+import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle, Mail, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { mergeWithDefaultProjectFields, isProtectedProjectField } from "@/lib/projectFields";
@@ -120,6 +120,17 @@ const Admin = () => {
   // Integration state
   const [heroApiKey, setHeroApiKey] = useState("");
   const [heroEnabled, setHeroEnabled] = useState(false);
+  // HERO doc-types: list pulled from HERO via hero-integration:list_document_types,
+  // plus a saved mapping per uploadType. We currently support two
+  // uploadType keys: "aufmass_pdf" (the Export-PDF from a project) and
+  // "lager_label_pdf" (the warehouse-label PDF, set up but not auto-
+  // uploaded yet - admin can still pre-pick its doc-type).
+  type HeroDocType = { id: number; name: string };
+  const [heroDocTypes, setHeroDocTypes] = useState<HeroDocType[]>([]);
+  const [heroDocTypesLoaded, setHeroDocTypesLoaded] = useState(false);
+  const [heroDocTypesError, setHeroDocTypesError] = useState<string | null>(null);
+  const [heroDocTypeConfig, setHeroDocTypeConfig] = useState<Record<string, number | null>>({});
+  const [savingHeroDocType, setSavingHeroDocType] = useState(false);
   const [heroHasKey, setHeroHasKey] = useState(false);
   const [savingHero, setSavingHero] = useState(false);
   const [testingHero, setTestingHero] = useState(false);
@@ -160,7 +171,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadNotifSettings(); loadVehicleFields(); loadIntegrations(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadNotifSettings(); loadVehicleFields(); loadIntegrations(); loadHeroDocTypeConfig(); }
   }, [adminToken]);
 
   useEffect(() => {
@@ -409,6 +420,61 @@ const Admin = () => {
       setHeroEnabled(data?.hero?.enabled ?? false);
       setHeroHasKey(data?.hero?.hasKey ?? false);
     } catch {}
+  };
+
+  const loadHeroDocTypeConfig = async () => {
+    try {
+      const data = await invoke("get_hero_doc_types_config");
+      setHeroDocTypeConfig(data?.config || {});
+    } catch {}
+  };
+
+  const loadHeroDocTypes = async () => {
+    // Ask HERO via the integration edge function for the list of
+    // available document types. Only meaningful if HERO is enabled and
+    // has a key configured; otherwise the call will fail and we just
+    // show an error message.
+    setHeroDocTypesError(null);
+    if (!adminToken) return;
+    try {
+      const { data, error } = await supabase.functions.invoke("hero-integration", {
+        body: { action: "list_document_types", adminToken },
+      });
+      if (error) {
+        setHeroDocTypesError(error.message || "Fehler");
+        setHeroDocTypes([]);
+        setHeroDocTypesLoaded(true);
+        return;
+      }
+      if (data?.error) {
+        setHeroDocTypesError(data.error);
+        setHeroDocTypes([]);
+        setHeroDocTypesLoaded(true);
+        return;
+      }
+      setHeroDocTypes(((data?.types || []) as HeroDocType[]).slice().sort((a, b) => a.name.localeCompare(b.name)));
+      setHeroDocTypesLoaded(true);
+    } catch (e: any) {
+      setHeroDocTypesError(e.message || "Fehler");
+      setHeroDocTypes([]);
+      setHeroDocTypesLoaded(true);
+    }
+  };
+
+  const saveHeroDocType = async (uploadType: string, documentTypeId: number | null) => {
+    setSavingHeroDocType(true);
+    try {
+      await invoke("set_hero_doc_type", {
+        uploadType,
+        documentTypeId: documentTypeId != null ? documentTypeId : null,
+      });
+      setHeroDocTypeConfig(prev => ({ ...prev, [`hero_doc_type_${uploadType}`]: documentTypeId }));
+      toast.success("Dokumenttyp gespeichert");
+    } catch (e: any) {
+      toast.error(e.message || "Fehler beim Speichern");
+    } finally {
+      setSavingHeroDocType(false);
+    }
   };
 
   const saveHeroConfig = async () => {
@@ -1525,6 +1591,71 @@ const Admin = () => {
                     <p className="text-muted-foreground/60">◌ Weitere Funktionen folgen</p>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2"><Plug className="h-5 w-5" /> HERO Dokumenttypen</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Beim Hochladen von PDFs nach HERO muss ein Dokumenttyp angegeben werden,
+                  damit das Dokument korrekt einsortiert wird. Hier kannst du pro Upload-Art
+                  festlegen, welcher HERO-Dokumenttyp verwendet werden soll.
+                </p>
+
+                {!heroEnabled || !heroHasKey ? (
+                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-sm text-amber-900 dark:text-amber-200">
+                    HERO-Integration ist nicht aktiv. Aktiviere die Integration oben, dann kannst du Dokumenttypen zuordnen.
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm text-muted-foreground">
+                        {heroDocTypesLoaded
+                          ? heroDocTypesError
+                            ? <span className="text-red-600">Fehler: {heroDocTypesError}</span>
+                            : <span>{heroDocTypes.length} Dokumenttypen verfügbar</span>
+                          : <span>Noch nicht geladen</span>}
+                      </div>
+                      <Button variant="outline" size="sm" onClick={loadHeroDocTypes}>
+                        <RefreshCw className="h-3 w-3 mr-1" /> Aus HERO laden
+                      </Button>
+                    </div>
+
+                    {[
+                      { key: "aufmass_pdf", label: "Aufmaß-PDF", description: "Das aus einem Projekt exportierte Aufmaß-PDF." },
+                      { key: "lager_label_pdf", label: "Lager-Etiketten", description: "Die Lager-Etiketten-PDFs, sobald deren Upload aktiv wird." },
+                    ].map(it => {
+                      const currentId = heroDocTypeConfig[`hero_doc_type_${it.key}`] ?? null;
+                      return (
+                        <div key={it.key} className="border rounded-lg p-3 space-y-2">
+                          <div>
+                            <p className="font-medium text-sm">{it.label}</p>
+                            <p className="text-xs text-muted-foreground">{it.description}</p>
+                          </div>
+                          <Select
+                            value={currentId != null ? String(currentId) : "none"}
+                            onValueChange={v => saveHeroDocType(it.key, v === "none" ? null : parseInt(v, 10))}
+                            disabled={savingHeroDocType || (!heroDocTypesLoaded && heroDocTypes.length === 0)}
+                          >
+                            <SelectTrigger className="w-full"><SelectValue placeholder="Dokumenttyp wählen" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">— Keiner —</SelectItem>
+                              {heroDocTypes.map(dt => (
+                                <SelectItem key={dt.id} value={String(dt.id)}>{dt.name}</SelectItem>
+                              ))}
+                              {heroDocTypes.length === 0 && currentId != null && (
+                                <SelectItem value={String(currentId)}>ID {currentId} (nicht geladen)</SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

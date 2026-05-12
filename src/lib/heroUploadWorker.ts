@@ -39,6 +39,40 @@ let tickInProgress = false;
 // stays promptly responsive without allowing concurrent runs.
 let pokePending = false;
 
+// Doc-type mapping cache. HERO requires a document_type_id when assigning
+// uploaded files to a project. The admin configures one doc-type per
+// uploadType in the Integrations tab; the values land in app_config
+// under keys like "hero_doc_type_aufmass_pdf". We cache here for 5 min
+// to avoid hitting the config table on every queue tick.
+let docTypeCache: { values: Record<string, number | null>; loadedAt: number } | null = null;
+const DOC_TYPE_TTL_MS = 5 * 60_000;
+
+async function getDocTypeId(uploadType: string): Promise<number | null> {
+  const now = Date.now();
+  if (!docTypeCache || now - docTypeCache.loadedAt > DOC_TYPE_TTL_MS) {
+    docTypeCache = { values: {}, loadedAt: now };
+    try {
+      // Look up all our hero_doc_type_* config entries in one query
+      const { data } = await supabase.from("app_config").select("key, value").like("key", "hero_doc_type_%");
+      for (const row of (data || [])) {
+        const v = row?.value ? parseInt(String(row.value), 10) : NaN;
+        if (Number.isFinite(v)) {
+          docTypeCache.values[row.key as string] = v;
+        }
+      }
+    } catch (e) {
+      // Silent fail - we'll just send no doc-type, HERO might still
+      // accept the upload depending on account config.
+      console.warn("HeroUploadWorker: doc-type config fetch failed", e);
+    }
+  }
+  return docTypeCache.values[`hero_doc_type_${uploadType}`] ?? null;
+}
+
+export function invalidateHeroDocTypeCache() {
+  docTypeCache = null;
+}
+
 async function processOne(): Promise<boolean> {
   // Returns true if we processed an item (so we should tick again soon),
   // false if the queue was empty/we should idle.
@@ -66,6 +100,15 @@ async function processOne(): Promise<boolean> {
     form.append("uploadType", item.uploadType);
     form.append("heroProjectMatchId", String(item.heroProjectMatchId));
     form.append("filename", item.filename);
+
+    // Look up the configured HERO document_type_id for this uploadType.
+    // The edge function uses it in the CustomerDocumentInput; without
+    // it the upload_document mutation will fail since HERO requires
+    // document_type_id (per HERO API docs).
+    const docTypeId = await getDocTypeId(item.uploadType);
+    if (docTypeId != null) {
+      form.append("documentTypeId", String(docTypeId));
+    }
 
     const { data, error } = await supabase.functions.invoke("hero-upload-proxy", {
       body: form,

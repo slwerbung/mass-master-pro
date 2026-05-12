@@ -459,8 +459,36 @@ Deno.serve(async (req) => {
         if (error) return json({ error: error.message }, 500);
         return json({ success: true });
       }
-<<<<<<< Updated upstream
-=======
+      case "get_hero_doc_types_config": {
+        // Returns the currently configured HERO document_type_id for
+        // each upload-kind we auto-upload to HERO. Used by the admin
+        // UI to show which doc-type each kind maps to.
+        const { data } = await supabase.from("app_config").select("key, value").like("key", "hero_doc_type_%");
+        const config: Record<string, number | null> = {};
+        for (const row of (data || [])) {
+          const v = row.value ? parseInt(String(row.value), 10) : NaN;
+          if (Number.isFinite(v)) config[row.key as string] = v;
+          else config[row.key as string] = null;
+        }
+        return json({ config });
+      }
+      case "set_hero_doc_type": {
+        // Persist the HERO document_type_id selected by the admin for a
+        // given upload-kind. uploadType is the same string used by the
+        // worker (e.g. "aufmass_pdf"). documentTypeId is an integer HERO ID,
+        // or null/empty to clear.
+        const uploadType = String(params.uploadType || "").trim();
+        if (!uploadType) return json({ error: "uploadType required" }, 400);
+        if (!/^[a-z0-9_]+$/.test(uploadType)) return json({ error: "uploadType has invalid chars" }, 400);
+
+        const raw = params.documentTypeId;
+        const key = `hero_doc_type_${uploadType}`;
+        const value = raw != null && raw !== "" && Number.isFinite(Number(raw)) ? String(Number(raw)) : null;
+
+        const { error } = await supabase.from("app_config").upsert({ key, value });
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
       case "get_notification_settings": {
         // Returns the global recipient email and per-event settings
         // (enabled + target). Admin-only because these settings affect
@@ -503,7 +531,6 @@ Deno.serve(async (req) => {
         }
         return json({ success: true });
       }
->>>>>>> Stashed changes
       case "get_employee_name": {
         const { data } = await supabase.from("employees").select("name").eq("id", params.employeeId).maybeSingle();
         return json({ name: data?.name ?? null });
