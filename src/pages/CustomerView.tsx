@@ -302,9 +302,14 @@ const CustomerView = () => {
       setLocations(locs);
       const allImgs = [...(imgs || []), ...((pdfs || []).map((p: any) => ({ ...p, image_type: "pdf" })))];
       setImages(allImgs);
-      // Pre-resolve signed URLs for all images
-      const paths = allImgs.map((img: any) => img.storage_path).filter(Boolean);
-      resolveSignedUrls(paths);
+      // Pre-resolve signed URLs for all images. We also add the
+      // deterministic fallback path images/<id>/original for every
+      // location, because some older locations have the file in storage
+      // but no metadata row in location_images. The signed-url request
+      // will succeed for whichever path actually exists.
+      const knownPaths = allImgs.map((img: any) => img.storage_path).filter(Boolean);
+      const fallbackPaths = locs.map((l: any) => `images/${l.id}/original`);
+      resolveSignedUrls([...knownPaths, ...fallbackPaths]);
       setApprovals({});
       if (locationIds.length > 0) {
         const { data: detailRows } = await supabase
@@ -403,11 +408,21 @@ const CustomerView = () => {
           detailMap[row.location_id].push(row);
         });
         setDetailImagesByLocation(detailMap);
-        // Pre-resolve signed URLs for detail images
+        // Pre-resolve signed URLs for everything we'll display. We
+        // include:
+        //   - paths known from location_images / location_pdfs
+        //   - paths from detail_images rows
+        //   - deterministic fallback paths images/<locationId>/original
+        //     for locations whose main image is in storage but lacks a
+        //     location_images metadata row (legacy data).
+        const mainImagePaths = (imgs || []).map((i: any) => i.storage_path).filter(Boolean);
+        const pdfPaths = pdfEntries.map((p: any) => p.storage_path).filter(Boolean);
         const detailPaths = (detailRows || []).flatMap((r: any) =>
           [r.annotated_path, r.original_path].filter(Boolean)
         );
-        if (detailPaths.length > 0) resolveSignedUrls(detailPaths);
+        const fallbackMainPaths = locationIds.map((id: string) => `images/${id}/original`);
+        const allPaths = [...mainImagePaths, ...pdfPaths, ...detailPaths, ...fallbackMainPaths];
+        if (allPaths.length > 0) resolveSignedUrls(allPaths);
 
         const approvMap: Record<string, boolean> = {};
         (approvData || []).forEach((a: any) => { approvMap[a.location_id] = a.approved; });
@@ -480,25 +495,28 @@ const CustomerView = () => {
     };
   }, [locations, selectedAssignment, directProjectId]);
 
-  const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
-
-  const resolveSignedUrls = async (paths: string[]) => {
-    const unresolved = paths.filter(p => p && !signedUrlCache[p]);
-    if (unresolved.length === 0) return;
-    const results = await Promise.all(
-      unresolved.map(async (path) => {
-        const { data } = await supabase.storage.from("project-files").createSignedUrl(path, 3600);
-        return { path, url: data?.signedUrl || "" };
-      })
-    );
-    setSignedUrlCache(prev => {
-      const next = { ...prev };
-      results.forEach(({ path, url }) => { if (url) next[path] = url; });
-      return next;
-    });
+  // Storage URL helper. The project-files bucket is non-public, but
+  // anon has SELECT permission via RLS - so getPublicUrl returns a
+  // URL the browser can fetch directly without a signed-URL roundtrip.
+  // We use the exact same approach as the employee view (LocationCard,
+  // VehicleDetail, PhotoEditor) which is proven to work.
+  //
+  // Why no caching: getPublicUrl is synchronous and just does string
+  // construction. A signed-URL cache was used before but had two issues:
+  //   - First render happened before the async cache was populated, so
+  //     images appeared blank until a re-render.
+  //   - createSignedUrl fails for non-existent paths, which broke the
+  //     fallback path strategy (images/<id>/original).
+  const getSignedImageUrl = (path: string): string => {
+    if (!path) return "";
+    const { data } = supabase.storage.from("project-files").getPublicUrl(path);
+    return data.publicUrl;
   };
 
-  const getSignedImageUrl = (path: string): string => signedUrlCache[path] || "";
+  // Kept as no-op for backward compat with the few remaining call sites
+  // that pass a list of paths. Now that URL resolution is synchronous
+  // we don't actually need to pre-resolve anything.
+  const resolveSignedUrls = async (_paths: string[]) => { /* no-op */ };
 
   // Customer notifications use 3 event types, throttled server-side:
   //   - first_action: any approval or comment, sent once per assignment
