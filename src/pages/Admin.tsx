@@ -130,7 +130,11 @@ const Admin = () => {
   const [heroDocTypesLoaded, setHeroDocTypesLoaded] = useState(false);
   const [heroDocTypesError, setHeroDocTypesError] = useState<string | null>(null);
   const [heroDocTypeConfig, setHeroDocTypeConfig] = useState<Record<string, number | null>>({});
-  const [savingHeroDocType, setSavingHeroDocType] = useState(false);
+  // Per-uploadType pending selection: the in-progress UI choice before
+  // the user confirms with "Speichern". Once saved, this matches
+  // heroDocTypeConfig and the row shows a green "Gespeichert" badge.
+  const [heroDocTypePending, setHeroDocTypePending] = useState<Record<string, number | null>>({});
+  const [savingHeroDocTypeKey, setSavingHeroDocTypeKey] = useState<string | null>(null);
   const [heroHasKey, setHeroHasKey] = useState(false);
   const [savingHero, setSavingHero] = useState(false);
   const [testingHero, setTestingHero] = useState(false);
@@ -425,7 +429,12 @@ const Admin = () => {
   const loadHeroDocTypeConfig = async () => {
     try {
       const data = await invoke("get_hero_doc_types_config");
-      setHeroDocTypeConfig(data?.config || {});
+      const cfg = data?.config || {};
+      setHeroDocTypeConfig(cfg);
+      // Mirror the saved values into the pending state so the dropdowns
+      // show the current selection on mount; "dirty" check is then a
+      // simple equality comparison.
+      setHeroDocTypePending(cfg);
     } catch {}
   };
 
@@ -461,20 +470,29 @@ const Admin = () => {
     }
   };
 
-  const saveHeroDocType = async (uploadType: string, documentTypeId: number | null) => {
-    setSavingHeroDocType(true);
+  const saveHeroDocType = async (uploadType: string) => {
+    // Persist whatever is currently in pending[uploadType] (or null).
+    // After success we mirror pending -> config so the row shows
+    // "Gespeichert"; on failure we keep pending dirty and toast an
+    // error.
+    const pendingValue = heroDocTypePending[`hero_doc_type_${uploadType}`] ?? null;
+    setSavingHeroDocTypeKey(uploadType);
     try {
       await invoke("set_hero_doc_type", {
         uploadType,
-        documentTypeId: documentTypeId != null ? documentTypeId : null,
+        documentTypeId: pendingValue,
       });
-      setHeroDocTypeConfig(prev => ({ ...prev, [`hero_doc_type_${uploadType}`]: documentTypeId }));
+      setHeroDocTypeConfig(prev => ({ ...prev, [`hero_doc_type_${uploadType}`]: pendingValue }));
       toast.success("Dokumenttyp gespeichert");
     } catch (e: any) {
-      toast.error(e.message || "Fehler beim Speichern");
+      toast.error(e?.message || "Fehler beim Speichern");
     } finally {
-      setSavingHeroDocType(false);
+      setSavingHeroDocTypeKey(null);
     }
+  };
+
+  const setHeroDocTypePendingFor = (uploadType: string, value: number | null) => {
+    setHeroDocTypePending(prev => ({ ...prev, [`hero_doc_type_${uploadType}`]: value }));
   };
 
   const saveHeroConfig = async () => {
@@ -1628,29 +1646,53 @@ const Admin = () => {
                       { key: "aufmass_pdf", label: "Aufmaß-PDF", description: "Das aus einem Projekt exportierte Aufmaß-PDF." },
                       { key: "lager_label_pdf", label: "Lager-Etiketten", description: "Die Lager-Etiketten-PDFs, sobald deren Upload aktiv wird." },
                     ].map(it => {
-                      const currentId = heroDocTypeConfig[`hero_doc_type_${it.key}`] ?? null;
+                      const savedId = heroDocTypeConfig[`hero_doc_type_${it.key}`] ?? null;
+                      const pendingId = heroDocTypePending[`hero_doc_type_${it.key}`] ?? null;
+                      const isDirty = savedId !== pendingId;
+                      const isSaving = savingHeroDocTypeKey === it.key;
+                      const savedName = savedId != null ? heroDocTypes.find(t => t.id === savedId)?.name : null;
                       return (
-                        <div key={it.key} className="border rounded-lg p-3 space-y-2">
-                          <div>
-                            <p className="font-medium text-sm">{it.label}</p>
-                            <p className="text-xs text-muted-foreground">{it.description}</p>
+                        <div key={it.key} className="border rounded-lg p-3 space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium text-sm">{it.label}</p>
+                              <p className="text-xs text-muted-foreground">{it.description}</p>
+                            </div>
+                            {savedId != null ? (
+                              <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700 shrink-0">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                {savedName || `ID ${savedId}`}
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-xs shrink-0">Nicht gesetzt</Badge>
+                            )}
                           </div>
-                          <Select
-                            value={currentId != null ? String(currentId) : "none"}
-                            onValueChange={v => saveHeroDocType(it.key, v === "none" ? null : parseInt(v, 10))}
-                            disabled={savingHeroDocType || (!heroDocTypesLoaded && heroDocTypes.length === 0)}
-                          >
-                            <SelectTrigger className="w-full"><SelectValue placeholder="Dokumenttyp wählen" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">— Keiner —</SelectItem>
-                              {heroDocTypes.map(dt => (
-                                <SelectItem key={dt.id} value={String(dt.id)}>{dt.name}</SelectItem>
-                              ))}
-                              {heroDocTypes.length === 0 && currentId != null && (
-                                <SelectItem value={String(currentId)}>ID {currentId} (nicht geladen)</SelectItem>
-                              )}
-                            </SelectContent>
-                          </Select>
+                          <div className="flex gap-2">
+                            <Select
+                              value={pendingId != null ? String(pendingId) : "none"}
+                              onValueChange={v => setHeroDocTypePendingFor(it.key, v === "none" ? null : parseInt(v, 10))}
+                              disabled={isSaving}
+                            >
+                              <SelectTrigger className="flex-1"><SelectValue placeholder="Dokumenttyp wählen" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">— Keiner —</SelectItem>
+                                {heroDocTypes.map(dt => (
+                                  <SelectItem key={dt.id} value={String(dt.id)}>{dt.name}</SelectItem>
+                                ))}
+                                {heroDocTypes.length === 0 && savedId != null && (
+                                  <SelectItem value={String(savedId)}>ID {savedId} (Liste laden)</SelectItem>
+                                )}
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              onClick={() => saveHeroDocType(it.key)}
+                              disabled={!isDirty || isSaving}
+                              size="sm"
+                              variant={isDirty ? "default" : "outline"}
+                            >
+                              {isSaving ? "Speichert..." : isDirty ? "Speichern" : "Gespeichert"}
+                            </Button>
+                          </div>
                         </div>
                       );
                     })}
