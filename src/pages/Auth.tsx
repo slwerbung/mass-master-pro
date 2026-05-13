@@ -264,18 +264,18 @@ const Auth = () => {
         <CardContent>
           {mode === "select" && (
             <div className="space-y-6">
-              {/* Primary: Mitarbeiter-Login - die häufigste Aktion im
-                  Arbeitsalltag, also ganz oben und groß. Kunden-Login
-                  direkt darunter (zweithäufigste Aktion). */}
+              {/* Logins: Mitarbeiter + Kunde gleich gewichtet, da beides
+                  Bestandskunden / -mitarbeiter mit eigenem Account sind. */}
               <div className="space-y-3">
                 <Button
-                  className="w-full h-20 justify-start gap-3 text-left"
+                  variant="outline"
+                  className="w-full h-16 justify-start gap-3 text-left"
                   onClick={() => setMode("employee")}
                 >
-                  <User className="h-7 w-7 shrink-0" />
+                  <User className="h-6 w-6 text-primary shrink-0" />
                   <div>
-                    <div className="font-semibold text-base">Mitarbeiter-Login</div>
-                    <div className="text-xs opacity-80">Projekte erstellen & bearbeiten</div>
+                    <div className="font-semibold">MITARBEITER-LOGIN</div>
+                    <div className="text-xs text-muted-foreground">Projekte erstellen & bearbeiten</div>
                   </div>
                 </Button>
                 <Button
@@ -285,26 +285,25 @@ const Auth = () => {
                 >
                   <Users className="h-6 w-6 text-primary shrink-0" />
                   <div>
-                    <div className="font-semibold">Kunden-Login</div>
+                    <div className="font-semibold">KUNDEN-LOGIN</div>
                     <div className="text-xs text-muted-foreground">Zugewiesene Projekte ansehen</div>
                   </div>
                 </Button>
               </div>
 
-              {/* Public forms below the logins - reachable, aber nicht
-                  als erste Aktion beworben. */}
+              {/* Public forms - für Erstkontakt ohne Account */}
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <div className="h-px flex-1 bg-border" />
-                  <span className="text-xs text-muted-foreground">Neu hier?</span>
+                  <span className="text-xs text-muted-foreground">Noch kein Account?</span>
                   <div className="h-px flex-1 bg-border" />
                 </div>
                 <Button
                   variant="outline"
-                  className="w-full h-14 justify-start gap-3 text-left"
+                  className="w-full h-16 justify-start gap-3 text-left"
                   onClick={() => navigate("/fahrzeug-anfrage")}
                 >
-                  <Car className="h-5 w-5 text-primary shrink-0" />
+                  <Car className="h-6 w-6 text-primary shrink-0" />
                   <div>
                     <div className="font-semibold">FAHRZEUG EINREICHEN</div>
                     <div className="text-xs text-muted-foreground">Fahrzeugdaten angeben für Beschriftung und Folierung</div>
@@ -312,12 +311,12 @@ const Auth = () => {
                 </Button>
                 <Button
                   variant="outline"
-                  className="w-full h-14 justify-start gap-3 text-left"
+                  className="w-full h-16 justify-start gap-3 text-left"
                   onClick={() => navigate("/neukunde")}
                 >
-                  <UserPlus className="h-5 w-5 text-primary shrink-0" />
+                  <UserPlus className="h-6 w-6 text-primary shrink-0" />
                   <div>
-                    <div className="font-semibold">Als Neukunde anmelden</div>
+                    <div className="font-semibold">ALS NEUKUNDE ANMELDEN</div>
                     <div className="text-xs text-muted-foreground">Erstanlage als Privat- oder Geschäftskunde</div>
                   </div>
                 </Button>
