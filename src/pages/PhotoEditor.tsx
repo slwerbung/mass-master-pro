@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage, Point } from "fabric";
-import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2, RectangleHorizontal } from "lucide-react";
+import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2, RectangleHorizontal, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { createMeasurementGroup } from "@/lib/measurement";
 import { createAreaMeasurementGroup } from "@/lib/areaMeasurement";
@@ -200,6 +200,7 @@ const PhotoEditor = () => {
   const handleCanvasClick = (e: any) => {
     if (!fabricCanvas) return;
     if (Date.now() < suppressTapUntilRef.current || pinchStateRef.current.isPinching) return;
+
     let pointer: { x: number; y: number } | null = null;
     if (fabricCanvas && e?.e) {
       try {
@@ -229,6 +230,80 @@ const PhotoEditor = () => {
       }
     }
   };
+
+  const duplicateAreaGroup = (sourceGroup: any) => {
+    if (!fabricCanvas) return;
+    const data = sourceGroup?.data;
+    if (!data || data.type !== "area") return;
+
+    const w = sourceGroup.width * (sourceGroup.scaleX ?? 1);
+    const h = sourceGroup.height * (sourceGroup.scaleY ?? 1);
+    const srcLeft = sourceGroup.left ?? 0;
+    const srcTop = sourceGroup.top ?? 0;
+
+    // Place the copy directly to the right of the source with a small
+    // gap so it's visibly distinct. If that would push it off-canvas,
+    // place it below instead.
+    const gap = 8;
+    let newLeft = srcLeft + w + gap;
+    let newTop = srcTop;
+    const canvasW = fabricCanvas.getWidth();
+    if (newLeft + w > canvasW) {
+      newLeft = srcLeft;
+      newTop = srcTop + h + gap;
+    }
+
+    const index = getNextAreaIndex();
+    const copy = createAreaMeasurementGroup(
+      newLeft,
+      newTop,
+      newLeft + w,
+      newTop + h,
+      data.widthMm,
+      data.heightMm,
+      index,
+      "#3b82f6"
+    );
+    fabricCanvas.add(copy);
+    fabricCanvas.setActiveObject(copy);
+    fabricCanvas.renderAll();
+    setTimeout(() => fabricCanvas.renderAll(), 50);
+  };
+
+  // Double-click on an area duplicates it. Quick way to stamp out
+  // multiple same-size surfaces (e.g. several identical window panels
+  // in a row) without re-entering the dimensions every time.
+  const handleAreaDoubleClick = (e: any) => {
+    const target = e?.target;
+    if (target?.data?.type === "area") {
+      duplicateAreaGroup(target);
+    }
+  };
+
+  // Track which area is currently selected so the toolbar can show
+  // the "Duplizieren" button only when an area is active.
+  const [selectedAreaGroup, setSelectedAreaGroup] = useState<any>(null);
+
+  useEffect(() => {
+    if (!fabricCanvas) return;
+    const onSelect = (e: any) => {
+      const target = e?.selected?.[0] || fabricCanvas.getActiveObject();
+      if (target?.data?.type === "area") setSelectedAreaGroup(target);
+      else setSelectedAreaGroup(null);
+    };
+    const onClear = () => setSelectedAreaGroup(null);
+    fabricCanvas.on("selection:created", onSelect);
+    fabricCanvas.on("selection:updated", onSelect);
+    fabricCanvas.on("selection:cleared", onClear);
+    fabricCanvas.on("mouse:dblclick", handleAreaDoubleClick);
+    return () => {
+      fabricCanvas.off("selection:created", onSelect);
+      fabricCanvas.off("selection:updated", onSelect);
+      fabricCanvas.off("selection:cleared", onClear);
+      fabricCanvas.off("mouse:dblclick", handleAreaDoubleClick);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fabricCanvas]);
 
   const handleMeasureConfirm = (value: string) => {
     if (!fabricCanvas || !measureStart || !measureEnd) return;
@@ -562,6 +637,17 @@ const PhotoEditor = () => {
             <Button variant="outline" size="sm" onClick={handleDelete} className="px-2">
               <Trash2 className="h-4 w-4" />
             </Button>
+            {selectedAreaGroup && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => duplicateAreaGroup(selectedAreaGroup)}
+                className="px-2"
+                title="Fläche duplizieren (oder Doppelklick)"
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            )}
           </div>
           <Button onClick={handleNext} size="sm" className="shrink-0">
             <Check className="h-4 w-4" />
