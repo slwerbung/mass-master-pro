@@ -265,28 +265,32 @@ const Auth = () => {
           {mode === "select" && (
             <div className="space-y-6">
               {/* Logins: Mitarbeiter + Kunde gleich gewichtet, da beides
-                  Bestandskunden / -mitarbeiter mit eigenem Account sind. */}
+                  Bestandskunden / -mitarbeiter mit eigenem Account sind.
+
+                  Alle Buttons sind `min-h-16` statt `h-16` und nutzen
+                  `whitespace-normal` damit Subtitle auf schmalen
+                  Viewports umbricht statt überzulaufen. */}
               <div className="space-y-3">
                 <Button
                   variant="outline"
-                  className="w-full h-16 justify-start gap-3 text-left"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
                   onClick={() => setMode("employee")}
                 >
                   <User className="h-6 w-6 text-primary shrink-0" />
-                  <div>
-                    <div className="font-semibold">MITARBEITER-LOGIN</div>
-                    <div className="text-xs text-muted-foreground">Projekte erstellen & bearbeiten</div>
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">MITARBEITER-LOGIN</div>
+                    <div className="text-xs text-muted-foreground break-words">Projekte erstellen & bearbeiten</div>
                   </div>
                 </Button>
                 <Button
                   variant="outline"
-                  className="w-full h-16 justify-start gap-3 text-left"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
                   onClick={() => setMode("customer")}
                 >
                   <Users className="h-6 w-6 text-primary shrink-0" />
-                  <div>
-                    <div className="font-semibold">KUNDEN-LOGIN</div>
-                    <div className="text-xs text-muted-foreground">Zugewiesene Projekte ansehen</div>
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">KUNDEN-LOGIN</div>
+                    <div className="text-xs text-muted-foreground break-words">Zugewiesene Projekte ansehen</div>
                   </div>
                 </Button>
               </div>
@@ -300,24 +304,24 @@ const Auth = () => {
                 </div>
                 <Button
                   variant="outline"
-                  className="w-full h-16 justify-start gap-3 text-left"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
                   onClick={() => navigate("/fahrzeug-anfrage")}
                 >
                   <Car className="h-6 w-6 text-primary shrink-0" />
-                  <div>
-                    <div className="font-semibold">FAHRZEUG EINREICHEN</div>
-                    <div className="text-xs text-muted-foreground">Fahrzeugdaten angeben für Beschriftung und Folierung</div>
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">FAHRZEUG EINREICHEN</div>
+                    <div className="text-xs text-muted-foreground break-words">Fahrzeugdaten angeben für Beschriftung und Folierung</div>
                   </div>
                 </Button>
                 <Button
                   variant="outline"
-                  className="w-full h-16 justify-start gap-3 text-left"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
                   onClick={() => navigate("/neukunde")}
                 >
                   <UserPlus className="h-6 w-6 text-primary shrink-0" />
-                  <div>
-                    <div className="font-semibold">ALS NEUKUNDE ANMELDEN</div>
-                    <div className="text-xs text-muted-foreground">Erstanlage als Privat- oder Geschäftskunde</div>
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">ALS NEUKUNDE ANMELDEN</div>
+                    <div className="text-xs text-muted-foreground break-words">Erstanlage als Privat- oder Geschäftskunde</div>
                   </div>
                 </Button>
               </div>
