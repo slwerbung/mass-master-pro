@@ -178,6 +178,19 @@ const Admin = () => {
     if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadNotifSettings(); loadVehicleFields(); loadIntegrations(); loadHeroDocTypeConfig(); }
   }, [adminToken]);
 
+  // Once we know HERO is enabled and has a key, auto-fetch the
+  // document type list. That way the saved doc-type IDs in the
+  // dropdowns can be rendered as their proper names ("Aufmaßdokument"
+  // instead of just "ID 279269") without the admin having to click
+  // "Aus HERO laden" first. We guard on heroDocTypesLoaded so we
+  // don't re-fetch on every render.
+  useEffect(() => {
+    if (heroEnabled && heroHasKey && !heroDocTypesLoaded) {
+      loadHeroDocTypes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroEnabled, heroHasKey, heroDocTypesLoaded]);
+
   useEffect(() => {
     if (!selectedProjectAccessId) return;
     const project = projects.find((entry) => entry.id === selectedProjectAccessId);
