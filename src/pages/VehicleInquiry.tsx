@@ -1,15 +1,14 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { ImagePlus, X, Loader2, CheckCircle2 } from "lucide-react";
+import { ImagePlus, X, Loader2, CheckCircle2, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { CompanyHeader } from "@/components/CompanyHeader";
-import { PrivacyLink } from "@/components/PrivacyLink";
 
 // Public-facing form for customers to request vehicle lettering. Submits
 // via the submit-vehicle-request edge function, which:
@@ -30,6 +29,7 @@ interface VehicleFieldConfig {
 }
 
 const VehicleInquiry = () => {
+  const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<{ projectNumber: string } | null>(null);
   const [needsSignup, setNeedsSignup] = useState(false);
@@ -232,38 +232,54 @@ const VehicleInquiry = () => {
   // ---- Success view ----
   if (submitted) {
     return (
-      <div className="min-h-screen bg-muted/30">
-        <CompanyHeader />
-        <div className="flex items-center justify-center p-4 pt-12">
-          <Card className="max-w-lg w-full">
-            <CardContent className="pt-8 pb-8 text-center space-y-4">
-              <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto" />
-              <h2 className="text-2xl font-bold">Anfrage erhalten</h2>
-              <p className="text-muted-foreground">
-                Vielen Dank! Ihre Anfrage wurde übermittelt und unter der Projektnummer
-                <strong> {submitted.projectNumber}</strong> registriert.
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Wir melden uns zeitnah bei Ihnen unter der angegebenen E-Mail-Adresse.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
+      <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
+        <Card className="max-w-lg w-full">
+          <CardContent className="pt-8 pb-8 text-center space-y-4">
+            <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto" />
+            <h2 className="text-2xl font-bold">Anfrage erhalten</h2>
+            <p className="text-muted-foreground">
+              Vielen Dank! Ihre Anfrage wurde übermittelt und unter der Projektnummer
+              <strong> {submitted.projectNumber}</strong> registriert.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Wir melden uns zeitnah bei Ihnen unter der angegebenen E-Mail-Adresse.
+            </p>
+            {/* Häufig haben Kunden mehrere Fahrzeuge - der Link erspart
+                ihnen die Suche zurück zum Formular. */}
+            <div className="pt-4 space-y-2">
+              <Button
+                className="w-full"
+                onClick={() => {
+                  // Reset to a fresh form rather than re-route through
+                  // the router (avoids a page reload and keeps the URL
+                  // clean). Clearing submitted shows the form again.
+                  setSubmitted(null);
+                  setFieldValues({});
+                  setUploadedImages([]);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" /> Weiteres Fahrzeug einreichen
+              </Button>
+              <Button variant="ghost" className="w-full" onClick={() => navigate("/")}>
+                Zur Startseite
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-muted/30">
-      <CompanyHeader />
-      <div className="py-8 px-4">
-        <div className="max-w-2xl mx-auto">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold mb-2">Anfrage Fahrzeugbeschriftung</h1>
-            <p className="text-muted-foreground">
-              Schicken Sie uns die Daten zu Ihrem Fahrzeug — wir melden uns zur Beratung.
-            </p>
-          </div>
+    <div className="min-h-screen bg-muted/30 py-8 px-4">
+      <div className="max-w-2xl mx-auto">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold mb-2">Anfrage Fahrzeugbeschriftung</h1>
+          <p className="text-muted-foreground">
+            Schicken Sie uns die Daten zu Ihrem Fahrzeug — wir melden uns zur Beratung.
+          </p>
+        </div>
 
         <Card>
           <CardHeader>
@@ -473,7 +489,7 @@ const VehicleInquiry = () => {
                     className={errors.consent ? "border-red-500 data-[state=unchecked]:border-red-500" : ""}
                   />
                   <Label htmlFor="consent" className="text-sm leading-relaxed cursor-pointer">
-                    Ich habe die <PrivacyLink /> gelesen und bin mit der Verarbeitung meiner Daten einverstanden. *
+                    Ich habe die <a href="https://www.slwerbung.de/datenschutz" target="_blank" rel="noreferrer" className="underline text-primary">Datenschutzerklärung</a> gelesen und bin mit der Verarbeitung meiner Daten einverstanden. *
                   </Label>
                 </div>
                 {errors.consent && <p className="text-sm text-red-600 mt-2">{errors.consent}</p>}
@@ -486,7 +502,6 @@ const VehicleInquiry = () => {
             </form>
           </CardContent>
         </Card>
-        </div>
       </div>
     </div>
   );

@@ -113,15 +113,28 @@ function getFloorPlanPath(projectId: string, floorPlanId: string) {
 
 // ─── Storage helpers ──────────────────────────────────────────────────────────
 
-async function uploadImageToStorage(path: string, base64: string): Promise<string | null> {
+async function uploadImageToStorage(
+  path: string,
+  base64: string,
+  options?: { compress?: boolean; maxDimension?: number; quality?: number }
+): Promise<string | null> {
   try {
     if (!base64 || !base64.includes(';base64,')) return null;
 
-    // Compress before upload if image is large (safety net – pages should compress too)
+    // Compress only when explicitly enabled. For annotated images we
+    // want pixel-perfect output so the labels & dimension lines drawn
+    // on top stay sharp - any re-encode degrades the text. Original
+    // photos can be compressed since they're just reference shots.
+    // Default to no compression so callers have to opt in.
     let data = base64;
-    const sizeKb = Math.round(base64.length * 0.75 / 1024);
-    if (sizeKb > 400) {
-      try { data = await compressImage(base64, 1600, 0.82); } catch { /* keep original */ }
+    const wantsCompress = options?.compress ?? false;
+    if (wantsCompress) {
+      const maxDim = options?.maxDimension ?? 2400;
+      const quality = options?.quality ?? 0.9;
+      const sizeKb = Math.round(base64.length * 0.75 / 1024);
+      if (sizeKb > 400) {
+        try { data = await compressImage(base64, maxDim, quality); } catch { /* keep original */ }
+      }
     }
 
     const parts = data.split(';base64,');
@@ -159,7 +172,14 @@ async function syncImageVariant(locationId: string, imageType: "annotated" | "or
   const cacheKey = `loc_${locationId}_${imageType}`;
   if (await isImageSynced(cacheKey, imageData)) return;
   const path = getLocationImagePath(locationId, imageType);
-  const uploaded = await uploadImageToStorage(path, imageData);
+  // Annotated images carry dimension labels / drawn-on text and need
+  // to stay sharp - no compression. Originals are reference photos and
+  // can be lightly compressed if they're huge.
+  const uploaded = await uploadImageToStorage(
+    path,
+    imageData,
+    imageType === "original" ? { compress: true, maxDimension: 2400, quality: 0.9 } : { compress: false }
+  );
   if (!uploaded) return;
   // Upsert relies on unique constraint (location_id, image_type) added in
   // migration 20260415150000_location_images_unique_constraint.sql.
@@ -209,8 +229,12 @@ async function syncDetailImage(detailImage: DetailImage, locationId: string): Pr
   const originalPath  = getDetailImagePath(locationId, detailImage.id, 'original');
 
   const [uploadedAnnotated, uploadedOriginal] = await Promise.all([
-    annotatedAlreadySynced ? annotatedPath : uploadImageToStorage(annotatedPath, annotatedData),
-    originalAlreadySynced  ? originalPath  : uploadImageToStorage(originalPath,  originalData),
+    annotatedAlreadySynced
+      ? annotatedPath
+      : uploadImageToStorage(annotatedPath, annotatedData, { compress: false }),
+    originalAlreadySynced
+      ? originalPath
+      : uploadImageToStorage(originalPath, originalData, { compress: true, maxDimension: 2400, quality: 0.9 }),
   ]);
 
   if (!uploadedAnnotated || !uploadedOriginal) return;
@@ -252,7 +276,7 @@ async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<v
   const path = getFloorPlanPath(projectId, floorPlan.id);
 
   if (!(await isImageSynced(cacheKey, floorPlan.imageData))) {
-    const uploaded = await uploadImageToStorage(path, floorPlan.imageData);
+    const uploaded = await uploadImageToStorage(path, floorPlan.imageData, { compress: true, maxDimension: 2400, quality: 0.9 });
     if (!uploaded) return;
     await markImageSynced(cacheKey, floorPlan.imageData);
   }

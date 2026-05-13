@@ -163,7 +163,7 @@ const LabelPrint = () => {
     setGenerating(true);
     try {
       const sz = LABEL_SIZES[size];
-      const pdf = buildLabelPdf({
+      const pdf = await buildLabelPdf({
         widthMm: sz.wMm,
         heightMm: sz.hMm,
         projectNumber,
@@ -554,7 +554,73 @@ function computeLayout(widthMm: number, heightMm: number): Layout {
 
 /* ---------- PDF generation ---------- */
 
-function buildLabelPdf(d: LabelData): jsPDF {
+// ─── Barlow font loader ──────────────────────────────────────────────
+//
+// jsPDF only ships with Helvetica/Times/Courier by default. To embed
+// Barlow (our brand font) in the printable PDF, we fetch the TTF files
+// at runtime, base64-encode them, and register them via the jsPDF
+// virtual filesystem. The result is cached in module scope so
+// subsequent prints in the same session skip the fetch+encode work.
+//
+// We fetch from gstatic (Google Fonts CDN) which the app already uses
+// via the <link> tag in the on-screen label, so the asset is usually
+// already in the browser cache. The TTFs are ~120 KB each, so the
+// total cold-load adds ~250 KB to the first PDF generation.
+//
+// If the fetch fails (offline, CDN blocked) we fall back gracefully to
+// Helvetica - it's not Barlow, but the print still happens.
+
+const BARLOW_URLS = {
+  // These point to specific static TTF files (not the CSS API) so we
+  // get one font per fetch instead of a stylesheet. The URLs come from
+  // google-webfonts-helper and are stable.
+  regular: "https://fonts.gstatic.com/s/barlow/v12/7cHpv4kjgoGqM7E_DMs5.ttf",
+  bold:    "https://fonts.gstatic.com/s/barlow/v12/7cHrv4kjgoGqM7E3_-gc4Q.ttf",
+};
+
+let barlowCache: { regular: string; bold: string } | null = null;
+let barlowLoadFailed = false;
+
+async function fetchFontAsBase64(url: string): Promise<string> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Font fetch failed: ${r.status}`);
+  const buf = await r.arrayBuffer();
+  // Convert ArrayBuffer to base64 in chunks to avoid huge call-stack
+  // arguments on big TTFs.
+  let binary = "";
+  const bytes = new Uint8Array(buf);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk) as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
+async function ensureBarlowLoaded(): Promise<{ regular: string; bold: string } | null> {
+  if (barlowCache) return barlowCache;
+  if (barlowLoadFailed) return null;
+  try {
+    const [regular, bold] = await Promise.all([
+      fetchFontAsBase64(BARLOW_URLS.regular),
+      fetchFontAsBase64(BARLOW_URLS.bold),
+    ]);
+    barlowCache = { regular, bold };
+    return barlowCache;
+  } catch (e) {
+    console.warn("Barlow font load failed, falling back to Helvetica", e);
+    barlowLoadFailed = true;
+    return null;
+  }
+}
+
+function registerBarlow(pdf: jsPDF, fonts: { regular: string; bold: string }) {
+  pdf.addFileToVFS("Barlow-Regular.ttf", fonts.regular);
+  pdf.addFont("Barlow-Regular.ttf", "Barlow", "normal");
+  pdf.addFileToVFS("Barlow-Bold.ttf", fonts.bold);
+  pdf.addFont("Barlow-Bold.ttf", "Barlow", "bold");
+}
+
+async function buildLabelPdf(d: LabelData): Promise<jsPDF> {
   // PDF-Seitengröße = exakte Etikettengröße in mm. jsPDF macht
   // anschließend alles in mm-Einheiten, sodass die Layout-Mathematik
   // direkt 1:1 abgebildet werden kann.
@@ -565,11 +631,14 @@ function buildLabelPdf(d: LabelData): jsPDF {
     compress: true,
   });
 
-  // jsPDF default font is Helvetica - close enough to Barlow for the
-  // PDF output. Loading custom fonts in jsPDF requires base64-embedding
-  // the TTF, which is overkill for storage labels. Helvetica bold gives
-  // a clean condensed-DIN-like look.
-  pdf.setFont("helvetica", "bold");
+  // Lade & registriere die Marken-Schrift Barlow. Wenn der Download
+  // scheitert (z.B. offline), nutzt ensureBarlowLoaded() null zurück
+  // und wir fallen auf Helvetica zurück - PDF wird trotzdem erstellt.
+  const barlow = await ensureBarlowLoaded();
+  const fontFamily = barlow ? "Barlow" : "helvetica";
+  if (barlow) registerBarlow(pdf, barlow);
+
+  pdf.setFont(fontFamily, "bold");
 
   const layout = computeLayout(d.widthMm, d.heightMm);
 
@@ -579,21 +648,21 @@ function buildLabelPdf(d: LabelData): jsPDF {
 
   // Block 1: Projektname (oben)
   const block1Y = oy;
-  drawBlackTextBlock(pdf, ox, block1Y, layout.innerW, layout.blockSide, d.projectName, layout.fontSide, layout.blockPadX, "bold");
+  drawBlackTextBlock(pdf, ox, block1Y, layout.innerW, layout.blockSide, d.projectName, layout.fontSide, layout.blockPadX, "bold", fontFamily);
 
   // Block 2: Projektnummer (mittig, groß)
   const block2Y = block1Y + layout.blockSide + layout.gap;
-  drawBlackTextBlock(pdf, ox, block2Y, layout.innerW, layout.blockNumber, d.projectNumber, layout.fontNumber, layout.blockPadX, "bold");
+  drawBlackTextBlock(pdf, ox, block2Y, layout.innerW, layout.blockNumber, d.projectNumber, layout.fontNumber, layout.blockPadX, "bold", fontFamily);
 
   // Block 3: Kunde (unten)
   const block3Y = block2Y + layout.blockNumber + layout.gap;
-  drawBlackTextBlock(pdf, ox, block3Y, layout.innerW, layout.blockSide, d.customerName, layout.fontSide, layout.blockPadX, "bold");
+  drawBlackTextBlock(pdf, ox, block3Y, layout.innerW, layout.blockSide, d.customerName, layout.fontSide, layout.blockPadX, "bold", fontFamily);
 
   // Footer: Datum + QR
   const footerY = block3Y + layout.blockSide + layout.gap;
 
   // Datum (links)
-  pdf.setFont("helvetica", "normal");
+  pdf.setFont(fontFamily, "normal");
   pdf.setTextColor(0, 0, 0);
   pdf.setFontSize(mmToPt(layout.fontFooter));
   // Vertikal mittig im Footer-Streifen ausrichten
@@ -623,7 +692,8 @@ function drawBlackTextBlock(
   text: string,
   fontMm: number,
   padX: number,
-  weight: "normal" | "bold"
+  weight: "normal" | "bold",
+  fontFamily: string = "helvetica"
 ) {
   // Schwarzer gefüllter Rechteck
   pdf.setFillColor(0, 0, 0);
@@ -633,7 +703,7 @@ function drawBlackTextBlock(
 
   // Weiße Schrift, mittig
   pdf.setTextColor(255, 255, 255);
-  pdf.setFont("helvetica", weight);
+  pdf.setFont(fontFamily, weight);
   pdf.setFontSize(mmToPt(fontMm));
 
   // Text horizontal zentriert in der mittleren x-Position

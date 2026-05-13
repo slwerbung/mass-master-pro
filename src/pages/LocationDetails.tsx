@@ -198,7 +198,7 @@ const LocationDetails = () => {
 
         toast.loading("Bild wird gespeichert...");
         const originalImageDataToSave = rawOriginal
-          ? await compressImage(rawOriginal, 1600, 0.85)
+          ? await compressImage(rawOriginal, 2400, 0.9)
           : imageDataToSave;
 
         const detailImage = { id: crypto.randomUUID(), imageData: imageDataToSave, originalImageData: originalImageDataToSave, caption: caption.trim() || undefined, createdAt: new Date() };
@@ -254,7 +254,7 @@ const LocationDetails = () => {
 
         toast.loading("Bild wird gespeichert...");
         const originalImageDataToSave = rawOriginal
-          ? await compressImage(rawOriginal, 1600, 0.85)
+          ? await compressImage(rawOriginal, 2400, 0.9)
           : imageDataToSave;
 
         const locationNumber = nextLocationNumber(project.locations);

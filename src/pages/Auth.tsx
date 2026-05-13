@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Shield, User, Users, ArrowLeft, Lock } from "lucide-react";
+import { Shield, User, Users, ArrowLeft, Lock, Car, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { setSession, getSession } from "@/lib/session";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
@@ -259,23 +259,71 @@ const Auth = () => {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">Captfix</CardTitle>
-          <CardDescription>{mode === "select" ? "Bitte wählen Sie Ihre Rolle" : ""}</CardDescription>
+          <CardDescription>{mode === "select" ? "Was möchten Sie tun?" : ""}</CardDescription>
         </CardHeader>
         <CardContent>
           {mode === "select" && (
-            <div className="space-y-3">
-              <Button variant="outline" className="w-full h-16 justify-start gap-3 text-left" onClick={() => setMode("admin")}>
-                <Shield className="h-6 w-6 text-primary shrink-0" />
-                <div><div className="font-semibold">Admin</div><div className="text-xs text-muted-foreground">Verwaltung & Einstellungen</div></div>
-              </Button>
-              <Button variant="outline" className="w-full h-16 justify-start gap-3 text-left" onClick={() => setMode("employee")}>
-                <User className="h-6 w-6 text-primary shrink-0" />
-                <div><div className="font-semibold">Mitarbeiter</div><div className="text-xs text-muted-foreground">Projekte erstellen & bearbeiten</div></div>
-              </Button>
-              <Button variant="outline" className="w-full h-16 justify-start gap-3 text-left" onClick={() => setMode("customer")}>
-                <Users className="h-6 w-6 text-primary shrink-0" />
-                <div><div className="font-semibold">Kunde</div><div className="text-xs text-muted-foreground">Zugewiesene Projekte ansehen</div></div>
-              </Button>
+            <div className="space-y-6">
+              {/* Primary actions: the two public forms. Most visitors
+                  who hit captfix.app are customers wanting to submit
+                  something, not employees logging in. */}
+              <div className="space-y-3">
+                <Button
+                  className="w-full h-20 justify-start gap-3 text-left"
+                  onClick={() => navigate("/fahrzeug-anfrage")}
+                >
+                  <Car className="h-7 w-7 shrink-0" />
+                  <div>
+                    <div className="font-semibold text-base">Fahrzeugbeschriftung anfragen</div>
+                    <div className="text-xs opacity-80">Fahrzeug für Vermessung übergeben</div>
+                  </div>
+                </Button>
+                <Button
+                  className="w-full h-20 justify-start gap-3 text-left"
+                  onClick={() => navigate("/neukunde")}
+                >
+                  <UserPlus className="h-7 w-7 shrink-0" />
+                  <div>
+                    <div className="font-semibold text-base">Als Neukunde anmelden</div>
+                    <div className="text-xs opacity-80">Erstanlage als Privat- oder Geschäftskunde</div>
+                  </div>
+                </Button>
+              </div>
+
+              {/* Kunden-Login: weniger Spektakel, klar getrennt */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-border" />
+                  <span className="text-xs text-muted-foreground">Bereits Kunde?</span>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+                <Button variant="outline" className="w-full h-14 justify-start gap-3 text-left" onClick={() => setMode("customer")}>
+                  <Users className="h-5 w-5 text-primary shrink-0" />
+                  <div><div className="font-semibold">Kundenbereich</div><div className="text-xs text-muted-foreground">Zugewiesene Projekte ansehen</div></div>
+                </Button>
+              </div>
+
+              {/* Mitarbeiter/Admin: ganz dezent, als kleine Links unten.
+                  Sie kennen ihren Weg und müssen nicht beworben werden. */}
+              <div className="pt-2 border-t">
+                <div className="flex items-center justify-center gap-4 text-xs">
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
+                    onClick={() => setMode("employee")}
+                  >
+                    Mitarbeiter-Login
+                  </button>
+                  <span className="text-muted-foreground/50">·</span>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
+                    onClick={() => setMode("admin")}
+                  >
+                    Admin-Login
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
