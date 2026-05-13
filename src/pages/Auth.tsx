@@ -295,7 +295,7 @@ const Auth = () => {
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <div className="h-px flex-1 bg-border" />
-                  <span className="text-xs text-muted-foreground">Noch kein Account?</span>
+                  <span className="text-xs text-muted-foreground">Anliegen einreichen</span>
                   <div className="h-px flex-1 bg-border" />
                 </div>
                 <Button
