@@ -172,16 +172,34 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    // Read HERO config
+    // Read HERO config + doc-type mapping. We use two separate queries
+    // because PostgREST's .or() + .like() combo is finicky with the
+    // wildcard syntax (% vs *), and silent mismatches mean we'd miss
+    // the doc-type config and fall back to "no doc type", which fails
+    // at HERO with a 422. Two simple queries are clearer and reliably
+    // return what we need.
+    //
+    // The edge function runs with service-role, so it can read
+    // app_config even though anon RLS would block direct browser
+    // access (which is intentional - keeps config private).
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
-    const { data: configRows } = await supabase
-      .from("app_config")
-      .select("key, value")
-      .in("key", ["hero_api_key", "hero_enabled"]);
-    const config = new Map((configRows || []).map((r: any) => [r.key, r.value]));
+    const [{ data: hereConfigRows }, { data: docTypeRows }] = await Promise.all([
+      supabase
+        .from("app_config")
+        .select("key, value")
+        .in("key", ["hero_api_key", "hero_enabled"]),
+      supabase
+        .from("app_config")
+        .select("key, value")
+        .like("key", "hero_doc_type_%"),
+    ]);
+    const config = new Map<string, string>();
+    for (const r of (hereConfigRows || [])) config.set(r.key as string, r.value as string);
+    for (const r of (docTypeRows || [])) config.set(r.key as string, r.value as string);
+
     const apiKey = config.get("hero_api_key");
     const heroEnabled = config.get("hero_enabled") === "true" && !!apiKey;
 
@@ -198,13 +216,17 @@ serve(async (req) => {
     const uploadType = form.get("uploadType") as UploadType | null;
     const heroProjectMatchId = form.get("heroProjectMatchId") as string | null;
     const filename = (form.get("filename") as string | null) || "upload.bin";
-    // Optional: HERO document_type_id. Sent by the client based on
-    // configured doc-type for the given uploadType (admin picks in the
-    // Integrations tab). Null/missing means we send an empty
-    // CustomerDocumentInput and let HERO use its default - which may
-    // fail depending on HERO account config.
-    const documentTypeIdRaw = form.get("documentTypeId") as string | null;
-    const documentTypeId = documentTypeIdRaw && /^\d+$/.test(documentTypeIdRaw) ? parseInt(documentTypeIdRaw, 10) : null;
+    // documentTypeId: prefer what the admin configured for this
+    // uploadType. Frontend may also pass one via form for backwards
+    // compat (older worker versions did so), but the server-side
+    // lookup wins because it always reflects current settings.
+    const configuredDocType = uploadType ? config.get(`hero_doc_type_${uploadType}`) : undefined;
+    const formDocType = form.get("documentTypeId") as string | null;
+    const rawDocType = configuredDocType ?? formDocType ?? null;
+    const documentTypeId = rawDocType && /^\d+$/.test(String(rawDocType)) ? parseInt(String(rawDocType), 10) : null;
+    // Diagnostic log: helps us see exactly what landed in config
+    // versus what was sent by the client. Truncated to keep logs small.
+    console.log(`HERO doc-type resolve: uploadType=${uploadType} configKey=hero_doc_type_${uploadType} configValue=${configuredDocType ?? "MISSING"} formValue=${formDocType ?? "none"} resolved=${documentTypeId ?? "none"}`);
 
     if (!file) {
       return new Response(JSON.stringify({ ok: false, error: "Kein File im Request", step: "input" }), {
