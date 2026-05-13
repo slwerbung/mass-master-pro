@@ -264,57 +264,68 @@ const Auth = () => {
         <CardContent>
           {mode === "select" && (
             <div className="space-y-6">
-              {/* Primary actions: the two public forms. Most visitors
-                  who hit captfix.app are customers wanting to submit
-                  something, not employees logging in. */}
+              {/* Primary: Mitarbeiter-Login - die häufigste Aktion im
+                  Arbeitsalltag, also ganz oben und groß. Kunden-Login
+                  direkt darunter (zweithäufigste Aktion). */}
               <div className="space-y-3">
                 <Button
                   className="w-full h-20 justify-start gap-3 text-left"
-                  onClick={() => navigate("/fahrzeug-anfrage")}
+                  onClick={() => setMode("employee")}
                 >
-                  <Car className="h-7 w-7 shrink-0" />
+                  <User className="h-7 w-7 shrink-0" />
                   <div>
-                    <div className="font-semibold text-base">Fahrzeugbeschriftung anfragen</div>
-                    <div className="text-xs opacity-80">Fahrzeug für Vermessung übergeben</div>
+                    <div className="font-semibold text-base">Mitarbeiter-Login</div>
+                    <div className="text-xs opacity-80">Projekte erstellen & bearbeiten</div>
                   </div>
                 </Button>
                 <Button
-                  className="w-full h-20 justify-start gap-3 text-left"
-                  onClick={() => navigate("/neukunde")}
+                  variant="outline"
+                  className="w-full h-16 justify-start gap-3 text-left"
+                  onClick={() => setMode("customer")}
                 >
-                  <UserPlus className="h-7 w-7 shrink-0" />
+                  <Users className="h-6 w-6 text-primary shrink-0" />
                   <div>
-                    <div className="font-semibold text-base">Als Neukunde anmelden</div>
-                    <div className="text-xs opacity-80">Erstanlage als Privat- oder Geschäftskunde</div>
+                    <div className="font-semibold">Kunden-Login</div>
+                    <div className="text-xs text-muted-foreground">Zugewiesene Projekte ansehen</div>
                   </div>
                 </Button>
               </div>
 
-              {/* Kunden-Login: weniger Spektakel, klar getrennt */}
+              {/* Public forms below the logins - reachable, aber nicht
+                  als erste Aktion beworben. */}
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <div className="h-px flex-1 bg-border" />
-                  <span className="text-xs text-muted-foreground">Bereits Kunde?</span>
+                  <span className="text-xs text-muted-foreground">Neu hier?</span>
                   <div className="h-px flex-1 bg-border" />
                 </div>
-                <Button variant="outline" className="w-full h-14 justify-start gap-3 text-left" onClick={() => setMode("customer")}>
-                  <Users className="h-5 w-5 text-primary shrink-0" />
-                  <div><div className="font-semibold">Kundenbereich</div><div className="text-xs text-muted-foreground">Zugewiesene Projekte ansehen</div></div>
+                <Button
+                  variant="outline"
+                  className="w-full h-14 justify-start gap-3 text-left"
+                  onClick={() => navigate("/fahrzeug-anfrage")}
+                >
+                  <Car className="h-5 w-5 text-primary shrink-0" />
+                  <div>
+                    <div className="font-semibold">FAHRZEUG EINREICHEN</div>
+                    <div className="text-xs text-muted-foreground">Fahrzeugdaten angeben für Beschriftung und Folierung</div>
+                  </div>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full h-14 justify-start gap-3 text-left"
+                  onClick={() => navigate("/neukunde")}
+                >
+                  <UserPlus className="h-5 w-5 text-primary shrink-0" />
+                  <div>
+                    <div className="font-semibold">Als Neukunde anmelden</div>
+                    <div className="text-xs text-muted-foreground">Erstanlage als Privat- oder Geschäftskunde</div>
+                  </div>
                 </Button>
               </div>
 
-              {/* Mitarbeiter/Admin: ganz dezent, als kleine Links unten.
-                  Sie kennen ihren Weg und müssen nicht beworben werden. */}
+              {/* Admin-Login: ganz unten, dezent als Text-Link */}
               <div className="pt-2 border-t">
-                <div className="flex items-center justify-center gap-4 text-xs">
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
-                    onClick={() => setMode("employee")}
-                  >
-                    Mitarbeiter-Login
-                  </button>
-                  <span className="text-muted-foreground/50">·</span>
+                <div className="flex items-center justify-center text-xs">
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
