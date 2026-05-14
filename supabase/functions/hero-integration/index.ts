@@ -152,13 +152,13 @@ Deno.serve(async (req) => {
       }
 
       case "update_project_notes": {
-        // Updates the "notes" field on a HERO project. HERO doesn't
-        // expose this in their public docs, but based on the
-        // update_contact pattern from the API guide
-        // (mutation update_contact(contact: { id, ...fields })), we
-        // assume the analog: update_project_match with input field
-        // "notes". If the actual field name differs, HERO will return
-        // "Field 'notes' is not defined" and we'll adapt.
+        // Updates the "partner_notes" field on a HERO project. HERO's
+        // Lead-API documentation (used for creating projects) shows
+        // that "partner_notes" is the notes field on a project_match,
+        // distinct from "comment" which writes a logbook entry.
+        // We assume the same field name applies to the GraphQL
+        // update_project_match mutation, analogous to how update_contact
+        // works in the API guide.
         const { heroProjectId, notes } = params;
         const projectIdNum = Number(heroProjectId);
         if (!Number.isFinite(projectIdNum)) return json({ error: "heroProjectId required" }, 400);
@@ -169,7 +169,7 @@ Deno.serve(async (req) => {
           }
         `;
         const data = await heroPost(apiKey, mutation, {
-          input: { id: projectIdNum, notes: text },
+          input: { id: projectIdNum, partner_notes: text },
         });
         return json({ success: true, data });
       }
