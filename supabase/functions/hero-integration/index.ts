@@ -151,6 +151,29 @@ Deno.serve(async (req) => {
         }
       }
 
+      case "update_project_notes": {
+        // Updates the "notes" field on a HERO project. HERO doesn't
+        // expose this in their public docs, but based on the
+        // update_contact pattern from the API guide
+        // (mutation update_contact(contact: { id, ...fields })), we
+        // assume the analog: update_project_match with input field
+        // "notes". If the actual field name differs, HERO will return
+        // "Field 'notes' is not defined" and we'll adapt.
+        const { heroProjectId, notes } = params;
+        const projectIdNum = Number(heroProjectId);
+        if (!Number.isFinite(projectIdNum)) return json({ error: "heroProjectId required" }, 400);
+        const text = typeof notes === "string" ? notes.slice(0, 50000) : "";
+        const mutation = `
+          mutation UpdateProjectNotes($input: ProjectMatchInput!) {
+            update_project_match(project_match: $input) { id }
+          }
+        `;
+        const data = await heroPost(apiKey, mutation, {
+          input: { id: projectIdNum, notes: text },
+        });
+        return json({ success: true, data });
+      }
+
       case "introspect_type": {
         // Diagnostic helper: returns the shape of a HERO GraphQL type.
         // Useful when an upload/mutation fails and we need to see what

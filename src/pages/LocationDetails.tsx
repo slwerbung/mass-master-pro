@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
 import { supabase } from "@/integrations/supabase/client";
 import { scheduleSyncProject } from "@/lib/supabaseSync";
+import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers";
 
 interface FieldConfig {
@@ -175,6 +176,9 @@ const LocationDetails = () => {
           customFields: Object.fromEntries(Object.entries(fieldValues).filter(([k]) => k.startsWith("custom_"))),
         });
         scheduleSyncProject(projectId);
+        // Sync area measurements into HERO notes if linked. Fire-and-
+        // forget: failures don't block the user.
+        updateHeroNotesIfLinked(projectId);
         toast.success("Standort aktualisiert");
         navigate(`/projects/${projectId}`);
       } else if (isDetailImage && imageDataRef.current) {
@@ -308,6 +312,8 @@ const LocationDetails = () => {
         if (floorPlanId) navigate(`/projects/${projectId}/floor-plans`);
         else navigate(`/projects/${projectId}`);
         scheduleSyncProject(projectId);
+        // Sync area measurements to HERO notes (best-effort)
+        updateHeroNotesIfLinked(projectId);
       }
     } catch (error) {
       toast.dismiss();
