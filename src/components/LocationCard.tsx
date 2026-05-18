@@ -3,7 +3,7 @@ import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, Upload, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check } from "lucide-react";
 import { Location } from "@/types/project";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
@@ -28,14 +28,6 @@ interface FeedbackItem {
 }
 
 const LEGACY_FEEDBACK_PREFIX = "legacy-feedback-";
-
-// Pulls the trailing "running number" out of a full location identifier.
-// E.g. "WER-1234-100" → "100", "WER-1234 Mustermann GmbH-101" → "101".
-// If no dash is present, returns the full string as-is.
-function shortLocationNumber(locationNumber: string): string {
-  const parts = locationNumber.split("-");
-  return parts[parts.length - 1] || locationNumber;
-}
 
 const isFeedbackTableUnavailable = (error: any) => {
   const message = String(error?.message || error?.details || "").toLowerCase();
@@ -75,10 +67,6 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
   const { cameraInput: detailCameraInput, triggerCamera: triggerDetailCamera } = useDirectCamera({
     onCapture: (imageData) => navigate(`/projects/${projectId}/editor?detail=true&locationId=${location.id}`, { state: { imageData } }),
-  });
-  const { cameraInput: detailUploadInput, triggerCamera: triggerDetailUpload } = useDirectCamera({
-    onCapture: (imageData) => navigate(`/projects/${projectId}/editor?detail=true&locationId=${location.id}`, { state: { imageData } }),
-    uploadMode: true,
   });
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState<string | null>(null);
@@ -178,7 +166,27 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     }
     setUploadingPdf(true);
     try {
-      const path = `pdfs/${location.id}/${Date.now()}_${file.name}`;
+      // Sanitize filename for Supabase Storage. The bucket rejects keys
+      // with non-ASCII characters, spaces, parentheses, and several
+      // other punctuation marks with "Invalid key". German filenames
+      // commonly contain umlauts (ä ö ü ß) and spaces - "Druckdatei
+      // für Standort 1 (final).pdf" would fail. We replace umlauts
+      // with ASCII equivalents and strip anything else that isn't a
+      // safe key character. We keep the original name in the DB so
+      // the user-facing filename stays intact.
+      const safeName = file.name
+        .replace(/ä/g, "ae")
+        .replace(/ö/g, "oe")
+        .replace(/ü/g, "ue")
+        .replace(/Ä/g, "Ae")
+        .replace(/Ö/g, "Oe")
+        .replace(/Ü/g, "Ue")
+        .replace(/ß/g, "ss")
+        .replace(/[^A-Za-z0-9._-]/g, "_") // anything else → underscore
+        .replace(/_+/g, "_")               // collapse runs of underscores
+        .replace(/^_+|_+$/g, "");          // trim leading/trailing underscores
+
+      const path = `pdfs/${location.id}/${Date.now()}_${safeName}`;
       const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { upsert: true });
       if (uploadError) {
         toast.error("Upload fehlgeschlagen: " + uploadError.message);
@@ -211,14 +219,8 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div className="space-y-1 flex-1 min-w-0">
-            {/* Title: short running number, plus name if present. The full
-                location number (e.g. WER-1234-100) is redundant here - the
-                project number is already shown at the page top, so just the
-                trailing running number (100, 101, …) is all we need. */}
-            <h3 className="font-semibold text-base md:text-lg truncate">
-              {shortLocationNumber(location.locationNumber)}
-              {location.locationName && <span className="text-muted-foreground font-normal"> – {location.locationName}</span>}
-            </h3>
+            <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
+            {location.locationName && <p className="text-sm text-foreground truncate">{location.locationName}</p>}
             <p className="text-xs text-muted-foreground">Erstellt am {formatDateTimeSafe(location.createdAt)}</p>
             {location.areaMeasurements && location.areaMeasurements.length > 0 && (
               <div className="mt-1 p-2 rounded bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 space-y-1">
@@ -243,7 +245,8 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
                 customFields: location.customFields,
               }}
               fields={fieldConfigs}
-              hideLocationName
+              project={project}
+              projectFields={projectFieldConfigs}
             />
           </div>
           <div className="flex gap-1">
@@ -269,7 +272,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         </div>
 
         <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Produktionsdatei</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Druckdatei</p>
           {showPrintFiles ? (
             pdfUrl && pdfName ? (
               <div className="flex items-center gap-2">
@@ -287,7 +290,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
             ) : (
               <Button size="sm" variant="outline" className="w-full" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}>
                 {uploadingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileUp className="h-4 w-4 mr-2" />}
-                {uploadingPdf ? "Lädt hoch..." : "Produktionsdatei hochladen"}
+                {uploadingPdf ? "Lädt hoch..." : "Druckdatei hochladen"}
               </Button>
             )
           ) : (
@@ -358,35 +361,12 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           </div>
         )}
 
-        {showDetailImages && (
-          <div className="grid grid-cols-[1fr_auto] gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                if (isMobile) triggerDetailCamera();
-                else navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`);
-              }}
-            >
-              <ImagePlus className="h-4 w-4 mr-2" /> Detailbild aufnehmen
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              title="Bild hochladen"
-              onClick={() => {
-                if (isMobile) triggerDetailUpload();
-                else navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}&mode=upload`);
-              }}
-            >
-              <Upload className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
+        {showDetailImages && (<Button variant="outline" size="sm" className="w-full" onClick={() => { if (isMobile) { triggerDetailCamera(); } else { navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`); } }}>
+          <ImagePlus className="h-4 w-4 mr-2" /> Detailbild hinzufügen
+        </Button>)}
       </CardContent>
 
       {detailCameraInput}
-      {detailUploadInput}
       <input ref={pdfInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,.ai,.eps" onChange={handlePrintFileUpload} className="hidden" />
     </Card>
   );
