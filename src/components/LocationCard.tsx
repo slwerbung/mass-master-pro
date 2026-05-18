@@ -187,12 +187,33 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         .replace(/^_+|_+$/g, "");          // trim leading/trailing underscores
 
       const path = `pdfs/${location.id}/${Date.now()}_${safeName}`;
-      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { upsert: true });
+      // We clean up the old row + storage file first, then insert a
+      // fresh one. We don't use { upsert: true } on the storage call
+      // because that triggers a SELECT under the hood to check if
+      // the object exists, and project-files has INSERT/UPDATE/DELETE
+      // policies for anon but no SELECT policy - so upsert returns
+      // "row-level security" errors even though pure INSERT would work.
+      // Since the path includes Date.now() it's unique per upload
+      // anyway, so upsert isn't needed.
+
+      // 1. Remove old DB row + the old storage file it references, so
+      //    we don't leak storage objects when the user replaces a file.
+      const { data: oldRows } = await supabase
+        .from("location_pdfs")
+        .select("storage_path")
+        .eq("location_id", location.id);
+      const oldPaths = (oldRows || []).map((r: any) => r.storage_path).filter(Boolean);
+      if (oldPaths.length > 0) {
+        await supabase.storage.from("project-files").remove(oldPaths);
+        await supabase.from("location_pdfs").delete().eq("location_id", location.id);
+      }
+
+      // 2. Upload the new file (no upsert; path is unique).
+      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file);
       if (uploadError) {
         toast.error("Upload fehlgeschlagen: " + uploadError.message);
         return;
       }
-      await supabase.from("location_pdfs").delete().eq("location_id", location.id);
       const { error: dbError } = await supabase.from("location_pdfs").insert({ location_id: location.id, storage_path: path, file_name: file.name });
       if (dbError) {
         toast.error("Datenbankfehler: " + dbError.message);
