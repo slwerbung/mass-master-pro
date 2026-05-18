@@ -14,6 +14,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { indexedDBStorage } from "./indexedDBStorage";
+import { getHeroProjectMatchId } from "./heroSyncHelpers";
 import type { Project, Location, AreaMeasurement } from "@/types/project";
 
 function formatArea(m: AreaMeasurement): string {
@@ -22,12 +23,12 @@ function formatArea(m: AreaMeasurement): string {
 }
 
 export function buildHeroNotes(project: Project): string {
-  // Sort locations by their location_number, falling back to creation
+  // Sort locations by their locationNumber, falling back to creation
   // order. Mirrors how the customer view orders them, so the HERO
   // notes match what people see on screen.
   const locations = [...project.locations].sort((a, b) => {
-    const na = parseInt((a as any).location_number || "0", 10) || 0;
-    const nb = parseInt((b as any).location_number || "0", 10) || 0;
+    const na = parseInt(a.locationNumber || "0", 10) || 0;
+    const nb = parseInt(b.locationNumber || "0", 10) || 0;
     return na - nb;
   });
 
@@ -35,11 +36,11 @@ export function buildHeroNotes(project: Project): string {
   let totalSqm = 0;
 
   for (const loc of locations) {
-    const areas: AreaMeasurement[] = (loc as any).areaMeasurements || [];
+    const areas: AreaMeasurement[] = loc.areaMeasurements || [];
     if (areas.length === 0) continue;
 
-    const locNum = (loc as any).location_number || "?";
-    const locName = (loc as any).location_name ? ` · ${(loc as any).location_name}` : "";
+    const locNum = loc.locationNumber || "?";
+    const locName = loc.locationName ? ` · ${loc.locationName}` : "";
     const header = `Standort ${locNum}${locName}`;
     const lines = areas.map(formatArea);
     const locTotal = areas.reduce((s, a) => s + (a.widthMm * a.heightMm) / 1_000_000, 0);
@@ -57,23 +58,24 @@ export function buildHeroNotes(project: Project): string {
 export async function updateHeroNotesIfLinked(projectId: string): Promise<void> {
   try {
     const project = await indexedDBStorage.getProject(projectId);
-    if (!project) return;
+    if (!project) {
+      console.log("HERO notes sync: project not found in IndexedDB", projectId);
+      return;
+    }
 
-    // Skip if there's no HERO link on this project. We don't want to
-    // call HERO for non-HERO projects, and we don't want to clear
-    // someone else's notes if they manually entered something.
-    const heroId = (project as any).hero_project_match_id;
-    if (!heroId) return;
+    // HERO project match id lives in customFields.__hero_project_id
+    // (the existing helper unpacks it consistently with the rest of
+    // the HERO sync code).
+    const heroId = getHeroProjectMatchId(project as any);
+    if (!heroId) {
+      console.log("HERO notes sync: project not linked to HERO, skipping", projectId);
+      return;
+    }
 
     const notes = buildHeroNotes(project);
+    console.log("HERO notes sync: pushing to project", heroId, "length:", notes.length);
 
-    // Empty notes = no measurements yet. We still push the empty string
-    // so HERO mirrors the truth (e.g. after deleting all locations),
-    // but we don't push if there's literally never been any area.
-    // Compromise: skip if empty AND no locations have area data.
-    // (If notes is non-empty, push always.)
-
-    const { error } = await supabase.functions.invoke("hero-integration", {
+    const { data, error } = await supabase.functions.invoke("hero-integration", {
       body: {
         action: "update_project_notes",
         heroProjectId: heroId,
@@ -83,6 +85,8 @@ export async function updateHeroNotesIfLinked(projectId: string): Promise<void> 
 
     if (error) {
       console.warn("HERO notes sync failed:", error.message || error);
+    } else {
+      console.log("HERO notes sync result:", data);
     }
   } catch (e) {
     // Never let a HERO sync failure prevent local save success
