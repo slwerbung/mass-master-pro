@@ -9,6 +9,7 @@ import { createAreaMeasurementGroup } from "@/lib/areaMeasurement";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { supabase } from "@/integrations/supabase/client";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers";
+import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import MeasurementInputDialog from "@/components/MeasurementInputDialog";
 import AreaMeasurementDialog from "@/components/AreaMeasurementDialog";
 import { compressImage } from "@/lib/imageCompression";
@@ -551,6 +552,10 @@ const PhotoEditor = () => {
               const mergedMeasurements = [...existingMeasurements, ...areaMeasurements];
               if (mergedMeasurements.length > 0) {
                 await indexedDBStorage.updateLocationMetadata(projectId, locationId, { areaMeasurements: mergedMeasurements });
+                // Sync the consolidated area measurements into HERO's
+                // project notes (partner_notes). Fire-and-forget; an
+                // outage in HERO must never block the local save flow.
+                updateHeroNotesIfLinked(projectId);
               }
               toast.success("Bild aktualisiert");
             }

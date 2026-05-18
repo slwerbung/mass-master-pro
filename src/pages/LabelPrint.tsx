@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, FileDown, ArrowLeft, Loader2 } from "lucide-react";
 import { getSession } from "@/lib/session";
+import { enqueueHeroUploadIfLinked } from "@/lib/heroSyncHelpers";
 import { toast } from "sonner";
 import QRCode from "qrcode";
 import { jsPDF } from "jspdf";
@@ -197,6 +198,33 @@ const LabelPrint = () => {
       // Blob-URL nach kurzer Zeit freigeben (geben dem Browser Zeit, den
       // Tab zu öffnen und den Download zu starten).
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+
+      // HERO-Upload: wenn das Projekt aus HERO-Suche kommt, gibts immer
+      // eine HERO-Projekt-ID. Wir bauen einen minimalen ProjectLike-Stub
+      // und delegieren an die normale Hero-Upload-Pipeline (Worker,
+      // Retry, Backoff). selectedProject.id ist die HERO project_match id.
+      try {
+        const heroProjectMatchId = Number(selectedProject?.id);
+        if (Number.isFinite(heroProjectMatchId) && heroProjectMatchId > 0) {
+          const stubProject = {
+            id: `hero:${heroProjectMatchId}`, // virtueller Projekt-Identifier; LabelPrint hat kein lokales Projekt
+            customFields: {
+              __hero_project_id: String(heroProjectMatchId),
+            },
+          } as any;
+          await enqueueHeroUploadIfLinked({
+            project: stubProject,
+            uploadType: "lager_label_pdf",
+            blob,
+            filename,
+          });
+          toast.success("Lager-Etikett in HERO hochgeladen ✓");
+        }
+      } catch (heroErr) {
+        // Best-effort - User hat das PDF schon, HERO-Upload ist Bonus.
+        console.warn("HERO-Upload fehlgeschlagen:", heroErr);
+        toast.warning("PDF erstellt, aber HERO-Upload fehlgeschlagen");
+      }
     } catch (e: any) {
       console.error(e);
       toast.error(e?.message || "PDF-Erstellung fehlgeschlagen");

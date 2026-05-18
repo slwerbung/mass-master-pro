@@ -33,6 +33,7 @@ type UploadType =
   | "detail_image"
   | "detail_image_original"
   | "aufmass_pdf"
+  | "lager_label_pdf"
   | "vehicle_image"
   | "vehicle_layout"
   | "vehicle_measured_image"
@@ -45,7 +46,7 @@ type UploadType =
 // vehicle_layout is treated as a document since it's usually a PDF or
 // non-photo design file; vehicle_image is a regular photo.
 function isDocumentType(t: UploadType): boolean {
-  return t === "aufmass_pdf" || t === "vehicle_layout";
+  return t === "aufmass_pdf" || t === "lager_label_pdf" || t === "vehicle_layout";
 }
 
 async function heroUploadFile(apiKey: string, file: Blob, filename: string): Promise<{ ok: true; uuid: string } | { ok: false; error: string }> {
