@@ -8,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check, Trash2, Upload, Download, Car, ImagePlus } from "lucide-react";
 import { format } from "date-fns";
-import { CompanyHeader } from "@/components/CompanyHeader";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { toast } from "sonner";
@@ -100,22 +99,18 @@ const CustomerView = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When the user arrives via /guest/:projectId/view -> /customer?project=...,
-  // the customer-data load path normally returns the assignment (because
-  // ensure-customer-assignment was called by GuestAccess and it created
-  // both the customer and the assignment). If for some reason the
-  // assignment isn't loaded yet but we have a directProjectId, this
-  // effect picks the matching assignment so the rest of the app sees a
-  // selectedAssignment and runs the normal customer flow - same as a
-  // user who clicked through from the assignment list.
   useEffect(() => {
     if (!directProjectId || selectedAssignment) return;
     const match = assignments.find((a) => a.project_id === directProjectId);
     if (match) {
       loadLocations(match);
+      return;
+    }
+    if (guestToken) {
+      loadDirectGuestProject(directProjectId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignments, directProjectId, selectedAssignment]);
+  }, [assignments, directProjectId, selectedAssignment, guestToken]);
 
   const visibleFields = useMemo(() => mergeWithDefaultLocationFields(fields).filter((f) => f.is_active && f.customer_visible), [fields]);
   const visibleProjectFields = useMemo(() => mergeWithDefaultProjectFields(projectFields).filter((f) => f.is_active), [projectFields]);
@@ -148,16 +143,7 @@ const CustomerView = () => {
 
   const getSelectedProjectId = () => selectedAssignment?.project_id || directProjectId || null;
   const isDirectGuestMode = !!selectedAssignment?.direct || (!!directProjectId && !assignments.some((a) => a.project_id === directProjectId));
-  // We removed the "limited guest" mode in favor of a unified flow:
-  // every direct-link visitor now logs in via /guest/:projectId, gets a
-  // proper customer record + assignment + auth token via
-  // ensure-customer-assignment, and then uses the same code paths as
-  // any other logged-in customer. This flag is kept as a constant so
-  // existing UI guards (`!isLimitedGuestMode && ...`) still type-check;
-  // they just always evaluate to true now. A follow-up cleanup pass
-  // will remove the now-dead branches in update-guest-info and the
-  // guest-data fallbacks.
-  const isLimitedGuestMode = false;
+  const isLimitedGuestMode = isDirectGuestMode && !isRealCustomerId(session?.id);
 
   const saveLegacyFeedback = async (locationId: string, message: string) => {
     const projectId = getSelectedProjectId();
@@ -226,6 +212,10 @@ const CustomerView = () => {
       }
 
       setAssignments(loadedAssignments);
+
+      if ((!loadedAssignments || loadedAssignments.length === 0) && directProjectId && guestToken) {
+        await loadDirectGuestProject(directProjectId);
+      }
     } catch (error) {
       console.error(error);
       toast.error("Fehler beim Laden");
@@ -302,14 +292,9 @@ const CustomerView = () => {
       setLocations(locs);
       const allImgs = [...(imgs || []), ...((pdfs || []).map((p: any) => ({ ...p, image_type: "pdf" })))];
       setImages(allImgs);
-      // Pre-resolve signed URLs for all images. We also add the
-      // deterministic fallback path images/<id>/original for every
-      // location, because some older locations have the file in storage
-      // but no metadata row in location_images. The signed-url request
-      // will succeed for whichever path actually exists.
-      const knownPaths = allImgs.map((img: any) => img.storage_path).filter(Boolean);
-      const fallbackPaths = locs.map((l: any) => `images/${l.id}/original`);
-      resolveSignedUrls([...knownPaths, ...fallbackPaths]);
+      // Pre-resolve signed URLs for all images
+      const paths = allImgs.map((img: any) => img.storage_path).filter(Boolean);
+      resolveSignedUrls(paths);
       setApprovals({});
       if (locationIds.length > 0) {
         const { data: detailRows } = await supabase
@@ -397,7 +382,7 @@ const CustomerView = () => {
           supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
           supabase.from("location_approvals").select("location_id, approved").eq("assignment_id", assignment.id).in("location_id", locationIds),
           (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at"),
-          supabase.from("detail_images").select("id, location_id, caption, annotated_path, original_path, created_at").in("location_id", locationIds).order("created_at", { ascending: true }),
+          supabase.from("detail_images").select("id, location_id, caption, annotated_path, created_at").in("location_id", locationIds).order("created_at", { ascending: true }),
         ]);
 
         const pdfEntries = (pdfs || []).map((p: any) => ({ location_id: p.location_id, image_type: "pdf", storage_path: p.storage_path, file_name: p.file_name, id: p.id }));
@@ -408,21 +393,11 @@ const CustomerView = () => {
           detailMap[row.location_id].push(row);
         });
         setDetailImagesByLocation(detailMap);
-        // Pre-resolve signed URLs for everything we'll display. We
-        // include:
-        //   - paths known from location_images / location_pdfs
-        //   - paths from detail_images rows
-        //   - deterministic fallback paths images/<locationId>/original
-        //     for locations whose main image is in storage but lacks a
-        //     location_images metadata row (legacy data).
-        const mainImagePaths = (imgs || []).map((i: any) => i.storage_path).filter(Boolean);
-        const pdfPaths = pdfEntries.map((p: any) => p.storage_path).filter(Boolean);
+        // Pre-resolve signed URLs for detail images
         const detailPaths = (detailRows || []).flatMap((r: any) =>
           [r.annotated_path, r.original_path].filter(Boolean)
         );
-        const fallbackMainPaths = locationIds.map((id: string) => `images/${id}/original`);
-        const allPaths = [...mainImagePaths, ...pdfPaths, ...detailPaths, ...fallbackMainPaths];
-        if (allPaths.length > 0) resolveSignedUrls(allPaths);
+        if (detailPaths.length > 0) resolveSignedUrls(detailPaths);
 
         const approvMap: Record<string, boolean> = {};
         (approvData || []).forEach((a: any) => { approvMap[a.location_id] = a.approved; });
@@ -495,75 +470,39 @@ const CustomerView = () => {
     };
   }, [locations, selectedAssignment, directProjectId]);
 
-  // Storage URL helper. The project-files bucket is non-public, but
-  // anon has SELECT permission via RLS - so getPublicUrl returns a
-  // URL the browser can fetch directly without a signed-URL roundtrip.
-  // We use the exact same approach as the employee view (LocationCard,
-  // VehicleDetail, PhotoEditor) which is proven to work.
-  //
-  // Why no caching: getPublicUrl is synchronous and just does string
-  // construction. A signed-URL cache was used before but had two issues:
-  //   - First render happened before the async cache was populated, so
-  //     images appeared blank until a re-render.
-  //   - createSignedUrl fails for non-existent paths, which broke the
-  //     fallback path strategy (images/<id>/original).
-  const getSignedImageUrl = (path: string): string => {
-    if (!path) return "";
-    const { data } = supabase.storage.from("project-files").getPublicUrl(path);
-    return data.publicUrl;
+  const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
+
+  const resolveSignedUrls = async (paths: string[]) => {
+    const unresolved = paths.filter(p => p && !signedUrlCache[p]);
+    if (unresolved.length === 0) return;
+    const results = await Promise.all(
+      unresolved.map(async (path) => {
+        const { data } = await supabase.storage.from("project-files").createSignedUrl(path, 3600);
+        return { path, url: data?.signedUrl || "" };
+      })
+    );
+    setSignedUrlCache(prev => {
+      const next = { ...prev };
+      results.forEach(({ path, url }) => { if (url) next[path] = url; });
+      return next;
+    });
   };
 
-  // Kept as no-op for backward compat with the few remaining call sites
-  // that pass a list of paths. Now that URL resolution is synchronous
-  // we don't actually need to pre-resolve anything.
-  const resolveSignedUrls = async (_paths: string[]) => { /* no-op */ };
+  const getSignedImageUrl = (path: string): string => signedUrlCache[path] || "";
 
-  // Customer notifications use 3 event types, throttled server-side:
-  //   - first_action: any approval or comment, sent once per assignment
-  //   - comment: a new comment was added (4h throttle on the server)
-  //   - completion: all locations approved (recomputed on the server)
-  // We always call first_action when something happens (cheap, server
-  // dedupes), call "comment" only on actual comment events, and call
-  // "completion" optimistically on any approval - the server checks
-  // whether everything is really approved before sending a mail.
-  //
-  // Works for both modes (logged-in customer AND direct-link guest)
-  // as long as we can resolve an assignment_id. For pure-token guests
-  // without any matching assignment we silently skip - those are
-  // typically people who got a one-off link and we don't track them.
-  const resolveAssignmentId = (): string | null => {
-    if (selectedAssignment?.id) return selectedAssignment.id;
-    if (directProjectId) {
-      const match = assignments.find(a => a.project_id === directProjectId);
-      if (match) return match.id;
-    }
-    return null;
-  };
-
-  const triggerNotification = async (event: "first_action" | "comment" | "completion") => {
-    const assignmentId = resolveAssignmentId();
-    if (!assignmentId) return;
+  const triggerNotification = async (changeType: "approval" | "comment") => {
+    if (!selectedAssignment || isLimitedGuestMode) return;
     try {
       await supabase.functions.invoke("send-notification", {
-        body: { assignmentId, event },
+        body: {
+          assignmentId: selectedAssignment.id,
+          customerName: session?.name || "Unbekannt",
+          projectNumber: selectedAssignment.projects?.project_number || "",
+          changeType,
+        },
       });
     } catch (e) {
       console.warn("Notification failed (non-fatal):", e);
-    }
-  };
-
-  // Reset completion_sent_at when an unapproval happens, so the next
-  // time everything is re-approved we send another completion mail.
-  const resetCompletionSent = async () => {
-    const assignmentId = resolveAssignmentId();
-    if (!assignmentId) return;
-    try {
-      await supabase
-        .from("customer_notifications")
-        .update({ completion_sent_at: null })
-        .eq("assignment_id", assignmentId);
-    } catch (e) {
-      console.warn("Reset completion_sent_at failed:", e);
     }
   };
 
@@ -645,7 +584,6 @@ const CustomerView = () => {
       setDraftFeedback((prev) => ({ ...prev, [locationId]: "" }));
       setEditingFeedbackId((prev) => ({ ...prev, [locationId]: null }));
       toast.success("Hinweis gespeichert");
-      triggerNotification("first_action");
       triggerNotification("comment");
     } catch (error) {
       console.error("saveFeedback failed", error);
@@ -731,7 +669,6 @@ const CustomerView = () => {
       setVehicleFeedbacks(prev => [...prev, data]);
       setVehicleFeedbackDraft("");
       toast.success("Hinweis gespeichert");
-      triggerNotification("first_action");
       triggerNotification("comment");
     } catch { toast.error("Fehler beim Speichern"); }
     finally { setSavingVehicleFeedback(false); }
@@ -748,12 +685,7 @@ const CustomerView = () => {
       approved: newVal,
       approved_at: newVal ? new Date().toISOString() : null,
     }, { onConflict: "project_id,assignment_id" });
-    if (newVal) {
-      triggerNotification("first_action");
-      triggerNotification("completion");
-    } else {
-      resetCompletionSent();
-    }
+    if (newVal) triggerNotification("approval");
     setSavingVehicleApproval(false);
   };
 
@@ -880,12 +812,7 @@ const CustomerView = () => {
       location_id: locationId, assignment_id: selectedAssignment.id,
       approved, approved_at: approved ? new Date().toISOString() : null,
     }, { onConflict: "location_id,assignment_id" });
-    if (approved) {
-      triggerNotification("first_action");
-      triggerNotification("completion");
-    } else {
-      resetCompletionSent();
-    }
+    if (approved) triggerNotification("approval");
   };
 
   const approveAll = async (approved: boolean) => {
@@ -899,12 +826,7 @@ const CustomerView = () => {
       approved, approved_at: approved ? new Date().toISOString() : null,
     }));
     await supabase.from("location_approvals").upsert(rows, { onConflict: "location_id,assignment_id" });
-    if (approved) {
-      triggerNotification("first_action");
-      triggerNotification("completion");
-    } else {
-      resetCompletionSent();
-    }
+    if (approved) triggerNotification("approval");
     toast.success(approved ? "Alle Standorte freigegeben" : "Alle Freigaben zurückgenommen");
     setSavingApprovals(false);
   };
@@ -919,7 +841,6 @@ const CustomerView = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      <CompanyHeader />
       <div className="container max-w-3xl mx-auto p-4 md:p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1199,24 +1120,7 @@ const CustomerView = () => {
 
             <div className="space-y-4">
               {sortedLocations.map((loc) => {
-                // Try the location_images metadata table first. If that
-                // table has no row for this location/image_type (which
-                // happens for older locations whose images were uploaded
-                // to storage but never registered in the metadata table),
-                // we fall back to the deterministic storage path that the
-                // sync code uses: `images/<locationId>/original` and
-                // `images/<locationId>/annotated`. The actual file is
-                // always at one of these two paths.
-                const originalRow = images.find((i: any) => i.location_id === loc.id && i.image_type === "original");
-                const annotatedRow = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
-                const originalPath = originalRow?.storage_path || `images/${loc.id}/original`;
-                const annotatedPath = annotatedRow?.storage_path || `images/${loc.id}/annotated`;
-                // Prefer original (unannotated) - that's what the customer
-                // should see. If only annotated exists, we still don't
-                // show it because annotation is internal info; the
-                // customer view intentionally hides bemaßte Bilder.
-                const mainImagePath = originalPath;
-
+                const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
                 const pdfEntries = images.filter((i: any) => i.location_id === loc.id && i.image_type === "pdf");
                 const locationFeedback = feedbacks[loc.id] || [];
                 const isApproved = !!approvals[loc.id];
@@ -1239,20 +1143,11 @@ const CustomerView = () => {
                       </div>
                     </CardHeader>
                     <CardContent className="p-4 space-y-4">
-                      <div className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[180px]">
-                        <img
-                          src={getSignedImageUrl(mainImagePath)}
-                          alt={`Standort ${loc.location_number}`}
-                          className="w-full h-auto max-h-[70vh] object-contain"
-                          onError={(e) => {
-                            // Falls die Datei wirklich nicht existiert
-                            // (z.B. ganz altes Standort ohne Sync),
-                            // verstecken wir den Container, statt einen
-                            // gebrochenen Bild-Platzhalter zu zeigen.
-                            (e.currentTarget.parentElement as HTMLElement | null)?.style.setProperty("display", "none");
-                          }}
-                        />
-                      </div>
+                      {annotated && (
+                        <div className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[180px]">
+                          <img src={getSignedImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-auto max-h-[70vh] object-contain" />
+                        </div>
+                      )}
 
                       {visibleFields.length > 0 && (
                         <LocationInfoFields location={loc} fields={visibleFields} customerOnly project={selectedProjectMeta} projectFields={visibleProjectFields} />
@@ -1282,7 +1177,7 @@ const CustomerView = () => {
                           <div className="grid grid-cols-2 gap-2">
                             {(detailImagesByLocation[loc.id] || []).map((detail: any) => (
                               <div key={detail.id} className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[120px]">
-                                <img src={getSignedImageUrl(detail.original_path || detail.annotated_path)} alt={detail.caption || "Detailbild"} className="w-full h-auto max-h-[220px] object-contain" />
+                                <img src={getSignedImageUrl(detail.annotated_path)} alt={detail.caption || "Detailbild"} className="w-full h-auto max-h-[220px] object-contain" />
                               </div>
                             ))}
                           </div>

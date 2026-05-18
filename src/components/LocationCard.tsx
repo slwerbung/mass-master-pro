@@ -169,7 +169,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
       // Sanitize filename for Supabase Storage. The bucket rejects keys
       // with non-ASCII characters, spaces, parentheses, and several
       // other punctuation marks with "Invalid key". German filenames
-      // commonly contain umlauts (ä ö ü ß) and spaces - "Druckdatei
+      // commonly contain umlauts (ä ö ü ß) and spaces - "Produktionsdatei
       // für Standort 1 (final).pdf" would fail. We replace umlauts
       // with ASCII equivalents and strip anything else that isn't a
       // safe key character. We keep the original name in the DB so
@@ -272,7 +272,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         </div>
 
         <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Druckdatei</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Produktionsdatei</p>
           {showPrintFiles ? (
             pdfUrl && pdfName ? (
               <div className="flex items-center gap-2">
@@ -290,7 +290,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
             ) : (
               <Button size="sm" variant="outline" className="w-full" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}>
                 {uploadingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileUp className="h-4 w-4 mr-2" />}
-                {uploadingPdf ? "Lädt hoch..." : "Druckdatei hochladen"}
+                {uploadingPdf ? "Lädt hoch..." : "Produktionsdatei hochladen"}
               </Button>
             )
           ) : (

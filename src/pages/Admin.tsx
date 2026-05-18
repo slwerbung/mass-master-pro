@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
-import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle, Mail, RefreshCw } from "lucide-react";
+import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { mergeWithDefaultProjectFields, isProtectedProjectField } from "@/lib/projectFields";
@@ -52,9 +52,6 @@ const Admin = () => {
   const [assignments, setAssignments] = useState<any[]>([]);
   const [projectEmployeeAssignments, setProjectEmployeeAssignments] = useState<any[]>([]);
   const [newEmployeeName, setNewEmployeeName] = useState("");
-  const [newEmployeeEmail, setNewEmployeeEmail] = useState("");
-  const [emailDialogEmployee, setEmailDialogEmployee] = useState<{ id: string; name: string; email?: string | null } | null>(null);
-  const [emailDialogValue, setEmailDialogValue] = useState("");
   const [newEmployeePasswordInput, setNewEmployeePasswordInput] = useState("");
   const [newCustomerName, setNewCustomerName] = useState("");
   const [assignCustomerId, setAssignCustomerId] = useState("");
@@ -66,32 +63,6 @@ const Admin = () => {
   const [savingAdminPassword, setSavingAdminPassword] = useState(false);
   const [companyLogo, setCompanyLogo] = useState<string | null>(null);
   const [savingLogo, setSavingLogo] = useState(false);
-  const [privacyUrl, setPrivacyUrl] = useState("");
-  const [savingPrivacyUrl, setSavingPrivacyUrl] = useState(false);
-  const [legalInfo, setLegalInfo] = useState({
-    companyName: "",
-    representative: "",
-    street: "",
-    zip: "",
-    city: "",
-    email: "",
-    phone: "",
-  });
-  const [savingLegalInfo, setSavingLegalInfo] = useState(false);
-
-  // Notifications: global recipient + per-event { enabled, target }.
-  // Target is "global" (use globalEmail) or "assigned_employee" (use
-  // the project owner's email; if that employee has no email,
-  // server-side falls back to globalEmail).
-  type NotificationEvent = "first_action" | "comment" | "completion";
-  type NotificationEventSetting = { enabled: boolean; target: "global" | "assigned_employee" };
-  const [notifGlobalEmail, setNotifGlobalEmail] = useState("");
-  const [notifSettings, setNotifSettings] = useState<Record<NotificationEvent, NotificationEventSetting>>({
-    first_action: { enabled: false, target: "global" },
-    comment: { enabled: false, target: "global" },
-    completion: { enabled: false, target: "global" },
-  });
-  const [savingNotif, setSavingNotif] = useState(false);
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [projectFields, setProjectFields] = useState<FieldConfig[]>([]);
   const [newFieldLabel, setNewFieldLabel] = useState("");
@@ -120,21 +91,6 @@ const Admin = () => {
   // Integration state
   const [heroApiKey, setHeroApiKey] = useState("");
   const [heroEnabled, setHeroEnabled] = useState(false);
-  // HERO doc-types: list pulled from HERO via hero-integration:list_document_types,
-  // plus a saved mapping per uploadType. We currently support two
-  // uploadType keys: "aufmass_pdf" (the Export-PDF from a project) and
-  // "lager_label_pdf" (the warehouse-label PDF, set up but not auto-
-  // uploaded yet - admin can still pre-pick its doc-type).
-  type HeroDocType = { id: number; name: string };
-  const [heroDocTypes, setHeroDocTypes] = useState<HeroDocType[]>([]);
-  const [heroDocTypesLoaded, setHeroDocTypesLoaded] = useState(false);
-  const [heroDocTypesError, setHeroDocTypesError] = useState<string | null>(null);
-  const [heroDocTypeConfig, setHeroDocTypeConfig] = useState<Record<string, number | null>>({});
-  // Per-uploadType pending selection: the in-progress UI choice before
-  // the user confirms with "Speichern". Once saved, this matches
-  // heroDocTypeConfig and the row shows a green "Gespeichert" badge.
-  const [heroDocTypePending, setHeroDocTypePending] = useState<Record<string, number | null>>({});
-  const [savingHeroDocTypeKey, setSavingHeroDocTypeKey] = useState<string | null>(null);
   const [heroHasKey, setHeroHasKey] = useState(false);
   const [savingHero, setSavingHero] = useState(false);
   const [testingHero, setTestingHero] = useState(false);
@@ -175,21 +131,8 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadNotifSettings(); loadVehicleFields(); loadIntegrations(); loadHeroDocTypeConfig(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadVehicleFields(); loadIntegrations(); }
   }, [adminToken]);
-
-  // Once we know HERO is enabled and has a key, auto-fetch the
-  // document type list. That way the saved doc-type IDs in the
-  // dropdowns can be rendered as their proper names ("Aufmaßdokument"
-  // instead of just "ID 279269") without the admin having to click
-  // "Aus HERO laden" first. We guard on heroDocTypesLoaded so we
-  // don't re-fetch on every render.
-  useEffect(() => {
-    if (heroEnabled && heroHasKey && !heroDocTypesLoaded) {
-      loadHeroDocTypes();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [heroEnabled, heroHasKey, heroDocTypesLoaded]);
 
   useEffect(() => {
     if (!selectedProjectAccessId) return;
@@ -247,98 +190,6 @@ const Admin = () => {
     const reader = new FileReader();
     reader.onload = () => saveLogo(reader.result as string);
     reader.readAsDataURL(file);
-  };
-
-  const loadPrivacyUrl = async () => {
-    try {
-      const data = await invoke("get_privacy_url");
-      setPrivacyUrl(data?.url ?? "");
-    } catch {}
-  };
-
-  const savePrivacyUrl = async () => {
-    setSavingPrivacyUrl(true);
-    try {
-      await invoke("set_privacy_url", { url: privacyUrl.trim() });
-      toast.success("Datenschutz-Link gespeichert");
-    } catch (e: any) { toast.error(e.message || "Fehler beim Speichern"); }
-    setSavingPrivacyUrl(false);
-  };
-
-  const loadLegalInfo = async () => {
-    try {
-      const data = await invoke("get_legal_info");
-      if (data?.info) {
-        setLegalInfo({
-          companyName: data.info.companyName || "",
-          representative: data.info.representative || "",
-          street: data.info.street || "",
-          zip: data.info.zip || "",
-          city: data.info.city || "",
-          email: data.info.email || "",
-          phone: data.info.phone || "",
-        });
-      }
-    } catch {}
-  };
-
-  const saveLegalInfo = async () => {
-    setSavingLegalInfo(true);
-    try {
-      await invoke("set_legal_info", { info: legalInfo });
-      toast.success("Verantwortlicher gespeichert");
-    } catch (e: any) { toast.error(e.message || "Fehler beim Speichern"); }
-    setSavingLegalInfo(false);
-  };
-
-  const loadNotifSettings = async () => {
-    try {
-      const data = await invoke("get_notification_settings");
-      setNotifGlobalEmail(data?.globalEmail || "");
-      const s = data?.settings || {};
-      setNotifSettings({
-        first_action: {
-          enabled: !!s.first_action?.enabled,
-          target: (s.first_action?.target === "assigned_employee" ? "assigned_employee" : "global"),
-        },
-        comment: {
-          enabled: !!s.comment?.enabled,
-          target: (s.comment?.target === "assigned_employee" ? "assigned_employee" : "global"),
-        },
-        completion: {
-          enabled: !!s.completion?.enabled,
-          target: (s.completion?.target === "assigned_employee" ? "assigned_employee" : "global"),
-        },
-      });
-    } catch {}
-  };
-
-  const saveNotifSettings = async () => {
-    setSavingNotif(true);
-    try {
-      await invoke("set_notification_settings", {
-        globalEmail: notifGlobalEmail.trim(),
-        settings: notifSettings,
-      });
-      toast.success("Benachrichtigungen gespeichert");
-    } catch (e: any) {
-      toast.error(e.message || "Fehler beim Speichern");
-    }
-    setSavingNotif(false);
-  };
-
-  // Helper: can this event-type be enabled at all? Only when EITHER
-  // globalEmail is set OR the target is "assigned_employee" (which has
-  // its own per-employee email). We use this to disable the "enabled"
-  // toggle when no recipient is reachable, so the admin understands
-  // why nothing would arrive.
-  const canEnableEvent = (s: NotificationEventSetting): boolean => {
-    if (notifGlobalEmail.trim()) return true;
-    return s.target === "assigned_employee";
-  };
-
-  const updateEventSetting = (event: NotificationEvent, partial: Partial<NotificationEventSetting>) => {
-    setNotifSettings(prev => ({ ...prev, [event]: { ...prev[event], ...partial } }));
   };
 
   const loadFields = async () => {
@@ -437,75 +288,6 @@ const Admin = () => {
       setHeroEnabled(data?.hero?.enabled ?? false);
       setHeroHasKey(data?.hero?.hasKey ?? false);
     } catch {}
-  };
-
-  const loadHeroDocTypeConfig = async () => {
-    try {
-      const data = await invoke("get_hero_doc_types_config");
-      const cfg = data?.config || {};
-      setHeroDocTypeConfig(cfg);
-      // Mirror the saved values into the pending state so the dropdowns
-      // show the current selection on mount; "dirty" check is then a
-      // simple equality comparison.
-      setHeroDocTypePending(cfg);
-    } catch {}
-  };
-
-  const loadHeroDocTypes = async () => {
-    // Ask HERO via the integration edge function for the list of
-    // available document types. Only meaningful if HERO is enabled and
-    // has a key configured; otherwise the call will fail and we just
-    // show an error message.
-    setHeroDocTypesError(null);
-    if (!adminToken) return;
-    try {
-      const { data, error } = await supabase.functions.invoke("hero-integration", {
-        body: { action: "list_document_types", adminToken },
-      });
-      if (error) {
-        setHeroDocTypesError(error.message || "Fehler");
-        setHeroDocTypes([]);
-        setHeroDocTypesLoaded(true);
-        return;
-      }
-      if (data?.error) {
-        setHeroDocTypesError(data.error);
-        setHeroDocTypes([]);
-        setHeroDocTypesLoaded(true);
-        return;
-      }
-      setHeroDocTypes(((data?.types || []) as HeroDocType[]).slice().sort((a, b) => a.name.localeCompare(b.name)));
-      setHeroDocTypesLoaded(true);
-    } catch (e: any) {
-      setHeroDocTypesError(e.message || "Fehler");
-      setHeroDocTypes([]);
-      setHeroDocTypesLoaded(true);
-    }
-  };
-
-  const saveHeroDocType = async (uploadType: string) => {
-    // Persist whatever is currently in pending[uploadType] (or null).
-    // After success we mirror pending -> config so the row shows
-    // "Gespeichert"; on failure we keep pending dirty and toast an
-    // error.
-    const pendingValue = heroDocTypePending[`hero_doc_type_${uploadType}`] ?? null;
-    setSavingHeroDocTypeKey(uploadType);
-    try {
-      await invoke("set_hero_doc_type", {
-        uploadType,
-        documentTypeId: pendingValue,
-      });
-      setHeroDocTypeConfig(prev => ({ ...prev, [`hero_doc_type_${uploadType}`]: pendingValue }));
-      toast.success("Dokumenttyp gespeichert");
-    } catch (e: any) {
-      toast.error(e?.message || "Fehler beim Speichern");
-    } finally {
-      setSavingHeroDocTypeKey(null);
-    }
-  };
-
-  const setHeroDocTypePendingFor = (uploadType: string, value: number | null) => {
-    setHeroDocTypePending(prev => ({ ...prev, [`hero_doc_type_${uploadType}`]: value }));
   };
 
   const saveHeroConfig = async () => {
@@ -708,26 +490,9 @@ const Admin = () => {
   const addEmployee = async () => {
     if (!newEmployeeName.trim()) return;
     try {
-      await invoke("create_employee", {
-        name: newEmployeeName.trim(),
-        password: newEmployeePasswordInput.trim() || undefined,
-        email: newEmployeeEmail.trim() || undefined,
-      });
-      setNewEmployeeName(""); setNewEmployeePasswordInput(""); setNewEmployeeEmail("");
+      await invoke("create_employee", { name: newEmployeeName.trim(), password: newEmployeePasswordInput.trim() || undefined });
+      setNewEmployeeName(""); setNewEmployeePasswordInput("");
       toast.success("Mitarbeiter erstellt"); loadAll();
-    } catch (e: any) { toast.error(e.message); }
-  };
-  const openEmailDialog = (emp: { id: string; name: string; email?: string | null }) => {
-    setEmailDialogEmployee(emp);
-    setEmailDialogValue(emp.email || "");
-  };
-  const saveEmployeeEmail = async () => {
-    if (!emailDialogEmployee) return;
-    try {
-      await invoke("set_employee_email", { employeeId: emailDialogEmployee.id, email: emailDialogValue.trim() });
-      toast.success("E-Mail gespeichert");
-      setEmailDialogEmployee(null);
-      loadAll();
     } catch (e: any) { toast.error(e.message); }
   };
   const deleteEmployee = async (id: string) => { try { await invoke("delete_employee", { employeeId: id }); toast.success("Gelöscht"); loadAll(); } catch (e: any) { toast.error(e.message); } };
@@ -811,13 +576,11 @@ const Admin = () => {
           <Button variant="outline" onClick={handleLogout}><LogOut className="h-4 w-4 mr-1" /> Abmelden</Button>
         </div>
         <Tabs defaultValue="employees">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 md:grid-cols-7 h-auto">
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-5 h-auto">
             <TabsTrigger value="employees" className="text-xs sm:text-sm">Mitarbeiter</TabsTrigger>
             <TabsTrigger value="customers" className="text-xs sm:text-sm">Kunden</TabsTrigger>
             <TabsTrigger value="fields" className="text-xs sm:text-sm">Felder</TabsTrigger>
             <TabsTrigger value="integrations" className="text-xs sm:text-sm">Integrationen</TabsTrigger>
-            <TabsTrigger value="notifications" className="text-xs sm:text-sm">Benachrichtigungen</TabsTrigger>
-            <TabsTrigger value="legal" className="text-xs sm:text-sm">Rechtliches</TabsTrigger>
             <TabsTrigger value="settings" className="text-xs sm:text-sm">Einstellungen</TabsTrigger>
           </TabsList>
 
@@ -827,32 +590,22 @@ const Admin = () => {
                 <div className="space-y-2">
                   <div className="flex flex-col sm:flex-row gap-2">
                     <Input placeholder="Name des Mitarbeiters" value={newEmployeeName} onChange={(e) => setNewEmployeeName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEmployee()} />
-                    <Input type="email" placeholder="E-Mail (optional)" value={newEmployeeEmail} onChange={(e) => setNewEmployeeEmail(e.target.value)} className="sm:max-w-[220px]" />
                     <Input type="password" placeholder="Passwort (optional)" value={newEmployeePasswordInput} onChange={(e) => setNewEmployeePasswordInput(e.target.value)} className="sm:max-w-[180px]" />
                     <Button onClick={addEmployee} disabled={!newEmployeeName.trim()} className="w-full sm:w-auto"><Plus className="h-4 w-4 mr-1" /> Hinzufügen</Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Mit hinterlegter E-Mail kann der Mitarbeiter Benachrichtigungen für die ihm zugeordneten Projekte empfangen.
-                  </p>
                 </div>
                 <div className="space-y-2">
                   {employees.map((emp) => (
                     <div key={emp.id} className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                      <div className="flex flex-col gap-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium">{emp.name}</span>
-                          {emp.hasPassword ? (
-                            <Badge variant="default" className="text-xs"><Lock className="h-3 w-3 mr-1" />Passwort gesetzt</Badge>
-                          ) : (
-                            <Badge variant="secondary" className="text-xs">Kein Passwort</Badge>
-                          )}
-                        </div>
-                        <span className="text-xs text-muted-foreground truncate">
-                          {emp.email ? emp.email : "Keine E-Mail hinterlegt"}
-                        </span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{emp.name}</span>
+                        {emp.hasPassword ? (
+                          <Badge variant="default" className="text-xs"><Lock className="h-3 w-3 mr-1" />Passwort gesetzt</Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">Kein Passwort</Badge>
+                        )}
                       </div>
-                      <div className="flex gap-1 shrink-0">
-                        <Button variant="ghost" size="sm" onClick={() => openEmailDialog(emp)} title="E-Mail setzen/ändern"><Mail className="h-4 w-4" /></Button>
+                      <div className="flex gap-1">
                         <Button variant="ghost" size="sm" onClick={() => openPasswordDialog(emp)} title="Passwort setzen/ändern"><KeyRound className="h-4 w-4" /></Button>
                         {emp.hasPassword && (
                           <AlertDialog>
@@ -993,202 +746,6 @@ const Admin = () => {
                 </div>
                 <div className="space-y-2">{assignments.map((a) => (<div key={a.id} className="flex items-center justify-between p-3 bg-muted rounded-lg"><span className="text-sm"><span className="font-medium">{a.customers?.name}</span>{" → "}<span className="font-medium">{a.projects?.project_number}</span></span><Button variant="ghost" size="sm" onClick={() => deleteAssignment(a.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>))}{assignments.length === 0 && <p className="text-muted-foreground text-center py-4">Noch keine Zuweisungen</p>}</div>
               </CardContent></Card>
-          </TabsContent>
-
-          <TabsContent value="notifications" className="space-y-4 mt-4">
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Benachrichtigungen</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <p className="text-sm text-muted-foreground">
-                  Lege fest, welche Kunden-Aktivitäten per E-Mail gemeldet werden und an wen.
-                  Standard-Empfänger ist die globale Adresse. Pro Ereignis kannst du stattdessen
-                  den Mitarbeiter wählen, dem das Projekt zugeordnet ist - hat dieser keine
-                  E-Mail hinterlegt, geht die Mail an die globale Adresse als Fallback.
-                </p>
-
-                <div className="space-y-2">
-                  <Label htmlFor="notif-global-email">Globale Empfänger-E-Mail</Label>
-                  <Input
-                    id="notif-global-email"
-                    type="email"
-                    placeholder="info@firma.de"
-                    value={notifGlobalEmail}
-                    onChange={(e) => setNotifGlobalEmail(e.target.value)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Wenn leer, können Benachrichtigungen nur funktionieren, wenn 'Mitarbeiter'
-                    als Empfänger gewählt ist UND der zugeordnete Mitarbeiter eine E-Mail hat.
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  {[
-                    { key: "first_action" as const, title: "Erste Aktivität", desc: "Wenn der Kunde zum ersten Mal etwas in einem Projekt tut (Freigabe oder Kommentar). Einmal pro Projekt." },
-                    { key: "comment" as const, title: "Kommentar", desc: "Wenn der Kunde einen Kommentar oder Hinweis schreibt. Höchstens alle 4 Stunden pro Projekt." },
-                    { key: "completion" as const, title: "Freigabe", desc: "Wenn der Kunde das Projekt komplett freigegeben hat." },
-                  ].map(ev => {
-                    const setting = notifSettings[ev.key];
-                    const canEnable = canEnableEvent(setting);
-                    return (
-                      <div key={ev.key} className="border rounded-lg p-4 space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="font-medium">{ev.title}</p>
-                            <p className="text-sm text-muted-foreground">{ev.desc}</p>
-                          </div>
-                          <label className="flex items-center gap-2 cursor-pointer shrink-0">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4"
-                              checked={setting.enabled}
-                              disabled={!canEnable && !setting.enabled}
-                              onChange={(e) => updateEventSetting(ev.key, { enabled: e.target.checked })}
-                            />
-                            <span className="text-sm">Aktiv</span>
-                          </label>
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs">Empfänger</Label>
-                          <Select
-                            value={setting.target}
-                            onValueChange={(v) => updateEventSetting(ev.key, { target: v as "global" | "assigned_employee" })}
-                            disabled={!setting.enabled}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="global">Globale E-Mail-Adresse</SelectItem>
-                              <SelectItem value="assigned_employee">Projekt-zugeordneter Mitarbeiter</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        {!canEnable && !setting.enabled && (
-                          <p className="text-xs text-amber-600">
-                            Kann nicht aktiviert werden: keine globale E-Mail hinterlegt.
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <Button onClick={saveNotifSettings} disabled={savingNotif}>
-                  {savingNotif ? "Speichert..." : "Speichern"}
-                </Button>
-              </CardContent>
-            </Card>
-
-          </TabsContent>
-
-          <TabsContent value="legal" className="space-y-4 mt-4">
-
-            <Card>
-              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Datenschutzerklärung</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Diese URL wird in den öffentlichen Formularen (Neukunden-Anmeldung, Fahrzeug-Anfrage)
-                  bei der Datenschutz-Zustimmung verlinkt. Wenn leer, wird die in der App eingebaute
-                  Datenschutzerklärung unter <code className="text-xs">/datenschutz</code> verwendet.
-                </p>
-                <div className="space-y-2">
-                  <Label htmlFor="privacy-url">Eigene URL zur Datenschutzerklärung (optional)</Label>
-                  <Input
-                    id="privacy-url"
-                    type="url"
-                    placeholder="https://www.firma.de/datenschutz"
-                    value={privacyUrl}
-                    onChange={(e) => setPrivacyUrl(e.target.value)}
-                  />
-                </div>
-                <Button onClick={savePrivacyUrl} disabled={savingPrivacyUrl}>
-                  {savingPrivacyUrl ? "Speichert..." : "Speichern"}
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Verantwortliche/r (für Datenschutz)</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Diese Daten werden in der eingebauten Datenschutzerklärung als Verantwortliche/r
-                  nach Art. 13 DSGVO genannt. Erforderlich, wenn keine eigene Datenschutz-URL hinterlegt ist.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="legal-company">Firmenname</Label>
-                    <Input
-                      id="legal-company"
-                      value={legalInfo.companyName}
-                      onChange={(e) => setLegalInfo({ ...legalInfo, companyName: e.target.value })}
-                      placeholder="SL Werbung GmbH"
-                    />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="legal-rep">Vertreten durch (optional)</Label>
-                    <Input
-                      id="legal-rep"
-                      value={legalInfo.representative}
-                      onChange={(e) => setLegalInfo({ ...legalInfo, representative: e.target.value })}
-                      placeholder="Max Mustermann (Geschäftsführer)"
-                    />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="legal-street">Straße &amp; Hausnummer</Label>
-                    <Input
-                      id="legal-street"
-                      value={legalInfo.street}
-                      onChange={(e) => setLegalInfo({ ...legalInfo, street: e.target.value })}
-                      placeholder="Beispielstraße 12"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="legal-zip">PLZ</Label>
-                    <Input
-                      id="legal-zip"
-                      value={legalInfo.zip}
-                      onChange={(e) => setLegalInfo({ ...legalInfo, zip: e.target.value })}
-                      placeholder="71364"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="legal-city">Ort</Label>
-                    <Input
-                      id="legal-city"
-                      value={legalInfo.city}
-                      onChange={(e) => setLegalInfo({ ...legalInfo, city: e.target.value })}
-                      placeholder="Winnenden"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="legal-email">E-Mail</Label>
-                    <Input
-                      id="legal-email"
-                      type="email"
-                      value={legalInfo.email}
-                      onChange={(e) => setLegalInfo({ ...legalInfo, email: e.target.value })}
-                      placeholder="info@firma.de"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="legal-phone">Telefon (optional)</Label>
-                    <Input
-                      id="legal-phone"
-                      value={legalInfo.phone}
-                      onChange={(e) => setLegalInfo({ ...legalInfo, phone: e.target.value })}
-                      placeholder="07191 12345"
-                    />
-                  </div>
-                </div>
-                <Button onClick={saveLegalInfo} disabled={savingLegalInfo}>
-                  {savingLegalInfo ? "Speichert..." : "Speichern"}
-                </Button>
-              </CardContent>
-            </Card>
-
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-4 mt-4">
@@ -1624,95 +1181,6 @@ const Admin = () => {
                 </div>
               </CardContent>
             </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2"><Plug className="h-5 w-5" /> HERO Dokumenttypen</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Beim Hochladen von PDFs nach HERO muss ein Dokumenttyp angegeben werden,
-                  damit das Dokument korrekt einsortiert wird. Hier kannst du pro Upload-Art
-                  festlegen, welcher HERO-Dokumenttyp verwendet werden soll.
-                </p>
-
-                {!heroEnabled || !heroHasKey ? (
-                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-sm text-amber-900 dark:text-amber-200">
-                    HERO-Integration ist nicht aktiv. Aktiviere die Integration oben, dann kannst du Dokumenttypen zuordnen.
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-sm text-muted-foreground">
-                        {heroDocTypesLoaded
-                          ? heroDocTypesError
-                            ? <span className="text-red-600">Fehler: {heroDocTypesError}</span>
-                            : <span>{heroDocTypes.length} Dokumenttypen verfügbar</span>
-                          : <span>Noch nicht geladen</span>}
-                      </div>
-                      <Button variant="outline" size="sm" onClick={loadHeroDocTypes}>
-                        <RefreshCw className="h-3 w-3 mr-1" /> Aus HERO laden
-                      </Button>
-                    </div>
-
-                    {[
-                      { key: "aufmass_pdf", label: "Aufmaß-PDF", description: "Das aus einem Projekt exportierte Aufmaß-PDF." },
-                      { key: "lager_label_pdf", label: "Lager-Etiketten", description: "Die Lager-Etiketten-PDFs, sobald deren Upload aktiv wird." },
-                    ].map(it => {
-                      const savedId = heroDocTypeConfig[`hero_doc_type_${it.key}`] ?? null;
-                      const pendingId = heroDocTypePending[`hero_doc_type_${it.key}`] ?? null;
-                      const isDirty = savedId !== pendingId;
-                      const isSaving = savingHeroDocTypeKey === it.key;
-                      const savedName = savedId != null ? heroDocTypes.find(t => t.id === savedId)?.name : null;
-                      return (
-                        <div key={it.key} className="border rounded-lg p-3 space-y-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-medium text-sm">{it.label}</p>
-                              <p className="text-xs text-muted-foreground">{it.description}</p>
-                            </div>
-                            {savedId != null ? (
-                              <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700 shrink-0">
-                                <CheckCircle className="h-3 w-3 mr-1" />
-                                {savedName || `ID ${savedId}`}
-                              </Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-xs shrink-0">Nicht gesetzt</Badge>
-                            )}
-                          </div>
-                          <div className="flex gap-2">
-                            <Select
-                              value={pendingId != null ? String(pendingId) : "none"}
-                              onValueChange={v => setHeroDocTypePendingFor(it.key, v === "none" ? null : parseInt(v, 10))}
-                              disabled={isSaving}
-                            >
-                              <SelectTrigger className="flex-1"><SelectValue placeholder="Dokumenttyp wählen" /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="none">— Keiner —</SelectItem>
-                                {heroDocTypes.map(dt => (
-                                  <SelectItem key={dt.id} value={String(dt.id)}>{dt.name}</SelectItem>
-                                ))}
-                                {heroDocTypes.length === 0 && savedId != null && (
-                                  <SelectItem value={String(savedId)}>ID {savedId} (Liste laden)</SelectItem>
-                                )}
-                              </SelectContent>
-                            </Select>
-                            <Button
-                              onClick={() => saveHeroDocType(it.key)}
-                              disabled={!isDirty || isSaving}
-                              size="sm"
-                              variant={isDirty ? "default" : "outline"}
-                            >
-                              {isSaving ? "Speichert..." : isDirty ? "Speichern" : "Gespeichert"}
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </>
-                )}
-              </CardContent>
-            </Card>
           </TabsContent>
         </Tabs>
       </div>
@@ -1738,26 +1206,6 @@ const Admin = () => {
             <Button onClick={saveEmployeePassword} disabled={!dialogPassword.trim() || savingEmpPassword}>
               {savingEmpPassword ? "Speichern..." : "Speichern"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!emailDialogEmployee} onOpenChange={(open) => { if (!open) setEmailDialogEmployee(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>E-Mail-Adresse</DialogTitle>
-            <DialogDescription>
-              E-Mail für {emailDialogEmployee?.name} hinterlegen. Leer lassen, um die Adresse zu entfernen.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="emp-dialog-email">E-Mail-Adresse</Label>
-            <Input id="emp-dialog-email" type="email" value={emailDialogValue} onChange={(e) => setEmailDialogValue(e.target.value)}
-              placeholder="vorname.nachname@firma.de" autoFocus onKeyDown={(e) => e.key === "Enter" && saveEmployeeEmail()} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEmailDialogEmployee(null)}>Abbrechen</Button>
-            <Button onClick={saveEmployeeEmail}>Speichern</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
