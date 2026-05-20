@@ -81,6 +81,7 @@ const VehicleInquiry = () => {
     if (!email.trim()) e.email = "Bitte E-Mail eingeben";
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) e.email = "Keine gültige E-Mail-Adresse";
     if (!consent) e.consent = "Bitte der Datenschutzerklärung zustimmen";
+
     // Required-flagged fields from vehicle_field_config. Picking these
     // up automatically means the admin can flip a field's is_required in
     // settings and the public form respects it without a code change.
@@ -89,6 +90,27 @@ const VehicleInquiry = () => {
         e[`field-${f.field_key}`] = `Bitte ${f.field_label} eingeben`;
       }
     }
+
+    // Force "Kennzeichen" required regardless of DB config - it's our
+    // project_title in HERO, so the project would otherwise show up
+    // with an empty name. We match the field by key OR label so a
+    // rename in admin doesn't break the rule.
+    const kennzeichenField = fieldConfigs.find(f => {
+      const k = f.field_key.toLowerCase();
+      const l = (f.field_label || "").toLowerCase();
+      return k.includes("kennzeichen") || k.includes("nummernschild") ||
+             l.includes("kennzeichen") || l.includes("nummernschild");
+    });
+    if (kennzeichenField && !(fieldValues[kennzeichenField.field_key] || "").trim()) {
+      e[`field-${kennzeichenField.field_key}`] = `Bitte Kennzeichen eingeben`;
+    }
+
+    // At least one image required - the team needs to see the vehicle
+    // before they can quote/schedule, so we don't accept empty submissions.
+    if (images.length === 0) {
+      e.images = "Bitte mindestens ein Bild des Fahrzeugs hochladen";
+    }
+
     if (needsSignup) {
       if (!lastName.trim()) e.lastName = "Bitte Nachname eingeben";
       if (!phone.trim() && !mobile.trim()) e.phone = "Bitte mindestens eine Telefonnummer eingeben";
@@ -108,7 +130,7 @@ const VehicleInquiry = () => {
     if (!hasAttempted) return;
     setErrors(validate());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [email, lastName, phone, mobile, street, zip, city, consent, needsSignup, hasAttempted, fieldValues, fieldConfigs]);
+  }, [email, lastName, phone, mobile, street, zip, city, consent, needsSignup, hasAttempted, fieldValues, fieldConfigs, images]);
 
   // ---- Image handling ----
   const compressImage = async (file: File): Promise<string> => {
@@ -343,8 +365,10 @@ const VehicleInquiry = () => {
 
               {/* Image upload */}
               <div className="space-y-2 pt-2">
-                <Label>Bilder Ihres Fahrzeugs (max. {MAX_IMAGES})</Label>
-                <div className="flex flex-wrap gap-2">
+                <Label>
+                  Bilder Ihres Fahrzeugs (max. {MAX_IMAGES}) <span className="text-red-600">*</span>
+                </Label>
+                <div className={`flex flex-wrap gap-2 ${errors.images ? "ring-2 ring-red-500 rounded-lg p-1" : ""}`}>
                   {images.map((img, i) => (
                     <div key={i} className="relative w-24 h-24 rounded-lg overflow-hidden border bg-muted">
                       <img src={img.dataUrl} alt={img.filename} className="w-full h-full object-cover" />
@@ -368,6 +392,7 @@ const VehicleInquiry = () => {
                     </button>
                   )}
                 </div>
+                {errors.images && <p className="text-sm text-red-600">{errors.images}</p>}
                 <input
                   ref={fileInputRef}
                   type="file"

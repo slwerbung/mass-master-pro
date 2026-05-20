@@ -317,15 +317,82 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
       body: JSON.stringify(payload),
     });
     const data = await resp.json();
-    // Lead API responds with { status: "success", id: <project_match_id> }
-    // on success, or { status: "error", message: "..." } on failure.
-    // Note: it does NOT return project_nr - we need to fetch that
-    // separately if we want to show it as the app's project number.
+    // Lead API responds with { status: "success", id: <project.id> } on
+    // success. The returned id is the HERO-internal project.id (the
+    // inner Project record), NOT the project_match.id that we need for
+    // partner URLs (/partner/Projects/view/<id>) or for the upload/notes
+    // mutations later. So we look up the project_match via the project
+    // id immediately after creation.
     if (data?.status !== "success") {
       return { id: null, nr: "", ok: false, raw: data };
     }
     const projId = data?.id ?? data?.project?.id ?? data?.project_id ?? null;
-    const projectMatchId = projId ? parseInt(String(projId), 10) : null;
+    const heroInternalId = projId ? parseInt(String(projId), 10) : null;
+    if (!heroInternalId) {
+      return { id: null, nr: "", ok: false, raw: data };
+    }
+
+    // Look up the project_match for this project.id. There should be
+    // exactly one for our partner. We fetch a few of the latest
+    // project_matches and find the one whose inner project.id matches.
+    let projectMatchId: number | null = null;
+    try {
+      const lookupQuery = `
+        query Lookup($projectIds: [Int]) {
+          project_matches(project_ids: $projectIds) {
+            id
+            project_nr
+            project { id }
+          }
+        }
+      `;
+      const lookupResp = await fetch(HERO_GRAPHQL_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ query: lookupQuery, variables: { projectIds: [heroInternalId] } }),
+      });
+      const lookupData = await lookupResp.json();
+      const matches = lookupData?.data?.project_matches || [];
+      // Prefer the match whose project.id we asked for
+      const exactMatch = matches.find((m: any) => Number(m?.project?.id) === heroInternalId);
+      const chosen = exactMatch || matches[0];
+      if (chosen?.id) {
+        projectMatchId = parseInt(String(chosen.id), 10);
+      }
+    } catch (e) {
+      console.warn("project_match lookup after Lead create failed", e);
+    }
+
+    // Fallback: if the lookup failed (e.g. project_ids arg not supported
+    // by this HERO instance), pull the most recent project_matches for
+    // our partner and pick the one matching our project.id.
+    if (!projectMatchId) {
+      try {
+        const fallbackQuery = `query { project_matches(orderBy: "id") { id project { id } } }`;
+        const fb = await fetch(HERO_GRAPHQL_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({ query: fallbackQuery }),
+        });
+        const fbData = await fb.json();
+        const all = fbData?.data?.project_matches || [];
+        // Find by project.id - if id sorting was descending, our just-
+        // created match is in the first few entries.
+        const hit = all.find((m: any) => Number(m?.project?.id) === heroInternalId);
+        if (hit?.id) {
+          projectMatchId = parseInt(String(hit.id), 10);
+        }
+      } catch (e) {
+        console.warn("project_match fallback lookup failed", e);
+      }
+    }
+
+    if (!projectMatchId) {
+      // Last resort: return the Lead-API id as-is (old behavior).
+      // The partner URL will likely 404, but at least we don't lose
+      // the project entirely.
+      projectMatchId = heroInternalId;
+    }
 
     // Lead API doesn't accept project_title; if we have one, set it
     // afterwards via update_project_match GraphQL mutation. Best-effort -
