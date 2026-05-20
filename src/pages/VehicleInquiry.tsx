@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { ImagePlus, X, Loader2, CheckCircle2, Plus } from "lucide-react";
+import { ImagePlus, X, Loader2, CheckCircle2, Plus, FileUp, Wand2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -31,7 +31,7 @@ interface VehicleFieldConfig {
 const VehicleInquiry = () => {
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState<{ projectNumber: string } | null>(null);
+  const [submitted, setSubmitted] = useState<{ projectNumber: string; projectId: string; heroProjectId: number | null } | null>(null);
   const [needsSignup, setNeedsSignup] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [hasAttempted, setHasAttempted] = useState(false);
@@ -243,7 +243,11 @@ const VehicleInquiry = () => {
         toast.error(data?.error || "Fehler beim Senden");
         return;
       }
-      setSubmitted({ projectNumber: data.project_number });
+      setSubmitted({
+        projectNumber: data.project_number,
+        projectId: data.project_id,
+        heroProjectId: data.hero_project_id ?? null,
+      });
     } catch (err: any) {
       toast.error("Fehler: " + (err.message || String(err)));
     } finally {
@@ -256,34 +260,65 @@ const VehicleInquiry = () => {
     return (
       <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
         <Card className="max-w-lg w-full">
-          <CardContent className="pt-8 pb-8 text-center space-y-4">
-            <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto" />
-            <h2 className="text-2xl font-bold">Anfrage erhalten</h2>
-            <p className="text-muted-foreground">
-              Vielen Dank! Ihre Anfrage wurde übermittelt und unter der Projektnummer
-              <strong> {submitted.projectNumber}</strong> registriert.
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Wir melden uns zeitnah bei Ihnen unter der angegebenen E-Mail-Adresse.
-            </p>
-            {/* Häufig haben Kunden mehrere Fahrzeuge - der Link erspart
-                ihnen die Suche zurück zum Formular. */}
-            <div className="pt-4 space-y-2">
-              <Button
-                className="w-full"
-                onClick={() => {
-                  // Reset to a fresh form rather than re-route through
-                  // the router (avoids a page reload and keeps the URL
-                  // clean). Clearing submitted shows the form again.
-                  setSubmitted(null);
-                  setFieldValues({});
-                  setUploadedImages([]);
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-              >
-                <Plus className="h-4 w-4 mr-2" /> Weiteres Fahrzeug einreichen
-              </Button>
-              <Button variant="ghost" className="w-full" onClick={() => navigate("/")}>
+          <CardContent className="pt-8 pb-8 space-y-5">
+            <div className="text-center space-y-3">
+              <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto" />
+              <h2 className="text-2xl font-bold">Anfrage erhalten</h2>
+              <p className="text-muted-foreground">
+                Vielen Dank! Ihre Anfrage wurde übermittelt und unter der Projektnummer
+                <strong> {submitted.projectNumber}</strong> registriert.
+              </p>
+            </div>
+
+            <div className="border-t pt-5">
+              <p className="text-center font-medium mb-4">Was möchten Sie jetzt tun?</p>
+              <div className="space-y-3">
+                {/* Option 1: another vehicle */}
+                <Button
+                  variant="outline"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
+                  onClick={() => {
+                    setSubmitted(null);
+                    setFieldValues({});
+                    setImages([]);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  <Plus className="h-6 w-6 text-primary shrink-0" />
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">WEITERES FAHRZEUG EINREICHEN</div>
+                    <div className="text-xs text-muted-foreground break-words">Noch ein Fahrzeug für Beschriftung anmelden</div>
+                  </div>
+                </Button>
+
+                {/* Option 2: upload an existing layout (PDF) */}
+                <Button
+                  variant="outline"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
+                  onClick={() => navigate(`/layout-upload?project=${submitted.projectId}${submitted.heroProjectId ? `&hero=${submitted.heroProjectId}` : ""}`)}
+                >
+                  <FileUp className="h-6 w-6 text-primary shrink-0" />
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">LAYOUT HOCHLADEN</div>
+                    <div className="text-xs text-muted-foreground break-words">Sie haben bereits ein fertiges Design (PDF)</div>
+                  </div>
+                </Button>
+
+                {/* Option 3: design quiz (coming soon - placeholder route) */}
+                <Button
+                  variant="outline"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
+                  onClick={() => navigate(`/gestaltung?project=${submitted.projectId}`)}
+                >
+                  <Wand2 className="h-6 w-6 text-primary shrink-0" />
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">GESTALTUNG ENTWICKELN</div>
+                    <div className="text-xs text-muted-foreground break-words">Wir entwickeln gemeinsam ein Design für Sie</div>
+                  </div>
+                </Button>
+              </div>
+
+              <Button variant="ghost" className="w-full mt-4" onClick={() => navigate("/")}>
                 Zur Startseite
               </Button>
             </div>

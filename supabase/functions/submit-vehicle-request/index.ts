@@ -802,34 +802,35 @@ serve(async (req) => {
     //   path for web-form leads.
     let heroProjectId: number | null = null;
     let projectNumber: string = "";
+
+    // Compute the project title from form values: prefer Kennzeichen,
+    // fall back to Hersteller. Computed OUTSIDE the heroEnabled block so
+    // the local Captfix project can use it as its display name even when
+    // HERO is disabled. We match against both field_key and field_label
+    // (lowercased) so an admin rename doesn't break detection.
+    const findValueByLabelOrKey = (...needles: string[]): string => {
+      for (const [key, val] of Object.entries(body.vehicleFields || {})) {
+        if (!val || !String(val).trim()) continue;
+        const label = (fieldLabels[key] || "").toLowerCase();
+        const k = key.toLowerCase();
+        if (needles.some(n => label.includes(n) || k.includes(n))) return String(val).trim();
+      }
+      return "";
+    };
+    // Aliases: kennzeichen + nummernschild, hersteller + marke
+    const projectTitle =
+      findValueByLabelOrKey("kennzeichen", "nummernschild") ||
+      findValueByLabelOrKey("hersteller", "marke") ||
+      "";
+    debug.projectTitle = projectTitle;
+    debug.fieldLabels = fieldLabels;
+
     if (heroEnabled) {
       const fieldDescriptions = Object.entries(body.vehicleFields || {})
         .filter(([_, v]) => v && String(v).trim())
         .map(([k, v]) => `${fieldLabels[k] || k}: ${v}`)
         .join("\n");
       const partnerNotes = `Anfrage über das Webformular von ${body.email.trim()}.\n\n${fieldDescriptions}`;
-
-      // Project title comes from the form values: prefer Kennzeichen,
-      // fall back to Hersteller, else stay empty. We match against both
-      // the field_key and the field_label, lowercased - so even if the
-      // admin renamed the label, the key likely still contains the
-      // original German term.
-      const findValueByLabelOrKey = (...needles: string[]): string => {
-        for (const [key, val] of Object.entries(body.vehicleFields || {})) {
-          if (!val || !String(val).trim()) continue;
-          const label = (fieldLabels[key] || "").toLowerCase();
-          const k = key.toLowerCase();
-          if (needles.some(n => label.includes(n) || k.includes(n))) return String(val).trim();
-        }
-        return "";
-      };
-      // Aliases: kennzeichen + nummernschild, hersteller + marke
-      const projectTitle =
-        findValueByLabelOrKey("kennzeichen", "nummernschild") ||
-        findValueByLabelOrKey("hersteller", "marke") ||
-        "";
-      debug.projectTitle = projectTitle;
-      debug.fieldLabels = fieldLabels;
 
       if (foundExistingContact && heroCustomerIdForProject && heroCustomerAddress?.zipcode) {
         // GraphQL path: existing contact, use stored address
@@ -905,6 +906,19 @@ serve(async (req) => {
       customFields.__hero_project_id = String(heroProjectId);
       customFields.__hero_project_nr = projectNumber;
     }
+    // Store the actual customer name in custom_fields so we don't lose
+    // it - the customer_name column is repurposed as the display name
+    // (Kennzeichen) for vehicle projects.
+    if (displayCustomerName) {
+      customFields.__customer_name = displayCustomerName;
+    }
+
+    // The Projects list shows customer_name as the project's headline.
+    // For vehicle inquiries the useful headline is the Kennzeichen (the
+    // license plate), not the customer - so we use projectTitle here and
+    // fall back to the customer name if for some reason no plate was
+    // captured.
+    const displayName = projectTitle || displayCustomerName || null;
 
     const { data: project, error: projError } = await supabase
       .from("projects")
@@ -914,7 +928,7 @@ serve(async (req) => {
         employee_id: null,
         project_number: projectNumber,
         project_type: "fahrzeugbeschriftung",
-        customer_name: displayCustomerName || null,
+        customer_name: displayName,
         custom_fields: customFields,
       })
       .select()
