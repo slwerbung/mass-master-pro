@@ -1658,6 +1658,7 @@ const Admin = () => {
                     {[
                       { key: "aufmass_pdf", label: "Aufmaß-PDF", description: "Das aus einem Projekt exportierte Aufmaß-PDF." },
                       { key: "lager_label_pdf", label: "Lager-Etiketten", description: "Die Lager-Etiketten-PDFs, sobald deren Upload aktiv wird." },
+                      { key: "layout_pdf", label: "Fahrzeug-Layout", description: "Vom Kunden hochgeladene Layout-/Design-PDFs (Fahrzeugbeschriftung)." },
                     ].map(it => {
                       const savedId = heroDocTypeConfig[`hero_doc_type_${it.key}`] ?? null;
                       const pendingId = heroDocTypePending[`hero_doc_type_${it.key}`] ?? null;
