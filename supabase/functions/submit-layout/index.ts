@@ -77,29 +77,40 @@ async function heroUploadDocument(
     } catch { /* ignore */ }
     if (!uuid) return { ok: false, error: "Keine UUID in Upload-Antwort" };
 
-    // HERO requires a document_type_id for upload_document. If we don't
-    // have one configured we still try without it - some HERO instances
-    // accept it, others reject; the error surfaces in the response.
-    const docInput: Record<string, unknown> = {
-      target: "project_match",
-      target_id: projectMatchId,
-      file_upload_uuid: uuid,
-      filename,
-    };
-    if (documentTypeId != null) docInput.document_type_id = documentTypeId;
+    // HERO upload_document mutation structure (verified against the
+    // schema + a live PowerShell test):
+    //   upload_document(
+    //     document: CustomerDocumentInput!   <- ONLY document_type_id
+    //     file_upload_uuid: String!          <- separate arg
+    //     target: LinkTargetEnum!            <- enum literal, not a string
+    //     target_id: Int!                    <- separate arg
+    //   ) { id }
+    // The earlier version wrongly stuffed target/target_id/uuid into a
+    // single customer_document object - that fails validation. We now
+    // mirror exactly what the working image/document path in
+    // hero-upload-proxy does.
+    const doc: Record<string, unknown> = {};
+    if (documentTypeId != null && Number.isFinite(documentTypeId)) {
+      doc.document_type_id = documentTypeId;
+    }
 
     const mutation = `
-      mutation Assign($input: CustomerDocumentInput!) {
-        upload_document(customer_document: $input) { id }
+      mutation AssignDoc($doc: CustomerDocumentInput!, $uuid: String!, $targetId: Int!) {
+        upload_document(document: $doc, file_upload_uuid: $uuid, target: project_match, target_id: $targetId) { id }
       }
     `;
     const r = await fetch(HERO_GRAPHQL_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query: mutation, variables: { input: docInput } }),
+      body: JSON.stringify({
+        query: mutation,
+        variables: { doc, uuid, targetId: projectMatchId },
+      }),
     });
     const data = await r.json();
     if (data.errors?.length) return { ok: false, error: data.errors.map((e: any) => e.message).join("; ") };
+    const id = data?.data?.upload_document?.id;
+    if (!id) return { ok: false, error: "Keine ID in Antwort: " + JSON.stringify(data).slice(0, 200) };
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: e.message || String(e) };
