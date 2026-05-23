@@ -176,9 +176,10 @@ const LocationDetails = () => {
           customFields: Object.fromEntries(Object.entries(fieldValues).filter(([k]) => k.startsWith("custom_"))),
         });
         scheduleSyncProject(projectId);
-        // Sync area measurements into HERO notes if linked. Fire-and-
-        // forget: failures don't block the user.
-        updateHeroNotesIfLinked(projectId);
+        // Sync area measurements into HERO notes if linked. Must await
+        // before navigate() unmounts the component, otherwise the edge-
+        // function call gets cancelled in flight.
+        await updateHeroNotesIfLinked(projectId);
         toast.success("Standort aktualisiert");
         navigate(`/projects/${projectId}`);
       } else if (isDetailImage && imageDataRef.current) {
@@ -309,11 +310,13 @@ const LocationDetails = () => {
 
         toast.dismiss();
         toast.success("Standort gespeichert");
+        scheduleSyncProject(projectId);
+        // Sync area measurements to HERO notes BEFORE navigating - the
+        // navigate() calls below unmount this component and would cancel
+        // the in-flight edge-function request otherwise.
+        await updateHeroNotesIfLinked(projectId);
         if (floorPlanId) navigate(`/projects/${projectId}/floor-plans`);
         else navigate(`/projects/${projectId}`);
-        scheduleSyncProject(projectId);
-        // Sync area measurements to HERO notes (best-effort)
-        updateHeroNotesIfLinked(projectId);
       }
     } catch (error) {
       toast.dismiss();

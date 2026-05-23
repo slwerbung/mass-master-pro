@@ -553,9 +553,11 @@ const PhotoEditor = () => {
               if (mergedMeasurements.length > 0) {
                 await indexedDBStorage.updateLocationMetadata(projectId, locationId, { areaMeasurements: mergedMeasurements });
                 // Sync the consolidated area measurements into HERO's
-                // project notes (partner_notes). Fire-and-forget; an
-                // outage in HERO must never block the local save flow.
-                updateHeroNotesIfLinked(projectId);
+                // project notes (partner_notes). We MUST await this before
+                // navigating away - navigation unmounts this component and
+                // would otherwise cancel the in-flight edge-function call,
+                // which is exactly why notes never reached HERO before.
+                await updateHeroNotesIfLinked(projectId);
               }
               toast.success("Bild aktualisiert");
             }
