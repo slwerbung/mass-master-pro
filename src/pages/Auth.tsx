@@ -55,20 +55,9 @@ function setLoginCache(role: string, token: string, userId: string) {
 
 type LoginMode = "select" | "admin" | "employee" | "customer";
 
-// `variant` controls which entry points are exposed:
-//   - "landing" (default, served at "/"): public-facing. Customer login
-//     + the public forms. NO employee/admin login - intentionally hidden
-//     so the homepage can become a tenant landing page later.
-//   - "team" (served at "/team"): internal entry. Employee + admin login
-//     only, reachable just by typing the URL. Not linked from landing.
-interface AuthProps {
-  variant?: "landing" | "team";
-}
-
-const Auth = ({ variant = "landing" }: AuthProps) => {
+const Auth = () => {
   const navigate = useNavigate();
-  const isTeam = variant === "team";
-  const [mode, setMode] = useState<LoginMode>(isTeam ? "employee" : "select");
+  const [mode, setMode] = useState<LoginMode>("select");
   const [adminPassword, setAdminPassword] = useState("");
   const [employeePassword, setEmployeePassword] = useState("");
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
@@ -275,83 +264,75 @@ const Auth = ({ variant = "landing" }: AuthProps) => {
         <CardContent>
           {mode === "select" && (
             <div className="space-y-6">
-              {isTeam ? (
-                /* TEAM entry: only employee + admin. Reached by typing
-                   the /team URL directly; never linked from landing. */
-                <div className="space-y-3">
-                  <Button
-                    variant="outline"
-                    className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
-                    onClick={() => setMode("employee")}
-                  >
-                    <User className="h-6 w-6 text-primary shrink-0" />
-                    <div className="min-w-0 flex-1 whitespace-normal">
-                      <div className="font-semibold break-words">MITARBEITER-LOGIN</div>
-                      <div className="text-xs text-muted-foreground break-words">Projekte erstellen & bearbeiten</div>
-                    </div>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
+              {/* Logins: Mitarbeiter + Kunde gleich gewichtet. */}
+              <div className="space-y-3">
+                <Button
+                  variant="outline"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
+                  onClick={() => setMode("employee")}
+                >
+                  <User className="h-6 w-6 text-primary shrink-0" />
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">MITARBEITER-LOGIN</div>
+                    <div className="text-xs text-muted-foreground break-words">Projekte erstellen & bearbeiten</div>
+                  </div>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
+                  onClick={() => setMode("customer")}
+                >
+                  <Users className="h-6 w-6 text-primary shrink-0" />
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">KUNDEN-LOGIN</div>
+                    <div className="text-xs text-muted-foreground break-words">Zugewiesene Projekte ansehen</div>
+                  </div>
+                </Button>
+              </div>
+
+              {/* Public forms - für Erstkontakt ohne Account */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-border" />
+                  <span className="text-xs text-muted-foreground">Anliegen einreichen</span>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+                <Button
+                  variant="outline"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
+                  onClick={() => navigate("/fahrzeug-anfrage")}
+                >
+                  <Car className="h-6 w-6 text-primary shrink-0" />
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">FAHRZEUG EINREICHEN</div>
+                    <div className="text-xs text-muted-foreground break-words">Fahrzeugdaten angeben für Beschriftung und Folierung</div>
+                  </div>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
+                  onClick={() => navigate("/neukunde")}
+                >
+                  <UserPlus className="h-6 w-6 text-primary shrink-0" />
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">ALS NEUKUNDE ANMELDEN</div>
+                    <div className="text-xs text-muted-foreground break-words">Erstanlage als Privat- oder Geschäftskunde</div>
+                  </div>
+                </Button>
+              </div>
+
+              {/* Admin-Login: ganz unten, dezent als Text-Link */}
+              <div className="pt-2 border-t">
+                <div className="flex items-center justify-center text-xs">
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
                     onClick={() => setMode("admin")}
                   >
-                    <Lock className="h-6 w-6 text-primary shrink-0" />
-                    <div className="min-w-0 flex-1 whitespace-normal">
-                      <div className="font-semibold break-words">ADMIN-LOGIN</div>
-                      <div className="text-xs text-muted-foreground break-words">Einstellungen & Verwaltung</div>
-                    </div>
-                  </Button>
+                    Admin-Login
+                  </button>
                 </div>
-              ) : (
-                /* LANDING entry (public): customer login + public forms.
-                   No employee/admin here. */
-                <>
-                  <div className="space-y-3">
-                    <Button
-                      variant="outline"
-                      className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
-                      onClick={() => setMode("customer")}
-                    >
-                      <Users className="h-6 w-6 text-primary shrink-0" />
-                      <div className="min-w-0 flex-1 whitespace-normal">
-                        <div className="font-semibold break-words">KUNDEN-LOGIN</div>
-                        <div className="text-xs text-muted-foreground break-words">Zugewiesene Projekte ansehen</div>
-                      </div>
-                    </Button>
-                  </div>
-
-                  {/* Public forms - für Erstkontakt ohne Account */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className="h-px flex-1 bg-border" />
-                      <span className="text-xs text-muted-foreground">Anliegen einreichen</span>
-                      <div className="h-px flex-1 bg-border" />
-                    </div>
-                    <Button
-                      variant="outline"
-                      className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
-                      onClick={() => navigate("/fahrzeug-anfrage")}
-                    >
-                      <Car className="h-6 w-6 text-primary shrink-0" />
-                      <div className="min-w-0 flex-1 whitespace-normal">
-                        <div className="font-semibold break-words">FAHRZEUG EINREICHEN</div>
-                        <div className="text-xs text-muted-foreground break-words">Fahrzeugdaten angeben für Beschriftung und Folierung</div>
-                      </div>
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
-                      onClick={() => navigate("/neukunde")}
-                    >
-                      <UserPlus className="h-6 w-6 text-primary shrink-0" />
-                      <div className="min-w-0 flex-1 whitespace-normal">
-                        <div className="font-semibold break-words">ALS NEUKUNDE ANMELDEN</div>
-                        <div className="text-xs text-muted-foreground break-words">Erstanlage als Privat- oder Geschäftskunde</div>
-                      </div>
-                    </Button>
-                  </div>
-                </>
-              )}
+              </div>
             </div>
           )}
 
