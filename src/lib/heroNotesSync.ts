@@ -75,9 +75,12 @@ export async function updateHeroNotesIfLinked(projectId: string): Promise<void> 
     const notes = buildHeroNotes(project);
     console.log("HERO notes sync: pushing to project", heroId, "length:", notes.length);
 
-    const { data, error } = await supabase.functions.invoke("hero-integration", {
+    // Dedicated server-side function (service role, reads HERO key from
+    // app_config). Mirrors the vehicle-inquiry flow that writes
+    // partner_notes reliably. We await this in the callers BEFORE any
+    // navigate(), so the request always completes.
+    const { data, error } = await supabase.functions.invoke("update-hero-notes", {
       body: {
-        action: "update_project_notes",
         heroProjectId: heroId,
         notes,
       },
