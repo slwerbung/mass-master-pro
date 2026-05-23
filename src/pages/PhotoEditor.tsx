@@ -12,7 +12,6 @@ import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers"
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import MeasurementInputDialog from "@/components/MeasurementInputDialog";
 import AreaMeasurementDialog from "@/components/AreaMeasurementDialog";
-import { compressImage } from "@/lib/imageCompression";
 
 type Tool = "select" | "draw" | "text" | "measure" | "area";
 
@@ -439,7 +438,14 @@ const PhotoEditor = () => {
     setTimeout(async () => {
       try {
         const bg: any = fabricCanvas.backgroundImage as any;
-        let exportOptions: any = { format: "jpeg", quality: 0.92, multiplier: 1 };
+        // Export the annotated image at the photo's NATIVE resolution
+        // without lossy downscaling. The drawn-on dimension lines and
+        // labels must stay crisp - the old behavior downscaled to 1600px
+        // which made them small and blurry. We map the on-screen (scaled)
+        // canvas back up to the background photo's real pixel size.
+        const bgScale = (bg && typeof bg.scaleX === "number" && bg.scaleX > 0) ? bg.scaleX : 1;
+        const nativeMultiplier = Math.min(Math.max(1 / bgScale, 1), 4);
+        let exportOptions: any = { format: "jpeg", quality: 0.95, multiplier: nativeMultiplier };
         if (bg && typeof bg.width === "number" && typeof bg.height === "number") {
           const bounds = typeof bg.getBoundingRect === "function"
             ? bg.getBoundingRect()
@@ -465,7 +471,9 @@ const PhotoEditor = () => {
         }
 
         let dataUrl = fabricCanvas.toDataURL(exportOptions);
-        dataUrl = await compressImage(dataUrl, 1600, 0.88);
+        // No compressImage() here on purpose - annotated images stay at
+        // full resolution so dimension labels remain sharp. (Originals
+        // are still lightly compressed in supabaseSync, annotated are not.)
 
         // Extract area measurements from canvas objects
         const areaMeasurements: { index: number; widthMm: number; heightMm: number }[] = [];
