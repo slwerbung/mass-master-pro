@@ -19,7 +19,9 @@ import type { Project, Location, AreaMeasurement } from "@/types/project";
 
 function formatArea(m: AreaMeasurement): string {
   const sqm = (m.widthMm * m.heightMm) / 1_000_000;
-  return `${m.widthMm} × ${m.heightMm} mm = ${sqm.toFixed(2).replace(".", ",")} m²`;
+  // Prefix with the area index (F1, F2, ...) so the HERO notes match
+  // exactly what's shown on the location detail screen.
+  return `F${m.index}: ${m.widthMm} × ${m.heightMm} mm = ${sqm.toFixed(2).replace(".", ",")} m²`;
 }
 
 export function buildHeroNotes(project: Project): string {
