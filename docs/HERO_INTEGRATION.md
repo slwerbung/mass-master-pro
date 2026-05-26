@@ -274,6 +274,147 @@ Der `document_type_id` wird **server-seitig** in `hero-upload-proxy` aus
 
 ---
 
+## 7a. Anwendungsfall: Termine (Calendar Events)
+
+HERO-Termine sind über GraphQL voll les- und schreibbar. Damit lassen sich
+Szenarien bauen wie: Vor-Ort-Termine zu einem Projekt anlegen, Termine eines
+Mitarbeiters abfragen, Kalender-Abo-Links erzeugen.
+
+Alle Operationen laufen über denselben GraphQL-Endpunkt + Bearer-Auth wie der
+Rest. Termine hängen i.d.R. an einem Projekt via `project_match_id` (= unsere
+`__hero_project_id`).
+
+> Hinweis: Die Create/Update/Delete-Mutationen sind in der HERO-Doku als
+> `deprecated` markiert, funktionieren aber noch. Vor produktivem Einsatz
+> per Introspection prüfen, ob es bereits einen Nachfolger gibt.
+
+### Termine lesen – `calendar_events`
+
+Berücksichtigt das Zugriffsrecht „Termine sichtbar".
+
+```graphql
+query CalendarEvents(
+  $start: DateTime, $end: DateTime, $matchId: Int,
+  $showDeleted: Boolean, $partnerIds: [Int], $resourceIds: [Int], $ids: [Int]
+) {
+  calendar_events(
+    start: $start, end: $end, project_match_id: $matchId,
+    show_deleted: $showDeleted, partner_ids: $partnerIds,
+    resource_ids: $resourceIds, ids: $ids
+  ) {
+    id title start end description
+    is_done is_recurring readonly
+    category_id category { id name }
+    project_match_id
+    partners { id full_name }
+    resources { id name }
+  }
+}
+```
+
+Parameter: `start`/`end` (DateTime, Zeitfenster), `project_match_id` (nur ein
+Projekt), `partner_ids` (nur bestimmte Mitarbeiter), `resource_ids` (nur
+bestimmte Ressourcen), `show_deleted` (Standard false), `ids` (gezielt),
+`first`/`last`/`offset` (Pagination, Standard last=50), `orderBy` (Standard id).
+
+### Termine durchsuchen – `search_calendar_events`
+
+Volltext über Titel, Kundenname, Projektname.
+
+```graphql
+query SearchCalendarEvents($search: String, $startDate: String, $showDeleted: Boolean) {
+  search_calendar_events(search: $search, startDate: $startDate, showDeleted: $showDeleted) {
+    id title description start end
+    project_match { name customer { first_name last_name } }
+  }
+}
+```
+
+### Kategorien – `calendar_event_categories`
+
+```graphql
+query CalendarEventCategories($showDeleted: Boolean) {
+  calendar_event_categories(show_deleted: $showDeleted) { id name deleted }
+}
+```
+
+### Termin anlegen – `create_calendar_event` (deprecated, funktioniert)
+
+```graphql
+mutation CreateCalendarEvent($calendar_event: CalendarEventInput!) {
+  calendar_event: create_calendar_event(calendar_event: $calendar_event) {
+    id title start end description is_done color
+    project_match_id partners { id } resources { id }
+  }
+}
+```
+
+### Termin aktualisieren – `update_calendar_event` (deprecated)
+
+Gleiches Input wie create, nur mit `id`.
+
+```graphql
+mutation UpdateCalendarEvent($calendar_event: CalendarEventInput!) {
+  calendar_event: update_calendar_event(calendar_event: $calendar_event) {
+    id title start end description color
+    project_match_id partners { id } resources { id }
+  }
+}
+```
+
+### `CalendarEventInput`
+
+| Feld | Typ | Beschreibung |
+|---|---|---|
+| `id` | Int | ID (für Update erforderlich) |
+| `title` | String | Titel |
+| `category_id` | Int | Kategorie |
+| `description` | String | Beschreibung |
+| `start` | DateTime | Startzeit |
+| `end` | DateTime | Endzeit |
+| `all_day` | Boolean | Ganztägig |
+| `is_done` | Boolean | Erledigt |
+| `partner_ids` | [Int] | Zugeordnete Mitarbeiter |
+| `resource_ids` | [Int] | Zugeordnete Ressourcen |
+| `project_match_id` | Int | Zugeordnetes Projekt (= `__hero_project_id`) |
+| `deleted` | Boolean | Soft-Delete |
+
+### Termin löschen – `delete_calendar_event` (deprecated)
+
+```graphql
+mutation DeleteCalendarEvent($id: Int!) {
+  CalendarEvent: delete_calendar_event(id: $id) { id }
+}
+```
+
+### Kalender-Abo-Link – `create_calendar_share_link`
+
+Erzeugt einen öffentlichen iCal/WebCal-Link zum Abonnieren.
+
+```graphql
+mutation CreateCalendarShareLink($categories: CalendarCategoryEnum, $events: CalendarEventSelection) {
+  create_calendar_share_link(categories: $categories, events: $events) {
+    id token calendar_url webcal_url
+  }
+}
+```
+
+- `categories`: `all` | `events_jobs` | `events` | `jobs` | `absences`
+- `events`: `own` (eigene) | `all` (alle)
+
+### Mögliche Captfix-Szenarien
+
+- **Vor-Ort-Termin aus Captfix anlegen:** beim Anlegen/Bearbeiten eines
+  Projekts einen `create_calendar_event` mit `project_match_id =
+  __hero_project_id` feuern (z.B. „Aufmaß-Termin"). Datumsformat ISO 8601
+  mit Zeitzone: `"2026-05-26T12:31:47+00:00"`.
+- **Termine eines Projekts anzeigen:** `calendar_events(project_match_id: ...)`
+  in der Projektansicht einblenden.
+- Wie immer server-seitig über eine Edge Function (API-Key aus `app_config`),
+  Muster analog zu `update-hero-notes`.
+
+---
+
 ## 8. Gelöste Bugs / Stolperfallen (Lessons Learned)
 
 1. **UUID-Extraktion:** UUID liegt in `response.data.uuid`, nicht top-level.
