@@ -29,6 +29,7 @@ import VehicleDetail from "./pages/VehicleDetail";
 import NewCustomerSignup from "./pages/NewCustomerSignup";
 import VehicleInquiry from "./pages/VehicleInquiry";
 import LayoutUpload from "./pages/LayoutUpload";
+import Gestaltung from "./pages/Gestaltung";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import LabelPrint from "./pages/LabelPrint";
 import NotFound from "./pages/NotFound";
@@ -161,6 +162,7 @@ const App = () => {
           <Route path="/neukunde" element={<NewCustomerSignup />} />
           <Route path="/fahrzeug-anfrage" element={<VehicleInquiry />} />
           <Route path="/layout-upload" element={<LayoutUpload />} />
+          <Route path="/gestaltung" element={<Gestaltung />} />
           <Route path="/datenschutz" element={<PrivacyPolicy />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
