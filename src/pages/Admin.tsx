@@ -134,6 +134,17 @@ const Admin = () => {
   // the user confirms with "Speichern". Once saved, this matches
   // heroDocTypeConfig and the row shows a green "Gespeichert" badge.
   const [heroDocTypePending, setHeroDocTypePending] = useState<Record<string, number | null>>({});
+
+  // HERO image categories: list pulled live from HERO via
+  // admin-manage:get_hero_image_categories, the per-upload-type mapping
+  // stored in app_config under hero_img_cat_<type>. Mirrors the doc-type
+  // flow but values are free-text strings, not numeric IDs.
+  const [heroImgCats, setHeroImgCats] = useState<string[]>([]);
+  const [heroImgCatsLoaded, setHeroImgCatsLoaded] = useState(false);
+  const [heroImgCatsError, setHeroImgCatsError] = useState<string | null>(null);
+  const [heroImgCatConfig, setHeroImgCatConfig] = useState<Record<string, string | null>>({});
+  const [heroImgCatPending, setHeroImgCatPending] = useState<Record<string, string | null>>({});
+  const [savingHeroImgCatKey, setSavingHeroImgCatKey] = useState<string | null>(null);
   const [savingHeroDocTypeKey, setSavingHeroDocTypeKey] = useState<string | null>(null);
   const [heroHasKey, setHeroHasKey] = useState(false);
   const [savingHero, setSavingHero] = useState(false);
@@ -175,7 +186,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadNotifSettings(); loadVehicleFields(); loadIntegrations(); loadHeroDocTypeConfig(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadNotifSettings(); loadVehicleFields(); loadIntegrations(); loadHeroDocTypeConfig(); loadHeroImgCatConfig(); }
   }, [adminToken]);
 
   // Once we know HERO is enabled and has a key, auto-fetch the
@@ -190,6 +201,14 @@ const Admin = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heroEnabled, heroHasKey, heroDocTypesLoaded]);
+
+  // Same auto-load for HERO image categories.
+  useEffect(() => {
+    if (heroEnabled && heroHasKey && !heroImgCatsLoaded) {
+      loadHeroImgCats();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroEnabled, heroHasKey, heroImgCatsLoaded]);
 
   useEffect(() => {
     if (!selectedProjectAccessId) return;
@@ -506,6 +525,55 @@ const Admin = () => {
 
   const setHeroDocTypePendingFor = (uploadType: string, value: number | null) => {
     setHeroDocTypePending(prev => ({ ...prev, [`hero_doc_type_${uploadType}`]: value }));
+  };
+
+  const loadHeroImgCatConfig = async () => {
+    try {
+      const data = await invoke("get_hero_image_categories_config");
+      const cfg = data?.config || {};
+      setHeroImgCatConfig(cfg);
+      setHeroImgCatPending(cfg);
+    } catch {}
+  };
+
+  const loadHeroImgCats = async () => {
+    // Live-fetch the available image categories from HERO. No session
+    // token needed - admin-manage reads the API key server-side.
+    setHeroImgCatsError(null);
+    try {
+      const data = await invoke("get_hero_image_categories");
+      if (data?.error) {
+        setHeroImgCatsError(data.error);
+        setHeroImgCats([]);
+        setHeroImgCatsLoaded(true);
+        return;
+      }
+      const cats = ((data?.categories || []) as string[]).slice().sort((a, b) => a.localeCompare(b));
+      setHeroImgCats(cats);
+      setHeroImgCatsLoaded(true);
+    } catch (e: any) {
+      setHeroImgCatsError(e?.message || "Fehler");
+      setHeroImgCats([]);
+      setHeroImgCatsLoaded(true);
+    }
+  };
+
+  const saveHeroImgCat = async (uploadType: string) => {
+    const pendingValue = heroImgCatPending[`hero_img_cat_${uploadType}`] ?? null;
+    setSavingHeroImgCatKey(uploadType);
+    try {
+      await invoke("set_hero_image_category", { uploadType, category: pendingValue });
+      setHeroImgCatConfig(prev => ({ ...prev, [`hero_img_cat_${uploadType}`]: pendingValue }));
+      toast.success("Bild-Kategorie gespeichert");
+    } catch (e: any) {
+      toast.error(e?.message || "Fehler beim Speichern");
+    } finally {
+      setSavingHeroImgCatKey(null);
+    }
+  };
+
+  const setHeroImgCatPendingFor = (uploadType: string, value: string | null) => {
+    setHeroImgCatPending(prev => ({ ...prev, [`hero_img_cat_${uploadType}`]: value }));
   };
 
   const saveHeroConfig = async () => {
@@ -1700,6 +1768,105 @@ const Admin = () => {
                             </Select>
                             <Button
                               onClick={() => saveHeroDocType(it.key)}
+                              disabled={!isDirty || isSaving}
+                              size="sm"
+                              variant={isDirty ? "default" : "outline"}
+                            >
+                              {isSaving ? "Speichert..." : isDirty ? "Speichern" : "Gespeichert"}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* HERO Bild-Kategorien */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2"><Plug className="h-5 w-5" /> HERO Bild-Kategorien</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Beim Hochladen von Bildern nach HERO kann optional eine Bild-Kategorie
+                  gesetzt werden, damit die Bilder im Projekt korrekt einsortiert werden.
+                  Lege pro Bild-Art fest, welche HERO-Kategorie verwendet werden soll
+                  (leer lassen = keine Kategorie setzen).
+                </p>
+
+                {!heroEnabled || !heroHasKey ? (
+                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-sm text-amber-900 dark:text-amber-200">
+                    HERO-Integration ist nicht aktiv. Aktiviere die Integration oben, dann kannst du Bild-Kategorien zuordnen.
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm text-muted-foreground">
+                        {heroImgCatsLoaded
+                          ? heroImgCatsError
+                            ? <span className="text-red-600">Fehler: {heroImgCatsError}</span>
+                            : <span>{heroImgCats.length} Kategorien verfügbar</span>
+                          : <span>Noch nicht geladen</span>}
+                      </div>
+                      <Button variant="outline" size="sm" onClick={loadHeroImgCats}>
+                        <RefreshCw className="h-3 w-3 mr-1" /> Aus HERO laden
+                      </Button>
+                    </div>
+
+                    {[
+                      { key: "location_image", label: "Standortbild", description: "Das bemaßte/annotierte Standortbild." },
+                      { key: "location_image_original", label: "Standortbild (Original)", description: "Das Originalfoto des Standorts ohne Bemaßung." },
+                      { key: "detail_image", label: "Detailbild", description: "Bemaßtes/annotiertes Detailbild." },
+                      { key: "detail_image_original", label: "Detailbild (Original)", description: "Originalfoto des Details ohne Bemaßung." },
+                      { key: "vehicle_image", label: "Fahrzeugbild", description: "Vom Kunden eingereichte Fahrzeugfotos." },
+                      { key: "vehicle_measured_image", label: "Fahrzeug bemaßt", description: "Bemaßtes Fahrzeugbild." },
+                      { key: "vehicle_measured_image_original", label: "Fahrzeug bemaßt (Original)", description: "Originalfoto des bemaßten Fahrzeugs." },
+                      { key: "design_inspiration", label: "Gestaltungs-Inspiration", description: "Inspirations-Bilder aus dem Gestaltungs-Quiz." },
+                    ].map(it => {
+                      const savedCat = heroImgCatConfig[`hero_img_cat_${it.key}`] ?? null;
+                      const pendingCat = heroImgCatPending[`hero_img_cat_${it.key}`] ?? null;
+                      const isDirty = savedCat !== pendingCat;
+                      const isSaving = savingHeroImgCatKey === it.key;
+                      // The saved value may not be in the loaded list (custom/renamed
+                      // in HERO meanwhile) - we still show it as a fallback option.
+                      const savedNotInList = savedCat != null && !heroImgCats.includes(savedCat);
+                      return (
+                        <div key={it.key} className="border rounded-lg p-3 space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium text-sm">{it.label}</p>
+                              <p className="text-xs text-muted-foreground">{it.description}</p>
+                            </div>
+                            {savedCat != null ? (
+                              <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700 shrink-0">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                {savedCat.trim() || savedCat}
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-xs shrink-0">Keine</Badge>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <Select
+                              value={pendingCat != null ? pendingCat : "none"}
+                              onValueChange={v => setHeroImgCatPendingFor(it.key, v === "none" ? null : v)}
+                              disabled={isSaving}
+                            >
+                              <SelectTrigger className="flex-1"><SelectValue placeholder="Kategorie wählen" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">— Keine —</SelectItem>
+                                {heroImgCats.map(cat => (
+                                  <SelectItem key={cat} value={cat}>{cat.trim() || cat}</SelectItem>
+                                ))}
+                                {savedNotInList && (
+                                  <SelectItem value={savedCat}>{(savedCat.trim() || savedCat)} (gespeichert)</SelectItem>
+                                )}
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              onClick={() => saveHeroImgCat(it.key)}
                               disabled={!isDirty || isSaving}
                               size="sm"
                               variant={isDirty ? "default" : "outline"}

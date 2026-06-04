@@ -79,7 +79,7 @@ async function heroUploadFile(apiKey: string, file: Blob, filename: string): Pro
   }
 }
 
-async function heroAssignImage(apiKey: string, uuid: string, projectMatchId: number): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+async function heroAssignImage(apiKey: string, uuid: string, projectMatchId: number, imageCategory?: string | null): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   // Note: `target: project_match` is an ENUM value, passed without quotes.
   // We don't use variables for it because HERO's introspection showed it
   // as LinkTargetEnum and mixing enums with GraphQL variables in a single
@@ -108,6 +108,31 @@ async function heroAssignImage(apiKey: string, uuid: string, projectMatchId: num
     if (result.errors?.length) return { ok: false, error: result.errors.map((e: any) => e.message).join("; ") };
     const id = result?.data?.upload_image?.id;
     if (!id) return { ok: false, error: "Keine ID in Antwort: " + JSON.stringify(result.data).slice(0, 200) };
+
+    // Optionally tag the freshly uploaded image with a HERO image
+    // category. HERO has no category arg on upload_image, so we set it
+    // afterwards via update_file_upload(id, image_category). Best-effort:
+    // a failure here doesn't fail the whole upload (the image is already
+    // in the project), we just log it.
+    if (imageCategory && String(imageCategory).trim() !== "") {
+      try {
+        const catMut = `
+          mutation SetCat($id: Int!, $cat: String!) {
+            update_file_upload(id: $id, image_category: $cat) { id image_category }
+          }
+        `;
+        const catResp = await fetch(HERO_GRAPHQL_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({ query: catMut, variables: { id: parseInt(String(id), 10), cat: imageCategory } }),
+        });
+        const catText = await catResp.text();
+        console.log("HERO image-category set:", catText.slice(0, 300));
+      } catch (catErr) {
+        console.warn("HERO image-category set failed:", catErr);
+      }
+    }
+
     return { ok: true, id: String(id) };
   } catch (e: any) {
     return { ok: false, error: e.message || String(e) };
@@ -187,7 +212,7 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
-    const [{ data: hereConfigRows }, { data: docTypeRows }] = await Promise.all([
+    const [{ data: hereConfigRows }, { data: docTypeRows }, { data: imgCatRows }] = await Promise.all([
       supabase
         .from("app_config")
         .select("key, value")
@@ -196,10 +221,15 @@ serve(async (req) => {
         .from("app_config")
         .select("key, value")
         .like("key", "hero_doc_type_%"),
+      supabase
+        .from("app_config")
+        .select("key, value")
+        .like("key", "hero_img_cat_%"),
     ]);
     const config = new Map<string, string>();
     for (const r of (hereConfigRows || [])) config.set(r.key as string, r.value as string);
     for (const r of (docTypeRows || [])) config.set(r.key as string, r.value as string);
+    for (const r of (imgCatRows || [])) config.set(r.key as string, r.value as string);
 
     const apiKey = config.get("hero_api_key");
     const heroEnabled = config.get("hero_enabled") === "true" && !!apiKey;
@@ -228,6 +258,12 @@ serve(async (req) => {
     // Diagnostic log: helps us see exactly what landed in config
     // versus what was sent by the client. Truncated to keep logs small.
     console.log(`HERO doc-type resolve: uploadType=${uploadType} configKey=hero_doc_type_${uploadType} configValue=${configuredDocType ?? "MISSING"} formValue=${formDocType ?? "none"} resolved=${documentTypeId ?? "none"}`);
+
+    // Resolve the configured HERO image category for this upload type
+    // (only relevant for image uploads). Empty/unset = no category.
+    const configuredImgCat = uploadType ? config.get(`hero_img_cat_${uploadType}`) : undefined;
+    const imageCategory = (configuredImgCat && String(configuredImgCat).trim() !== "") ? String(configuredImgCat) : null;
+    console.log(`HERO image-category resolve: uploadType=${uploadType} configKey=hero_img_cat_${uploadType} resolved=${imageCategory ?? "none"}`);
 
     if (!file) {
       return new Response(JSON.stringify({ ok: false, error: "Kein File im Request", step: "input" }), {
@@ -263,7 +299,7 @@ serve(async (req) => {
     // Step 2: assign to project_match (image or document mutation)
     const assign = isDocumentType(uploadType)
       ? await heroAssignDocument(apiKey, uploadRes.uuid, projectMatchIdInt, filename, documentTypeId)
-      : await heroAssignImage(apiKey, uploadRes.uuid, projectMatchIdInt);
+      : await heroAssignImage(apiKey, uploadRes.uuid, projectMatchIdInt, imageCategory);
 
     if (!assign.ok) {
       return new Response(JSON.stringify({ ok: false, error: assign.error, step: "assign", uuid: uploadRes.uuid }), {

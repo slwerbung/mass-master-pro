@@ -489,6 +489,60 @@ Deno.serve(async (req) => {
         if (error) return json({ error: error.message }, 500);
         return json({ success: true });
       }
+      case "get_hero_image_categories": {
+        // Live-fetch the image categories defined in HERO (the customer
+        // can create custom ones), analogous to listing document types.
+        // Returns a list of category strings. No session token needed -
+        // we read the API key server-side from app_config.
+        const { data: keyRow } = await supabase.from("app_config").select("value").eq("key", "hero_api_key").maybeSingle();
+        const apiKey = keyRow?.value;
+        if (!apiKey) return json({ error: "Kein API Key hinterlegt" }, 400);
+        try {
+          const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+            body: JSON.stringify({ query: "query { upload_image_categories }" }),
+          });
+          const respText = await resp.text();
+          if (!resp.ok) return json({ error: `HTTP ${resp.status}: ${respText.slice(0, 300)}` }, 502);
+          let result: any;
+          try { result = JSON.parse(respText); } catch { return json({ error: `Ungültige Antwort: ${respText.slice(0, 200)}` }, 502); }
+          if (result.errors?.length) return json({ error: result.errors[0]?.message }, 502);
+          const cats = (result?.data?.upload_image_categories || []).filter((c: any) => typeof c === "string");
+          return json({ categories: cats });
+        } catch (fetchErr: any) {
+          return json({ error: `Verbindungsfehler: ${fetchErr.message}` }, 502);
+        }
+      }
+      case "get_hero_image_categories_config": {
+        // Returns the currently configured HERO image_category for each
+        // image upload-kind. Used by the admin UI to show the mapping.
+        const { data } = await supabase.from("app_config").select("key, value").like("key", "hero_img_cat_%");
+        const config: Record<string, string | null> = {};
+        for (const row of (data || [])) {
+          config[row.key as string] = row.value ? String(row.value) : null;
+        }
+        return json({ config });
+      }
+      case "set_hero_image_category": {
+        // Persist the HERO image_category selected for a given image
+        // upload-kind. uploadType e.g. "location_image". category is a
+        // free-text string from upload_image_categories, or null/empty
+        // to clear (then no category is set on upload).
+        const uploadType = String(params.uploadType || "").trim();
+        if (!uploadType) return json({ error: "uploadType required" }, 400);
+        if (!/^[a-z0-9_]+$/.test(uploadType)) return json({ error: "uploadType has invalid chars" }, 400);
+
+        const raw = params.category;
+        const key = `hero_img_cat_${uploadType}`;
+        // Keep the category exactly as HERO returns it (may contain
+        // trailing spaces, German chars). Just cap length defensively.
+        const value = (raw != null && String(raw).trim() !== "") ? String(raw).slice(0, 200) : null;
+
+        const { error } = await supabase.from("app_config").upsert({ key, value });
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
       case "get_notification_settings": {
         // Returns the global recipient email and per-event settings
         // (enabled + target). Admin-only because these settings affect
