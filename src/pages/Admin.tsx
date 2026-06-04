@@ -611,15 +611,16 @@ const Admin = () => {
   };
 
   const loadVehicleFields = async () => {
-    const { data } = await supabase.from("vehicle_field_config").select("*").order("sort_order");
-    setVehicleFields((data || []) as FieldConfig[]);
+    // Routed via admin-manage so the admin token is verified server-side.
+    const data = await invoke("list_vehicle_fields");
+    setVehicleFields((data?.fields || []) as FieldConfig[]);
   };
 
   const addVehicleField = async () => {
     if (!newVehicleFieldLabel.trim()) return;
     const maxOrder = vehicleFields.length > 0 ? Math.max(...vehicleFields.map(f => f.sort_order)) + 1 : 0;
     const key = `vfield_${Date.now()}`;
-    const { error } = await supabase.from("vehicle_field_config").insert({
+    const result = await invoke("create_vehicle_field", {
       field_key: key,
       field_label: newVehicleFieldLabel.trim(),
       field_type: newVehicleFieldType,
@@ -628,7 +629,7 @@ const Admin = () => {
       sort_order: maxOrder,
       is_required: newVehicleFieldRequired,
     });
-    if (error) { toast.error("Fehler beim Erstellen: " + error.message); return; }
+    if (result?.error) { toast.error("Fehler beim Erstellen: " + result.error); return; }
     setNewVehicleFieldLabel(""); setNewVehicleFieldOptions(""); setNewVehicleFieldType("text"); setNewVehicleFieldRequired(false);
     toast.success("Fahrzeugfeld erstellt"); loadVehicleFields();
   };
@@ -646,24 +647,25 @@ const Admin = () => {
   };
 
   const saveVehicleFieldEdit = async (field: FieldConfig) => {
-    const { error } = await supabase.from("vehicle_field_config").update({
+    const result = await invoke("update_vehicle_field", {
+      fieldId: field.id,
       field_label: editVehicleFieldLabel.trim() || field.field_label,
       field_type: editVehicleFieldType,
       field_options: editVehicleFieldType === "dropdown" && editVehicleFieldOptions.trim()
         ? JSON.stringify(editVehicleFieldOptions.split(",").map((s: string) => s.trim()).filter(Boolean)) : null,
       is_required: editVehicleFieldRequired,
-    }).eq("id", field.id);
-    if (error) { toast.error("Fehler beim Speichern"); return; }
+    });
+    if (result?.error) { toast.error("Fehler beim Speichern"); return; }
     cancelEditVehicleField(); loadVehicleFields(); toast.success("Fahrzeugfeld aktualisiert");
   };
 
   const toggleVehicleField = async (field: FieldConfig) => {
-    await supabase.from("vehicle_field_config").update({ is_active: !field.is_active }).eq("id", field.id);
+    await invoke("update_vehicle_field", { fieldId: field.id, is_active: !field.is_active });
     loadVehicleFields();
   };
 
   const deleteVehicleField = async (id: string) => {
-    await supabase.from("vehicle_field_config").delete().eq("id", id);
+    await invoke("delete_vehicle_field", { fieldId: id });
     loadVehicleFields(); toast.success("Fahrzeugfeld gelöscht");
   };
 

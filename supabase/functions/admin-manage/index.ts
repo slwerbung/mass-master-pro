@@ -653,6 +653,56 @@ Deno.serve(async (req) => {
         }
       }
 
+      // ── Vehicle field config ──────────────────────────────────────────
+      // Previously called directly from Admin.tsx with the anon key, which
+      // meant anyone knowing the anon key could modify vehicle field config.
+      // Moved here so the admin token is verified server-side first.
+
+      case "list_vehicle_fields": {
+        const { data, error } = await supabase
+          .from("vehicle_field_config")
+          .select("*")
+          .order("sort_order");
+        if (error) return json({ error: error.message }, 500);
+        return json({ fields: data });
+      }
+
+      case "create_vehicle_field": {
+        const { error } = await supabase.from("vehicle_field_config").insert({
+          field_key: params.field_key,
+          field_label: params.field_label,
+          field_type: params.field_type || "text",
+          field_options: params.field_options ?? null,
+          sort_order: params.sort_order ?? 0,
+          is_required: params.is_required ?? false,
+        });
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
+      case "update_vehicle_field": {
+        const allowed: Record<string, unknown> = {};
+        const allowedKeys = ["field_label", "field_type", "field_options", "sort_order", "is_active", "is_required"];
+        for (const k of allowedKeys) {
+          if (Object.prototype.hasOwnProperty.call(params, k)) allowed[k] = (params as any)[k];
+        }
+        const { error } = await supabase
+          .from("vehicle_field_config")
+          .update(allowed)
+          .eq("id", params.fieldId);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
+      case "delete_vehicle_field": {
+        const { error } = await supabase
+          .from("vehicle_field_config")
+          .delete()
+          .eq("id", params.fieldId);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

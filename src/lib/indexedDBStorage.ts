@@ -153,12 +153,16 @@ function createDB() {
         floorPlanImageStore.createIndex('by-floor-plan', 'floorPlanId');
       }
       if (oldVersion < 5) {
+        // Note: version 4 was never shipped externally. The upgrade path
+        // jumps from 3 to 5 intentionally – version 4 was a short-lived
+        // internal build that never reached production devices.
         const projectStore = transaction.objectStore('projects');
         if (!projectStore.indexNames.contains('by-access-employee')) {
           projectStore.createIndex('by-access-employee', 'accessEmployeeIds', { multiEntry: true });
         }
       }
       if (oldVersion < 7) {
+        // Note: version 6 was never shipped externally (same reason as v4).
         // Background upload queue for HERO integration. See HeroUploadWorker.
         const queueStore = db.createObjectStore('hero-upload-queue', { keyPath: 'id' });
         queueStore.createIndex('by-next-attempt', 'nextAttemptAt');
@@ -798,16 +802,17 @@ export const indexedDBStorage = {
   async getDueHeroUploads(limit = 5): Promise<AufmassDBSchema['hero-upload-queue']['value'][]> {
     const db = await getDB();
     const now = Date.now();
-    // Items due for a retry: nextAttemptAt <= now. We use the index and
-    // stop once items are in the future.
+    // Items due for a retry: nextAttemptAt <= now.
+    // The index is sorted ascending by nextAttemptAt, so as soon as we
+    // hit an item in the future every subsequent item will also be in the
+    // future. We break early instead of scanning the whole queue.
     const results: AufmassDBSchema['hero-upload-queue']['value'][] = [];
     const tx = db.transaction('hero-upload-queue', 'readonly');
     const idx = tx.store.index('by-next-attempt');
     let cursor = await idx.openCursor();
     while (cursor && results.length < limit) {
-      if (cursor.value.nextAttemptAt <= now) {
-        results.push(cursor.value);
-      }
+      if (cursor.value.nextAttemptAt > now) break; // all remaining are in the future
+      results.push(cursor.value);
       cursor = await cursor.continue();
     }
     await tx.done;

@@ -90,6 +90,11 @@ const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; childre
       body: { role: session.role, token: session.authToken, userId: session.id },
     }).then(({ data, error }) => {
       if (!mounted) return;
+      // Intentional offline-tolerant fallback: if the Edge Function call
+      // itself fails (network error, Supabase cold-start) we let the user
+      // through rather than force a logout. The token's signature and expiry
+      // are already verified client-side in session.ts (getSession). Trade-off:
+      // a revoked/expired token is not rejected during outages.
       const isValid = error ? true : !!data?.valid;
       setCachedValidation(session.role, session.authToken!, session.id, isValid);
       setValidated(isValid);

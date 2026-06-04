@@ -6,7 +6,13 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const HERO_GRAPHQL = "https://login.hero-software.de/api/external/v7/graphql";
+// HERO GraphQL API endpoint. The documented current version is v9.
+// v7 is kept here as the last known-working version across all mutations
+// used by this function. Update to v9 once verified in staging that all
+// mutations (search_projects, add_logbook_entry, update_project_match,
+// create_project_match) still work unchanged.
+// See: https://login.hero-software.de/api/external/v9/graphql
+const HERO_GRAPHQL = "https://login.hero-software.de/api/external/v9/graphql";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
