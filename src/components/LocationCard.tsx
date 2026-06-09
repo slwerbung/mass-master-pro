@@ -219,13 +219,44 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         toast.error("Datenbankfehler: " + dbError.message);
         return;
       }
-      toast.success("Produktionsdatei hochgeladen ✓");
+      toast.success("Datei hochgeladen ✓");
       await loadPdf();
     } catch (err: any) {
       toast.error("Fehler: " + err.message);
     } finally {
       setUploadingPdf(false);
       if (pdfInputRef.current) pdfInputRef.current.value = "";
+    }
+  };
+
+  const handleDeletePrintFile = async () => {
+    setUploadingPdf(true);
+    try {
+      // Remove the storage object(s) first, then the DB row(s), so we
+      // don't leak files in the bucket.
+      const { data: rows } = await supabase
+        .from("location_pdfs")
+        .select("storage_path")
+        .eq("location_id", location.id);
+      const paths = (rows || []).map((r: any) => r.storage_path).filter(Boolean);
+      if (paths.length > 0) {
+        await supabase.storage.from("project-files").remove(paths);
+      }
+      const { error: dbError } = await supabase
+        .from("location_pdfs")
+        .delete()
+        .eq("location_id", location.id);
+      if (dbError) {
+        toast.error("Löschen fehlgeschlagen: " + dbError.message);
+        return;
+      }
+      setPdfUrl(null);
+      setPdfName(null);
+      toast.success("Datei gelöscht ✓");
+    } catch (err: any) {
+      toast.error("Fehler: " + err.message);
+    } finally {
+      setUploadingPdf(false);
     }
   };
 
@@ -293,7 +324,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         </div>
 
         <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Produktionsdatei</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Layout / Produktionsdatei</p>
           {showPrintFiles ? (
             pdfUrl && pdfName ? (
               <div className="flex items-center gap-2">
@@ -307,11 +338,30 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
                 <Button size="sm" variant="ghost" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf} title="Ersetzen">
                   <FileUp className="h-3 w-3" />
                 </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button size="sm" variant="ghost" disabled={uploadingPdf} title="Löschen">
+                      <Trash2 className="h-3 w-3 text-destructive" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Datei löschen?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        „{pdfName}" wird dauerhaft entfernt. Diese Aktion kann nicht rückgängig gemacht werden.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleDeletePrintFile} className="bg-destructive">Löschen</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             ) : (
               <Button size="sm" variant="outline" className="w-full" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}>
                 {uploadingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileUp className="h-4 w-4 mr-2" />}
-                {uploadingPdf ? "Lädt hoch..." : "Produktionsdatei hochladen"}
+                {uploadingPdf ? "Lädt hoch..." : "Datei hochladen"}
               </Button>
             )
           ) : (
