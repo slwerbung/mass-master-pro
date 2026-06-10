@@ -395,18 +395,19 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
       projectMatchId = heroInternalId;
     }
 
-    // Lead API doesn't accept project_title; if we have one, set it
-    // afterwards via update_project_match GraphQL mutation. Best-effort -
-    // failure here doesn't fail the whole flow, just leaves HERO's
-    // default title (e.g. "WER-1750 | Mustermann").
+    // Lead API doesn't accept project_title; set it afterwards via
+    // update_project_match. We now check the response so a failure is visible
+    // in debug instead of being silently swallowed (this was why HERO project
+    // names from the vehicle form stayed empty).
+    let titleUpdate: any = null;
     if (projectMatchId && opts.projectTitle) {
       try {
         const updateMutation = `
           mutation Upd($pm: ProjectMatchInput) {
-            update_project_match(project_match: $pm) { id }
+            update_project_match(project_match: $pm) { id project_title }
           }
         `;
-        await fetch(HERO_GRAPHQL_URL, {
+        const upResp = await fetch(HERO_GRAPHQL_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
           body: JSON.stringify({
@@ -414,12 +415,20 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
             variables: { pm: { id: projectMatchId, project_title: opts.projectTitle } },
           }),
         });
-      } catch (e) {
+        const upData = await upResp.json();
+        if (upData.errors?.length) {
+          titleUpdate = { ok: false, error: upData.errors.map((e: any) => e.message).join("; ") };
+          console.warn("project_title update returned errors", titleUpdate.error);
+        } else {
+          titleUpdate = { ok: true, title: upData?.data?.update_project_match?.project_title ?? opts.projectTitle };
+        }
+      } catch (e: any) {
+        titleUpdate = { ok: false, error: e.message || String(e) };
         console.warn("project_title update failed", e);
       }
     }
 
-    return { id: projectMatchId, nr: "", ok: true, raw: data };
+    return { id: projectMatchId, nr: "", ok: true, raw: data, titleUpdate };
   } catch (e: any) {
     return { id: null, nr: "", ok: false, raw: { error: e.message || String(e) } };
   }
@@ -809,7 +818,7 @@ serve(async (req) => {
     // the local Captfix project can use it as its display name even when
     // HERO is disabled. We match against both field_key and field_label
     // (lowercased) so an admin rename doesn't break detection.
-    const findValueByLabelOrKey = (...needles: string[]): string => {
+    const pickField = (...needles: string[]): string => {
       for (const [key, val] of Object.entries(body.vehicleFields || {})) {
         if (!val || !String(val).trim()) continue;
         const label = (fieldLabels[key] || "").toLowerCase();
@@ -818,12 +827,15 @@ serve(async (req) => {
       }
       return "";
     };
-    // Aliases: kennzeichen + nummernschild, hersteller + marke
-    const projectTitle =
-      findValueByLabelOrKey("kennzeichen", "nummernschild") ||
-      findValueByLabelOrKey("hersteller", "marke") ||
-      "";
+    // Project name in HERO = Hersteller + Modell + Kennzeichen (in that order),
+    // each looked up by label/key with common aliases so an admin rename
+    // doesn't break it. Empty parts are simply skipped.
+    const hersteller = pickField("hersteller", "marke", "fabrikat");
+    const modell = pickField("modell", "model");
+    const kennzeichen = pickField("kennzeichen", "nummernschild", "kennz");
+    const projectTitle = [hersteller, modell, kennzeichen].filter(Boolean).join(" ").trim();
     debug.projectTitle = projectTitle;
+    debug.titleParts = { hersteller, modell, kennzeichen };
     debug.fieldLabels = fieldLabels;
 
     if (heroEnabled) {
@@ -858,7 +870,7 @@ serve(async (req) => {
           partnerNotes,
           projectTitle,
         });
-        debug.heroCreateProject = { path: "lead", ok: result.ok, id: result.id, raw: result.raw };
+        debug.heroCreateProject = { path: "lead", ok: result.ok, id: result.id, raw: result.raw, titleUpdate: (result as any).titleUpdate };
         if (!result.ok) {
           heroError = `Projekt-Anlage (Lead): ${JSON.stringify(result.raw)}`;
         } else {
