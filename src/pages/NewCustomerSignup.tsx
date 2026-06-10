@@ -157,6 +157,7 @@ const NewCustomerSignup = () => {
   // Empty map means the form is valid.
   const validate = (): Record<string, string> => {
     const e: Record<string, string> = {};
+    if (!salutation.trim()) e.salutation = "Bitte Anrede wählen";
     if (!lastName.trim()) e.lastName = "Bitte Nachname eingeben";
     if (!email.trim()) {
       e.email = "Bitte E-Mail eingeben";
@@ -319,13 +320,14 @@ const NewCustomerSignup = () => {
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Ansprechpartner</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor="salutation">Anrede</Label>
+                    <Label htmlFor="salutation">Anrede *</Label>
                     <Select value={salutation} onValueChange={setSalutation}>
-                      <SelectTrigger id="salutation"><SelectValue placeholder="Bitte wählen" /></SelectTrigger>
+                      <SelectTrigger id="salutation" aria-invalid={!!errors.salutation} className={errors.salutation ? "border-red-500 focus-visible:ring-red-500" : ""}><SelectValue placeholder="Bitte wählen" /></SelectTrigger>
                       <SelectContent>
                         {SALUTATIONS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                    {errors.salutation && <p className="text-sm text-red-600">{errors.salutation}</p>}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="firstName">Vorname</Label>
