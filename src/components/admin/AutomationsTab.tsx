@@ -65,6 +65,23 @@ const AutomationsTab = ({ invoke }: { invoke: InvokeFn }) => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState<any>(emptyDraft());
+  // Live option lists pulled from HERO, keyed by source (e.g. "hero_partners").
+  const [heroOptions, setHeroOptions] = useState<
+    Record<string, { loading: boolean; options: { value: string; label: string }[]; error?: string }>
+  >({});
+
+  const loadHeroSource = useCallback(async (source: string) => {
+    setHeroOptions((prev) => ({ ...prev, [source]: { loading: true, options: prev[source]?.options || [] } }));
+    try {
+      const res = await invoke("hero_list_options", { source });
+      setHeroOptions((prev) => ({
+        ...prev,
+        [source]: { loading: false, options: res?.options || [], error: res?.error },
+      }));
+    } catch (e: any) {
+      setHeroOptions((prev) => ({ ...prev, [source]: { loading: false, options: [], error: e.message } }));
+    }
+  }, [invoke]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +100,19 @@ const AutomationsTab = ({ invoke }: { invoke: InvokeFn }) => {
   }, [invoke]);
 
   useEffect(() => { load(); }, [load]);
+
+  // When the dialog is open, load any HERO-backed option lists the current
+  // action needs (employees, categories), once per source.
+  useEffect(() => {
+    if (!dialogOpen) return;
+    const fields = getAction(draft.action_type)?.configFields || [];
+    const sources = Array.from(new Set(fields.map((f) => f.optionsSource).filter(Boolean) as string[]));
+    for (const src of sources) {
+      const cur = heroOptions[src];
+      if (!cur || (!cur.loading && cur.options.length === 0 && !cur.error)) loadHeroSource(src);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogOpen, draft.action_type]);
 
   const openNew = () => {
     const d = emptyDraft();
@@ -262,28 +292,61 @@ const AutomationsTab = ({ invoke }: { invoke: InvokeFn }) => {
             </div>
 
             {/* Dynamische Config-Felder der Aktion */}
-            {activeAction?.configFields.map((f) => (
-              <div key={f.key} className="space-y-1">
-                <Label>{f.label}{f.optional ? " (optional)" : ""}</Label>
-                {f.type === "select" ? (
-                  <Select value={String(draft.action_config[f.key] ?? f.default ?? "")} onValueChange={(v) => setCfg(f.key, v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {f.options?.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                ) : f.type === "checkbox" ? (
-                  <Switch checked={!!draft.action_config[f.key]} onCheckedChange={(c) => setCfg(f.key, c)} />
-                ) : (
-                  <Input
-                    type={f.type === "number" ? "number" : f.type === "time" ? "time" : "text"}
-                    value={draft.action_config[f.key] ?? ""}
-                    onChange={(e) => setCfg(f.key, f.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
-                  />
-                )}
-                {f.help && <p className="text-xs text-muted-foreground">{f.help}</p>}
-              </div>
-            ))}
+            {activeAction?.configFields.map((f) => {
+              const src = f.optionsSource ? heroOptions[f.optionsSource] : undefined;
+              const useHeroSelect = !!f.optionsSource;
+              return (
+                <div key={f.key} className="space-y-1">
+                  <Label>{f.label}{f.optional ? " (optional)" : ""}</Label>
+
+                  {useHeroSelect ? (
+                    src?.loading ? (
+                      <Input disabled value="Lädt aus HERO…" />
+                    ) : src && src.options.length > 0 ? (
+                      <Select
+                        value={String(draft.action_config[f.key] ?? "")}
+                        onValueChange={(v) => setCfg(f.key, v === "__none__" ? "" : v)}
+                      >
+                        <SelectTrigger><SelectValue placeholder="Bitte wählen" /></SelectTrigger>
+                        <SelectContent>
+                          {f.optional && <SelectItem value="__none__">— keine —</SelectItem>}
+                          {src.options.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <>
+                        <Input
+                          type="number"
+                          placeholder="HERO-ID manuell eingeben"
+                          value={draft.action_config[f.key] ?? ""}
+                          onChange={(e) => setCfg(f.key, e.target.value === "" ? "" : Number(e.target.value))}
+                        />
+                        <p className="text-xs text-amber-600">
+                          HERO-Liste nicht verfügbar{src?.error ? `: ${src.error}` : ""}. ID manuell eingeben.
+                        </p>
+                      </>
+                    )
+                  ) : f.type === "select" ? (
+                    <Select value={String(draft.action_config[f.key] ?? f.default ?? "")} onValueChange={(v) => setCfg(f.key, v)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {f.options?.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  ) : f.type === "checkbox" ? (
+                    <Switch checked={!!draft.action_config[f.key]} onCheckedChange={(c) => setCfg(f.key, c)} />
+                  ) : (
+                    <Input
+                      type={f.type === "number" ? "number" : f.type === "time" ? "time" : "text"}
+                      value={draft.action_config[f.key] ?? ""}
+                      onChange={(e) => setCfg(f.key, f.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
+                    />
+                  )}
+
+                  {f.help && <p className="text-xs text-muted-foreground">{f.help}</p>}
+                </div>
+              );
+            })}
 
             <div className="flex items-center gap-2">
               <Switch checked={draft.enabled} onCheckedChange={(c) => setDraft((d: any) => ({ ...d, enabled: c }))} />

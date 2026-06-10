@@ -16,6 +16,10 @@ export interface ConfigField {
   options?: { value: string; label: string }[];
   optional?: boolean;
   help?: string;
+  // If set, the UI loads the dropdown options live from HERO via admin-manage
+  // (action "hero_list_options" with this source). Falls back to a manual
+  // number input when the list can't be loaded.
+  optionsSource?: string;
 }
 
 export interface TriggerDef {
@@ -55,7 +59,8 @@ export const ACTIONS: ActionDef[] = [
     configFields: [
       { key: "title", label: "Titel", type: "text", default: "Aufmaß vor Ort" },
       {
-        key: "partnerId", label: "Mitarbeiter (HERO partner_id)", type: "number", optional: true,
+        key: "partnerId", label: "Mitarbeiter (HERO)", type: "select", optional: true,
+        optionsSource: "hero_partners",
         help: "Wer den Termin in der Plantafel bekommt. Leer = niemand zugeordnet.",
       },
       {
@@ -71,7 +76,7 @@ export const ACTIONS: ActionDef[] = [
       },
       { key: "time", label: "Uhrzeit", type: "time", default: "09:00" },
       { key: "durationMinutes", label: "Dauer (Minuten)", type: "number", default: 60 },
-      { key: "categoryId", label: "Kategorie-ID (HERO, optional)", type: "number", optional: true },
+      { key: "categoryId", label: "Kategorie (HERO)", type: "select", optional: true, optionsSource: "hero_calendar_categories" },
     ],
   },
 ];

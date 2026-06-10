@@ -761,6 +761,64 @@ Deno.serve(async (req) => {
         return json({ runs: data });
       }
 
+      // ── HERO option lists (for automation dropdowns) ──────────────────
+      // Pulls live data from HERO so the automation config offers real
+      // choices (employees, calendar categories) instead of raw IDs.
+      case "hero_list_options": {
+        const { data: keyRow } = await supabase
+          .from("app_config").select("value").eq("key", "hero_api_key").maybeSingle();
+        const apiKey = keyRow?.value;
+        if (!apiKey) return json({ options: [], error: "Kein HERO API-Key hinterlegt" });
+
+        const heroFetch = async (query: string): Promise<{ data?: any; error?: string }> => {
+          try {
+            const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+              body: JSON.stringify({ query }),
+            });
+            const text = await resp.text();
+            if (!resp.ok) return { error: `HTTP ${resp.status}: ${text.slice(0, 200)}` };
+            let j: any;
+            try { j = JSON.parse(text); } catch { return { error: "Ungültige HERO-Antwort" }; }
+            if (j.errors?.length) return { error: j.errors[0]?.message || "GraphQL-Fehler" };
+            return { data: j.data };
+          } catch (e: any) {
+            return { error: e.message || String(e) };
+          }
+        };
+
+        const source = params.source;
+        if (source === "hero_calendar_categories") {
+          const r = await heroFetch(`query { calendar_event_categories(show_deleted: false) { id name } }`);
+          if (r.error) return json({ options: [], error: r.error });
+          const options = (r.data?.calendar_event_categories || [])
+            .map((c: any) => ({ value: String(c.id), label: c.name || `#${c.id}` }));
+          return json({ options });
+        }
+
+        if (source === "hero_partners") {
+          // HERO's field name for the employee list varies between accounts;
+          // try the known candidates until one returns rows.
+          const candidates = [
+            `query { partners { id full_name } }`,
+            `query { users { id full_name } }`,
+          ];
+          let lastErr = "";
+          for (const q of candidates) {
+            const r = await heroFetch(q);
+            if (r.error) { lastErr = r.error; continue; }
+            const root = (r.data && (r.data.partners || r.data.users)) || [];
+            const options = root.map((p: any) => ({ value: String(p.id), label: p.full_name || `#${p.id}` }));
+            if (options.length) return json({ options });
+            lastErr = "Keine Mitarbeiter gefunden";
+          }
+          return json({ options: [], error: lastErr || "Mitarbeiter nicht abrufbar" });
+        }
+
+        return json({ options: [], error: `Unbekannte Quelle: ${source}` });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
