@@ -15,6 +15,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { dispatchAutomations } from "../_shared/automations.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -999,6 +1000,18 @@ serve(async (req) => {
       } catch (e) {
         console.warn("Email notification failed:", e);
       }
+    }
+
+    // Automation-Trigger: Fahrzeuganfrage abgeschickt. Best-effort, server-
+    // seitig über die geteilte Dispatch-Logik (HERO-Key bleibt am Server).
+    // Läuft erst nachdem das HERO-Projekt feststeht, damit heroProjectId passt.
+    try {
+      await dispatchAutomations(supabase, "vehicle_inquiry_submitted", {
+        projectId: project.id,
+        heroProjectId,
+      });
+    } catch (e) {
+      console.warn("Automation dispatch failed:", e);
     }
 
     return new Response(

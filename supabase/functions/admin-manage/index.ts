@@ -703,6 +703,64 @@ Deno.serve(async (req) => {
         return json({ success: true });
       }
 
+      // ── Automations ───────────────────────────────────────────────────
+      case "list_automations": {
+        const { data, error } = await supabase
+          .from("automations")
+          .select("*")
+          .order("sort_order")
+          .order("created_at");
+        if (error) return json({ error: error.message }, 500);
+        return json({ automations: data });
+      }
+
+      case "create_automation": {
+        const { error } = await supabase.from("automations").insert({
+          name: params.name,
+          enabled: params.enabled ?? true,
+          trigger_type: params.trigger_type,
+          trigger_config: params.trigger_config ?? {},
+          action_type: params.action_type,
+          action_config: params.action_config ?? {},
+          sort_order: params.sort_order ?? 0,
+        });
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
+      case "update_automation": {
+        const allowed: Record<string, unknown> = {};
+        for (const k of ["name", "enabled", "trigger_type", "trigger_config", "action_type", "action_config", "sort_order"]) {
+          if (Object.prototype.hasOwnProperty.call(params, k)) allowed[k] = (params as any)[k];
+        }
+        allowed.updated_at = new Date().toISOString();
+        const { error } = await supabase
+          .from("automations")
+          .update(allowed)
+          .eq("id", params.id);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
+      case "delete_automation": {
+        const { error } = await supabase
+          .from("automations")
+          .delete()
+          .eq("id", params.id);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
+      case "list_automation_runs": {
+        const { data, error } = await supabase
+          .from("automation_runs")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(params.limit ?? 30);
+        if (error) return json({ error: error.message }, 500);
+        return json({ runs: data });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

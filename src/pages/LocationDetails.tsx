@@ -15,7 +15,7 @@ import { compressImage } from "@/lib/imageCompression";
 import { supabase } from "@/integrations/supabase/client";
 import { scheduleSyncProject } from "@/lib/supabaseSync";
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
-import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers";
+import { enqueueHeroUploadIfLinked, dataUrlToBlob, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 
 interface FieldConfig {
   id: string;
@@ -287,7 +287,18 @@ const LocationDetails = () => {
         project.locations.push(newLocation);
         await indexedDBStorage.saveProject(project);
 
-        // Mirror to HERO if project is linked. Uses the short location
+        // Automation-Trigger: erster Standort im Projekt angelegt.
+        // Feuert nur beim Übergang 0 -> 1 Standort. Server-seitig laufen dann
+        // die im Admin konfigurierten Automationen (z.B. HERO-Termin).
+        if (project.locations.length === 1) {
+          const heroProjectId = getHeroProjectMatchId(project);
+          supabase.functions.invoke("run-automations", {
+            body: {
+              trigger_type: "first_location_created",
+              context: { projectId: project.id, heroProjectId },
+            },
+          }).catch(() => { /* best-effort, darf den Speichern-Flow nie blockieren */ });
+        }
         // number (e.g. "100") in the filename so uploads are easy to
         // identify in HERO's file list.
         const baseName = `standort-${fullLocationNumber}`;

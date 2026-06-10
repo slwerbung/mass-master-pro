@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import AutomationsTab from "@/components/admin/AutomationsTab";
 import { Label } from "@/components/ui/label";
 import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle, Mail, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -881,7 +882,7 @@ const Admin = () => {
           <Button variant="outline" onClick={handleLogout}><LogOut className="h-4 w-4 mr-1" /> Abmelden</Button>
         </div>
         <Tabs defaultValue="employees">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 md:grid-cols-7 h-auto">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 md:grid-cols-8 h-auto">
             <TabsTrigger value="employees" className="text-xs sm:text-sm">Mitarbeiter</TabsTrigger>
             <TabsTrigger value="customers" className="text-xs sm:text-sm">Kunden</TabsTrigger>
             <TabsTrigger value="fields" className="text-xs sm:text-sm">Felder</TabsTrigger>
@@ -889,6 +890,7 @@ const Admin = () => {
             <TabsTrigger value="notifications" className="text-xs sm:text-sm">Benachrichtigungen</TabsTrigger>
             <TabsTrigger value="legal" className="text-xs sm:text-sm">Rechtliches</TabsTrigger>
             <TabsTrigger value="settings" className="text-xs sm:text-sm">Einstellungen</TabsTrigger>
+            <TabsTrigger value="automations" className="text-xs sm:text-sm">Automationen</TabsTrigger>
           </TabsList>
 
           <TabsContent value="employees" className="space-y-4 mt-4">
@@ -1884,6 +1886,11 @@ const Admin = () => {
               </CardContent>
             </Card>
           </TabsContent>
+        
+          <TabsContent value="automations" className="space-y-4 mt-4">
+            <AutomationsTab invoke={invoke} />
+          </TabsContent>
+
         </Tabs>
       </div>
 
