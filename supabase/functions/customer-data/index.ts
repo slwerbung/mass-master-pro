@@ -140,6 +140,9 @@ Deno.serve(async (req) => {
 
 
       case "create_feedback": {
+        if (!params.assignmentId) return json({ error: "Kein Projekt ausgewählt (assignmentId fehlt)" }, 400);
+        if (!params.locationId) return json({ error: "Kein Standort angegeben (locationId fehlt)" }, 400);
+
         const { data: assignment } = await supabase
           .from("customer_project_assignments")
           .select("id")
@@ -147,10 +150,10 @@ Deno.serve(async (req) => {
           .eq("customer_id", customerId)
           .single();
 
-        if (!assignment) return json({ error: "No access" }, 403);
+        if (!assignment) return json({ error: "Kein Zugriff auf dieses Projekt" }, 403);
 
         const sanitizedMessage = String(params.message || "").trim().slice(0, 5000);
-        if (!sanitizedMessage) return json({ error: "Missing message" }, 400);
+        if (!sanitizedMessage) return json({ error: "Leere Nachricht" }, 400);
 
         const { data, error } = await supabase
           .from("location_feedback")
@@ -164,7 +167,14 @@ Deno.serve(async (req) => {
           .select("*")
           .single();
 
-        if (error) return json({ error: error.message }, 500);
+        if (error) {
+          // 23503 = FK violation on location_id: the location isn't in
+          // Supabase yet (not synced). Meaningful message instead of raw SQL.
+          if (error.code === "23503") {
+            return json({ error: "Standort noch nicht synchronisiert – bitte später erneut versuchen." }, 409);
+          }
+          return json({ error: error.message }, 500);
+        }
         return json({ success: true, feedback: data });
       }
 

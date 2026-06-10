@@ -585,9 +585,10 @@ const CustomerView = () => {
       setEditingFeedbackId((prev) => ({ ...prev, [locationId]: null }));
       toast.success("Hinweis gespeichert");
       triggerNotification("comment");
-    } catch (error) {
+    } catch (error: any) {
       console.error("saveFeedback failed", error);
-      toast.error("Fehler beim Speichern");
+      const msg = error?.message || error?.error || "Unbekannter Fehler";
+      toast.error("Fehler beim Speichern: " + msg);
     } finally {
       setSavingId(null);
     }
