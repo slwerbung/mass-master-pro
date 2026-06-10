@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import AutomationsTab from "@/components/admin/AutomationsTab";
 import { Label } from "@/components/ui/label";
 import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle, Mail, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -611,15 +612,16 @@ const Admin = () => {
   };
 
   const loadVehicleFields = async () => {
-    const { data } = await supabase.from("vehicle_field_config").select("*").order("sort_order");
-    setVehicleFields((data || []) as FieldConfig[]);
+    // Routed via admin-manage so the admin token is verified server-side.
+    const data = await invoke("list_vehicle_fields");
+    setVehicleFields((data?.fields || []) as FieldConfig[]);
   };
 
   const addVehicleField = async () => {
     if (!newVehicleFieldLabel.trim()) return;
     const maxOrder = vehicleFields.length > 0 ? Math.max(...vehicleFields.map(f => f.sort_order)) + 1 : 0;
     const key = `vfield_${Date.now()}`;
-    const { error } = await supabase.from("vehicle_field_config").insert({
+    const result = await invoke("create_vehicle_field", {
       field_key: key,
       field_label: newVehicleFieldLabel.trim(),
       field_type: newVehicleFieldType,
@@ -628,7 +630,7 @@ const Admin = () => {
       sort_order: maxOrder,
       is_required: newVehicleFieldRequired,
     });
-    if (error) { toast.error("Fehler beim Erstellen: " + error.message); return; }
+    if (result?.error) { toast.error("Fehler beim Erstellen: " + result.error); return; }
     setNewVehicleFieldLabel(""); setNewVehicleFieldOptions(""); setNewVehicleFieldType("text"); setNewVehicleFieldRequired(false);
     toast.success("Fahrzeugfeld erstellt"); loadVehicleFields();
   };
@@ -646,24 +648,25 @@ const Admin = () => {
   };
 
   const saveVehicleFieldEdit = async (field: FieldConfig) => {
-    const { error } = await supabase.from("vehicle_field_config").update({
+    const result = await invoke("update_vehicle_field", {
+      fieldId: field.id,
       field_label: editVehicleFieldLabel.trim() || field.field_label,
       field_type: editVehicleFieldType,
       field_options: editVehicleFieldType === "dropdown" && editVehicleFieldOptions.trim()
         ? JSON.stringify(editVehicleFieldOptions.split(",").map((s: string) => s.trim()).filter(Boolean)) : null,
       is_required: editVehicleFieldRequired,
-    }).eq("id", field.id);
-    if (error) { toast.error("Fehler beim Speichern"); return; }
+    });
+    if (result?.error) { toast.error("Fehler beim Speichern"); return; }
     cancelEditVehicleField(); loadVehicleFields(); toast.success("Fahrzeugfeld aktualisiert");
   };
 
   const toggleVehicleField = async (field: FieldConfig) => {
-    await supabase.from("vehicle_field_config").update({ is_active: !field.is_active }).eq("id", field.id);
+    await invoke("update_vehicle_field", { fieldId: field.id, is_active: !field.is_active });
     loadVehicleFields();
   };
 
   const deleteVehicleField = async (id: string) => {
-    await supabase.from("vehicle_field_config").delete().eq("id", id);
+    await invoke("delete_vehicle_field", { fieldId: id });
     loadVehicleFields(); toast.success("Fahrzeugfeld gelöscht");
   };
 
@@ -879,7 +882,7 @@ const Admin = () => {
           <Button variant="outline" onClick={handleLogout}><LogOut className="h-4 w-4 mr-1" /> Abmelden</Button>
         </div>
         <Tabs defaultValue="employees">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 md:grid-cols-7 h-auto">
+          <TabsList className="flex flex-wrap w-full h-auto justify-start gap-1 p-1">
             <TabsTrigger value="employees" className="text-xs sm:text-sm">Mitarbeiter</TabsTrigger>
             <TabsTrigger value="customers" className="text-xs sm:text-sm">Kunden</TabsTrigger>
             <TabsTrigger value="fields" className="text-xs sm:text-sm">Felder</TabsTrigger>
@@ -887,6 +890,7 @@ const Admin = () => {
             <TabsTrigger value="notifications" className="text-xs sm:text-sm">Benachrichtigungen</TabsTrigger>
             <TabsTrigger value="legal" className="text-xs sm:text-sm">Rechtliches</TabsTrigger>
             <TabsTrigger value="settings" className="text-xs sm:text-sm">Einstellungen</TabsTrigger>
+            <TabsTrigger value="automations" className="text-xs sm:text-sm">Automationen</TabsTrigger>
           </TabsList>
 
           <TabsContent value="employees" className="space-y-4 mt-4">
@@ -1274,12 +1278,12 @@ const Admin = () => {
             <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><FolderOpen className="h-5 w-5" /> Medien-Sichtbarkeit</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">Hier legst du fest, ob Produktionsdateien und Detailbilder in der internen Ansicht, der Kundenansicht und im jeweiligen PDF-Export sichtbar sind.</p>
+                <p className="text-sm text-muted-foreground">Hier legst du fest, ob Layout-/Produktionsdateien und Detailbilder in der internen Ansicht, der Kundenansicht und im jeweiligen PDF-Export sichtbar sind.</p>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="rounded-lg border p-3 space-y-3">
                     <p className="text-sm font-medium">Interne Ansicht / Interner Export</p>
                     <div className="flex items-center justify-between gap-3">
-                      <Label htmlFor="internal-print-files">Produktionsdateien anzeigen</Label>
+                      <Label htmlFor="internal-print-files">Layout / Produktionsdatei anzeigen</Label>
                       <Switch id="internal-print-files" checked={viewSettings.internalShowPrintFiles} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, internalShowPrintFiles: checked }))} />
                     </div>
                     <div className="flex items-center justify-between gap-3">
@@ -1290,7 +1294,7 @@ const Admin = () => {
                   <div className="rounded-lg border p-3 space-y-3">
                     <p className="text-sm font-medium">Kundenansicht / Kunden-Export</p>
                     <div className="flex items-center justify-between gap-3">
-                      <Label htmlFor="customer-print-files">Produktionsdateien anzeigen</Label>
+                      <Label htmlFor="customer-print-files">Layout / Produktionsdatei anzeigen</Label>
                       <Switch id="customer-print-files" checked={viewSettings.customerShowPrintFiles} onCheckedChange={(checked) => setViewSettings((prev) => ({ ...prev, customerShowPrintFiles: checked }))} />
                     </div>
                     <div className="flex items-center justify-between gap-3">
@@ -1882,6 +1886,11 @@ const Admin = () => {
               </CardContent>
             </Card>
           </TabsContent>
+        
+          <TabsContent value="automations" className="space-y-4 mt-4">
+            <AutomationsTab invoke={invoke} />
+          </TabsContent>
+
         </Tabs>
       </div>
 
