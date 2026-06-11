@@ -88,6 +88,7 @@ Deno.serve(async (req) => {
             author_customer_id: null,
             message: sanitizedInfo,
             status: "open",
+            author_type: "guest",
           })
           .select("*")
           .single();
@@ -106,7 +107,7 @@ Deno.serve(async (req) => {
     }
 
     return json({ success: true, feedback, legacy: false });
-  } catch {
-    return json({ error: "Server error" }, 500);
+  } catch (e: any) {
+    return json({ error: "Server error: " + (e?.message || String(e)) }, 500);
   }
 });

@@ -11,6 +11,8 @@ import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import LocationInfoFields from "@/components/LocationInfoFields";
+import LocationChat, { ChatMessage } from "@/components/LocationChat";
+import { getSession } from "@/lib/session";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
@@ -22,6 +24,7 @@ interface FeedbackItem {
   location_id: string;
   message: string;
   author_name: string;
+  author_type?: string;
   status: "open" | "done";
   created_at: string;
   legacy?: boolean;
@@ -113,7 +116,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   const loadFeedbacks = async () => {
     const { data, error } = await (supabase as any)
       .from("location_feedback")
-      .select("id, location_id, message, author_name, status, created_at")
+      .select("id, location_id, message, author_name, author_type, status, created_at")
       .eq("location_id", location.id)
       .order("created_at", { ascending: true });
 
@@ -152,6 +155,44 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
       toast.success(nextStatus === "done" ? "Kommentar als umgesetzt markiert" : "Kommentar wieder geöffnet");
     } catch {
       toast.error("Kommentar konnte nicht aktualisiert werden");
+    } finally {
+      setUpdatingFeedbackId(null);
+    }
+  };
+
+  const [sendingMsg, setSendingMsg] = useState(false);
+  const sendEmployeeMessage = async (text: string) => {
+    const message = text.trim();
+    if (!message) return;
+    setSendingMsg(true);
+    try {
+      const name = getSession()?.name || "Mitarbeiter";
+      const { error } = await (supabase as any).from("location_feedback").insert({
+        location_id: location.id,
+        author_name: name,
+        author_type: "employee",
+        author_customer_id: null,
+        message,
+        status: "open",
+      });
+      if (error) throw error;
+      await loadFeedbacks();
+    } catch (e: any) {
+      toast.error("Nachricht konnte nicht gesendet werden: " + (e?.message || "Fehler"));
+    } finally {
+      setSendingMsg(false);
+    }
+  };
+
+  const deleteOwnMessage = async (m: ChatMessage) => {
+    if (m.legacy) return;
+    setUpdatingFeedbackId(m.id);
+    try {
+      const { error } = await (supabase as any).from("location_feedback").delete().eq("id", m.id);
+      if (error) throw error;
+      await loadFeedbacks();
+    } catch (e: any) {
+      toast.error("Löschen fehlgeschlagen");
     } finally {
       setUpdatingFeedbackId(null);
     }
@@ -372,28 +413,19 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
           <div className="flex items-center gap-2">
             <MessageSquare className="h-4 w-4 text-primary" />
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Kunden-Feedback</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Standort-Chat</p>
           </div>
-          {feedbacks.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Noch keine Rückmeldungen.</p>
-          ) : (
-            <div className="space-y-2">
-              {feedbacks.map((feedback) => (
-                <div key={feedback.id} className="rounded border bg-background p-2 space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium">{feedback.author_name}</p>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs px-2 py-0.5 rounded ${feedback.status === "done" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{feedback.status === "done" ? "Umgesetzt" : "Offen"}</span>
-                      <Button size="sm" variant="ghost" disabled={updatingFeedbackId === feedback.id} onClick={() => toggleFeedbackDone(feedback)}>
-                        <Check className="h-4 w-4 mr-1" /> {feedback.status === "done" ? "Öffnen" : "Erledigt"}
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="text-sm whitespace-pre-wrap">{feedback.message}</p>
-                </div>
-              ))}
-            </div>
-          )}
+          <LocationChat
+            messages={feedbacks as ChatMessage[]}
+            viewerSide="employee"
+            sending={sendingMsg}
+            onSend={sendEmployeeMessage}
+            onToggleDone={(m) => toggleFeedbackDone(m as FeedbackItem)}
+            canDelete={(m) => m.author_type === "employee" && !m.legacy}
+            onDelete={deleteOwnMessage}
+            busyId={updatingFeedbackId}
+            placeholder="Antwort an den Kunden…"
+          />
         </div>
 
         {showDetailImages && location.detailImages && location.detailImages.length > 0 && (

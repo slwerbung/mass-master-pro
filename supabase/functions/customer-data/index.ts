@@ -163,6 +163,7 @@ Deno.serve(async (req) => {
             author_customer_id: customerId,
             message: sanitizedMessage,
             status: "open",
+            author_type: "customer",
           })
           .select("*")
           .single();
