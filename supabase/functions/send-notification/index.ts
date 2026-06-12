@@ -119,9 +119,10 @@ Deno.serve(async (req) => {
         .eq("id", projectId)
         .maybeSingle();
       const projectType = (projData?.project_type as string) || "standort";
+      const isVehicle = projectType.includes("fahrzeug");
 
       let isComplete = false;
-      if (projectType === "fahrzeug") {
+      if (isVehicle) {
         const { data: vehicleApproval } = await supabase
           .from("vehicle_layout_approval")
           .select("approved")
@@ -145,6 +146,13 @@ Deno.serve(async (req) => {
       if (isComplete && !existing?.completion_sent_at) {
         shouldSend = true;
         updateFields.completion_sent_at = now.toISOString();
+      } else if (!isComplete && existing?.completion_sent_at) {
+        // No longer fully approved → clear the flag so the next completion
+        // sends a fresh mail. Persisted directly because we return early below
+        // when shouldSend is false.
+        await supabase.from("customer_notifications")
+          .update({ completion_sent_at: null })
+          .eq("assignment_id", assignmentId);
       }
     } else {
       return json({ error: `Unknown event type: ${event}` }, 400);

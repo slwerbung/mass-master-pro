@@ -788,7 +788,7 @@ const CustomerView = () => {
       approved: newVal,
       approved_at: newVal ? new Date().toISOString() : null,
     }, { onConflict: "project_id,assignment_id" });
-    if (newVal) triggerNotification("approval");
+    triggerNotification("approval"); // server sends on full completion, resets otherwise
     setSavingVehicleApproval(false);
   };
 
@@ -915,7 +915,7 @@ const CustomerView = () => {
       location_id: locationId, assignment_id: selectedAssignment.id,
       approved, approved_at: approved ? new Date().toISOString() : null,
     }, { onConflict: "location_id,assignment_id" });
-    if (approved) triggerNotification("approval");
+    triggerNotification("approval"); // server sends on full completion, resets otherwise
   };
 
   const approveAll = async (approved: boolean) => {
@@ -929,7 +929,7 @@ const CustomerView = () => {
       approved, approved_at: approved ? new Date().toISOString() : null,
     }));
     await supabase.from("location_approvals").upsert(rows, { onConflict: "location_id,assignment_id" });
-    if (approved) triggerNotification("approval");
+    triggerNotification("approval"); // server sends on full completion, resets otherwise
     toast.success(approved ? "Alle Standorte freigegeben" : "Alle Freigaben zurückgenommen");
     setSavingApprovals(false);
   };
