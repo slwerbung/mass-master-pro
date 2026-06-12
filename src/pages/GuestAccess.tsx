@@ -80,6 +80,10 @@ const GuestAccess = () => {
 
       // Store the customer name for next visit so we can prefill it.
       localStorage.setItem("guest_name", customerName);
+      // The legacy guest token is no longer needed — we now run as a full
+      // customer. Removing it prevents CustomerView from falling into the old
+      // limited-guest mode (which caused the "Kein Zugriff" comment bug).
+      localStorage.removeItem("guest_token");
 
       // Set up a full customer session - same shape as the regular
       // /kunde login. From here on the app treats this user like any
