@@ -4,7 +4,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import LocationChat from "@/components/LocationChat";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check, Trash2, Upload, Download, Car, ImagePlus } from "lucide-react";
@@ -44,10 +43,6 @@ interface FeedbackItem {
 
 const LEGACY_FEEDBACK_PREFIX = "legacy-feedback-";
 const DIRECT_ASSIGNMENT_ID_PREFIX = "direct-project-";
-// A synthetic assignment id is created for direct-link access and is NOT a real
-// customer_project_assignments row — so writes for it must use the guest path,
-// never customer-data (which would reject it with "Kein Zugriff").
-const isSyntheticAssignment = (id?: string | null) => !!id && String(id).startsWith(DIRECT_ASSIGNMENT_ID_PREFIX);
 
 const isFeedbackTableUnavailable = (error: any) => {
   const message = String(error?.message || error?.details || "").toLowerCase();
@@ -61,15 +56,7 @@ const CustomerView = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const session = getSession();
   const directProjectId = searchParams.get("project");
-  // A real customer (logged in OR arrived via direct link and provisioned by
-  // ensure-customer-assignment) must NEVER fall into limited guest mode, even
-  // if a stale guest_token lingers in localStorage. Only a non-real ("guest:")
-  // session may use the guest token. This unifies login and direct-link access
-  // onto the exact same real-customer path.
-  const guestToken =
-    typeof window !== "undefined" && !isRealCustomerId(session?.id)
-      ? localStorage.getItem("guest_token")
-      : null;
+  const guestToken = typeof window !== "undefined" ? localStorage.getItem("guest_token") : null;
   const guestProjectNumber = typeof window !== "undefined" ? localStorage.getItem("guest_project_number") : null;
 
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -400,14 +387,6 @@ const CustomerView = () => {
 
         const pdfEntries = (pdfs || []).map((p: any) => ({ location_id: p.location_id, image_type: "pdf", storage_path: p.storage_path, file_name: p.file_name, id: p.id }));
         setImages([...(imgs || []), ...pdfEntries]);
-        // Bug fix: the main location images (annotated) need their signed URLs
-        // resolved too — previously only detail images were resolved here, so
-        // the Standortbild stayed blank in the customer-login view.
-        const mainPaths = [
-          ...((imgs || []).map((i: any) => i.storage_path)),
-          ...((pdfs || []).map((p: any) => p.storage_path)),
-        ].filter(Boolean);
-        if (mainPaths.length > 0) resolveSignedUrls(mainPaths);
         const detailMap: Record<string, any[]> = {};
         (detailRows || []).forEach((row: any) => {
           if (!detailMap[row.location_id]) detailMap[row.location_id] = [];
@@ -527,79 +506,6 @@ const CustomerView = () => {
     }
   };
 
-  const extractFnError = async (error: any, data: any): Promise<string> => {
-    if (data?.error) return data.error;
-    // supabase-js wraps non-2xx responses in FunctionsHttpError with the body
-    // available via error.context — read it so we show the real message.
-    try {
-      if (error?.context && typeof error.context.json === "function") {
-        const body = await error.context.json();
-        if (body?.error) return body.error;
-      }
-    } catch { /* ignore */ }
-    return error?.message || "Unbekannter Fehler";
-  };
-
-  // Chat-style: always create a new message (no in-place edit).
-  const sendCustomerMessage = async (locationId: string, text: string) => {
-    const message = text.trim();
-    if (!message) return;
-    setSavingId(locationId);
-    try {
-      // Direct-link access carries a synthetic assignment id that customer-data
-      // can't validate → use the guest write path in that case too.
-      const useGuestWrite = (isLimitedGuestMode || isSyntheticAssignment(selectedAssignment?.id)) && !!guestToken;
-      let data: any, error: any;
-      if (useGuestWrite) {
-        ({ data, error } = await supabase.functions.invoke("update-guest-info", {
-          body: {
-            projectId: getSelectedProjectId(),
-            token: guestToken,
-            locationId,
-            guestInfo: message,
-            authorName: session?.name || localStorage.getItem("guest_name") || "Kunde",
-            feedbackId: null,
-          },
-        }));
-      } else {
-        ({ data, error } = await supabase.functions.invoke("customer-data", {
-          body: {
-            action: "create_feedback",
-            customerToken: session?.authToken,
-            assignmentId: selectedAssignment?.id,
-            locationId,
-            message,
-            authorName: session?.name || "Kunde",
-          },
-        }));
-      }
-      if (error || data?.error) throw new Error(await extractFnError(error, data));
-
-      const savedEntry = data?.feedback || null;
-      if (savedEntry) {
-        setFeedbacks((prev) => {
-          const existing = (prev[locationId] || []).filter(
-            (entry) => entry.id !== savedEntry.id && entry.id !== `${LEGACY_FEEDBACK_PREFIX}${locationId}`
-          );
-          return {
-            ...prev,
-            [locationId]: [...existing, savedEntry].sort(
-              (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-            ),
-          };
-        });
-      } else {
-        await reloadFeedbacks([locationId]);
-      }
-      triggerNotification("comment");
-    } catch (error: any) {
-      console.error("sendCustomerMessage failed", error);
-      toast.error("Fehler beim Speichern: " + (error?.message || "Unbekannter Fehler"));
-    } finally {
-      setSavingId(null);
-    }
-  };
-
   const saveFeedback = async (locationId: string) => {
     const message = (draftFeedback[locationId] || "").trim();
     if (!message) return;
@@ -703,7 +609,7 @@ const CustomerView = () => {
     }
     setSavingId(locationId);
     try {
-      if ((isLimitedGuestMode || isSyntheticAssignment(selectedAssignment?.id)) && guestToken) {
+      if (isLimitedGuestMode && guestToken) {
         await supabase.from("location_feedback").delete().eq("id", feedbackId);
       } else {
         const { data, error } = await supabase.functions.invoke("customer-data", {
@@ -1279,20 +1185,50 @@ const CustomerView = () => {
                         </div>
                       )}
 
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <Label>Hinweise / Korrekturen</Label>
-                        <LocationChat
-                          messages={locationFeedback as any}
-                          viewerSide="customer"
-                          sending={savingId === loc.id}
-                          onSend={(text) => sendCustomerMessage(loc.id, text)}
-                          canDelete={(m) =>
-                            !m.legacy && m.status === "open" &&
-                            (m.author_customer_id === session?.id || (!m.author_customer_id && m.author_name === session?.name))
-                          }
-                          onDelete={(m) => deleteFeedback(loc.id, m.id)}
-                          placeholder="Hinweis oder Korrektur zu diesem Standort…"
+                        {locationFeedback.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">Noch keine Rückmeldungen vorhanden.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {locationFeedback.map((entry) => (
+                              <div key={entry.id} className="rounded-lg border p-3 bg-muted/20 space-y-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div>
+                                    <p className="text-sm font-medium">{entry.author_name}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {entry.created_at && new Date(entry.created_at).getTime() > 0
+                                        ? formatDateTimeSafe(entry.created_at)
+                                        : ""}
+                                    </p>
+                                  </div>
+                                  <span className={`text-xs px-2 py-0.5 rounded ${entry.status === "done" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{entry.status === "done" ? "Umgesetzt" : "Offen"}</span>
+                                </div>
+                                <p className="text-sm whitespace-pre-wrap">{entry.message}</p>
+                                {(entry.author_customer_id === session?.id || (!entry.author_customer_id && entry.author_name === session?.name)) && entry.status === "open" && (
+                                  <div className="flex gap-2">
+                                    <Button variant="ghost" size="sm" className="px-0" onClick={() => startEditFeedback(loc.id, entry)}>
+                                      <Pencil className="h-4 w-4 mr-1" /> Bearbeiten
+                                    </Button>
+                                    <Button variant="ghost" size="sm" className="px-0 text-destructive" onClick={() => deleteFeedback(loc.id, entry.id)}>
+                                      <Trash2 className="h-4 w-4 mr-1" /> Löschen
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <Textarea
+                          placeholder="Hinweis oder Korrektur zu diesem Standort eingeben..."
+                          value={draftFeedback[loc.id] || ""}
+                          onChange={(e) => setDraftFeedback((prev) => ({ ...prev, [loc.id]: e.target.value }))}
+                          rows={3}
                         />
+                        <Button size="sm" onClick={() => saveFeedback(loc.id)} disabled={savingId === loc.id || !(draftFeedback[loc.id] || "").trim()}>
+                          <Save className="h-4 w-4 mr-1" />
+                          {savingId === loc.id ? "Speichert..." : editingFeedbackId[loc.id] ? "Hinweis aktualisieren" : "Hinweis speichern"}
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>
