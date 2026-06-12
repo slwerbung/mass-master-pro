@@ -1098,9 +1098,8 @@ const Admin = () => {
 
                 <div className="space-y-4">
                   {[
-                    { key: "first_action" as const, title: "Erste Aktivität", desc: "Wenn der Kunde zum ersten Mal etwas in einem Projekt tut (Freigabe oder Kommentar). Einmal pro Projekt." },
-                    { key: "comment" as const, title: "Kommentar", desc: "Wenn der Kunde einen Kommentar oder Hinweis schreibt. Höchstens alle 4 Stunden pro Projekt." },
-                    { key: "completion" as const, title: "Freigabe", desc: "Wenn der Kunde das Projekt komplett freigegeben hat." },
+                    { key: "comment" as const, title: "Kundenaktivität", desc: "Wenn der Kunde einen Kommentar oder Hinweis schreibt. Höchstens alle 4 Stunden pro Projekt." },
+                    { key: "completion" as const, title: "Freigaben", desc: "Wenn der Kunde das Projekt komplett freigegeben hat." },
                   ].map(ev => {
                     const setting = notifSettings[ev.key];
                     const canEnable = canEnableEvent(setting);
