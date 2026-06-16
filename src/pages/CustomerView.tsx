@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -496,24 +496,66 @@ const CustomerView = () => {
   }, [locations, selectedAssignment, directProjectId]);
 
   const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
+  const signedUrlCacheRef = useRef<Record<string, string>>({});
+  useEffect(() => { signedUrlCacheRef.current = signedUrlCache; }, [signedUrlCache]);
+  const signUrlAttempts = useRef<Record<string, number>>({});
+  const MAX_SIGN_ATTEMPTS = 6;
 
+  // Resolve signed URLs for storage paths, with bounded retry.
+  //
+  // Right after a customer login the first createSignedUrl call can come back
+  // empty (session/storage timing). Previously empty results were dropped
+  // silently with no retry, which left location images blank until the user
+  // reloaded several times. We now retry transient misses with a short delay,
+  // capped per path, and always read the latest cache via a ref so parallel
+  // callers don't redo work.
   const resolveSignedUrls = async (paths: string[]) => {
-    const unresolved = paths.filter(p => p && !signedUrlCache[p]);
+    const unresolved = Array.from(new Set(paths)).filter(
+      (p) => p && !signedUrlCacheRef.current[p] && (signUrlAttempts.current[p] ?? 0) < MAX_SIGN_ATTEMPTS
+    );
     if (unresolved.length === 0) return;
+    unresolved.forEach((p) => { signUrlAttempts.current[p] = (signUrlAttempts.current[p] ?? 0) + 1; });
+
     const results = await Promise.all(
       unresolved.map(async (path) => {
-        const { data } = await supabase.storage.from("project-files").createSignedUrl(path, 3600);
-        return { path, url: data?.signedUrl || "" };
+        try {
+          const { data } = await supabase.storage.from("project-files").createSignedUrl(path, 3600);
+          return { path, url: data?.signedUrl || "" };
+        } catch {
+          return { path, url: "" };
+        }
       })
     );
-    setSignedUrlCache(prev => {
-      const next = { ...prev };
-      results.forEach(({ path, url }) => { if (url) next[path] = url; });
-      return next;
-    });
+
+    const got = results.filter((r) => r.url);
+    if (got.length > 0) {
+      setSignedUrlCache((prev) => {
+        const next = { ...prev };
+        got.forEach(({ path, url }) => { next[path] = url; });
+        return next;
+      });
+    }
+
+    // Retry the ones that came back empty (transient right after login).
+    const stillEmpty = results.filter((r) => !r.url).map((r) => r.path);
+    if (stillEmpty.length > 0) {
+      setTimeout(() => { resolveSignedUrls(stillEmpty); }, 700);
+    }
   };
 
   const getSignedImageUrl = (path: string): string => signedUrlCache[path] || "";
+
+  // Safety net: whenever the set of images changes, ensure every visible image
+  // path has a signed URL. Together with the retry above this lets the view
+  // self-heal after login without the user reloading.
+  useEffect(() => {
+    const paths = [
+      ...images.map((i: any) => i.storage_path),
+      ...Object.values(detailImagesByLocation).flat().flatMap((d: any) => [d.annotated_path, d.original_path]),
+    ].filter(Boolean);
+    if (paths.length > 0) resolveSignedUrls(paths);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [images, detailImagesByLocation]);
 
   const triggerNotification = async (changeType: "approval" | "comment") => {
     if (!selectedAssignment || isLimitedGuestMode) return;
@@ -911,10 +953,16 @@ const CustomerView = () => {
   const toggleApproval = async (locationId: string, approved: boolean) => {
     if (!selectedAssignment || isLimitedGuestMode) return;
     setApprovals(prev => ({ ...prev, [locationId]: approved }));
-    await supabase.from("location_approvals").upsert({
+    const { error } = await supabase.from("location_approvals").upsert({
       location_id: locationId, assignment_id: selectedAssignment.id,
       approved, approved_at: approved ? new Date().toISOString() : null,
     }, { onConflict: "location_id,assignment_id" });
+    if (error) {
+      // Revert optimistic UI and tell the user instead of failing silently.
+      setApprovals(prev => ({ ...prev, [locationId]: !approved }));
+      toast.error("Freigabe konnte nicht gespeichert werden: " + error.message);
+      return;
+    }
     triggerNotification("approval"); // server sends on full completion, resets otherwise
   };
 
@@ -928,7 +976,12 @@ const CustomerView = () => {
       location_id: l.id, assignment_id: selectedAssignment.id,
       approved, approved_at: approved ? new Date().toISOString() : null,
     }));
-    await supabase.from("location_approvals").upsert(rows, { onConflict: "location_id,assignment_id" });
+    const { error } = await supabase.from("location_approvals").upsert(rows, { onConflict: "location_id,assignment_id" });
+    if (error) {
+      toast.error("Freigaben konnten nicht gespeichert werden: " + error.message);
+      setSavingApprovals(false);
+      return;
+    }
     triggerNotification("approval"); // server sends on full completion, resets otherwise
     toast.success(approved ? "Alle Standorte freigegeben" : "Alle Freigaben zurückgenommen");
     setSavingApprovals(false);
