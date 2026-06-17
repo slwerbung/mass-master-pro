@@ -67,6 +67,8 @@ const VehicleDetail = () => {
   const [images, setImages] = useState<VehicleImage[]>([]);
   const [layout, setLayout] = useState<VehicleLayout | null>(null);
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
+  const [measuredImages, setMeasuredImages] = useState<any[]>([]);
+  const [uploadingMeasured, setUploadingMeasured] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadingLayout, setUploadingLayout] = useState(false);
@@ -76,6 +78,7 @@ const VehicleDetail = () => {
   const [captionDraft, setCaptionDraft] = useState("");
   const imageInputRef = useRef<HTMLInputElement>(null);
   const layoutInputRef = useRef<HTMLInputElement>(null);
+  const measuredInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!projectId) return;
@@ -93,6 +96,7 @@ const VehicleDetail = () => {
         { data: imgs },
         { data: layouts },
         { data: fbs },
+        { data: measured },
       ] = await Promise.all([
         supabase.from("projects").select("id, project_number, customer_name, custom_fields, project_type").eq("id", projectId!).maybeSingle(),
         supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
@@ -100,6 +104,7 @@ const VehicleDetail = () => {
         supabase.from("vehicle_images").select("*").eq("project_id", projectId!).order("created_at"),
         supabase.from("vehicle_layouts").select("*").eq("project_id", projectId!).order("uploaded_at", { ascending: false }).limit(1),
         supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId!).order("created_at"),
+        supabase.from("vehicle_measured_images").select("*").eq("project_id", projectId!).order("created_at"),
       ]);
 
       setProject(proj);
@@ -110,6 +115,7 @@ const VehicleDetail = () => {
       setImages((imgs || []) as VehicleImage[]);
       setLayout(layouts && layouts.length > 0 ? (layouts[0] as VehicleLayout) : null);
       setFeedbacks((fbs || []) as FeedbackItem[]);
+      setMeasuredImages(measured || []);
     } catch (e) {
       toast.error("Fehler beim Laden");
     } finally {
@@ -211,6 +217,42 @@ const VehicleDetail = () => {
       toast.success("Bild gelöscht");
     } catch {
       toast.error("Fehler beim Löschen");
+    }
+  };
+
+  const handleMeasuredUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingMeasured(true);
+    try {
+      const id = crypto.randomUUID();
+      const path = `vehicle-measured/${projectId}/${id}`;
+      const { error: upErr } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type });
+      if (upErr) throw upErr;
+      const { error: dbErr } = await supabase.from("vehicle_measured_images").insert({
+        id, project_id: projectId, storage_path: path,
+        uploaded_by: session?.name || "Mitarbeiter",
+      });
+      if (dbErr) throw dbErr;
+      toast.success("Bild hochgeladen");
+      loadAll();
+    } catch (err: any) {
+      toast.error("Upload fehlgeschlagen: " + err.message);
+    } finally {
+      setUploadingMeasured(false);
+      if (measuredInputRef.current) measuredInputRef.current.value = "";
+    }
+  };
+
+  const deleteMeasuredImage = async (img: any) => {
+    try {
+      if (img.storage_path) await supabase.storage.from("project-files").remove([img.storage_path]);
+      if (img.original_storage_path) await supabase.storage.from("project-files").remove([img.original_storage_path]);
+      await supabase.from("vehicle_measured_images").delete().eq("id", img.id);
+      setMeasuredImages(prev => prev.filter(m => m.id !== img.id));
+      toast.success("Bild gelöscht");
+    } catch (err: any) {
+      toast.error("Fehler beim Löschen: " + err.message);
     }
   };
 
@@ -483,6 +525,63 @@ const VehicleDetail = () => {
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Bilder bemaßt */}
+        <Card>
+          <CardHeader className="p-4 pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Bilder bemaßt</CardTitle>
+              <Button size="sm" variant="outline" onClick={() => measuredInputRef.current?.click()} disabled={uploadingMeasured}>
+                <ImagePlus className="h-4 w-4 mr-1" />
+                {uploadingMeasured ? "Lädt..." : "Bild hinzufügen"}
+              </Button>
+              <input ref={measuredInputRef} type="file" accept="image/*" className="hidden" onChange={handleMeasuredUpload} />
+            </div>
+          </CardHeader>
+          <CardContent className="p-4">
+            {measuredImages.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                Noch keine bemaßten Bilder. Bild hochladen, dann im Editor bemaßen.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {measuredImages.map((img) => (
+                  <div key={img.id} className="relative group rounded-lg overflow-hidden border">
+                    <img
+                      src={getPublicUrl(img.storage_path)}
+                      alt={img.caption || "Bemaßtes Bild"}
+                      className="w-full h-36 object-cover cursor-pointer"
+                      onClick={() => navigate(`/projects/${projectId}/vehicle/measured/${img.id}/edit-image`)}
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => navigate(`/projects/${projectId}/vehicle/measured/${img.id}/edit-image`)}>
+                        <Pencil className="h-3 w-3 mr-1" /> Bemaßen
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button size="sm" variant="destructive"><Trash2 className="h-3 w-3" /></Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Bild löschen?</AlertDialogTitle>
+                            <AlertDialogDescription>Das bemaßte Bild wird dauerhaft entfernt.</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => deleteMeasuredImage(img)} className="bg-destructive">Löschen</AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                    {img.caption && (
+                      <p className="text-xs text-center p-1 bg-muted truncate">{img.caption}</p>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </CardContent>
