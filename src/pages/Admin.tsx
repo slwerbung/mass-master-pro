@@ -54,6 +54,7 @@ const Admin = () => {
   const [projectEmployeeAssignments, setProjectEmployeeAssignments] = useState<any[]>([]);
   const [newEmployeeName, setNewEmployeeName] = useState("");
   const [newEmployeeEmail, setNewEmployeeEmail] = useState("");
+  const [newEmployeeHeroPartner, setNewEmployeeHeroPartner] = useState("");
   const [emailDialogEmployee, setEmailDialogEmployee] = useState<{ id: string; name: string; email?: string | null } | null>(null);
   const [emailDialogValue, setEmailDialogValue] = useState("");
   const [newEmployeePasswordInput, setNewEmployeePasswordInput] = useState("");
@@ -121,6 +122,8 @@ const Admin = () => {
   // Integration state
   const [heroApiKey, setHeroApiKey] = useState("");
   const [heroEnabled, setHeroEnabled] = useState(false);
+  const [heroPartnerOptions, setHeroPartnerOptions] = useState<{ value: string; label: string }[]>([]);
+  const [heroPartnersLoaded, setHeroPartnersLoaded] = useState(false);
   // HERO doc-types: list pulled from HERO via hero-integration:list_document_types,
   // plus a saved mapping per uploadType. We currently support two
   // uploadType keys: "aufmass_pdf" (the Export-PDF from a project) and
@@ -210,6 +213,20 @@ const Admin = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heroEnabled, heroHasKey, heroImgCatsLoaded]);
+
+  // Load HERO partners (Mitarbeiter) for the employee-mapping dropdowns.
+  useEffect(() => {
+    if (heroEnabled && heroHasKey && !heroPartnersLoaded) {
+      (async () => {
+        try {
+          const data = await invoke("hero_list_options", { source: "hero_partners" });
+          setHeroPartnerOptions(data?.options || []);
+        } catch { /* manual entry still possible */ }
+        setHeroPartnersLoaded(true);
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroEnabled, heroHasKey, heroPartnersLoaded]);
 
   useEffect(() => {
     if (!selectedProjectAccessId) return;
@@ -783,10 +800,20 @@ const Admin = () => {
         name: newEmployeeName.trim(),
         password: newEmployeePasswordInput.trim() || undefined,
         email: newEmployeeEmail.trim() || undefined,
+        heroPartnerId: newEmployeeHeroPartner || undefined,
       });
-      setNewEmployeeName(""); setNewEmployeePasswordInput(""); setNewEmployeeEmail("");
+      setNewEmployeeName(""); setNewEmployeePasswordInput(""); setNewEmployeeEmail(""); setNewEmployeeHeroPartner("");
       toast.success("Mitarbeiter erstellt"); loadAll();
     } catch (e: any) { toast.error(e.message); }
+  };
+  const setEmployeeHeroPartner = async (employeeId: string, heroPartnerId: string | null) => {
+    try {
+      await invoke("set_employee_hero_partner", { employeeId, heroPartnerId });
+      setEmployees(prev => prev.map(e => e.id === employeeId
+        ? { ...e, hero_partner_id: heroPartnerId ? Number(heroPartnerId) : null }
+        : e));
+      toast.success("HERO-Zuordnung gespeichert");
+    } catch (e: any) { toast.error("Fehler: " + e.message); }
   };
   const openEmailDialog = (emp: { id: string; name: string; email?: string | null }) => {
     setEmailDialogEmployee(emp);
@@ -903,6 +930,20 @@ const Admin = () => {
                     <Input type="password" placeholder="Passwort (optional)" value={newEmployeePasswordInput} onChange={(e) => setNewEmployeePasswordInput(e.target.value)} className="sm:max-w-[180px]" />
                     <Button onClick={addEmployee} disabled={!newEmployeeName.trim()} className="w-full sm:w-auto"><Plus className="h-4 w-4 mr-1" /> Hinzufügen</Button>
                   </div>
+                  {heroEnabled && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0">HERO-Mitarbeiter (optional):</span>
+                      <Select value={newEmployeeHeroPartner || "none"} onValueChange={(v) => setNewEmployeeHeroPartner(v === "none" ? "" : v)}>
+                        <SelectTrigger className="h-8 text-xs w-[240px]"><SelectValue placeholder="Zuordnen…" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">— Keine Zuordnung —</SelectItem>
+                          {heroPartnerOptions.map((o: any) => (
+                            <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     Mit hinterlegter E-Mail kann der Mitarbeiter Benachrichtigungen für die ihm zugeordneten Projekte empfangen.
                   </p>
@@ -922,6 +963,28 @@ const Admin = () => {
                         <span className="text-xs text-muted-foreground truncate">
                           {emp.email ? emp.email : "Keine E-Mail hinterlegt"}
                         </span>
+                        {heroEnabled && (
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-muted-foreground shrink-0">HERO:</span>
+                            <Select
+                              value={emp.hero_partner_id ? String(emp.hero_partner_id) : "none"}
+                              onValueChange={(v) => setEmployeeHeroPartner(emp.id, v === "none" ? null : v)}
+                            >
+                              <SelectTrigger className="h-7 text-xs w-[200px]">
+                                <SelectValue placeholder="HERO-Mitarbeiter zuordnen" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">— Keine Zuordnung —</SelectItem>
+                                {emp.hero_partner_id && !heroPartnerOptions.some((o: any) => o.value === String(emp.hero_partner_id)) && (
+                                  <SelectItem value={String(emp.hero_partner_id)}>HERO-ID {emp.hero_partner_id}</SelectItem>
+                                )}
+                                {heroPartnerOptions.map((o: any) => (
+                                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
                       </div>
                       <div className="flex gap-1 shrink-0">
                         <Button variant="ghost" size="sm" onClick={() => openEmailDialog(emp)} title="E-Mail setzen/ändern"><Mail className="h-4 w-4" /></Button>

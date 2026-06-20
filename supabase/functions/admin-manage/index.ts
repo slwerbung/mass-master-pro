@@ -253,6 +253,7 @@ Deno.serve(async (req) => {
           email: emp.email || null,
           created_at: emp.created_at,
           hasPassword: !!emp.password_hash,
+          hero_partner_id: emp.hero_partner_id ?? null,
         }));
         return json({ employees });
       }
@@ -264,9 +265,29 @@ Deno.serve(async (req) => {
         if (params.email && String(params.email).trim()) {
           insertData.email = String(params.email).trim();
         }
+        // Optional HERO partner mapping straight from the create form.
+        if (params.heroPartnerId !== undefined && params.heroPartnerId !== null && String(params.heroPartnerId).trim() !== "") {
+          const n = Number(params.heroPartnerId);
+          if (Number.isInteger(n) && n > 0) insertData.hero_partner_id = n;
+        }
         const { data, error } = await supabase.from("employees").insert(insertData).select().single();
         if (error) return json({ error: error.message }, 400);
-        return json({ employee: { id: data.id, name: data.name, email: data.email || null, created_at: data.created_at, hasPassword: !!data.password_hash } });
+        return json({ employee: { id: data.id, name: data.name, email: data.email || null, created_at: data.created_at, hasPassword: !!data.password_hash, hero_partner_id: data.hero_partner_id ?? null } });
+      }
+      case "set_employee_hero_partner": {
+        // Map a CaptFix employee to a HERO partner_id (or clear with null/empty).
+        const employeeId = params.employeeId;
+        if (!employeeId) return json({ error: "employeeId required" }, 400);
+        const raw = params.heroPartnerId;
+        let heroPartnerId: number | null = null;
+        if (raw !== null && raw !== undefined && String(raw).trim() !== "") {
+          const n = Number(raw);
+          if (!Number.isInteger(n) || n <= 0) return json({ error: "Ungültige HERO-ID" }, 400);
+          heroPartnerId = n;
+        }
+        const { error } = await supabase.from("employees").update({ hero_partner_id: heroPartnerId }).eq("id", employeeId);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
       }
       case "delete_employee": {
         const { error } = await supabase.from("employees").delete().eq("id", params.employeeId);
@@ -651,6 +672,89 @@ Deno.serve(async (req) => {
         } catch (fetchErr: any) {
           return json({ success: false, error: `Verbindungsfehler: ${fetchErr.message}` });
         }
+      }
+
+      case "hero_list_options": {
+        // Provides option lists for the Automations UI. Sources:
+        //   hero_partners            -> employees/Mitarbeiter assignable to events
+        //   hero_resources           -> resources/Ressourcen assignable to events
+        //   hero_targets             -> combined (partners + resources), grouped
+        //   hero_calendar_categories -> event categories
+        // HERO's PartnerQuery root has no stable top-level "list all" field for
+        // partners/resources, so we derive them from existing calendar events
+        // (documented to work) and fall back to schema introspection for
+        // diagnostics if nothing is found.
+        const source = params.source;
+        const { data: keyRow } = await supabase.from("app_config").select("value").eq("key", "hero_api_key").maybeSingle();
+        const apiKey = keyRow?.value;
+        if (!apiKey) return json({ options: [], error: "Kein API Key hinterlegt" });
+
+        const heroQuery = async (q: string) => {
+          try {
+            const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+              body: JSON.stringify({ query: q }),
+            });
+            const text = await resp.text();
+            if (!resp.ok) return { error: `HTTP ${resp.status}: ${text.slice(0, 200)}` };
+            const parsed = JSON.parse(text);
+            if (parsed.errors?.length) return { error: parsed.errors[0]?.message || "GraphQL-Fehler" };
+            return { data: parsed.data };
+          } catch (e: any) {
+            return { error: e.message };
+          }
+        };
+
+        if (source === "hero_calendar_categories") {
+          const r = await heroQuery(`query { calendar_event_categories(show_deleted: false) { id name } }`);
+          if (r.error) return json({ options: [], error: r.error });
+          const options = (r.data?.calendar_event_categories || []).map((c: any) => ({ value: String(c.id), label: c.name || `#${c.id}` }));
+          return json({ options });
+        }
+
+        // Derive partners and/or resources from recent calendar events.
+        const wantPartners = source === "hero_partners" || source === "hero_targets";
+        const wantResources = source === "hero_resources" || source === "hero_targets";
+        const ev = await heroQuery(`query { calendar_events(last: 500) { partners { id full_name } resources { id name } } }`);
+
+        const partnerMap = new Map<string, string>();
+        const resourceMap = new Map<string, string>();
+        if (!ev.error) {
+          for (const e of (ev.data?.calendar_events || [])) {
+            if (wantPartners) for (const p of (e.partners || [])) {
+              if (p?.id != null) partnerMap.set(String(p.id), p.full_name || `#${p.id}`);
+            }
+            if (wantResources) for (const r of (e.resources || [])) {
+              if (r?.id != null) resourceMap.set(String(r.id), r.name || `#${r.id}`);
+            }
+          }
+        }
+
+        const options: { value: string; label: string; kind?: string }[] = [];
+        if (wantPartners) {
+          Array.from(partnerMap, ([value, label]) => ({ value, label, kind: "partner" }))
+            .sort((a, b) => a.label.localeCompare(b.label))
+            .forEach(o => options.push(o));
+        }
+        if (wantResources) {
+          Array.from(resourceMap, ([value, label]) => ({ value, label, kind: "resource" }))
+            .sort((a, b) => a.label.localeCompare(b.label))
+            .forEach(o => options.push(o));
+        }
+
+        if (options.length > 0) return json({ options });
+
+        // Diagnostics: show what the schema actually exposes.
+        const intro = await heroQuery(`query { __type(name: "PartnerQuery") { fields { name } } }`);
+        const debugFields = (intro.data?.__type?.fields || []).map((f: any) => f.name);
+        return json({
+          options: [],
+          error: ev.error
+            ? `HERO-Liste nicht abrufbar (${ev.error}). Bitte ID manuell eingeben.`
+            : "Keine Einträge über Termine gefunden. Bitte ID manuell eingeben.",
+          debug_fields: debugFields,
+        });
       }
 
       default:
