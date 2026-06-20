@@ -731,14 +731,27 @@ Deno.serve(async (req) => {
           }
         }
 
+        // For the combined "hero_targets" source we prefix the value with the
+        // kind ("partner:ID" / "resource:ID") so the automation dispatch knows
+        // whether to set partner_ids or resource_ids. For the single-purpose
+        // sources we keep the raw numeric id (employee-mapping stores a number).
+        const combined = source === "hero_targets";
         const options: { value: string; label: string; kind?: string }[] = [];
         if (wantPartners) {
-          Array.from(partnerMap, ([value, label]) => ({ value, label, kind: "partner" }))
+          Array.from(partnerMap, ([id, name]) => ({
+            value: combined ? `partner:${id}` : id,
+            label: combined ? `${name} (Mitarbeiter)` : name,
+            kind: "partner",
+          }))
             .sort((a, b) => a.label.localeCompare(b.label))
             .forEach(o => options.push(o));
         }
         if (wantResources) {
-          Array.from(resourceMap, ([value, label]) => ({ value, label, kind: "resource" }))
+          Array.from(resourceMap, ([id, name]) => ({
+            value: combined ? `resource:${id}` : id,
+            label: combined ? `${name} (Ressource)` : name,
+            kind: "resource",
+          }))
             .sort((a, b) => a.label.localeCompare(b.label))
             .forEach(o => options.push(o));
         }

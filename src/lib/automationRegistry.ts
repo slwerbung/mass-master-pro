@@ -59,9 +59,9 @@ export const ACTIONS: ActionDef[] = [
     configFields: [
       { key: "title", label: "Titel", type: "text", default: "Aufmaß vor Ort" },
       {
-        key: "partnerId", label: "Mitarbeiter (HERO)", type: "select", optional: true,
-        optionsSource: "hero_partners",
-        help: "Wer den Termin in der Plantafel bekommt. Leer = niemand zugeordnet.",
+        key: "target", label: "Termin geht an (Mitarbeiter/Ressource)", type: "select", optional: true,
+        optionsSource: "hero_targets",
+        help: "Mitarbeiter oder Ressource, die den Termin in der Plantafel bekommt. Leer = der auslösende Mitarbeiter (laut HERO-Zuordnung).",
       },
       {
         key: "dayOffset", label: "Wann", type: "select", default: "0",

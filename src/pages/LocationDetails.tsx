@@ -16,6 +16,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { scheduleSyncProject } from "@/lib/supabaseSync";
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
+import { getSession } from "@/lib/session";
 
 interface FieldConfig {
   id: string;
@@ -292,10 +293,12 @@ const LocationDetails = () => {
         // die im Admin konfigurierten Automationen (z.B. HERO-Termin).
         if (project.locations.length === 1) {
           const heroProjectId = getHeroProjectMatchId(project);
+          const sess = getSession();
+          const actingEmployeeId = sess?.role === "employee" ? sess.id : null;
           supabase.functions.invoke("run-automations", {
             body: {
               trigger_type: "first_location_created",
-              context: { projectId: project.id, heroProjectId },
+              context: { projectId: project.id, heroProjectId, actingEmployeeId },
             },
           }).catch(() => { /* best-effort, darf den Speichern-Flow nie blockieren */ });
         }

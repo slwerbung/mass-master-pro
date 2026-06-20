@@ -16,6 +16,9 @@ const HERO_GRAPHQL_URL = "https://login.hero-software.de/api/external/v9/graphql
 export interface AutomationContext {
   // The linked HERO project_match_id, when known. Calendar actions need it.
   heroProjectId?: number | null;
+  // CaptFix employee id that triggered the automation (if any). Used to
+  // default the calendar target to that employee's mapped HERO partner.
+  actingEmployeeId?: string | null;
   // Free-form extras for logging / future conditions.
   [k: string]: unknown;
 }
@@ -94,6 +97,7 @@ async function heroCreateCalendarEvent(
 }
 
 async function runHeroCalendarAction(
+  supabase: SupabaseClient,
   apiKey: string | undefined, heroEnabled: boolean,
   cfg: Record<string, any>, ctx: AutomationContext
 ): Promise<ActionResult> {
@@ -114,17 +118,58 @@ async function runHeroCalendarAction(
   };
   if (cfg.description) input.description = String(cfg.description);
   if (cfg.categoryId) input.category_id = Number(cfg.categoryId);
-  if (cfg.partnerId) input.partner_ids = [Number(cfg.partnerId)];
   if (cfg.allDay === true || cfg.allDay === "true") input.all_day = true;
 
+  // Resolve the appointment target.
+  // 1) explicit cfg.target ("partner:ID" / "resource:ID", or a raw number = partner for legacy),
+  // 2) legacy cfg.partnerId (raw number = partner),
+  // 3) fallback: the triggering employee's mapped HERO partner.
+  let partnerId: number | null = null;
+  let resourceId: number | null = null;
+  let targetNote = "";
+
+  const rawTarget = cfg.target != null && String(cfg.target).trim() !== "" ? String(cfg.target).trim() : "";
+  if (rawTarget) {
+    if (rawTarget.startsWith("resource:")) {
+      const n = Number(rawTarget.slice("resource:".length));
+      if (Number.isInteger(n) && n > 0) { resourceId = n; targetNote = `Ressource ${n}`; }
+    } else if (rawTarget.startsWith("partner:")) {
+      const n = Number(rawTarget.slice("partner:".length));
+      if (Number.isInteger(n) && n > 0) { partnerId = n; targetNote = `Mitarbeiter ${n}`; }
+    } else {
+      const n = Number(rawTarget);
+      if (Number.isInteger(n) && n > 0) { partnerId = n; targetNote = `Mitarbeiter ${n}`; }
+    }
+  } else if (cfg.partnerId) {
+    const n = Number(cfg.partnerId);
+    if (Number.isInteger(n) && n > 0) { partnerId = n; targetNote = `Mitarbeiter ${n}`; }
+  } else if (ctx.actingEmployeeId) {
+    // No explicit target — use the triggering employee's HERO mapping.
+    const { data: emp } = await supabase
+      .from("employees")
+      .select("hero_partner_id, name")
+      .eq("id", ctx.actingEmployeeId)
+      .maybeSingle();
+    if (emp?.hero_partner_id) {
+      partnerId = Number(emp.hero_partner_id);
+      targetNote = `auslösender Mitarbeiter (${emp.name || partnerId})`;
+    }
+  }
+
+  if (partnerId) input.partner_ids = [partnerId];
+  if (resourceId) input.resource_ids = [resourceId];
+
   const res = await heroCreateCalendarEvent(apiKey, input);
-  if (res.ok) return { status: "success", message: `HERO-Termin angelegt (ID ${res.id ?? "?"}) für ${start}` };
+  if (res.ok) {
+    const who = targetNote ? `, ${targetNote}` : ", ohne Zuordnung";
+    return { status: "success", message: `HERO-Termin angelegt (ID ${res.id ?? "?"}) für ${start}${who}` };
+  }
   return { status: "error", message: res.error || "Unbekannter Fehler" };
 }
 
 const ACTION_HANDLERS: Record<
   string,
-  (apiKey: string | undefined, heroEnabled: boolean, cfg: any, ctx: AutomationContext) => Promise<ActionResult>
+  (supabase: SupabaseClient, apiKey: string | undefined, heroEnabled: boolean, cfg: any, ctx: AutomationContext) => Promise<ActionResult>
 > = {
   hero_create_calendar_event: runHeroCalendarAction,
 };
@@ -157,7 +202,7 @@ export async function dispatchAutomations(
       result = { status: "error", message: `Unbekannte Aktion: ${rule.action_type}` };
     } else {
       try {
-        result = await handler(apiKey, heroEnabled, rule.action_config || {}, ctx);
+        result = await handler(supabase, apiKey, heroEnabled, rule.action_config || {}, ctx);
       } catch (e) {
         result = { status: "error", message: (e as Error).message };
       }
