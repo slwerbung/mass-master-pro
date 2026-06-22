@@ -177,7 +177,7 @@ export function LocationApprovalMedia({ annotatedUrl, pdfs, heightClass, big }: 
             <button
               onClick={() => setShowOriginal((v) => !v)}
               title={showOriginal ? "Zur Druckdatei" : "Original-Foto ansehen"}
-              className="absolute bottom-2 right-2 w-16 h-16 rounded-md overflow-hidden border-2 border-background shadow-lg bg-muted hover:scale-105 transition-transform"
+              className={`absolute bottom-2 right-2 ${big ? "w-32 h-32" : "w-24 h-24"} rounded-md overflow-hidden border-2 border-background shadow-lg bg-muted hover:scale-105 transition-transform`}
             >
               <img
                 src={showOriginal && current ? current.src : annotatedUrl}
