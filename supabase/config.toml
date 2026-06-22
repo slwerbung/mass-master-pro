@@ -26,3 +26,6 @@ verify_jwt = false
 
 [functions.get-view-settings]
 verify_jwt = false
+
+[functions.project-invite]
+verify_jwt = false
