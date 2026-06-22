@@ -674,6 +674,62 @@ Deno.serve(async (req) => {
         }
       }
 
+      case "list_automations": {
+        const { data, error } = await supabase
+          .from("automations")
+          .select("id,name,enabled,trigger_type,trigger_config,action_type,action_config,sort_order,created_at,updated_at")
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true });
+        if (error) return json({ error: error.message }, 500);
+        return json({ automations: data || [] });
+      }
+      case "list_automation_runs": {
+        const limit = Math.min(Math.max(Number(params.limit ?? 30), 1), 200);
+        const { data, error } = await supabase
+          .from("automation_runs")
+          .select("id,automation_id,automation_name,trigger_type,action_type,status,message,context,created_at")
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (error) return json({ error: error.message }, 500);
+        return json({ runs: data || [] });
+      }
+      case "create_automation": {
+        if (!params.name || !String(params.name).trim()) return json({ error: "Name fehlt" }, 400);
+        if (!params.trigger_type || !params.action_type) return json({ error: "Trigger/Aktion fehlt" }, 400);
+        const insert = {
+          name: String(params.name).trim(),
+          enabled: params.enabled !== false,
+          trigger_type: String(params.trigger_type),
+          trigger_config: params.trigger_config ?? {},
+          action_type: String(params.action_type),
+          action_config: params.action_config ?? {},
+          sort_order: Number.isFinite(Number(params.sort_order)) ? Number(params.sort_order) : 0,
+        };
+        const { data, error } = await supabase.from("automations").insert(insert).select().single();
+        if (error) return json({ error: error.message }, 500);
+        return json({ automation: data });
+      }
+      case "update_automation": {
+        if (!params.id) return json({ error: "id fehlt" }, 400);
+        const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+        if (params.name !== undefined) patch.name = String(params.name).trim();
+        if (params.enabled !== undefined) patch.enabled = !!params.enabled;
+        if (params.trigger_type !== undefined) patch.trigger_type = String(params.trigger_type);
+        if (params.trigger_config !== undefined) patch.trigger_config = params.trigger_config;
+        if (params.action_type !== undefined) patch.action_type = String(params.action_type);
+        if (params.action_config !== undefined) patch.action_config = params.action_config;
+        if (params.sort_order !== undefined) patch.sort_order = Number(params.sort_order) || 0;
+        const { data, error } = await supabase.from("automations").update(patch).eq("id", params.id).select().single();
+        if (error) return json({ error: error.message }, 500);
+        return json({ automation: data });
+      }
+      case "delete_automation": {
+        if (!params.id) return json({ error: "id fehlt" }, 400);
+        const { error } = await supabase.from("automations").delete().eq("id", params.id);
+        if (error) return json({ error: error.message }, 500);
+        return json({ success: true });
+      }
+
       case "hero_list_options": {
         // Provides option lists for the Automations UI. Sources:
         //   hero_partners            -> employees/Mitarbeiter assignable to events
