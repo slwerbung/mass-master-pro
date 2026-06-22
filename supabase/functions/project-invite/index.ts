@@ -84,6 +84,42 @@ function escapeHtml(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// HERO logbook endpoint (v9, matching hero-integration where this mutation is proven).
+const HERO_LOGBOOK_URL = "https://login.hero-software.de/api/external/v9/graphql";
+
+// Resolves HERO context for a project: returns { apiKey, heroId } only when the
+// integration is enabled AND the project is linked to a HERO project_match.
+async function heroContext(supabase: any, projectId: string): Promise<{ apiKey: string; heroId: number } | null> {
+  const { data: cfg } = await supabase.from("app_config").select("key,value").in("key", ["hero_api_key", "hero_enabled"]);
+  const map = new Map((cfg || []).map((r: any) => [r.key, r.value]));
+  const apiKey = map.get("hero_api_key") as string | undefined;
+  const enabled = map.get("hero_enabled") === "true" || map.get("hero_enabled") === true;
+  if (!enabled || !apiKey) return null;
+  const { data: proj } = await supabase.from("projects").select("custom_fields").eq("id", projectId).maybeSingle();
+  const raw = proj?.custom_fields?.__hero_project_id;
+  const heroId = Number(raw);
+  if (!Number.isFinite(heroId) || heroId <= 0) return null;
+  return { apiKey, heroId };
+}
+
+async function heroAddLogbook(apiKey: string, heroProjectId: number, title: string, text: string): Promise<{ ok: boolean; error?: string }> {
+  const mutation = `mutation($projectId: Int!, $title: String!, $text: String) { add_logbook_entry(project_match_id: $projectId, custom_title: $title, custom_text: $text) { id } }`;
+  try {
+    const resp = await fetch(HERO_LOGBOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ query: mutation, variables: { projectId: heroProjectId, title: title.slice(0, 500), text: text ? text.slice(0, 5000) : null } }),
+    });
+    const t = await resp.text();
+    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}: ${t.slice(0, 200)}` };
+    const d = JSON.parse(t);
+    if (d.errors?.length) return { ok: false, error: d.errors[0]?.message };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 function buildInviteMail(companyName: string, projectNumber: string, projectId: string, note: string) {
   const link = `${APP_BASE}/guest/${projectId}`;
   const noteBlock = note.trim()
@@ -167,6 +203,20 @@ Deno.serve(async (req) => {
         const errText = await emailRes.text();
         return json({ error: `Mailversand fehlgeschlagen: ${errText.slice(0, 200)}` }, 502);
       }
+
+      // HERO logbook entry (best-effort; never blocks the invite result).
+      try {
+        const hctx = await heroContext(supabase, projectId);
+        if (hctx) {
+          const logText =
+            `Einladung zur Korrektur/Freigabe an ${email} versendet.\n\n` +
+            `Betreff: ${subject}\n` +
+            `Link: ${APP_BASE}/guest/${projectId}` +
+            (note.trim() ? `\n\nPersönliche Nachricht:\n${note.trim()}` : "");
+          await heroAddLogbook(hctx.apiKey, hctx.heroId, "Captfix: Einladung versendet", logText);
+        }
+      } catch { /* logbook is best-effort */ }
+
       return json({ success: true });
     }
 

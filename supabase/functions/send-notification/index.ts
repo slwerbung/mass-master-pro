@@ -1,5 +1,32 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// HERO logbook endpoint (v9, matching hero-integration where this mutation is proven).
+const HERO_LOGBOOK_URL = "https://login.hero-software.de/api/external/v9/graphql";
+
+async function heroContext(supabase: any, projectId: string): Promise<{ apiKey: string; heroId: number } | null> {
+  const { data: cfg } = await supabase.from("app_config").select("key,value").in("key", ["hero_api_key", "hero_enabled"]);
+  const map = new Map((cfg || []).map((r: any) => [r.key, r.value]));
+  const apiKey = map.get("hero_api_key") as string | undefined;
+  const enabled = map.get("hero_enabled") === "true" || map.get("hero_enabled") === true;
+  if (!enabled || !apiKey) return null;
+  const { data: proj } = await supabase.from("projects").select("custom_fields").eq("id", projectId).maybeSingle();
+  const raw = proj?.custom_fields?.__hero_project_id;
+  const heroId = Number(raw);
+  if (!Number.isFinite(heroId) || heroId <= 0) return null;
+  return { apiKey, heroId };
+}
+
+async function heroAddLogbook(apiKey: string, heroProjectId: number, title: string, text: string): Promise<void> {
+  const mutation = `mutation($projectId: Int!, $title: String!, $text: String) { add_logbook_entry(project_match_id: $projectId, custom_title: $title, custom_text: $text) { id } }`;
+  try {
+    await fetch(HERO_LOGBOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ query: mutation, variables: { projectId: heroProjectId, title: title.slice(0, 500), text: text ? text.slice(0, 5000) : null } }),
+    });
+  } catch { /* best-effort */ }
+}
+
 /**
  * Customer activity notifications. Triggered from the customer-facing
  * approval/commenting flow. Three event types, each with its own
@@ -244,6 +271,21 @@ Deno.serve(async (req) => {
       assignment_id: assignmentId,
       ...updateFields,
     }, { onConflict: "assignment_id" });
+
+    // On full approval, also write a HERO logbook entry (best-effort) so the
+    // approval is documented in the HERO project, not just via the email.
+    if (event === "completion") {
+      try {
+        const hctx = await heroContext(supabase, projectId);
+        if (hctx) {
+          await heroAddLogbook(
+            hctx.apiKey, hctx.heroId,
+            "Captfix: Freigabe durch Kunde",
+            `${customerName} hat das Projekt ${projectNumber} vollständig freigegeben.`
+          );
+        }
+      } catch { /* logbook is best-effort */ }
+    }
 
     return json({ sent: true, event, recipient: recipientEmail });
   } catch (e: any) {
