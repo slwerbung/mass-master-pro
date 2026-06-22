@@ -84,24 +84,23 @@ function escapeHtml(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function buildInviteMail(projectNumber: string, projectId: string, note: string) {
+function buildInviteMail(companyName: string, projectNumber: string, projectId: string, note: string) {
   const link = `${APP_BASE}/guest/${projectId}`;
   const noteBlock = note.trim()
     ? `<p style="margin:16px 0;white-space:pre-wrap">${escapeHtml(note.trim())}</p>`
     : "";
-  const subject = `Freigabe-Anfrage: Projekt ${projectNumber}`;
+  const subject = `Korrektur / Freigabe – Einladung von ${companyName} · Projekt ${projectNumber}`;
   const html = `
-    <div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:560px">
+    <div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:560px;line-height:1.5">
       <p>Guten Tag,</p>
-      <p>für Ihr Projekt <strong>${escapeHtml(projectNumber)}</strong> haben wir die Standorte und Layouts zur Freigabe vorbereitet.</p>
-      <p>Bitte öffnen Sie den folgenden Link, sehen Sie sich die Standorte an und erteilen Sie Ihre Freigabe direkt online – ganz ohne Anmeldung:</p>
+      <p><strong>${escapeHtml(companyName)}</strong> hat für Ihr Projekt <strong>${escapeHtml(projectNumber)}</strong> die Standorte zur Freigabe bereitgestellt. Die Prüfung läuft online über <strong>Captfix</strong> (captfix.app).</p>
       ${noteBlock}
+      <p style="margin:16px 0"><strong>So geht's:</strong> Link öffnen, Ihren Namen eingeben, dann Standorte freigeben oder Korrekturen hinterlassen.</p>
       <p style="margin:24px 0">
         <a href="${link}" style="background:#0E73E8;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:600">Standorte ansehen &amp; freigeben</a>
       </p>
-      <p style="font-size:13px;color:#666">Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:<br>${link}</p>
-      <hr style="margin:24px 0;border:none;border-top:1px solid #eee">
-      <p style="color:#888;font-size:12px;margin:0">Diese Einladung wurde von SL Werbung über Captfix versendet.</p>
+      <p style="font-size:13px;color:#666">Link: ${link}</p>
+      <p style="margin-top:20px">Mit freundlichen Grüßen<br>${escapeHtml(companyName)}</p>
     </div>`;
   return { subject, html };
 }
@@ -144,10 +143,21 @@ Deno.serve(async (req) => {
       const { data: proj } = await supabase.from("projects").select("project_number").eq("id", projectId).maybeSingle();
       const projectNumber = proj?.project_number || projectId.slice(0, 8);
 
+      // Company name from settings (legal_info). Multi-tenant ready: later this
+      // comes from the tenant's settings instead of the single legal_info row.
+      let companyName = "SL WERBUNG";
+      const { data: legalRow } = await supabase.from("app_config").select("value").eq("key", "legal_info").maybeSingle();
+      if (legalRow?.value) {
+        try {
+          const info = JSON.parse(legalRow.value);
+          if (info?.companyName && String(info.companyName).trim()) companyName = String(info.companyName).trim();
+        } catch { /* keep default */ }
+      }
+
       const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
       if (!RESEND_API_KEY) return json({ error: "RESEND_API_KEY not configured" }, 500);
 
-      const { subject, html } = buildInviteMail(projectNumber, projectId, note);
+      const { subject, html } = buildInviteMail(companyName, projectNumber, projectId, note);
       const emailRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
