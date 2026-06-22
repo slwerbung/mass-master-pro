@@ -31,11 +31,15 @@ import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 import { readImageFileForEditor } from "@/lib/imageFile";
 import { useDirectCamera } from "@/lib/useDirectCamera";
 import ProjectInfoFields from "@/components/ProjectInfoFields";
+import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
+import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
+import { Mail } from "lucide-react";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [isOnlineOnly, setIsOnlineOnly] = useState(false);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<any[]>([]);
@@ -251,9 +255,14 @@ const ProjectDetail = () => {
             <p className="text-muted-foreground mt-1 text-sm md:text-base">{project.locations.length} {project.locations.length === 1 ? "Standort" : "Standorte"}{isPlanProject && ` · ${project.floorPlans?.length || 0} Grundriss(e)`}</p>
             <p className="text-xs md:text-sm text-muted-foreground mt-1">Erstellt am {formatDateTimeSafe(project.createdAt)}</p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => { const guestUrl = `${window.location.origin}/guest/${projectId}`; navigator.clipboard.writeText(guestUrl); toast.success("Gast-Link kopiert!"); }}>
-            <Share2 className="h-4 w-4 mr-1" /><span className="hidden sm:inline">Gast-Link</span>
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setInviteOpen(true)}>
+              <Mail className="h-4 w-4 mr-1" /><span className="hidden sm:inline">Kunde einladen</span>
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => { const guestUrl = `${window.location.origin}/guest/${projectId}`; navigator.clipboard.writeText(guestUrl); toast.success("Gast-Link kopiert!"); }}>
+              <Share2 className="h-4 w-4 mr-1" /><span className="hidden sm:inline">Gast-Link</span>
+            </Button>
+          </div>
         </div>
 
 
@@ -315,6 +324,16 @@ const ProjectDetail = () => {
           <Button size="lg" variant="outline" onClick={() => navigate(`/projects/${projectId}/export`)} className="flex-1 h-12 md:h-11 px-2 md:px-4"><Download className="mr-1 h-4 w-4 md:h-5 md:w-5 shrink-0" /><span className="text-xs md:text-base">Export</span></Button>
         </div>
       </div>
+
+      {projectId && (
+        <InviteCustomerDialog
+          open={inviteOpen}
+          onOpenChange={setInviteOpen}
+          projectId={projectId}
+          projectNumber={project.projectNumber}
+          heroProjectId={getHeroProjectMatchId(project)}
+        />
+      )}
     </div>
   );
 };
