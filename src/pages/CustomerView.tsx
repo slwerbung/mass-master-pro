@@ -21,6 +21,7 @@ import { naturalLocationSortDesc } from "@/lib/locationSorting";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import { FullscreenApproval, FsLocation } from "@/components/FullscreenApproval";
+import { FloorPlanApproval, PlanPage } from "@/components/FloorPlanApproval";
 import { Maximize2 } from "lucide-react";
 
 interface FieldConfig {
@@ -81,6 +82,7 @@ const CustomerView = () => {
   const [images, setImages] = useState<any[]>([]);
   const [fsOpen, setFsOpen] = useState(false);
   const [fsIndex, setFsIndex] = useState(0);
+  const [floorPlans, setFloorPlans] = useState<any[]>([]);
   const [detailImagesByLocation, setDetailImagesByLocation] = useState<Record<string, any[]>>({});
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [projectFields, setProjectFields] = useState<any[]>([]);
@@ -314,6 +316,17 @@ const CustomerView = () => {
       const paths = allImgs.map((img: any) => img.storage_path).filter(Boolean);
       resolveSignedUrls(paths);
       setApprovals({});
+      // Grundrisse (Floor Plans) für dieses Projekt laden — mit klickbaren Markern.
+      {
+        const { data: planRows } = await supabase
+          .from("floor_plans")
+          .select("id, name, storage_path, markers, page_index")
+          .eq("project_id", projectId)
+          .order("page_index", { ascending: true });
+        setFloorPlans(planRows || []);
+        const planPaths = (planRows || []).map((p: any) => p.storage_path).filter(Boolean);
+        if (planPaths.length > 0) resolveSignedUrls(planPaths);
+      }
       if (locationIds.length > 0) {
         const { data: detailRows } = await supabase
           .from("detail_images")
@@ -413,6 +426,17 @@ const CustomerView = () => {
           ...((pdfs || []).map((p: any) => p.storage_path)),
         ].filter(Boolean);
         if (mainPaths.length > 0) resolveSignedUrls(mainPaths);
+        // Grundrisse (Floor Plans) für dieses Projekt laden — mit klickbaren Markern.
+        {
+          const { data: planRows } = await supabase
+            .from("floor_plans")
+            .select("id, name, storage_path, markers, page_index")
+            .eq("project_id", assignment.project_id)
+            .order("page_index", { ascending: true });
+          setFloorPlans(planRows || []);
+          const planPaths = (planRows || []).map((p: any) => p.storage_path).filter(Boolean);
+          if (planPaths.length > 0) resolveSignedUrls(planPaths);
+        }
         const detailMap: Record<string, any[]> = {};
         (detailRows || []).forEach((row: any) => {
           if (!detailMap[row.location_id]) detailMap[row.location_id] = [];
@@ -557,10 +581,11 @@ const CustomerView = () => {
     const paths = [
       ...images.map((i: any) => i.storage_path),
       ...Object.values(detailImagesByLocation).flat().flatMap((d: any) => [d.annotated_path, d.original_path]),
+      ...floorPlans.map((fp: any) => fp.storage_path),
     ].filter(Boolean);
     if (paths.length > 0) resolveSignedUrls(paths);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [images, detailImagesByLocation]);
+  }, [images, detailImagesByLocation, floorPlans]);
 
   const triggerNotification = async (changeType: "approval" | "comment") => {
     if (!selectedAssignment || isLimitedGuestMode) return;
@@ -1283,6 +1308,36 @@ const CustomerView = () => {
                 </CardContent>
               </Card>
             )}
+
+            {floorPlans.length > 0 && (() => {
+              const planPages: PlanPage[] = floorPlans.map((fp: any) => ({
+                id: fp.id,
+                name: fp.name,
+                imageUrl: getSignedImageUrl(fp.storage_path),
+                markers: Array.isArray(fp.markers) ? fp.markers : [],
+              })).filter((pp: PlanPage) => pp.imageUrl);
+              if (planPages.length === 0) return null;
+              const locNumber = (id: string) => {
+                const l = locations.find((x: any) => x.id === id);
+                return l ? String(l.location_number) : "?";
+              };
+              const openForLocation = (locationId: string) => {
+                const i = sortedLocations.findIndex((l: any) => l.id === locationId);
+                if (i >= 0) { setFsIndex(i); setFsOpen(true); }
+              };
+              return (
+                <Card>
+                  <CardContent className="p-4">
+                    <FloorPlanApproval
+                      pages={planPages}
+                      locationNumber={locNumber}
+                      isApproved={(id) => !!approvals[id]}
+                      onMarkerClick={openForLocation}
+                    />
+                  </CardContent>
+                </Card>
+              );
+            })()}
 
             <div className="space-y-4">
               {sortedLocations.map((loc) => {
