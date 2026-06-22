@@ -19,6 +19,9 @@ import LocationInfoFields from "@/components/LocationInfoFields";
 import ProjectInfoFields from "@/components/ProjectInfoFields";
 import { naturalLocationSortDesc } from "@/lib/locationSorting";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
+import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
+import { FullscreenApproval, FsLocation } from "@/components/FullscreenApproval";
+import { Maximize2 } from "lucide-react";
 
 interface FieldConfig {
   id?: string;
@@ -76,6 +79,8 @@ const CustomerView = () => {
   const [selectedAssignment, setSelectedAssignment] = useState<any | null>(null);
   const [locations, setLocations] = useState<any[]>([]);
   const [images, setImages] = useState<any[]>([]);
+  const [fsOpen, setFsOpen] = useState(false);
+  const [fsIndex, setFsIndex] = useState(0);
   const [detailImagesByLocation, setDetailImagesByLocation] = useState<Record<string, any[]>>({});
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [projectFields, setProjectFields] = useState<any[]>([]);
@@ -1214,6 +1219,11 @@ const CustomerView = () => {
                       {someApproved && (
                         <Button size="sm" variant="outline" onClick={() => approveAll(false)} disabled={savingApprovals}>Alle zurücknehmen</Button>
                       )}
+                      {locations.length > 0 && (
+                        <Button size="sm" variant="outline" onClick={() => { setFsIndex(0); setFsOpen(true); }}>
+                          <Maximize2 className="h-4 w-4 mr-1" /> Schnellfreigabe
+                        </Button>
+                      )}
                       <Button size="sm" onClick={() => approveAll(true)} disabled={allApproved || savingApprovals}>
                         <CheckCheck className="h-4 w-4 mr-1" /> Alle freigeben
                       </Button>
@@ -1299,10 +1309,13 @@ const CustomerView = () => {
                       </div>
                     </CardHeader>
                     <CardContent className="p-4 space-y-4">
-                      {annotated && (
-                        <div className="bg-muted rounded-lg overflow-hidden flex items-center justify-center min-h-[180px]">
-                          <img src={getSignedImageUrl(annotated.storage_path)} alt={`Standort ${loc.location_number}`} className="w-full h-auto max-h-[70vh] object-contain" />
-                        </div>
+                      {(annotated || (viewSettings.customerShowPrintFiles && pdfEntries.length > 0)) && (
+                        <LocationApprovalMedia
+                          annotatedUrl={annotated ? getSignedImageUrl(annotated.storage_path) : undefined}
+                          pdfs={viewSettings.customerShowPrintFiles
+                            ? pdfEntries.map((p: any) => ({ url: getSignedImageUrl(p.storage_path), name: p.file_name })).filter((p: any) => p.url)
+                            : []}
+                        />
                       )}
 
                       {visibleFields.length > 0 && (
@@ -1364,6 +1377,31 @@ const CustomerView = () => {
           </>
         )}
       </div>
+
+      {fsOpen && (() => {
+        const fsLocations: FsLocation[] = sortedLocations.map((loc: any) => {
+          const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
+          const pdfEntries = images.filter((i: any) => i.location_id === loc.id && i.image_type === "pdf");
+          return {
+            id: loc.id,
+            label: `Standort ${loc.location_number}${loc.location_name ? " · " + loc.location_name : ""}`,
+            annotatedUrl: annotated ? getSignedImageUrl(annotated.storage_path) : undefined,
+            pdfs: viewSettings.customerShowPrintFiles
+              ? pdfEntries.map((p: any) => ({ url: getSignedImageUrl(p.storage_path), name: p.file_name })).filter((p: any) => p.url)
+              : [],
+            approved: !!approvals[loc.id],
+          };
+        });
+        return (
+          <FullscreenApproval
+            locations={fsLocations}
+            index={fsIndex}
+            setIndex={setFsIndex}
+            onToggleApprove={(id, approved) => toggleApproval(id, approved)}
+            onClose={() => setFsOpen(false)}
+          />
+        );
+      })()}
     </div>
   );
 };
