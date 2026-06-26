@@ -1,17 +1,15 @@
-// Edge function: a customer uploads an existing layout (PDF) for their
-// vehicle project, right after submitting the vehicle inquiry.
+// Edge function: a customer uploads layout file(s) for their vehicle project.
 //
 // Flow:
-//   1. Validate: project must exist, file must be a PDF.
-//   2. Store the PDF in Supabase Storage + a row in project_layouts.
-//   3. If the project is linked to HERO, mirror the PDF into the HERO
-//      project as a document (using the configured document_type_id for
-//      "layout_pdf", falling back to no type if unset).
+//   1. Accept either a `files` array (new) or a single `fileDataUrl` (legacy).
+//   2. Validate each file: allowed MIME type, max 25 MB.
+//   3. Verify the project exists.
+//   4. Store all files in Supabase Storage + rows in project_layouts.
+//   5. If the project is linked to HERO, mirror each file as a document.
+//   6. If a comment was provided, add a HERO logbook entry.
 //
-// This function uses the service role, so it works for the public
-// (not-logged-in) customer who just filled in the inquiry form. We
-// guard by requiring a valid project_id that actually exists; there's
-// no auth token because the customer has none at this point.
+// Uses service role — no auth token required. The public customer who just
+// submitted a vehicle inquiry has no session.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -22,8 +20,18 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const HERO_GRAPHQL_URL = "https://login.hero-software.de/api/external/v7/graphql";
+const HERO_GRAPHQL_URL = "https://login.hero-software.de/api/external/v9/graphql";
 const HERO_UPLOAD_URL = "https://login.hero-software.de/app/v8/FileUploads/upload";
+
+const ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/svg+xml",
+  "application/postscript", // .ai / .eps
+]);
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -41,6 +49,11 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([arr], { type: m[1] });
 }
 
+function mimeFromDataUrl(dataUrl: string): string {
+  const m = /^data:([^;]+);/.exec(dataUrl);
+  return m ? m[1] : "application/octet-stream";
+}
+
 function sanitizeFilename(name: string): string {
   return name
     .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue")
@@ -51,8 +64,6 @@ function sanitizeFilename(name: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
-// Upload a document (PDF) to a HERO project_match. Two-step: REST upload
-// for the UUID, then GraphQL upload_document with the document_type_id.
 async function heroUploadDocument(
   apiKey: string,
   projectMatchId: number,
@@ -77,18 +88,6 @@ async function heroUploadDocument(
     } catch { /* ignore */ }
     if (!uuid) return { ok: false, error: "Keine UUID in Upload-Antwort" };
 
-    // HERO upload_document mutation structure (verified against the
-    // schema + a live PowerShell test):
-    //   upload_document(
-    //     document: CustomerDocumentInput!   <- ONLY document_type_id
-    //     file_upload_uuid: String!          <- separate arg
-    //     target: LinkTargetEnum!            <- enum literal, not a string
-    //     target_id: Int!                    <- separate arg
-    //   ) { id }
-    // The earlier version wrongly stuffed target/target_id/uuid into a
-    // single customer_document object - that fails validation. We now
-    // mirror exactly what the working image/document path in
-    // hero-upload-proxy does.
     const doc: Record<string, unknown> = {};
     if (documentTypeId != null && Number.isFinite(documentTypeId)) {
       doc.document_type_id = documentTypeId;
@@ -117,6 +116,34 @@ async function heroUploadDocument(
   }
 }
 
+async function heroAddLogbookEntry(
+  apiKey: string,
+  projectMatchId: number,
+  title: string,
+  text: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const mutation = `
+      mutation($projectId: Int!, $title: String!, $text: String) {
+        add_logbook_entry(project_match_id: $projectId, custom_title: $title, custom_text: $text) { id }
+      }
+    `;
+    const r = await fetch(HERO_GRAPHQL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        query: mutation,
+        variables: { projectId: projectMatchId, title: title.slice(0, 500), text: text.slice(0, 5000) },
+      }),
+    });
+    const data = await r.json();
+    if (data.errors?.length) return { ok: false, error: data.errors.map((e: any) => e.message).join("; ") };
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -128,12 +155,38 @@ serve(async (req) => {
 
     const body = await req.json();
     const projectId = String(body.projectId || "").trim();
-    const fileDataUrl = String(body.fileDataUrl || "");
-    const filename = sanitizeFilename(String(body.filename || "layout.pdf"));
+    const comment = typeof body.comment === "string" ? body.comment.trim() : "";
 
     if (!projectId) return json({ ok: false, error: "projectId fehlt" }, 400);
-    if (!fileDataUrl.startsWith("data:application/pdf")) {
-      return json({ ok: false, error: "Nur PDF-Dateien sind erlaubt" }, 400);
+
+    // Normalize to a unified list of {dataUrl, filename} entries.
+    // New callers send body.files (array); the legacy single-file path
+    // used body.fileDataUrl / body.filename.
+    let fileEntries: { dataUrl: string; filename: string }[];
+    if (Array.isArray(body.files) && body.files.length > 0) {
+      fileEntries = body.files.map((f: any) => ({
+        dataUrl: String(f.dataUrl || ""),
+        filename: sanitizeFilename(String(f.filename || "datei")),
+      }));
+    } else if (body.fileDataUrl) {
+      fileEntries = [{
+        dataUrl: String(body.fileDataUrl),
+        filename: sanitizeFilename(String(body.filename || "layout.pdf")),
+      }];
+    } else {
+      return json({ ok: false, error: "Keine Dateien angegeben" }, 400);
+    }
+
+    // Validate all files before touching storage.
+    for (const entry of fileEntries) {
+      const mime = mimeFromDataUrl(entry.dataUrl);
+      if (!ALLOWED_MIME_TYPES.has(mime)) {
+        return json({ ok: false, error: `Dateityp nicht erlaubt: ${mime} (${entry.filename})` }, 400);
+      }
+      const blob = dataUrlToBlob(entry.dataUrl);
+      if (blob.size > 25 * 1024 * 1024) {
+        return json({ ok: false, error: `Datei zu groß (max. 25 MB): ${entry.filename}` }, 400);
+      }
     }
 
     // Verify the project exists (basic guard for this public endpoint).
@@ -146,35 +199,38 @@ serve(async (req) => {
       return json({ ok: false, error: "Projekt nicht gefunden" }, 404);
     }
 
-    const blob = dataUrlToBlob(fileDataUrl);
-    // Hard cap ~25 MB to avoid runaway payloads.
-    if (blob.size > 25 * 1024 * 1024) {
-      return json({ ok: false, error: "Datei zu groß (max. 25 MB)" }, 400);
+    // Upload all files.
+    const storedPaths: string[] = [];
+    for (const entry of fileEntries) {
+      const blob = dataUrlToBlob(entry.dataUrl);
+      const mime = mimeFromDataUrl(entry.dataUrl);
+      const path = `layouts/${projectId}/${Date.now()}_${entry.filename}`;
+      const { error: upErr } = await supabase.storage
+        .from("project-files")
+        .upload(path, blob, { contentType: mime });
+      if (upErr) {
+        return json({
+          ok: false,
+          error: `Storage-Upload fehlgeschlagen (${entry.filename}): ${upErr.message}`,
+        }, 500);
+      }
+      storedPaths.push(path);
+
+      try {
+        await supabase.from("project_layouts").insert({
+          project_id: projectId,
+          storage_path: path,
+          file_name: entry.filename,
+          comment: comment || null,
+          uploaded_by: "Kunde",
+        });
+      } catch (e) {
+        console.warn("project_layouts insert failed:", e);
+      }
     }
 
-    // 1. Store in Supabase Storage
-    const path = `layouts/${projectId}/${Date.now()}_${filename}`;
-    const { error: upErr } = await supabase.storage
-      .from("project-files")
-      .upload(path, blob, { contentType: "application/pdf" });
-    if (upErr) {
-      return json({ ok: false, error: "Storage-Upload fehlgeschlagen: " + upErr.message }, 500);
-    }
-
-    // 2. Track it in project_layouts (best-effort; table may need creating)
-    try {
-      await supabase.from("project_layouts").insert({
-        project_id: projectId,
-        storage_path: path,
-        file_name: body.filename || filename,
-        uploaded_by: "Kunde",
-      });
-    } catch (e) {
-      console.warn("project_layouts insert failed (table missing?)", e);
-    }
-
-    // 3. Mirror to HERO if linked
-    let heroResult: { ok: boolean; error?: string } | null = null;
+    // Mirror to HERO if the project is linked.
+    let heroWarning: string | undefined;
     const heroProjectId = Number((project as any).custom_fields?.__hero_project_id);
     if (Number.isFinite(heroProjectId) && heroProjectId > 0) {
       const { data: cfg } = await supabase
@@ -188,22 +244,39 @@ serve(async (req) => {
       const docTypeId = docTypeRaw ? parseInt(String(docTypeRaw), 10) : null;
 
       if (heroEnabled && apiKey) {
-        heroResult = await heroUploadDocument(
-          apiKey,
-          heroProjectId,
-          blob,
-          filename,
-          Number.isFinite(docTypeId as number) ? docTypeId : null,
-        );
-        if (!heroResult.ok) console.warn("HERO layout upload failed:", heroResult.error);
+        const heroErrors: string[] = [];
+        for (const entry of fileEntries) {
+          const blob = dataUrlToBlob(entry.dataUrl);
+          const mime = mimeFromDataUrl(entry.dataUrl);
+          const typedBlob = new Blob([blob], { type: mime });
+          const res = await heroUploadDocument(
+            apiKey, heroProjectId, typedBlob, entry.filename,
+            Number.isFinite(docTypeId as number) ? docTypeId : null,
+          );
+          if (!res.ok) {
+            console.warn("HERO layout upload failed:", res.error);
+            heroErrors.push(`${entry.filename}: ${res.error}`);
+          }
+        }
+        if (heroErrors.length > 0) {
+          heroWarning = `Layout gespeichert, HERO-Upload teilweise fehlgeschlagen: ${heroErrors.join("; ")}`;
+        }
+
+        // Add customer comment as a HERO logbook entry.
+        if (comment) {
+          const logRes = await heroAddLogbookEntry(
+            apiKey, heroProjectId,
+            "Kommentar zum Layout (Kunde)",
+            comment,
+          );
+          if (!logRes.ok) {
+            console.warn("HERO logbook entry failed:", logRes.error);
+          }
+        }
       }
     }
 
-    return json({
-      ok: true,
-      storagePath: path,
-      hero: heroResult,
-    });
+    return json({ ok: true, storagePaths: storedPaths, heroWarning });
   } catch (e: any) {
     return json({ ok: false, error: e.message || String(e) }, 500);
   }
