@@ -32,14 +32,16 @@ import { readImageFileForEditor } from "@/lib/imageFile";
 import { useDirectCamera } from "@/lib/useDirectCamera";
 import ProjectInfoFields from "@/components/ProjectInfoFields";
 import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
+import { SplitPdfDialog } from "@/components/SplitPdfDialog";
 import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
-import { Mail } from "lucide-react";
+import { Mail, Scissors } from "lucide-react";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [splitOpen, setSplitOpen] = useState(false);
   const [isOnlineOnly, setIsOnlineOnly] = useState(false);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<any[]>([]);
@@ -256,6 +258,11 @@ const ProjectDetail = () => {
             <p className="text-xs md:text-sm text-muted-foreground mt-1">Erstellt am {formatDateTimeSafe(project.createdAt)}</p>
           </div>
           <div className="flex gap-2">
+            {project.locations.length > 0 && (
+              <Button variant="outline" size="sm" onClick={() => setSplitOpen(true)}>
+                <Scissors className="h-4 w-4 mr-1" /><span className="hidden sm:inline">PDF aufteilen</span>
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => setInviteOpen(true)}>
               <Mail className="h-4 w-4 mr-1" /><span className="hidden sm:inline">Kunde einladen</span>
             </Button>
@@ -332,6 +339,16 @@ const ProjectDetail = () => {
           projectId={projectId}
           projectNumber={project.projectNumber}
           heroProjectId={getHeroProjectMatchId(project)}
+        />
+      )}
+
+      {projectId && (
+        <SplitPdfDialog
+          open={splitOpen}
+          onOpenChange={setSplitOpen}
+          projectId={projectId}
+          projectNumber={project.projectNumber}
+          locations={project.locations.map((l) => ({ id: l.id, locationNumber: l.locationNumber }))}
         />
       )}
     </div>
