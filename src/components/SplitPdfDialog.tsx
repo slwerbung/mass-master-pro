@@ -43,6 +43,7 @@ export function SplitPdfDialog({ open, onOpenChange, projectId, projectNumber, l
   const [thumbs, setThumbs] = useState<(string | null)[]>([]);
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Reset everything when the dialog closes.
@@ -62,8 +63,7 @@ export function SplitPdfDialog({ open, onOpenChange, projectId, projectNumber, l
     return mb < 1 ? `${Math.round(bytes / 1024)} KB` : `${mb.toFixed(1)} MB`;
   };
 
-  const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
+  const handleFile = async (f: File | undefined | null) => {
     if (!f) return;
     if (f.type !== "application/pdf") { toast.error("Bitte eine PDF-Datei auswählen."); return; }
     fileRef.current = f;
@@ -87,8 +87,18 @@ export function SplitPdfDialog({ open, onOpenChange, projectId, projectNumber, l
       fileRef.current = null; setFileName("");
     } finally {
       setLoadingDoc(false);
-      if (inputRef.current) inputRef.current.value = "";
     }
+  };
+
+  const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    await handleFile(e.target.files?.[0]);
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    handleFile(e.dataTransfer.files?.[0]);
   };
 
   // Lazily render a page thumbnail when its row scrolls into view.
@@ -193,20 +203,27 @@ export function SplitPdfDialog({ open, onOpenChange, projectId, projectNumber, l
     <Dialog open={open} onOpenChange={(o) => { if (!processing) onOpenChange(o); }}>
       <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><Scissors className="h-5 w-5" /> Mehrseitiges PDF aufteilen</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><FileUp className="h-5 w-5" /> Produktionsdaten hochladen</DialogTitle>
         </DialogHeader>
+
+        <input ref={inputRef} type="file" accept="application/pdf" onChange={onPick} className="hidden" />
 
         {!fileName ? (
           <div className="py-8">
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => inputRef.current?.click()}
-              className="w-full border-2 border-dashed rounded-lg p-8 text-center hover:bg-muted/50 transition-colors"
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") inputRef.current?.click(); }}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              className={`w-full border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${dragOver ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}
             >
               <FileUp className="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
-              <p className="font-medium">PDF auswählen</p>
-              <p className="text-sm text-muted-foreground mt-1">Eine Datei mit allen Standort-Seiten</p>
-            </button>
+              <p className="font-medium">PDF mit Produktionsdaten hierher ziehen oder klicken</p>
+              <p className="text-sm text-muted-foreground mt-1">Eine Datei mit allen Standort-Seiten – wird automatisch auf die Standorte verteilt</p>
+            </div>
             <p className="text-xs text-muted-foreground mt-4 text-center">
               Große Dateien werden im Browser verarbeitet – am besten am Desktop-Rechner.
             </p>

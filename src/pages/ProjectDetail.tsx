@@ -34,7 +34,7 @@ import ProjectInfoFields from "@/components/ProjectInfoFields";
 import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import { SplitPdfDialog } from "@/components/SplitPdfDialog";
 import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
-import { Mail, Scissors } from "lucide-react";
+import { Mail, Upload } from "lucide-react";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
@@ -260,7 +260,7 @@ const ProjectDetail = () => {
           <div className="flex gap-2">
             {project.locations.length > 0 && (
               <Button variant="outline" size="sm" onClick={() => setSplitOpen(true)}>
-                <Scissors className="h-4 w-4 mr-1" /><span className="hidden sm:inline">PDF aufteilen</span>
+                <Upload className="h-4 w-4 mr-1" /><span className="hidden sm:inline">Produktionsdaten</span>
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={() => setInviteOpen(true)}>
