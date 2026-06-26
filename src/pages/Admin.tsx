@@ -94,6 +94,15 @@ const Admin = () => {
     completion: { enabled: false, target: "global" },
   });
   const [savingNotif, setSavingNotif] = useState(false);
+
+  // Reminder settings
+  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [reminderDays, setReminderDays] = useState(3);
+  const [reminderEmailText, setReminderEmailText] = useState("");
+  const [reminderPending, setReminderPending] = useState(0);
+  const [savingReminder, setSavingReminder] = useState(false);
+  const [sendingReminders, setSendingReminders] = useState(false);
+
   const [fields, setFields] = useState<FieldConfig[]>([]);
   const [projectFields, setProjectFields] = useState<FieldConfig[]>([]);
   const [newFieldLabel, setNewFieldLabel] = useState("");
@@ -190,7 +199,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadNotifSettings(); loadVehicleFields(); loadIntegrations(); loadHeroDocTypeConfig(); loadHeroImgCatConfig(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadNotifSettings(); loadReminderSettings(); loadVehicleFields(); loadIntegrations(); loadHeroDocTypeConfig(); loadHeroImgCatConfig(); }
   }, [adminToken]);
 
   // Once we know HERO is enabled and has a key, auto-fetch the
@@ -376,6 +385,51 @@ const Admin = () => {
 
   const updateEventSetting = (event: NotificationEvent, partial: Partial<NotificationEventSetting>) => {
     setNotifSettings(prev => ({ ...prev, [event]: { ...prev[event], ...partial } }));
+  };
+
+  const loadReminderSettings = async () => {
+    try {
+      const data = await invoke("get_reminder_settings");
+      setReminderEnabled(!!data?.enabled);
+      setReminderDays(data?.days ?? 3);
+      setReminderEmailText(data?.emailText || "");
+      setReminderPending(data?.pendingInvites ?? 0);
+    } catch {}
+  };
+
+  const saveReminderSettings = async () => {
+    setSavingReminder(true);
+    try {
+      await invoke("set_reminder_settings", {
+        enabled: reminderEnabled,
+        days: reminderDays,
+        emailText: reminderEmailText,
+      });
+      toast.success("Erinnerungseinstellungen gespeichert");
+    } catch (e: any) {
+      toast.error(e.message || "Fehler beim Speichern");
+    }
+    setSavingReminder(false);
+  };
+
+  const sendRemindersNow = async () => {
+    setSendingReminders(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-reminders", {
+        body: { token: session?.authToken },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (data?.skipped && data?.reason) {
+        toast.info(data.reason);
+      } else {
+        toast.success(`${data?.sent ?? 0} Erinnerung(en) gesendet, ${data?.skipped ?? 0} übersprungen`);
+        loadReminderSettings();
+      }
+    } catch (e: any) {
+      toast.error("Fehler: " + (e.message || String(e)));
+    }
+    setSendingReminders(false);
   };
 
   const loadFields = async () => {
@@ -1213,6 +1267,73 @@ const Admin = () => {
                 <Button onClick={saveNotifSettings} disabled={savingNotif}>
                   {savingNotif ? "Speichert..." : "Speichern"}
                 </Button>
+              </CardContent>
+            </Card>
+
+            {/* Reminder card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2"><Mail className="h-5 w-5" /> Erinnerungsmail</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <p className="text-sm text-muted-foreground">
+                  Wenn ein eingeladener Kunde den Freigabe-Link nach einer bestimmten
+                  Anzahl von Tagen noch nicht geöffnet (keine Feedback-Einträge vorhanden) hat,
+                  wird automatisch eine Erinnerungsmail an die Kunden-Adresse gesendet.
+                  Die Erinnerung wird nur einmal pro Einladung versendet.
+                </p>
+
+                <div className="flex items-center gap-3">
+                  <Switch
+                    checked={reminderEnabled}
+                    onCheckedChange={setReminderEnabled}
+                    id="reminder-enabled"
+                  />
+                  <Label htmlFor="reminder-enabled">Erinnerungen aktivieren</Label>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="reminder-days">Tage bis zur Erinnerung</Label>
+                  <Input
+                    id="reminder-days"
+                    type="number"
+                    min={1}
+                    max={30}
+                    value={reminderDays}
+                    onChange={(e) => setReminderDays(Math.max(1, parseInt(e.target.value) || 3))}
+                    disabled={!reminderEnabled}
+                    className="w-28"
+                  />
+                  <p className="text-xs text-muted-foreground">Erinnerung wird nach {reminderDays} Tag(en) ohne Rückmeldung versendet.</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="reminder-text">Zusätzlicher Text in der Erinnerungsmail (optional)</Label>
+                  <textarea
+                    id="reminder-text"
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+                    rows={3}
+                    placeholder="z.B. Bitte nehmen Sie sich kurz die Zeit, die Standorte zu prüfen…"
+                    value={reminderEmailText}
+                    onChange={(e) => setReminderEmailText(e.target.value)}
+                    disabled={!reminderEnabled}
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-2 items-center">
+                  <Button onClick={saveReminderSettings} disabled={savingReminder}>
+                    {savingReminder ? "Speichert..." : "Einstellungen speichern"}
+                  </Button>
+                  {reminderEnabled && (
+                    <Button variant="outline" onClick={sendRemindersNow} disabled={sendingReminders}>
+                      {sendingReminders ? (
+                        <><RefreshCw className="h-4 w-4 mr-1.5 animate-spin" /> Wird gesendet…</>
+                      ) : (
+                        <><Mail className="h-4 w-4 mr-1.5" /> Jetzt senden ({reminderPending} ausstehend)</>
+                      )}
+                    </Button>
+                  )}
+                </div>
               </CardContent>
             </Card>
 

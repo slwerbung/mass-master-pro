@@ -611,6 +611,49 @@ Deno.serve(async (req) => {
         return json({ name: data?.name ?? null });
       }
 
+      // ---- REMINDER SETTINGS ----
+      case "get_reminder_settings": {
+        const { data } = await supabase
+          .from("app_config")
+          .select("key, value")
+          .in("key", ["reminder_enabled", "reminder_days", "reminder_email_text"]);
+        const map = new Map((data || []).map((r: any) => [r.key, r.value]));
+        const pendingInvites = await (async () => {
+          const reminderDays = Math.max(1, parseInt(map.get("reminder_days") || "3", 10));
+          const cutoff = new Date(Date.now() - reminderDays * 24 * 60 * 60 * 1000).toISOString();
+          const { count } = await supabase
+            .from("project_invites")
+            .select("id", { count: "exact", head: true })
+            .lte("sent_at", cutoff)
+            .is("reminder_sent_at", null);
+          return count || 0;
+        })();
+        return json({
+          enabled: map.get("reminder_enabled") === "true",
+          days: parseInt(map.get("reminder_days") || "3", 10),
+          emailText: map.get("reminder_email_text") || "",
+          pendingInvites,
+        });
+      }
+      case "set_reminder_settings": {
+        const updates: { key: string; value: string | null }[] = [];
+        if ("enabled" in params) {
+          updates.push({ key: "reminder_enabled", value: params.enabled ? "true" : "false" });
+        }
+        if ("days" in params) {
+          const days = Math.max(1, Math.min(30, parseInt(String(params.days), 10) || 3));
+          updates.push({ key: "reminder_days", value: String(days) });
+        }
+        if ("emailText" in params) {
+          updates.push({ key: "reminder_email_text", value: String(params.emailText || "").slice(0, 1000) || null });
+        }
+        for (const u of updates) {
+          const { error } = await supabase.from("app_config").upsert(u);
+          if (error) return json({ error: error.message }, 500);
+        }
+        return json({ success: true });
+      }
+
       // ---- PROJECT PREFIX ----
       case "get_project_prefix": {
         const { data } = await supabase.from("app_config").select("value").eq("key", "project_prefix").maybeSingle();

@@ -204,6 +204,16 @@ Deno.serve(async (req) => {
         return json({ error: `Mailversand fehlgeschlagen: ${errText.slice(0, 200)}` }, 502);
       }
 
+      // Track invite for reminder follow-up (best-effort).
+      try {
+        await supabase.from("project_invites").insert({
+          project_id: projectId,
+          project_number: projectNumber,
+          email,
+          sent_at: new Date().toISOString(),
+        });
+      } catch { /* non-blocking */ }
+
       // HERO logbook entry (best-effort; never blocks the invite result).
       try {
         const hctx = await heroContext(supabase, projectId);
