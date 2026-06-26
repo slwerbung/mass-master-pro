@@ -319,19 +319,22 @@ const PhotoEditor = () => {
     setShowMeasureDialog(false); setMeasureStart(null); setMeasureEnd(null); setActiveTool("select");
   };
 
-  // Load existing area measurement max index for re-edit
+  // Load the max area measurement index across ALL project locations so new
+  // areas continue the numbering project-wide instead of restarting at 1.
   useEffect(() => {
-    if (isReEdit && projectId && locationId) {
-      indexedDBStorage.getProject(projectId).then(proj => {
-        if (!proj) return;
-        const loc = proj.locations.find(l => l.id === locationId);
-        if (loc?.areaMeasurements && loc.areaMeasurements.length > 0) {
-          const max = Math.max(...loc.areaMeasurements.map(m => m.index));
-          setSavedMaxAreaIndex(max);
+    if (!projectId) return;
+    indexedDBStorage.getProject(projectId).then(proj => {
+      if (!proj) return;
+      let max = 0;
+      for (const loc of proj.locations) {
+        if (loc.areaMeasurements && loc.areaMeasurements.length > 0) {
+          const locMax = Math.max(...loc.areaMeasurements.map(m => m.index));
+          if (locMax > max) max = locMax;
         }
-      });
-    }
-  }, [isReEdit, projectId, locationId]);
+      }
+      setSavedMaxAreaIndex(max);
+    });
+  }, [projectId]);
 
   const getNextAreaIndex = () => {
     let max = savedMaxAreaIndex;

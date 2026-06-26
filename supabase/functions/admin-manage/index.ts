@@ -826,6 +826,17 @@ Deno.serve(async (req) => {
         });
       }
 
+      case "list_options_app_employees": {
+        // Used by the automation UI "assign_employee" action to list app employees.
+        const { data: emps, error } = await supabase
+          .from("employees")
+          .select("id, name")
+          .order("name");
+        if (error) return json({ options: [], error: error.message });
+        const options = (emps || []).map((e: any) => ({ value: e.id, label: e.name || e.id }));
+        return json({ options });
+      }
+
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

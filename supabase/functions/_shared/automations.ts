@@ -14,6 +14,8 @@ import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 const HERO_GRAPHQL_URL = "https://login.hero-software.de/api/external/v9/graphql";
 
 export interface AutomationContext {
+  // The local project UUID. Used by assign_employee and similar actions.
+  projectId?: string | null;
   // The linked HERO project_match_id, when known. Calendar actions need it.
   heroProjectId?: number | null;
   // CaptFix employee id that triggered the automation (if any). Used to
@@ -167,10 +169,38 @@ async function runHeroCalendarAction(
   return { status: "error", message: res.error || "Unbekannter Fehler" };
 }
 
+// ── assign_employee action ────────────────────────────────────────────
+async function runAssignEmployeeAction(
+  supabase: SupabaseClient,
+  _apiKey: string | undefined,
+  _heroEnabled: boolean,
+  cfg: Record<string, any>,
+  ctx: AutomationContext
+): Promise<ActionResult> {
+  const projectId = ctx.projectId as string | undefined;
+  if (!projectId) return { status: "skipped", message: "Keine Projekt-ID im Kontext" };
+
+  // Use explicit employee from config, fall back to the triggering employee.
+  const employeeId = (cfg.employee_id && String(cfg.employee_id).trim()) || ctx.actingEmployeeId;
+  if (!employeeId) return { status: "skipped", message: "Kein Mitarbeiter angegeben und kein auslösender Mitarbeiter im Kontext" };
+
+  // Upsert into project_employee_assignments (ignore if already assigned).
+  const { error } = await supabase
+    .from("project_employee_assignments")
+    .upsert({ project_id: projectId, employee_id: employeeId }, { onConflict: "project_id,employee_id" });
+
+  if (error) return { status: "error", message: `Zuordnung fehlgeschlagen: ${error.message}` };
+
+  // Fetch name for logging.
+  const { data: emp } = await supabase.from("employees").select("name").eq("id", employeeId).maybeSingle();
+  return { status: "success", message: `Mitarbeiter "${emp?.name || employeeId}" dem Projekt ${projectId} zugeordnet` };
+}
+
 const ACTION_HANDLERS: Record<
   string,
   (supabase: SupabaseClient, apiKey: string | undefined, heroEnabled: boolean, cfg: any, ctx: AutomationContext) => Promise<ActionResult>
 > = {
+  assign_employee: runAssignEmployeeAction,
   hero_create_calendar_event: runHeroCalendarAction,
 };
 

@@ -45,12 +45,27 @@ export const TRIGGERS: TriggerDef[] = [
   },
   {
     type: "first_location_created",
-    label: "Erster Standort angelegt",
-    description: "Im Projekt wurde der erste Standort erstellt.",
+    label: "Erster Standort angelegt (Nach Aufmaß)",
+    description: "Im Projekt wurde der erste Standort erstellt – z.B. nach dem Aufmaß vor Ort.",
   },
 ];
 
 export const ACTIONS: ActionDef[] = [
+  {
+    type: "assign_employee",
+    label: "Mitarbeiter dem Projekt zuordnen",
+    description: "Weist einen Mitarbeiter dem auslösenden Projekt zu (erscheint in der Mitarbeiterliste des Projekts). Leer = der auslösende Mitarbeiter wird zugeordnet.",
+    configFields: [
+      {
+        key: "employee_id",
+        label: "Mitarbeiter (optional)",
+        type: "select",
+        optional: true,
+        optionsSource: "app_employees",
+        help: "Wähle einen Mitarbeiter. Leer = der Mitarbeiter, der den Trigger ausgelöst hat (z.B. erste Standortaufnahme).",
+      },
+    ],
+  },
   {
     type: "hero_create_calendar_event",
     label: "HERO: Termin in Plantafel anlegen",
