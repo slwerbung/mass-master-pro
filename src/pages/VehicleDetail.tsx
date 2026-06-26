@@ -356,46 +356,56 @@ const VehicleDetail = () => {
     return <Input value={value} onChange={e => onChange(e.target.value)} />;
   };
 
-  if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><p className="text-muted-foreground">Laden...</p></div>;
+  if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><p className="text-muted-foreground">Laden…</p></div>;
   if (!project) return null;
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <div className="container max-w-3xl mx-auto p-4 md:p-6 space-y-5">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => navigate("/projects")}><ArrowLeft className="h-4 w-4" /></Button>
-            <div>
-              <div className="flex items-center gap-2">
-                <Car className="h-5 w-5 text-primary" />
-                <h1 className="text-xl font-bold">{project.project_number}</h1>
-              </div>
-              <p className="text-sm text-muted-foreground">Fahrzeugbeschriftung</p>
-            </div>
+    <div className="min-h-screen bg-muted/30">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/60 px-4 py-2.5">
+        <div className="container max-w-3xl mx-auto flex items-center gap-2">
+          <Button variant="ghost" size="icon" className="-ml-2 shrink-0" onClick={() => navigate("/projects")}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            <Car className="h-4 w-4 text-primary shrink-0" />
+            <span className="font-semibold truncate">{project.project_number}</span>
+            <span className="text-xs text-muted-foreground hidden sm:inline">Fahrzeugbeschriftung</span>
           </div>
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/guest/${projectId}`); toast.success("Gast-Link kopiert!"); }}>
-              <Share2 className="h-4 w-4 mr-1" /><span className="hidden sm:inline text-xs">Gast-Link</span>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <Button
+              variant="ghost" size="icon" className="h-9 w-9"
+              onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/guest/${projectId}`); toast.success("Gast-Link kopiert!"); }}
+              title="Gast-Link kopieren"
+            >
+              <Share2 className="h-4 w-4" />
             </Button>
             <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Projekt löschen?</AlertDialogTitle>
-                <AlertDialogDescription>Alle Bilder, das Layout und alle Daten werden unwiderruflich gelöscht.</AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                <AlertDialogAction onClick={handleDeleteProject} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Löschen</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Projekt löschen?</AlertDialogTitle>
+                  <AlertDialogDescription>Alle Bilder, das Layout und alle Daten werden unwiderruflich gelöscht.</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleDeleteProject} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Löschen</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
+        </div>
+      </div>
+
+      <div className="container max-w-3xl mx-auto p-4 md:p-6 space-y-4 pb-10">
+        {/* Project title */}
+        <div className="pt-1">
+          <h1 className="text-2xl font-bold tracking-tight">{project.project_number}</h1>
+          {project.customer_name && <p className="text-sm text-muted-foreground mt-0.5">{project.customer_name}</p>}
         </div>
 
         {/* Vehicle Images */}
