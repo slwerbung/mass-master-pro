@@ -32,7 +32,6 @@ import {
 } from "@/lib/pdfHelpers";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/projectFields";
-import { supabase } from "@/integrations/supabase/client";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 
