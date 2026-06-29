@@ -222,7 +222,7 @@ export async function drawCoverPage(pdf: jsPDF, opts: {
   dateStr: string;
   locationCount: number;
   floorPlanCount?: number;
-  locations: { number: string; name?: string }[];
+  locations: { number: string; name?: string; pageLink?: number }[];
 }) {
   const blockH = 104;
   fill(pdf, BRAND);
@@ -315,6 +315,8 @@ export async function drawCoverPage(pdf: jsPDF, opts: {
       ink(pdf, INK);
       pdf.setFont("helvetica", "normal");
       if (loc.name) pdf.text(trunc(pdf, loc.name, colW - numW - 5), x + 3 + numW, yy);
+      // klickbarer Sprung zur Standortseite (gesamte Zeile)
+      if (loc.pageLink) pdf.link(x, yy - 4.4, colW, 6, { pageNumber: loc.pageLink });
     });
 
     if (opts.locations.length > show.length) {

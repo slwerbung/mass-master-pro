@@ -53,7 +53,8 @@ async function urlToDataUrl(url: string): Promise<string | null> {
 }
 
 // Rasterise a production PDF to one JPEG data-URL per page (same approach the
-// app's LocationApprovalMedia uses to show production files as the main image).
+// app's LocationApprovalMedia uses to show production files). Resolution is
+// kept modest to keep the export fast and the file small.
 async function rasterizePdf(url: string, name: string): Promise<{ src: string; label: string }[]> {
   const resp = await fetch(url);
   const buf = await resp.arrayBuffer();
@@ -62,15 +63,31 @@ async function rasterizePdf(url: string, name: string): Promise<{ src: string; l
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const base = page.getViewport({ scale: 1 });
-    const scale = Math.min(2.2, 1600 / Math.max(base.width, base.height));
+    const scale = Math.min(1.8, 1300 / Math.max(base.width, base.height));
     const viewport = page.getViewport({ scale: scale > 0 ? scale : 1 });
     const canvas = document.createElement("canvas");
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     const ctx = canvas.getContext("2d")!;
     await page.render({ canvasContext: ctx, viewport }).promise;
-    out.push({ src: canvas.toDataURL("image/jpeg", 0.82), label: doc.numPages > 1 ? `${name} · S.${i}` : name });
+    out.push({ src: canvas.toDataURL("image/jpeg", 0.78), label: doc.numPages > 1 ? `${name} · S.${i}` : name });
+    canvas.width = 0; canvas.height = 0; // Speicher freigeben
   }
+  return out;
+}
+
+// Läuft eine async-Funktion über Items mit begrenzter Parallelität (schnellerer
+// Export, ohne den pdf.js-Worker zu überlasten).
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return out;
 }
 
@@ -315,8 +332,7 @@ const Export = () => {
   // dem Foto als Thumbnail; ohne Produktionsdatei das Foto selbst.
   type LocMedia = {
     main?: string; mainLabel: string;
-    thumb?: string; thumbLabel?: string;
-    extras: { src: string; label: string }[];
+    productionPages: { src: string; label: string }[];
     printNames: string[];
   };
 
@@ -329,30 +345,28 @@ const Export = () => {
     const showPrintFiles = customerOnly ? viewSettings.customerShowPrintFiles : viewSettings.internalShowPrintFiles;
     const showDetailImages = customerOnly ? viewSettings.customerShowDetailImages : viewSettings.internalShowDetailImages;
 
-    // Build the media (rendered production pages + photo thumb) per location.
+    // Pro Standort: das (unbemaßte) Standortfoto als Hauptbild, danach die
+    // Produktionsdateien als eigene Seiten (PDF via pdf.js gerendert).
     const buildLocationMedia = async (location: any): Promise<LocMedia> => {
-      const photo = location.imageData as string | undefined;
+      const photo = (location.originalImageData || location.imageData) as string | undefined;
       const printFiles = printFilesByLocation[location.id] || [];
       const printNames = printFiles.map((p: any) => p.file_name);
+      const productionPages: { src: string; label: string }[] = [];
       if (showPrintFiles && printFiles.length > 0) {
-        const pages: { src: string; label: string }[] = [];
         for (const pf of printFiles) {
           const url = publicFileUrl(pf.storage_path);
           const isPdf = /\.pdf$/i.test(pf.file_name || "") || /\.pdf$/i.test(pf.storage_path || "");
           try {
             if (isPdf) {
-              pages.push(...(await rasterizePdf(url, pf.file_name)));
+              productionPages.push(...(await rasterizePdf(url, pf.file_name)));
             } else {
               const d = await urlToDataUrl(url);
-              if (d) pages.push({ src: d, label: pf.file_name });
+              if (d) productionPages.push({ src: d, label: pf.file_name });
             }
           } catch { /* skip a broken file, keep going */ }
         }
-        if (pages.length > 0) {
-          return { main: pages[0].src, mainLabel: pages[0].label, thumb: photo, thumbLabel: "Foto", extras: pages.slice(1), printNames };
-        }
       }
-      return { main: photo, mainLabel: "Standortfoto", extras: [], printNames };
+      return { main: photo, mainLabel: "Standortfoto", productionPages, printNames };
     };
 
     const buildFields = (location: any, printNames: string[]): FieldRow[] => {
@@ -384,13 +398,12 @@ const Export = () => {
       return { kind: open ? "correction" : "open" };
     };
 
-    // ── 1) Medien pro Standort vorab laden (beeinflusst die Seitenzählung) ──
+    // ── 1) Medien pro Standort parallel laden (beeinflusst die Seitenzählung) ──
+    const mediaList = await mapPool(sortedLocations, 3, (location) => buildLocationMedia(location));
     const mediaByLoc = new Map<string, LocMedia>();
-    for (const location of sortedLocations) {
-      mediaByLoc.set(location.id, await buildLocationMedia(location));
-    }
+    sortedLocations.forEach((loc, i) => mediaByLoc.set(loc.id, mediaList[i]));
 
-    // ── 2) Seitenplan: Deckblatt(1) → Grundrisse → Standorte(+Extra/Detail) ──
+    // ── 2) Seitenplan: Deckblatt(1) → Grundrisse → Standorte(+Produktion/Detail) ──
     let page = 1; // Deckblatt
     const floorPlanPage = new Map<string, number>();
     for (const fp of sortedFloorPlans) floorPlanPage.set(fp.id, ++page);
@@ -398,11 +411,11 @@ const Export = () => {
     for (const location of sortedLocations) {
       locationPage.set(location.id, ++page);
       const m = mediaByLoc.get(location.id)!;
-      page += m.extras.length;
+      page += m.productionPages.length;
       if (showDetailImages && location.detailImages && location.detailImages.length > 0) page += 1;
     }
 
-    // ── 3) Deckblatt ──────────────────────────────────────────────────────
+    // ── 3) Deckblatt (Standortnummern verlinken auf die jeweilige Seite) ────
     await drawCoverPage(pdf, {
       logoDataUri: companyLogo,
       title: "Aufmaß-Dokumentation",
@@ -412,7 +425,7 @@ const Export = () => {
       dateStr,
       locationCount: sortedLocations.length,
       floorPlanCount: sortedFloorPlans.length || undefined,
-      locations: sortedLocations.map((l) => ({ number: l.locationNumber, name: l.locationName })),
+      locations: sortedLocations.map((l) => ({ number: l.locationNumber, name: l.locationName, pageLink: locationPage.get(l.id) })),
     });
 
     // ── 4) Grundrissseiten (klickbare Marker → Standortseite) ──────────────
@@ -446,21 +459,19 @@ const Export = () => {
         pill: pillFor(location),
         mainImage: m.main,
         mainLabel: m.mainLabel,
-        thumbImage: m.thumb,
-        thumbLabel: m.thumbLabel,
         fields: buildFields(location, m.printNames),
         pageNumber: p,
       });
 
-      // Zusätzliche Produktionsseiten (mehrseitige Druckdateien)
-      for (const ex of m.extras) {
+      // Produktionsdaten als eigene Seiten (folgen dem Standortfoto)
+      for (const pp of m.productionPages) {
         pdf.addPage();
         p += 1;
         await drawMediaPage(pdf, {
           title: `Standort ${location.locationNumber} · Produktionsdatei`,
           sub: `${location.locationName ? location.locationName + "  ·  " : ""}Projekt ${project.projectNumber}`,
-          image: ex.src,
-          label: ex.label,
+          image: pp.src,
+          label: pp.label,
           pageNumber: p,
         });
       }
