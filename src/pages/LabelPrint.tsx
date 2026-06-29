@@ -598,15 +598,16 @@ function computeLayout(widthMm: number, heightMm: number): Layout {
 // If the fetch fails (offline, CDN blocked) we fall back gracefully to
 // Helvetica - it's not Barlow, but the print still happens.
 
+// URLs derived from Google Fonts CSS API (fonts.googleapis.com/css2?family=Barlow:wght@400;700).
+// Update by running: curl -s "https://fonts.googleapis.com/css2?family=Barlow:wght@400;700&display=swap" | grep -o 'https://fonts.gstatic.com[^)]*'
 const BARLOW_URLS = {
-  // These point to specific static TTF files (not the CSS API) so we
-  // get one font per fetch instead of a stylesheet. The URLs come from
-  // google-webfonts-helper and are stable.
-  regular: "https://fonts.gstatic.com/s/barlow/v12/7cHpv4kjgoGqM7E_DMs5.ttf",
-  bold:    "https://fonts.gstatic.com/s/barlow/v12/7cHrv4kjgoGqM7E3_-gc4Q.ttf",
+  regular: "https://fonts.gstatic.com/s/barlow/v13/7cHpv4kjgoGqM7EPCw.ttf",
+  bold:    "https://fonts.gstatic.com/s/barlow/v13/7cHqv4kjgoGqM7E3t-4c4A.ttf",
 };
 
 let barlowCache: { regular: string; bold: string } | null = null;
+// Reset on each generatePdf call so transient network failures don't
+// permanently disable the font for the rest of the session.
 let barlowLoadFailed = false;
 
 async function fetchFontAsBase64(url: string): Promise<string> {
@@ -658,6 +659,11 @@ async function buildLabelPdf(d: LabelData): Promise<jsPDF> {
     format: [d.widthMm, d.heightMm],
     compress: true,
   });
+
+  // Reset failure flag so every PDF generation gets a fresh attempt.
+  // This prevents a transient network error from permanently disabling
+  // the font for the rest of the session.
+  if (barlowLoadFailed && !barlowCache) barlowLoadFailed = false;
 
   // Lade & registriere die Marken-Schrift Barlow. Wenn der Download
   // scheitert (z.B. offline), nutzt ensureBarlowLoaded() null zurück

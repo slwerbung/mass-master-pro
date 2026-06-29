@@ -73,7 +73,13 @@ const AutomationsTab = ({ invoke }: { invoke: InvokeFn }) => {
   const loadHeroSource = useCallback(async (source: string) => {
     setHeroOptions((prev) => ({ ...prev, [source]: { loading: true, options: prev[source]?.options || [] } }));
     try {
-      const res = await invoke("hero_list_options", { source });
+      // Non-HERO sources are loaded via dedicated admin-manage actions.
+      let res: any;
+      if (source === "app_employees") {
+        res = await invoke("list_options_app_employees");
+      } else {
+        res = await invoke("hero_list_options", { source });
+      }
       setHeroOptions((prev) => ({
         ...prev,
         [source]: { loading: false, options: res?.options || [], error: res?.error },

@@ -3,7 +3,8 @@ import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock } from "lucide-react";
+import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import { Location } from "@/types/project";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
@@ -76,10 +77,22 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   const [uploadingPdf, setUploadingPdf] = useState(false);
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
   const [updatingFeedbackId, setUpdatingFeedbackId] = useState<string | null>(null);
+  const [approvalCount, setApprovalCount] = useState<{ total: number; approved: number } | null>(null);
+
+  const loadApprovals = async () => {
+    const { data } = await supabase
+      .from("location_approvals")
+      .select("approved")
+      .eq("location_id", location.id);
+    if (data) {
+      setApprovalCount({ total: data.length, approved: data.filter((r: any) => r.approved).length });
+    }
+  };
 
   useEffect(() => {
     loadPdf();
     loadFeedbacks();
+    loadApprovals();
 
     const channel = supabase
       .channel(`location-feedback-${location.id}`)
@@ -303,16 +316,38 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
 
   return (
     <Card className="overflow-hidden">
-      <div className="min-h-[180px] bg-muted relative cursor-pointer group rounded-lg overflow-hidden flex items-center justify-center" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}>
-        <img src={location.imageData} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-          <Pencil className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+      {pdfUrl ? (
+        <div className="p-3 pb-0">
+          <LocationApprovalMedia
+            annotatedUrl={location.imageData}
+            pdfs={[{ url: pdfUrl, name: pdfName || "Produktionsdatei" }]}
+          />
         </div>
-      </div>
+      ) : (
+        <div className="min-h-[180px] bg-muted relative cursor-pointer group rounded-lg overflow-hidden flex items-center justify-center" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}>
+          <img src={location.imageData} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+            <Pencil className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
+        </div>
+      )}
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div className="space-y-1 flex-1 min-w-0">
-            <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
+              {approvalCount !== null && approvalCount.total > 0 && (
+                approvalCount.approved >= approvalCount.total ? (
+                  <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium">
+                    <CheckCheck className="h-3 w-3" /> Freigegeben
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-medium">
+                    <Clock className="h-3 w-3" /> {approvalCount.approved}/{approvalCount.total} freigegeben
+                  </span>
+                )
+              )}
+            </div>
             {location.locationName && <p className="text-sm text-foreground truncate">{location.locationName}</p>}
             <p className="text-xs text-muted-foreground">Erstellt am {formatDateTimeSafe(location.createdAt)}</p>
             {location.areaMeasurements && location.areaMeasurements.length > 0 && (
@@ -421,7 +456,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
             sending={sendingMsg}
             onSend={sendEmployeeMessage}
             onToggleDone={(m) => toggleFeedbackDone(m as FeedbackItem)}
-            canDelete={(m) => m.author_type === "employee" && !m.legacy}
+            canDelete={(m) => !m.legacy}
             onDelete={deleteOwnMessage}
             busyId={updatingFeedbackId}
             placeholder="Antwort an den Kunden…"
