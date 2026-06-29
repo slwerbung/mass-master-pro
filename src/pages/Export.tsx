@@ -20,6 +20,8 @@ import PDFExportOptionsUI, { PDFExportOptions, defaultPDFOptions } from "@/compo
 import {
   getImageDimensions,
   drawLocationPageLandscape,
+  drawCoverPage,
+  drawPageHeaderBand,
   drawFooter,
   FooterData,
   FooterRow,
@@ -27,8 +29,7 @@ import {
   PAGE_W,
   PAGE_H,
   BLUE,
-  DARK,
-  CONTENT_WIDTH,
+  HEADER_BAND_H,
 } from "@/lib/pdfHelpers";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/projectFields";
@@ -275,9 +276,23 @@ const Export = () => {
     const customerOnly = pdfOptions.mode === "customer";
       const visibleFields = getVisibleFields(customerOnly);
 
+      // ── Deckblatt (Seite 1) ───────────────────────────────────────────────
+      await drawCoverPage({
+        pdf,
+        logoDataUri: companyLogo,
+        title: "Aufmaß-Dokumentation",
+        subtitle: customerOnly ? "Standort-Übersicht zur Freigabe" : "Internes Aufmaß-Protokoll",
+        projectNumber: project.projectNumber,
+        customerName: project.customerName,
+        dateStr,
+        locationCount: sortedLocations.length,
+        locations: sortedLocations.map((l) => ({ number: l.locationNumber, name: l.locationName })),
+      });
+
       const locationPageMap: Record<string, number> = {};
       const floorPlanPageMap: Record<string, number> = {};
-      let pageCounter = 1;
+      // Deckblatt ist Seite 1 → Inhaltsseiten beginnen bei 2.
+      let pageCounter = 2;
 
       // Grundrisse bleiben im Hochformat → eigene Seiten zählen
       for (const fp of sortedFloorPlans) floorPlanPageMap[fp.id] = pageCounter++;
@@ -289,26 +304,25 @@ const Export = () => {
       }
       const totalPages = pageCounter - 1;
 
-      // Grundrissseiten (Hochformat – eigene addPage mit orientation)
-      let firstPage = true;
+      // Inhaltsseiten: das Deckblatt belegt bereits die erste Seite, daher
+      // bekommt jede weitere Seite ein eigenes addPage().
+      let firstPage = false;
       for (const floorPlan of sortedFloorPlans) {
         if (!firstPage) pdf.addPage("a4", "landscape");
         firstPage = false;
         const currentPage = floorPlanPageMap[floorPlan.id];
-        // Grundriss im Querformat darstellen
+        // Akzent-Kopfleiste
+        drawPageHeaderBand(pdf, { title: `Grundriss · ${floorPlan.name}`, right: `Projekt ${project.projectNumber}` });
+        // Grundriss im Querformat darstellen, unter der Kopfleiste
         const fpDims = await getImageDimensions(floorPlan.imageData);
+        const fpTop = HEADER_BAND_H + 5;
         const maxW = PAGE_W - 2 * MARGIN;
-        const maxH = PAGE_H - 2 * MARGIN - 12;
+        const maxH = PAGE_H - MARGIN - fpTop;
         const fpRatio = Math.min(maxW / fpDims.width, maxH / fpDims.height);
         const fpW = fpDims.width * fpRatio;
         const fpH = fpDims.height * fpRatio;
         const fpX = MARGIN + (maxW - fpW) / 2;
-        const fpY = MARGIN + 10;
-
-        pdf.setFontSize(8);
-        pdf.setFont("helvetica", "bold");
-        pdf.setTextColor(DARK.r, DARK.g, DARK.b);
-        pdf.text(`Grundriss · ${floorPlan.name}`, MARGIN, MARGIN + 6);
+        const fpY = fpTop;
 
         const fmt = floorPlan.imageData.startsWith("data:image/jpeg") ? "JPEG"
                   : floorPlan.imageData.startsWith("data:image/webp") ? "WEBP" : "PNG";
@@ -408,7 +422,15 @@ const Export = () => {
           logoDataUri: companyLogo,
         };
 
-        await drawLocationPageLandscape({ pdf, imageData: location.imageData, footer });
+        await drawLocationPageLandscape({
+          pdf,
+          imageData: location.imageData,
+          footer,
+          header: {
+            title: `Standort ${location.locationNumber}${location.locationName ? ` · ${location.locationName}` : ""}`,
+            right: `Projekt ${project.projectNumber}`,
+          },
+        });
 
         // Detailbilder
         if (((customerOnly && viewSettings.customerShowDetailImages) || (!customerOnly && viewSettings.internalShowDetailImages)) && location.detailImages && location.detailImages.length > 0) {
@@ -598,13 +620,12 @@ async function drawDetailImagesPage({ pdf, projectNumber, location, dateStr, com
   // Querformat – Detailbilder nebeneinander über dem Footer
   const FOOTER_H_D = 12;
   const contentH = PAGE_H - 2 * MARGIN - FOOTER_H_D;
-  let y = MARGIN;
 
-  pdf.setFontSize(8);
-  pdf.setFont("helvetica", "bold");
-  pdf.setTextColor(DARK.r, DARK.g, DARK.b);
-  pdf.text(`Detailbilder · Standort ${location.locationNumber}`, MARGIN, y + 4);
-  y += 8;
+  drawPageHeaderBand(pdf, {
+    title: `Detailbilder · Standort ${location.locationNumber}${location.locationName ? ` · ${location.locationName}` : ""}`,
+    right: `Projekt ${projectNumber}`,
+  });
+  let y = HEADER_BAND_H + 4;
 
   const maxW = (PAGE_W - 2 * MARGIN - 6) / 2;
   const maxH = contentH - 10;

@@ -8,6 +8,7 @@
 // from wherever that event happens — no change needed here for new triggers.
 
 import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { generateAufmassPdf, uploadPdfToHero, fmtDate } from "./aufmassPdf.ts";
 
 // Calendar mutations live on the documented current API version. If HERO
 // retires the (deprecated) create_calendar_event, swap the mutation here.
@@ -196,12 +197,69 @@ async function runAssignEmployeeAction(
   return { status: "success", message: `Mitarbeiter "${emp?.name || employeeId}" dem Projekt ${projectId} zugeordnet` };
 }
 
+// ── HERO: upload Aufmaß-PDF action ────────────────────────────────────
+// Generates a project Aufmaß-PDF and uploads it to the linked HERO project
+// as a document. The document type defaults to the admin mapping
+// (app_config "hero_doc_type_aufmass_pdf") but can be overridden per
+// automation via cfg.documentType.
+async function runHeroUploadAufmassPdfAction(
+  supabase: SupabaseClient,
+  apiKey: string | undefined,
+  heroEnabled: boolean,
+  cfg: Record<string, any>,
+  ctx: AutomationContext,
+): Promise<ActionResult> {
+  if (!heroEnabled || !apiKey) return { status: "skipped", message: "HERO ist nicht aktiv" };
+  const heroProjectId = ctx.heroProjectId;
+  if (!heroProjectId) return { status: "skipped", message: "Projekt nicht mit HERO verknüpft" };
+  const projectId = ctx.projectId as string | undefined;
+  if (!projectId) return { status: "skipped", message: "Keine Projekt-ID im Kontext" };
+
+  // Resolve document type: explicit cfg override, else admin mapping.
+  let docTypeId: number | null = null;
+  const cfgDoc = cfg.documentType != null && String(cfg.documentType).trim() !== "" ? Number(cfg.documentType) : NaN;
+  if (Number.isFinite(cfgDoc) && cfgDoc > 0) {
+    docTypeId = cfgDoc;
+  } else {
+    const { data: dtRow } = await supabase.from("app_config").select("value").eq("key", "hero_doc_type_aufmass_pdf").maybeSingle();
+    const v = dtRow?.value ? parseInt(String(dtRow.value), 10) : NaN;
+    if (Number.isFinite(v) && v > 0) docTypeId = v;
+  }
+
+  // Resolve project number + company name.
+  const { data: proj } = await supabase.from("projects").select("project_number").eq("id", projectId).maybeSingle();
+  const projectNumber = (ctx.projectNumber as string) || proj?.project_number || projectId.slice(0, 8);
+  const customerName = (ctx.customerName as string) || "Kunde";
+
+  let companyName = "SL WERBUNG";
+  const { data: legalRow } = await supabase.from("app_config").select("value").eq("key", "legal_info").maybeSingle();
+  if (legalRow?.value) {
+    try {
+      const info = JSON.parse(legalRow.value);
+      if (info?.companyName?.trim()) companyName = info.companyName.trim();
+    } catch { /* keep default */ }
+  }
+
+  const bytes = await generateAufmassPdf(supabase, { projectId, projectNumber, customerName, companyName });
+  if (!bytes) return { status: "skipped", message: "Kein PDF erzeugt (keine Standorte)" };
+
+  const safeNum = projectNumber.replace(/[^A-Za-z0-9-]/g, "_");
+  const dateStr = fmtDate(new Date()).replace(/\./g, "-");
+  const filename = `Captfix_Freigabe_${safeNum}_${dateStr}.pdf`;
+  const res = await uploadPdfToHero(apiKey, Number(heroProjectId), bytes, filename, docTypeId);
+  if (res.ok) {
+    return { status: "success", message: `Aufmaß-PDF nach HERO hochgeladen (${filename}${docTypeId ? `, Typ ${docTypeId}` : ", ohne Typ"})` };
+  }
+  return { status: "error", message: res.error || "Upload fehlgeschlagen" };
+}
+
 const ACTION_HANDLERS: Record<
   string,
   (supabase: SupabaseClient, apiKey: string | undefined, heroEnabled: boolean, cfg: any, ctx: AutomationContext) => Promise<ActionResult>
 > = {
   assign_employee: runAssignEmployeeAction,
   hero_create_calendar_event: runHeroCalendarAction,
+  hero_upload_aufmass_pdf: runHeroUploadAufmassPdfAction,
 };
 
 // ── dispatch ─────────────────────────────────────────────────────────---

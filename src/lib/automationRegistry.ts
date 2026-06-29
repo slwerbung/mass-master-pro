@@ -48,6 +48,11 @@ export const TRIGGERS: TriggerDef[] = [
     label: "Erster Standort angelegt (Nach Aufmaß)",
     description: "Im Projekt wurde der erste Standort erstellt – z.B. nach dem Aufmaß vor Ort.",
   },
+  {
+    type: "project_fully_approved",
+    label: "Projekt vollständig freigegeben",
+    description: "Der Kunde hat alle Standorte (bzw. das Fahrzeug-Layout) des Projekts freigegeben.",
+  },
 ];
 
 export const ACTIONS: ActionDef[] = [
@@ -92,6 +97,22 @@ export const ACTIONS: ActionDef[] = [
       { key: "time", label: "Uhrzeit", type: "time", default: "09:00" },
       { key: "durationMinutes", label: "Dauer (Minuten)", type: "number", default: 60 },
       { key: "categoryId", label: "Kategorie (HERO)", type: "select", optional: true, optionsSource: "hero_calendar_categories" },
+    ],
+  },
+  {
+    type: "hero_upload_aufmass_pdf",
+    label: "HERO: Aufmaß-PDF hochladen",
+    description: "Erstellt automatisch ein Aufmaß-PDF des Projekts und lädt es als Dokument ins verknüpfte HERO-Projekt.",
+    requires: ["hero"],
+    configFields: [
+      {
+        key: "documentType",
+        label: "HERO-Dokumenttyp",
+        type: "select",
+        optional: true,
+        optionsSource: "hero_doc_types",
+        help: "Leer = der unter „HERO Dokumente“ (Aufmaß-PDF) im Admin hinterlegte Dokumenttyp wird verwendet.",
+      },
     ],
   },
 ];

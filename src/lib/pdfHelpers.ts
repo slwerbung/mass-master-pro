@@ -10,6 +10,14 @@ export const DARK        = { r: 26,  g: 26,  b: 26  }; // #1A1A1A
 export const TEXT_MUTED  = { r: 100, g: 100, b: 100 };
 export const BLUE        = { r: 37,  g: 99,  b: 235 }; // für Grundriss-Links
 export const BORDER_GRAY = { r: 200, g: 200, b: 200 };
+// App-Akzentfarbe (entspricht --primary der App, #0E73E8)
+export const BRAND       = { r: 14,  g: 115, b: 232 };
+export const BRAND_DARK  = { r: 8,   g: 80,  b: 180 };
+export const SURFACE     = { r: 244, g: 247, b: 251 }; // dezenter Karten-Hintergrund
+export const WHITE       = { r: 255, g: 255, b: 255 };
+
+// Höhe der Akzent-Kopfleiste auf Standort-/Grundrissseiten (mm)
+export const HEADER_BAND_H = 11;
 
 // ─── Seitenmaße (A4 Querformat in mm) ────────────────────────────────────────
 export const PAGE_W   = 297;
@@ -136,17 +144,190 @@ export function drawFooter(pdf: jsPDF, data: FooterData) {
   }
 }
 
+// ─── Logo-Helfer ───────────────────────────────────────────────────────────────
+
+/** Bettet ein Logo in eine Box (x,y,maxW,maxH) ein, zentriert, ratio-erhaltend. */
+function drawLogoInBox(pdf: jsPDF, logoDataUri: string, x: number, y: number, maxW: number, maxH: number) {
+  try {
+    const fmt = logoDataUri.startsWith("data:image/png") ? "PNG"
+              : logoDataUri.startsWith("data:image/svg") ? "PNG"
+              : "JPEG";
+    const props = pdf.getImageProperties(logoDataUri);
+    const ratio = Math.min(maxW / props.width, maxH / props.height);
+    const lw = props.width * ratio;
+    const lh = props.height * ratio;
+    pdf.addImage(logoDataUri, fmt, x + (maxW - lw) / 2, y + (maxH - lh) / 2, lw, lh);
+  } catch { /* Logo nicht einbettbar – still fail */ }
+}
+
+// ─── Akzent-Kopfleiste (Standort-/Grundrissseiten) ──────────────────────────────
+
+export function drawPageHeaderBand(pdf: jsPDF, opts: { title: string; right?: string }) {
+  pdf.setFillColor(BRAND.r, BRAND.g, BRAND.b);
+  pdf.rect(0, 0, PAGE_W, HEADER_BAND_H, "F");
+  // schmaler dunklerer Streifen ganz oben für Tiefe
+  pdf.setFillColor(BRAND_DARK.r, BRAND_DARK.g, BRAND_DARK.b);
+  pdf.rect(0, 0, PAGE_W, 1.4, "F");
+
+  const baseY = HEADER_BAND_H / 2 + 2.2;
+  pdf.setTextColor(WHITE.r, WHITE.g, WHITE.b);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(10.5);
+  pdf.text(truncateText(pdf, opts.title, PAGE_W - 2 * MARGIN - 60), MARGIN, baseY);
+
+  if (opts.right) {
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8.5);
+    pdf.text(opts.right, PAGE_W - MARGIN, baseY - 0.3, { align: "right" });
+  }
+  pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+}
+
+// ─── Deckblatt ───────────────────────────────────────────────────────────────--
+
+export async function drawCoverPage(params: {
+  pdf: jsPDF;
+  logoDataUri?: string | null;
+  title: string;
+  subtitle?: string;
+  projectNumber: string;
+  customerName?: string;
+  dateStr: string;
+  locationCount: number;
+  locations: { number: string; name?: string }[];
+  companyName?: string;
+}) {
+  const { pdf } = params;
+
+  // Akzentleiste oben
+  pdf.setFillColor(BRAND.r, BRAND.g, BRAND.b);
+  pdf.rect(0, 0, PAGE_W, 4, "F");
+
+  // Logo oben rechts
+  if (params.logoDataUri) {
+    drawLogoInBox(pdf, params.logoDataUri, PAGE_W - MARGIN - 42, MARGIN + 4, 42, 20);
+  }
+
+  // Titelblock
+  let y = MARGIN + 22;
+  pdf.setTextColor(BRAND.r, BRAND.g, BRAND.b);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(28);
+  pdf.text(params.title, MARGIN, y);
+  if (params.subtitle) {
+    y += 8;
+    pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(12);
+    pdf.text(params.subtitle, MARGIN, y);
+  }
+
+  // Trennlinie
+  y += 8;
+  pdf.setDrawColor(BORDER_GRAY.r, BORDER_GRAY.g, BORDER_GRAY.b);
+  pdf.setLineWidth(0.3);
+  pdf.line(MARGIN, y, PAGE_W - MARGIN, y);
+
+  // Info-Karte links
+  const cardY = y + 8;
+  const cardW = 92;
+  const cardH = 58;
+  pdf.setFillColor(SURFACE.r, SURFACE.g, SURFACE.b);
+  pdf.roundedRect(MARGIN, cardY, cardW, cardH, 2.5, 2.5, "F");
+  pdf.setFillColor(BRAND.r, BRAND.g, BRAND.b);
+  pdf.rect(MARGIN, cardY, 2.5, cardH, "F");
+
+  const meta: { label: string; value: string }[] = [
+    { label: "Projektnummer", value: params.projectNumber },
+    ...(params.customerName ? [{ label: "Kunde", value: params.customerName }] : []),
+    { label: "Datum", value: params.dateStr },
+    { label: "Standorte", value: String(params.locationCount) },
+  ];
+  let my = cardY + 11;
+  for (const row of meta) {
+    pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7.5);
+    pdf.text(row.label.toUpperCase(), MARGIN + 9, my);
+    pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(11);
+    pdf.text(truncateText(pdf, row.value, cardW - 14), MARGIN + 9, my + 5);
+    my += 13;
+  }
+
+  // Standort-Übersicht rechts
+  if (params.locations.length > 0) {
+    const listX = MARGIN + cardW + 10;
+    const listW = PAGE_W - MARGIN - listX;
+    pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(11);
+    pdf.text("Standorte", listX, cardY + 4);
+
+    const colCount = 2;
+    const colGap = 6;
+    const colW = (listW - colGap * (colCount - 1)) / colCount;
+    const rowH = 5.4;
+    const startY = cardY + 12;
+    const maxRows = Math.floor((cardH - 12) / rowH);
+    const capacity = maxRows * colCount;
+    const show = params.locations.slice(0, capacity);
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8.5);
+    show.forEach((loc, i) => {
+      const col = Math.floor(i / maxRows);
+      const rowInCol = i % maxRows;
+      const x = listX + col * (colW + colGap);
+      const ry = startY + rowInCol * rowH;
+      // Nummern-Badge
+      pdf.setTextColor(BRAND.r, BRAND.g, BRAND.b);
+      pdf.setFont("helvetica", "bold");
+      const numLabel = loc.number || "–";
+      pdf.text(numLabel, x, ry);
+      const numW = pdf.getTextWidth(numLabel) + 2;
+      // Name
+      pdf.setTextColor(DARK.r, DARK.g, DARK.b);
+      pdf.setFont("helvetica", "normal");
+      const name = loc.name ? truncateText(pdf, loc.name, colW - numW - 1) : "";
+      if (name) pdf.text(name, x + numW, ry);
+    });
+
+    if (params.locations.length > show.length) {
+      pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
+      pdf.setFont("helvetica", "italic");
+      pdf.setFontSize(8);
+      pdf.text(`… und ${params.locations.length - show.length} weitere`, listX, startY + maxRows * rowH + 2);
+    }
+  }
+
+  // Fußzeile
+  pdf.setDrawColor(BORDER_GRAY.r, BORDER_GRAY.g, BORDER_GRAY.b);
+  pdf.setLineWidth(0.2);
+  pdf.line(MARGIN, PAGE_H - 14, PAGE_W - MARGIN, PAGE_H - 14);
+  pdf.setTextColor(TEXT_MUTED.r, TEXT_MUTED.g, TEXT_MUTED.b);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  const left = params.companyName ? params.companyName : "";
+  if (left) pdf.text(left, MARGIN, PAGE_H - 9);
+  pdf.text(`Erstellt mit Captfix · captfix.app · ${params.dateStr}`, PAGE_W - MARGIN, PAGE_H - 9, { align: "right" });
+}
+
 // ─── Standortseite ────────────────────────────────────────────────────────────
 
 export async function drawLocationPageLandscape(params: {
   pdf: jsPDF;
   imageData: string;
   footer: FooterData;
+  header?: { title: string; right?: string };
 }) {
-  const { pdf, imageData, footer } = params;
+  const { pdf, imageData, footer, header } = params;
 
-  // Foto-Bereich: von MARGIN bis über dem Footer
-  const fotoTop    = MARGIN;
+  if (header) drawPageHeaderBand(pdf, header);
+
+  // Foto-Bereich: unter der Kopfleiste (falls vorhanden) bis über dem Footer
+  const fotoTop    = header ? HEADER_BAND_H + 3 : MARGIN;
   const fotoBottom = PAGE_H - FOOTER_H;
   const fotoH      = fotoBottom - fotoTop;
   const fotoW      = PAGE_W - 2 * MARGIN;
