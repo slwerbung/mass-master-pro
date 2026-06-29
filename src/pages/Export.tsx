@@ -18,23 +18,61 @@ import {
 } from "@/lib/exportUtils";
 import PDFExportOptionsUI, { PDFExportOptions, defaultPDFOptions } from "@/components/PDFExportOptions";
 import {
-  getImageDimensions,
-  drawLocationPageLandscape,
   drawCoverPage,
-  drawPageHeaderBand,
-  drawFooter,
-  FooterData,
-  FooterRow,
-  MARGIN,
-  PAGE_W,
-  PAGE_H,
-  BLUE,
-  HEADER_BAND_H,
+  drawLocationPage,
+  drawMediaPage,
+  drawFloorPlanPage,
+  drawDetailPage,
+  type FieldRow,
+  type PillKind,
 } from "@/lib/pdfHelpers";
+import * as pdfjsLib from "pdfjs-dist";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
-import { mergeWithDefaultProjectFields, getProjectFieldValue } from "@/lib/projectFields";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
+
+// Reuse the worker source proven in LocationApprovalMedia / FloorPlanUpload.
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+
+// Public URL for a stored print file (the project-files bucket is public).
+const publicFileUrl = (path: string) => supabase.storage.from("project-files").getPublicUrl(path).data.publicUrl;
+
+async function urlToDataUrl(url: string): Promise<string | null> {
+  try {
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    return await new Promise((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result as string);
+      fr.onerror = () => resolve(null);
+      fr.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+// Rasterise a production PDF to one JPEG data-URL per page (same approach the
+// app's LocationApprovalMedia uses to show production files as the main image).
+async function rasterizePdf(url: string, name: string): Promise<{ src: string; label: string }[]> {
+  const resp = await fetch(url);
+  const buf = await resp.arrayBuffer();
+  const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+  const out: { src: string; label: string }[] = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const base = page.getViewport({ scale: 1 });
+    const scale = Math.min(2.2, 1600 / Math.max(base.width, base.height));
+    const viewport = page.getViewport({ scale: scale > 0 ? scale : 1 });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext("2d")!;
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    out.push({ src: canvas.toDataURL("image/jpeg", 0.82), label: doc.numPages > 1 ? `${name} · S.${i}` : name });
+  }
+  return out;
+}
 
 type FieldConfig = {
   id?: string;
@@ -51,6 +89,7 @@ type FeedbackItem = {
   location_id: string;
   message: string;
   author_name: string;
+  author_type?: string;
   status: "open" | "done";
   created_at: string;
 };
@@ -61,6 +100,7 @@ const Export = () => {
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>([]);
   const [projectFieldConfigs, setProjectFieldConfigs] = useState<any[]>([]);
   const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackItem[]>>({});
+  const [approvedLocationIds, setApprovedLocationIds] = useState<Set<string>>(new Set());
   const [printFilesByLocation, setPrintFilesByLocation] = useState<Record<string, any[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [downloadingPDF, setDownloadingPDF] = useState(false);
@@ -85,7 +125,7 @@ const Export = () => {
           supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
           supabase
             .from("location_feedback")
-            .select("id, location_id, message, author_name, status, created_at")
+            .select("id, location_id, message, author_name, author_type, status, created_at")
             .order("created_at", { ascending: true }),
           fetchViewSettings(),
         ]);
@@ -128,18 +168,20 @@ const Export = () => {
 
         const locationIds = loadedProject.locations.map((loc) => loc.id);
         if (locationIds.length > 0) {
-          const { data: printFiles } = await supabase
-            .from("location_pdfs")
-            .select("id, location_id, storage_path, file_name")
-            .in("location_id", locationIds);
+          const [{ data: printFiles }, { data: approvals }] = await Promise.all([
+            supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
+            supabase.from("location_approvals").select("location_id").eq("approved", true).in("location_id", locationIds),
+          ]);
           const map: Record<string, any[]> = {};
           (printFiles || []).forEach((row: any) => {
             if (!map[row.location_id]) map[row.location_id] = [];
             map[row.location_id].push(row);
           });
           setPrintFilesByLocation(map);
+          setApprovedLocationIds(new Set((approvals || []).map((r: any) => r.location_id)));
         } else {
           setPrintFilesByLocation({});
+          setApprovedLocationIds(new Set());
         }
       } catch (error) {
         console.error("Error loading project:", error);
@@ -267,188 +309,177 @@ const Export = () => {
 
   // Builds the export PDF and returns it as a Blob (or null). Both the
   // download button and the send-to-HERO button use this so they emit
-  // an identical document.
+  // an identical document. Hochformat, karten-basiert, im Stil der App:
+  // pro Standort wird – wie in der Kunden-/Mitarbeiteransicht – die
+  // Produktionsdatei als Hauptbild gezeigt (PDF via pdf.js gerendert) mit
+  // dem Foto als Thumbnail; ohne Produktionsdatei das Foto selbst.
+  type LocMedia = {
+    main?: string; mainLabel: string;
+    thumb?: string; thumbLabel?: string;
+    extras: { src: string; label: string }[];
+    printNames: string[];
+  };
+
   const buildPdf = async (): Promise<Blob | null> => {
     if (!project) return null;
-    // Querformat für Standortseiten
-    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const dateStr = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
     const customerOnly = pdfOptions.mode === "customer";
-      const visibleFields = getVisibleFields(customerOnly);
+    const visibleFields = getVisibleFields(customerOnly);
+    const showPrintFiles = customerOnly ? viewSettings.customerShowPrintFiles : viewSettings.internalShowPrintFiles;
+    const showDetailImages = customerOnly ? viewSettings.customerShowDetailImages : viewSettings.internalShowDetailImages;
 
-      // ── Deckblatt (Seite 1) ───────────────────────────────────────────────
-      await drawCoverPage({
-        pdf,
-        logoDataUri: companyLogo,
-        title: "Aufmaß-Dokumentation",
-        subtitle: customerOnly ? "Standort-Übersicht zur Freigabe" : "Internes Aufmaß-Protokoll",
+    // Build the media (rendered production pages + photo thumb) per location.
+    const buildLocationMedia = async (location: any): Promise<LocMedia> => {
+      const photo = location.imageData as string | undefined;
+      const printFiles = printFilesByLocation[location.id] || [];
+      const printNames = printFiles.map((p: any) => p.file_name);
+      if (showPrintFiles && printFiles.length > 0) {
+        const pages: { src: string; label: string }[] = [];
+        for (const pf of printFiles) {
+          const url = publicFileUrl(pf.storage_path);
+          const isPdf = /\.pdf$/i.test(pf.file_name || "") || /\.pdf$/i.test(pf.storage_path || "");
+          try {
+            if (isPdf) {
+              pages.push(...(await rasterizePdf(url, pf.file_name)));
+            } else {
+              const d = await urlToDataUrl(url);
+              if (d) pages.push({ src: d, label: pf.file_name });
+            }
+          } catch { /* skip a broken file, keep going */ }
+        }
+        if (pages.length > 0) {
+          return { main: pages[0].src, mainLabel: pages[0].label, thumb: photo, thumbLabel: "Foto", extras: pages.slice(1), printNames };
+        }
+      }
+      return { main: photo, mainLabel: "Standortfoto", extras: [], printNames };
+    };
+
+    const buildFields = (location: any, printNames: string[]): FieldRow[] => {
+      const rows: FieldRow[] = [];
+      // Standard- + Custom-Felder (respektiert Kundensichtbarkeit/Reihenfolge),
+      // Standortname steckt schon in der Kopfleiste, Kommentar separat.
+      visibleFields
+        .filter((f: any) => !["locationName", "comment"].includes(f.field_key))
+        .forEach((f: any) => {
+          const v = resolveFieldValue(location, f.field_key);
+          if (v != null && String(v).trim()) {
+            const dv = f.field_type === "checkbox" ? ((v === true || v === "true") ? "Ja" : "Nein") : String(v);
+            rows.push({ label: f.field_label, value: dv });
+          }
+        });
+      const commentField = visibleFields.find((f: any) => f.field_key === "comment");
+      if ((commentField || !customerOnly) && location.comment) {
+        rows.push({ label: commentField?.field_label || "Kommentar", value: location.comment, full: true });
+      }
+      if (showPrintFiles && printNames.length > 0) {
+        rows.push({ label: "Produktionsdatei", value: printNames.join(", "), full: true });
+      }
+      return rows;
+    };
+
+    const pillFor = (location: any): { kind: PillKind } => {
+      if (approvedLocationIds.has(location.id)) return { kind: "approved" };
+      const open = (feedbackMap[location.id] || []).some((f) => f.author_type === "customer" && f.status === "open");
+      return { kind: open ? "correction" : "open" };
+    };
+
+    // ── 1) Medien pro Standort vorab laden (beeinflusst die Seitenzählung) ──
+    const mediaByLoc = new Map<string, LocMedia>();
+    for (const location of sortedLocations) {
+      mediaByLoc.set(location.id, await buildLocationMedia(location));
+    }
+
+    // ── 2) Seitenplan: Deckblatt(1) → Grundrisse → Standorte(+Extra/Detail) ──
+    let page = 1; // Deckblatt
+    const floorPlanPage = new Map<string, number>();
+    for (const fp of sortedFloorPlans) floorPlanPage.set(fp.id, ++page);
+    const locationPage = new Map<string, number>();
+    for (const location of sortedLocations) {
+      locationPage.set(location.id, ++page);
+      const m = mediaByLoc.get(location.id)!;
+      page += m.extras.length;
+      if (showDetailImages && location.detailImages && location.detailImages.length > 0) page += 1;
+    }
+
+    // ── 3) Deckblatt ──────────────────────────────────────────────────────
+    await drawCoverPage(pdf, {
+      logoDataUri: companyLogo,
+      title: "Aufmaß-Dokumentation",
+      subtitle: customerOnly ? "Standort-Übersicht zur Freigabe" : "Internes Aufmaß-Protokoll",
+      projectNumber: project.projectNumber,
+      customerName: project.customerName,
+      dateStr,
+      locationCount: sortedLocations.length,
+      floorPlanCount: sortedFloorPlans.length || undefined,
+      locations: sortedLocations.map((l) => ({ number: l.locationNumber, name: l.locationName })),
+    });
+
+    // ── 4) Grundrissseiten (klickbare Marker → Standortseite) ──────────────
+    for (const floorPlan of sortedFloorPlans) {
+      pdf.addPage();
+      const markers = floorPlan.markers
+        .map((mk) => {
+          const loc = sortedLocations.find((l) => l.id === mk.locationId);
+          if (!loc) return null;
+          return { x: mk.x, y: mk.y, short: shortLocationNumber(loc.locationNumber), pageLink: locationPage.get(loc.id) };
+        })
+        .filter(Boolean) as { x: number; y: number; short: string; pageLink?: number }[];
+      await drawFloorPlanPage(pdf, {
+        name: floorPlan.name,
         projectNumber: project.projectNumber,
-        customerName: project.customerName,
-        dateStr,
-        locationCount: sortedLocations.length,
-        locations: sortedLocations.map((l) => ({ number: l.locationNumber, name: l.locationName })),
+        image: floorPlan.imageData,
+        markers,
+        pageNumber: floorPlanPage.get(floorPlan.id)!,
+      });
+    }
+
+    // ── 5) Standortseiten ──────────────────────────────────────────────────
+    for (const location of sortedLocations) {
+      const m = mediaByLoc.get(location.id)!;
+      let p = locationPage.get(location.id)!;
+      pdf.addPage();
+      await drawLocationPage(pdf, {
+        number: location.locationNumber,
+        name: location.locationName,
+        projectNumber: project.projectNumber,
+        pill: pillFor(location),
+        mainImage: m.main,
+        mainLabel: m.mainLabel,
+        thumbImage: m.thumb,
+        thumbLabel: m.thumbLabel,
+        fields: buildFields(location, m.printNames),
+        pageNumber: p,
       });
 
-      const locationPageMap: Record<string, number> = {};
-      const floorPlanPageMap: Record<string, number> = {};
-      // Deckblatt ist Seite 1 → Inhaltsseiten beginnen bei 2.
-      let pageCounter = 2;
-
-      // Grundrisse bleiben im Hochformat → eigene Seiten zählen
-      for (const fp of sortedFloorPlans) floorPlanPageMap[fp.id] = pageCounter++;
-      for (const location of sortedLocations) {
-        locationPageMap[location.id] = pageCounter++;
-        if (((customerOnly && viewSettings.customerShowDetailImages) || (!customerOnly && viewSettings.internalShowDetailImages)) && location.detailImages && location.detailImages.length > 0) {
-          pageCounter++;
-        }
-      }
-      const totalPages = pageCounter - 1;
-
-      // Inhaltsseiten: das Deckblatt belegt bereits die erste Seite, daher
-      // bekommt jede weitere Seite ein eigenes addPage().
-      let firstPage = false;
-      for (const floorPlan of sortedFloorPlans) {
-        if (!firstPage) pdf.addPage("a4", "landscape");
-        firstPage = false;
-        const currentPage = floorPlanPageMap[floorPlan.id];
-        // Akzent-Kopfleiste
-        drawPageHeaderBand(pdf, { title: `Grundriss · ${floorPlan.name}`, right: `Projekt ${project.projectNumber}` });
-        // Grundriss im Querformat darstellen, unter der Kopfleiste
-        const fpDims = await getImageDimensions(floorPlan.imageData);
-        const fpTop = HEADER_BAND_H + 5;
-        const maxW = PAGE_W - 2 * MARGIN;
-        const maxH = PAGE_H - MARGIN - fpTop;
-        const fpRatio = Math.min(maxW / fpDims.width, maxH / fpDims.height);
-        const fpW = fpDims.width * fpRatio;
-        const fpH = fpDims.height * fpRatio;
-        const fpX = MARGIN + (maxW - fpW) / 2;
-        const fpY = fpTop;
-
-        const fmt = floorPlan.imageData.startsWith("data:image/jpeg") ? "JPEG"
-                  : floorPlan.imageData.startsWith("data:image/webp") ? "WEBP" : "PNG";
-        try { pdf.addImage(floorPlan.imageData, fmt as any, fpX, fpY, fpW, fpH); } catch {}
-
-        for (const marker of floorPlan.markers) {
-          const loc = sortedLocations.find(l => l.id === marker.locationId);
-          if (!loc) continue;
-          const mx = fpX + marker.x * fpW;
-          const my = fpY + marker.y * fpH;
-          const shortNum = shortLocationNumber(loc.locationNumber);
-          const targetPage = locationPageMap[loc.id];
-          if (targetPage) pdf.link(mx - 4, my - 4, 8, 8, { pageNumber: targetPage });
-          pdf.setFillColor(BLUE.r, BLUE.g, BLUE.b);
-          pdf.circle(mx, my, 2.5, "F");
-          pdf.setFontSize(5);
-          pdf.setFont("helvetica", "bold");
-          pdf.setTextColor(255, 255, 255);
-          pdf.text(shortNum, mx, my + 0.8, { align: "center" });
-        }
-      }
-
-      // Standortseiten
-      for (const location of sortedLocations) {
-        if (!firstPage) pdf.addPage("a4", "landscape");
-        firstPage = false;
-
-        // Footer-Daten aufbauen
-        const parentFP = sortedFloorPlans.find(fp => fp.markers.some(m => m.locationId === location.id));
-        const printFiles = printFilesByLocation[location.id] || [];
-        const showPrintFiles = customerOnly ? viewSettings.customerShowPrintFiles : viewSettings.internalShowPrintFiles;
-
-        // Spalte 1: Projekt-Pflichtfelder + konfigurierte Projektfelder
-        const col1: FooterRow[] = [
-          { label: "Stand",     value: dateStr },
-          ...(employeeName ? [{ label: "Zeichner", value: employeeName }] : []),
-          { label: "Projektnr.", value: project.projectNumber },
-        ];
-        if (project.customerName) col1.push({ label: "Kunde", value: project.customerName });
-        mergeWithDefaultProjectFields(projectFieldConfigs || [])
-          .filter((f: any) => f.is_active)
-          .forEach((f: any) => {
-            const v = getProjectFieldValue(project, f.field_key);
-            if (v && String(v).trim()) col1.push({ label: f.field_label, value: String(v) });
-          });
-
-        // Spalte 2: Standort-Pflichtfelder + optional + Plan
-        const col2: FooterRow[] = [
-          { label: "Standortnr.", value: location.locationNumber },
-        ];
-        if (location.locationName) col2.push({ label: "Standortname", value: location.locationName });
-        if (location.comment) col2.push({ label: "Kommentar", value: location.comment });
-        if (parentFP) {
-          col2.push({
-            label: "Plan",
-            value: parentFP.name,
-            pink: true,
-            pageLink: floorPlanPageMap[parentFP.id],
-          });
-        }
-        // Konfigurierte Standortfelder für Spalte 2 (nicht System/Art/Beschriftung/Format)
-        const col2FieldKeys = new Set(["system", "label", "locationType"]);
-        visibleFields
-          .filter((f: any) => !col2FieldKeys.has(f.field_key))
-          .forEach((f: any) => {
-            const v = resolveFieldValue(location, f.field_key);
-            if (v && String(v).trim()) {
-              const displayVal = f.field_type === "checkbox"
-                ? ((v === true || v === "true") ? "Ja" : "Nein")
-                : String(v);
-              col2.push({ label: f.field_label, value: displayVal, pink: false });
-            }
-          });
-        // Produktionsdatei
-        if (showPrintFiles && printFiles.length > 0) {
-          printFiles.forEach((pf: any) => {
-            col2.push({ label: "Layout / Produktionsdatei", value: pf.file_name, pink: true });
-          });
-        }
-
-        // Spalte 3: System, Art, Beschriftung + weitere konfigurierte Felder
-        const col3: FooterRow[] = [];
-        if (location.system) col3.push({ label: "System", value: location.system });
-        if (location.locationType) col3.push({ label: "Art", value: location.locationType });
-        if (location.label) col3.push({ label: "Beschriftung", value: location.label });
-        visibleFields
-          .filter((f: any) => col2FieldKeys.has(f.field_key) && !["system", "locationType", "label"].includes(f.field_key))
-          .forEach((f: any) => {
-            const v = resolveFieldValue(location, f.field_key);
-            if (v && String(v).trim()) col3.push({ label: f.field_label, value: String(v) });
-          });
-
-        const footer: FooterData = {
-          col1: col1.slice(0, 5),
-          col2: col2.slice(0, 5),
-          col3: col3.slice(0, 5),
-          logoDataUri: companyLogo,
-        };
-
-        await drawLocationPageLandscape({
-          pdf,
-          imageData: location.imageData,
-          footer,
-          header: {
-            title: `Standort ${location.locationNumber}${location.locationName ? ` · ${location.locationName}` : ""}`,
-            right: `Projekt ${project.projectNumber}`,
-          },
+      // Zusätzliche Produktionsseiten (mehrseitige Druckdateien)
+      for (const ex of m.extras) {
+        pdf.addPage();
+        p += 1;
+        await drawMediaPage(pdf, {
+          title: `Standort ${location.locationNumber} · Produktionsdatei`,
+          sub: `${location.locationName ? location.locationName + "  ·  " : ""}Projekt ${project.projectNumber}`,
+          image: ex.src,
+          label: ex.label,
+          pageNumber: p,
         });
-
-        // Detailbilder
-        if (((customerOnly && viewSettings.customerShowDetailImages) || (!customerOnly && viewSettings.internalShowDetailImages)) && location.detailImages && location.detailImages.length > 0) {
-          pdf.addPage("a4", "landscape");
-          await drawDetailImagesPage({
-            pdf,
-            projectNumber: project.projectNumber,
-            location,
-            dateStr,
-            currentPage: locationPageMap[location.id] + 1,
-            totalPages,
-            companyLogo,
-          });
-        }
       }
 
-      const pdfBlob = pdf.output("blob");
-      return pdfBlob;
+      // Detailbilder
+      if (showDetailImages && location.detailImages && location.detailImages.length > 0) {
+        pdf.addPage();
+        p += 1;
+        await drawDetailPage(pdf, {
+          number: location.locationNumber,
+          name: location.locationName,
+          projectNumber: project.projectNumber,
+          images: location.detailImages.map((d: any) => ({ src: d.imageData, caption: d.caption })),
+          pageNumber: p,
+        });
+      }
+    }
+
+    return pdf.output("blob");
   };
 
   const exportAsPDF = async () => {
@@ -614,49 +645,6 @@ function naturalLocationSort(a: string, b: string) {
 function shortLocationNumber(locationNumber: string) {
   const parts = locationNumber.split("-");
   return parts[parts.length - 1] || locationNumber;
-}
-
-async function drawDetailImagesPage({ pdf, projectNumber, location, dateStr, companyLogo }: any) {
-  // Querformat – Detailbilder nebeneinander über dem Footer
-  const FOOTER_H_D = 12;
-  const contentH = PAGE_H - 2 * MARGIN - FOOTER_H_D;
-
-  drawPageHeaderBand(pdf, {
-    title: `Detailbilder · Standort ${location.locationNumber}${location.locationName ? ` · ${location.locationName}` : ""}`,
-    right: `Projekt ${projectNumber}`,
-  });
-  let y = HEADER_BAND_H + 4;
-
-  const maxW = (PAGE_W - 2 * MARGIN - 6) / 2;
-  const maxH = contentH - 10;
-  let col = 0;
-  for (const detail of location.detailImages) {
-    const dims = await getImageDimensions(detail.imageData);
-    const ratio = Math.min(maxW / dims.width, maxH / dims.height);
-    const w = dims.width * ratio;
-    const h = dims.height * ratio;
-    const x = MARGIN + col * (maxW + 6) + (maxW - w) / 2;
-    if (y + h + 10 > PAGE_H - MARGIN - FOOTER_H_D) {
-      pdf.addPage("a4", "landscape");
-      y = MARGIN + 8;
-      col = 0;
-    }
-    const fmt = detail.imageData.startsWith("data:image/jpeg") ? "JPEG"
-              : detail.imageData.startsWith("data:image/webp") ? "WEBP" : "PNG";
-    try { pdf.addImage(detail.imageData, fmt as any, x, y, w, h); } catch {}
-    if (detail.caption) {
-      pdf.setFontSize(6);
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(100, 100, 100);
-      pdf.text(detail.caption, x, y + h + 3, { maxWidth: maxW });
-    }
-    if (col === 1) {
-      col = 0;
-      y += maxH + 12;
-    } else {
-      col = 1;
-    }
-  }
 }
 
 export default Export;
