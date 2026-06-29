@@ -3,7 +3,7 @@ import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, AlertTriangle } from "lucide-react";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import { Location } from "@/types/project";
 import { format } from "date-fns";
@@ -314,6 +314,21 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     }
   };
 
+  // Freigabe-Status spiegelt die Kundenansicht: ein Standort ist
+  // "Freigegeben" (alle Freigabe-Zeilen approved), "Korrektur gewünscht"
+  // (offene Kundenkorrektur und nicht freigegeben) oder "Offen" (Kunde war
+  // aktiv, aber weder freigegeben noch offene Korrektur). Ohne jegliche
+  // Kundenaktivität zeigen wir keinen Badge.
+  const hasApprovalRows = approvalCount !== null && approvalCount.total > 0;
+  const fullyApproved = hasApprovalRows && approvalCount!.approved === approvalCount!.total;
+  const hasCustomerFeedback = feedbacks.some((f) => f.author_type === "customer");
+  const openCorrection = feedbacks.some((f) => f.author_type === "customer" && f.status === "open");
+  const approvalState: "approved" | "correction" | "open" | null =
+    fullyApproved ? "approved"
+    : openCorrection ? "correction"
+    : (hasApprovalRows || hasCustomerFeedback) ? "open"
+    : null;
+
   return (
     <Card className="overflow-hidden">
       {pdfUrl ? (
@@ -336,16 +351,20 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           <div className="space-y-1 flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="font-semibold text-base md:text-lg">Standort {location.locationNumber}</h3>
-              {approvalCount !== null && approvalCount.total > 0 && (
-                approvalCount.approved >= approvalCount.total ? (
-                  <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium">
-                    <CheckCheck className="h-3 w-3" /> Freigegeben
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-medium">
-                    <Clock className="h-3 w-3" /> {approvalCount.approved}/{approvalCount.total} freigegeben
-                  </span>
-                )
+              {approvalState === "approved" && (
+                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium">
+                  <CheckCheck className="h-3 w-3" /> Freigegeben
+                </span>
+              )}
+              {approvalState === "correction" && (
+                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-medium">
+                  <AlertTriangle className="h-3 w-3" /> Korrektur gewünscht
+                </span>
+              )}
+              {approvalState === "open" && (
+                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+                  <Clock className="h-3 w-3" /> Offen
+                </span>
               )}
             </div>
             {location.locationName && <p className="text-sm text-foreground truncate">{location.locationName}</p>}

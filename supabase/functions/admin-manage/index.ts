@@ -812,6 +812,15 @@ Deno.serve(async (req) => {
           return json({ options });
         }
 
+        if (source === "hero_doc_types") {
+          const r = await heroQuery(`query { document_types { id name } }`);
+          if (r.error) return json({ options: [], error: r.error });
+          const options = (r.data?.document_types || [])
+            .map((d: any) => ({ value: String(d.id), label: d.name || `#${d.id}` }))
+            .sort((a: any, b: any) => a.label.localeCompare(b.label));
+          return json({ options });
+        }
+
         // Derive partners and/or resources from recent calendar events.
         const wantPartners = source === "hero_partners" || source === "hero_targets";
         const wantResources = source === "hero_resources" || source === "hero_targets";

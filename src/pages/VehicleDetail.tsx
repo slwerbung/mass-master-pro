@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2 } from "lucide-react";
+import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
@@ -67,6 +67,7 @@ const VehicleDetail = () => {
   const [images, setImages] = useState<VehicleImage[]>([]);
   const [layout, setLayout] = useState<VehicleLayout | null>(null);
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
+  const [vehicleApproved, setVehicleApproved] = useState(false);
   const [measuredImages, setMeasuredImages] = useState<any[]>([]);
   const [uploadingMeasured, setUploadingMeasured] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -97,6 +98,7 @@ const VehicleDetail = () => {
         { data: layouts },
         { data: fbs },
         { data: measured },
+        { data: approvals },
       ] = await Promise.all([
         supabase.from("projects").select("id, project_number, customer_name, custom_fields, project_type").eq("id", projectId!).maybeSingle(),
         supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
@@ -105,9 +107,11 @@ const VehicleDetail = () => {
         supabase.from("vehicle_layouts").select("*").eq("project_id", projectId!).order("uploaded_at", { ascending: false }).limit(1),
         supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId!).order("created_at"),
         supabase.from("vehicle_measured_images").select("*").eq("project_id", projectId!).order("created_at"),
+        supabase.from("vehicle_layout_approval").select("approved").eq("project_id", projectId!).eq("approved", true),
       ]);
 
       setProject(proj);
+      setVehicleApproved(((approvals as any[]) || []).length > 0);
       setFieldConfigs((configs || []) as VehicleFieldConfig[]);
       const vals: Record<string, string> = {};
       (values || []).forEach((v: any) => { vals[v.field_key] = v.value || ""; });
@@ -402,9 +406,24 @@ const VehicleDetail = () => {
       </div>
 
       <div className="container max-w-3xl mx-auto p-4 md:p-6 space-y-4 pb-10">
-        {/* Project title */}
+        {/* Project title + Freigabestatus (wie bei den anderen Projektarten) */}
         <div className="pt-1">
-          <h1 className="text-2xl font-bold tracking-tight">{project.project_number}</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold tracking-tight">{project.project_number}</h1>
+            {vehicleApproved ? (
+              <span className="inline-flex items-center gap-1.5 text-sm px-3 py-1 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium">
+                <CheckCheck className="h-4 w-4" /> Komplett freigegeben
+              </span>
+            ) : feedbacks.some((f) => f.status === "open") ? (
+              <span className="inline-flex items-center gap-1.5 text-sm px-3 py-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-medium">
+                <AlertTriangle className="h-4 w-4" /> Korrekturen
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-sm px-3 py-1 rounded-full bg-muted text-muted-foreground font-medium">
+                <Clock className="h-4 w-4" /> Offen
+              </span>
+            )}
+          </div>
           {project.customer_name && <p className="text-sm text-muted-foreground mt-0.5">{project.customer_name}</p>}
         </div>
 
