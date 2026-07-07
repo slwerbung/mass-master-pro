@@ -94,6 +94,10 @@ export const ACTIONS: ActionDef[] = [
           { value: "14", label: "2 Wochen später" },
         ],
       },
+      {
+        key: "skipWeekends", label: "Nur an Werktagen", type: "checkbox", default: true, optional: true,
+        help: "Fällt der berechnete Tag auf ein Wochenende, wird der Termin auf den nächsten Werktag (Montag) verschoben.",
+      },
       { key: "time", label: "Uhrzeit", type: "time", default: "09:00" },
       { key: "durationMinutes", label: "Dauer (Minuten)", type: "number", default: 60 },
       { key: "categoryId", label: "Kategorie (HERO)", type: "select", optional: true, optionsSource: "hero_calendar_categories" },

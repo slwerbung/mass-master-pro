@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 
 // ─── Kontext ──────────────────────────────────────────────────────────────────
 type Phase = "idle" | "recording" | "processing";
-export interface MeetingResult { id?: string; summary: string; actionPlan: string; heroLogged: boolean; projectNumber?: string }
+export interface MeetingResult { id?: string; summary: string; actionPlan: string; heroLogged: boolean; heroError?: string; projectNumber?: string }
 
 interface RecorderCtx {
   phase: Phase;
@@ -238,8 +238,9 @@ function ResultDialog({ result, onClose }: { result: MeetingResult | null; onClo
                 <CheckCircle2 className="h-4 w-4" /> Im HERO-Logbuch gespeichert{result.projectNumber ? ` · Projekt ${result.projectNumber}` : ""}
               </div>
             ) : (
-              <div className="text-sm rounded-lg bg-muted px-3 py-2 text-muted-foreground">
-                Notiz gespeichert. (Kein HERO-Logbuch-Eintrag – Projekt nicht mit HERO verknüpft oder Integration aus.)
+              <div className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-300 px-3 py-2">
+                Notiz gespeichert, aber kein HERO-Logbuch-Eintrag.
+                {result.heroError ? <span className="block mt-1 text-xs opacity-80 break-words">{result.heroError}</span> : null}
               </div>
             )}
             <div>

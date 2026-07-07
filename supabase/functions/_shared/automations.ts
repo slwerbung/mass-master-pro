@@ -55,13 +55,21 @@ function toBerlinIso(instant: Date): string {
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}${berlinOffset(instant)}`;
 }
 // base = "now" in Berlin + dayOffset days, at HH:MM, lasting durationMin.
-function buildEventTimes(now: Date, dayOffset: number, time: string, durationMin: number) {
+// When skipWeekends is set, a resulting Saturday/Sunday is pushed to the next
+// Monday (nächster Werktag).
+function buildEventTimes(now: Date, dayOffset: number, time: string, durationMin: number, skipWeekends = false) {
   const dayFmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit",
   });
   const [y, m, d] = dayFmt.format(now).split("-").map(Number);
   const base = new Date(Date.UTC(y, m - 1, d));
   base.setUTCDate(base.getUTCDate() + (Number.isFinite(dayOffset) ? dayOffset : 0));
+  if (skipWeekends) {
+    // base was built from Berlin y/m/d, so getUTCDay() is the correct weekday.
+    const wd = base.getUTCDay(); // 0 = Sun, 6 = Sat
+    if (wd === 6) base.setUTCDate(base.getUTCDate() + 2);
+    else if (wd === 0) base.setUTCDate(base.getUTCDate() + 1);
+  }
   const ty = base.getUTCFullYear(), tm = base.getUTCMonth() + 1, td = base.getUTCDate();
   const [hhRaw, miRaw] = (time || "09:00").split(":");
   const hh = Math.min(23, Math.max(0, parseInt(hhRaw, 10) || 9));
@@ -112,7 +120,10 @@ async function runHeroCalendarAction(
     new Date(),
     Number(cfg.dayOffset ?? 0),
     String(cfg.time ?? "09:00"),
-    Number(cfg.durationMinutes ?? 60)
+    Number(cfg.durationMinutes ?? 60),
+    // Default ON: unless explicitly disabled, push weekend dates to the next
+    // working day. Existing rules (no key stored) benefit without re-saving.
+    cfg.skipWeekends !== false && cfg.skipWeekends !== "false"
   );
   const input: Record<string, unknown> = {
     title: cfg.title || "Aufmaß vor Ort",
