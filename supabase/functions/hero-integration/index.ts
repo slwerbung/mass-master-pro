@@ -113,16 +113,17 @@ Deno.serve(async (req) => {
         const { heroProjectId, title, text } = params;
         const projectIdNum = Number(heroProjectId);
         if (!Number.isFinite(projectIdNum)) return json({ error: "heroProjectId required" }, 400);
-        // Use GraphQL variables to prevent injection via title/text
+        // HERO v9: add_logbook_entry takes a single LogbookEntryInput (no
+        // title field); the title is folded into custom_text (required).
+        // GraphQL variables prevent injection via title/text.
         const mutation = `
-          mutation($projectId: Int!, $title: String!, $text: String) {
-            add_logbook_entry(project_match_id: $projectId, custom_title: $title, custom_text: $text) { id }
+          mutation($entry: LogbookEntryInput!) {
+            add_logbook_entry(logbook_entry: $entry) { id }
           }
         `;
+        const customText = ([String(title || ""), String(text || "")].filter(Boolean).join("\n\n") || String(title || "")).slice(0, 5000);
         await heroPost(apiKey, mutation, {
-          projectId: projectIdNum,
-          title: String(title || "").slice(0, 500),
-          text: text ? String(text).slice(0, 5000) : null,
+          entry: { target: "project_match", target_id: projectIdNum, custom_text: customText },
         });
         return json({ success: true });
       }
