@@ -59,7 +59,7 @@ async function heroContext(supabase: any, projectId: string): Promise<{ apiKey: 
   return { apiKey, heroId };
 }
 
-async function heroAddLogbook(apiKey: string, heroProjectId: number, title: string, text: string): Promise<boolean> {
+async function heroAddLogbook(apiKey: string, heroProjectId: number, title: string, text: string): Promise<{ ok: boolean; error?: string }> {
   const mutation = `mutation($projectId: Int!, $title: String!, $text: String) { add_logbook_entry(project_match_id: $projectId, custom_title: $title, custom_text: $text) { id } }`;
   try {
     const resp = await fetch(HERO_GRAPHQL_URL, {
@@ -67,10 +67,25 @@ async function heroAddLogbook(apiKey: string, heroProjectId: number, title: stri
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ query: mutation, variables: { projectId: heroProjectId, title: title.slice(0, 500), text: text ? text.slice(0, 5000) : null } }),
     });
-    const data = await resp.json();
-    return !data.errors?.length;
-  } catch {
-    return false;
+    const raw = await resp.text();
+    if (!resp.ok) {
+      return { ok: false, error: `HERO HTTP ${resp.status}: ${raw.slice(0, 400)}` };
+    }
+    let data: any;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return { ok: false, error: `HERO lieferte kein JSON: ${raw.slice(0, 400)}` };
+    }
+    if (data?.errors?.length) {
+      return { ok: false, error: `HERO GraphQL: ${JSON.stringify(data.errors).slice(0, 400)}` };
+    }
+    if (!data?.data?.add_logbook_entry?.id) {
+      return { ok: false, error: `HERO: keine Eintrags-ID zurückgegeben: ${raw.slice(0, 400)}` };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: `HERO Anfrage fehlgeschlagen: ${e?.message || String(e)}` };
   }
 }
 
@@ -199,17 +214,25 @@ Deno.serve(async (req) => {
       const { data: proj } = await supabase.from("projects").select("project_number").eq("id", projectId).maybeSingle();
       const projectNumber = proj?.project_number || projectId.slice(0, 8);
 
-      // HERO logbook (best-effort).
+      // HERO logbook (best-effort). Surface WHY it failed instead of a
+      // misleading generic "not linked" message.
       let heroLogged = false;
+      let heroError: string | undefined;
       try {
         const hctx = await heroContext(supabase, projectId);
-        if (hctx) {
+        if (!hctx) {
+          heroError = "Projekt nicht mit HERO verknüpft oder Integration aus.";
+        } else {
           const text =
             `ERGEBNISPROTOKOLL\n\n${summary}\n\n` +
             `MASSNAHMENPLAN\n\n${actionPlan}`;
-          heroLogged = await heroAddLogbook(hctx.apiKey, hctx.heroId, `Captfix: Gesprächsnotiz · ${projectNumber}`, text);
+          const res = await heroAddLogbook(hctx.apiKey, hctx.heroId, `Captfix: Gesprächsnotiz · ${projectNumber}`, text);
+          heroLogged = res.ok;
+          if (!res.ok) heroError = res.error;
         }
-      } catch { /* best-effort */ }
+      } catch (e: any) {
+        heroError = e?.message || String(e);
+      }
 
       // Store the note; drop the raw audio.
       const createdBy = (payload as any).name || (payload.role === "admin" ? "Admin" : "Mitarbeiter");
@@ -224,7 +247,7 @@ Deno.serve(async (req) => {
 
       await supabase.storage.from("project-files").remove([audioPath]).catch(() => {});
 
-      return json({ id: inserted?.id, summary, actionPlan, heroLogged, projectNumber });
+      return json({ id: inserted?.id, summary, actionPlan, heroLogged, heroError, projectNumber });
     }
 
     return json({ error: `Unbekannte Aktion: ${action}` }, 400);
