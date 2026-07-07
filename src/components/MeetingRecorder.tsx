@@ -86,7 +86,17 @@ export function MeetingRecorderProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase.functions.invoke("meeting-notes", {
         body: { action: "process", token: session?.authToken, projectId, audioPath: path },
       });
-      if (error) throw new Error(error.message);
+      if (error) {
+        // supabase-js wraps a non-2xx response in FunctionsHttpError; the real
+        // message from the function is in error.context (a Response). Surface it.
+        let msg = error.message;
+        try {
+          const ctx = (error as any).context;
+          const body = ctx && typeof ctx.json === "function" ? await ctx.json() : null;
+          if (body?.error) msg = body.error;
+        } catch { /* keep generic message */ }
+        throw new Error(msg);
+      }
       if ((data as any)?.error) throw new Error((data as any).error);
       setResult(data as MeetingResult);
       window.dispatchEvent(new CustomEvent("meeting-note-created", { detail: { projectId } }));
