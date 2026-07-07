@@ -15,6 +15,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
+import { MeetingNotesCard } from "@/components/MeetingNotesCard";
 
 interface VehicleFieldConfig {
   id: string;
@@ -426,6 +427,9 @@ const VehicleDetail = () => {
           </div>
           {project.customer_name && <p className="text-sm text-muted-foreground mt-0.5">{project.customer_name}</p>}
         </div>
+
+        {/* Gesprächsnotizen (Diktiergerät → Transkript → Protokoll → HERO) */}
+        <MeetingNotesCard projectId={projectId!} projectNumber={project.project_number} />
 
         {/* Vehicle Images */}
         <Card>

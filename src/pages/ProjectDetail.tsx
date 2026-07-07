@@ -31,6 +31,7 @@ import { useDirectCamera } from "@/lib/useDirectCamera";
 import ProjectInfoFields from "@/components/ProjectInfoFields";
 import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import { SplitPdfDialog } from "@/components/SplitPdfDialog";
+import { MeetingNotesCard } from "@/components/MeetingNotesCard";
 import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 
 const ProjectDetail = () => {
@@ -353,6 +354,9 @@ const ProjectDetail = () => {
             <ProjectInfoFields project={project} fields={projectFieldConfigs} />
           </CardContent>
         </Card>
+
+        {/* Gesprächsnotizen (Diktiergerät → Transkript → Protokoll → HERO) */}
+        <MeetingNotesCard projectId={projectId!} projectNumber={project.projectNumber} />
 
         {/* Floor plans (plan projects only) */}
         {isPlanProject && (

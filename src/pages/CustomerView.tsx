@@ -411,7 +411,7 @@ const CustomerView = () => {
         const [{ data: imgs }, { data: pdfs }, { data: approvData }, feedbackResponse, { data: detailRows }] = await Promise.all([
           supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds),
           supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
-          supabase.from("location_approvals").select("location_id, approved").eq("assignment_id", assignment.id).in("location_id", locationIds),
+          supabase.from("location_approvals").select("location_id, approved").in("location_id", locationIds),
           (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at"),
           supabase.from("detail_images").select("id, location_id, caption, annotated_path, created_at").in("location_id", locationIds).order("created_at", { ascending: true }),
         ]);
@@ -449,8 +449,11 @@ const CustomerView = () => {
         );
         if (detailPaths.length > 0) resolveSignedUrls(detailPaths);
 
+        // Freigaben projektweit: ein Standort gilt als freigegeben, sobald ihn
+        // irgendein Kunde (Assignment) freigegeben hat. So sehen verschiedene
+        // Kunden, die am selben Projekt arbeiten, immer denselben Stand.
         const approvMap: Record<string, boolean> = {};
-        (approvData || []).forEach((a: any) => { approvMap[a.location_id] = a.approved; });
+        (approvData || []).forEach((a: any) => { if (a.approved) approvMap[a.location_id] = true; });
         setApprovals(approvMap);
 
         const feedbackMap: Record<string, FeedbackItem[]> = {};
@@ -814,7 +817,7 @@ const CustomerView = () => {
         supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
         supabase.from("vehicle_field_values").select("field_key, value").eq("project_id", projectId),
         supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId).order("created_at"),
-        supabase.from("vehicle_layout_approval").select("*").eq("project_id", projectId).eq("assignment_id", assignmentId).maybeSingle(),
+        supabase.from("vehicle_layout_approval").select("approved").eq("project_id", projectId),
       ]);
       setVehicleImages(imgs || []);
       setVehicleLayout(layouts && layouts.length > 0 ? layouts[0] : null);
@@ -823,7 +826,8 @@ const CustomerView = () => {
       (values || []).forEach((v: any) => { vals[v.field_key] = v.value || ""; });
       setVehicleFieldValues(vals);
       setVehicleFeedbacks(fbs || []);
-      setVehicleApproved(!!(approval as any)?.approved);
+      // Projektweit: freigegeben, sobald irgendein Kunde freigegeben hat.
+      setVehicleApproved(((approval as any[]) || []).some((a: any) => a.approved));
     } catch (e) {
       toast.error("Fehler beim Laden der Fahrzeugdaten");
     }
@@ -854,12 +858,20 @@ const CustomerView = () => {
     const newVal = !vehicleApproved;
     setSavingVehicleApproval(true);
     setVehicleApproved(newVal);
-    await supabase.from("vehicle_layout_approval").upsert({
-      project_id: selectedAssignment.project_id,
-      assignment_id: selectedAssignment.id,
-      approved: newVal,
-      approved_at: newVal ? new Date().toISOString() : null,
-    }, { onConflict: "project_id,assignment_id" });
+    // Freigeben schreibt die Zeile dieses Kunden; Zurücknehmen hebt die
+    // Freigabe projektweit (für alle Kunden) auf, damit der Stand gleich bleibt.
+    if (newVal) {
+      await supabase.from("vehicle_layout_approval").upsert({
+        project_id: selectedAssignment.project_id,
+        assignment_id: selectedAssignment.id,
+        approved: true,
+        approved_at: new Date().toISOString(),
+      }, { onConflict: "project_id,assignment_id" });
+    } else {
+      await supabase.from("vehicle_layout_approval")
+        .update({ approved: false, approved_at: null })
+        .eq("project_id", selectedAssignment.project_id);
+    }
     triggerNotification("approval"); // server sends on full completion, resets otherwise
     setSavingVehicleApproval(false);
   };
@@ -983,10 +995,17 @@ const CustomerView = () => {
   const toggleApproval = async (locationId: string, approved: boolean) => {
     if (!selectedAssignment || isLimitedGuestMode) return;
     setApprovals(prev => ({ ...prev, [locationId]: approved }));
-    const { error } = await supabase.from("location_approvals").upsert({
-      location_id: locationId, assignment_id: selectedAssignment.id,
-      approved, approved_at: approved ? new Date().toISOString() : null,
-    }, { onConflict: "location_id,assignment_id" });
+    // Projektweiter Status: Freigeben schreibt die Zeile dieses Kunden;
+    // Zurücknehmen hebt die Freigabe für ALLE Kunden des Standorts auf, damit
+    // der Stand für alle gleich bleibt.
+    const { error } = approved
+      ? await supabase.from("location_approvals").upsert({
+          location_id: locationId, assignment_id: selectedAssignment.id,
+          approved: true, approved_at: new Date().toISOString(),
+        }, { onConflict: "location_id,assignment_id" })
+      : await supabase.from("location_approvals")
+          .update({ approved: false, approved_at: null })
+          .eq("location_id", locationId);
     if (error) {
       // Revert optimistic UI and tell the user instead of failing silently.
       setApprovals(prev => ({ ...prev, [locationId]: !approved }));
@@ -1002,11 +1021,18 @@ const CustomerView = () => {
     const newApprovals: Record<string, boolean> = {};
     locations.forEach(l => { newApprovals[l.id] = approved; });
     setApprovals(newApprovals);
-    const rows = locations.map(l => ({
-      location_id: l.id, assignment_id: selectedAssignment.id,
-      approved, approved_at: approved ? new Date().toISOString() : null,
-    }));
-    const { error } = await supabase.from("location_approvals").upsert(rows, { onConflict: "location_id,assignment_id" });
+    const locIds = locations.map(l => l.id);
+    const { error } = approved
+      ? await supabase.from("location_approvals").upsert(
+          locations.map(l => ({
+            location_id: l.id, assignment_id: selectedAssignment.id,
+            approved: true, approved_at: new Date().toISOString(),
+          })),
+          { onConflict: "location_id,assignment_id" },
+        )
+      : await supabase.from("location_approvals")
+          .update({ approved: false, approved_at: null })
+          .in("location_id", locIds);
     if (error) {
       toast.error("Freigaben konnten nicht gespeichert werden: " + error.message);
       setSavingApprovals(false);

@@ -827,15 +827,15 @@ serve(async (req) => {
       }
       return "";
     };
-    // Project name in HERO = Hersteller + Modell + Kennzeichen (in that order),
-    // each looked up by label/key with common aliases so an admin rename
-    // doesn't break it. Empty parts are simply skipped.
-    const hersteller = pickField("hersteller", "marke", "fabrikat");
-    const modell = pickField("modell", "model");
-    const kennzeichen = pickField("kennzeichen", "nummernschild", "kennz");
-    const projectTitle = [hersteller, modell, kennzeichen].filter(Boolean).join(" ").trim();
+    // Project name in HERO = Kennzeichen + Marke + Fahrzeugbezeichnung (in that
+    // order), each looked up by label/key with common aliases so an admin
+    // rename doesn't break it. Empty parts are simply skipped.
+    const kennzeichen = pickField("kennzeichen", "nummernschild", "kennz", "amtliches");
+    const marke = pickField("hersteller", "marke", "fabrikat");
+    const bezeichnung = pickField("fahrzeugbezeichnung", "bezeichnung", "modell", "model", "typ");
+    const projectTitle = [kennzeichen, marke, bezeichnung].filter(Boolean).join(" ").trim();
     debug.projectTitle = projectTitle;
-    debug.titleParts = { hersteller, modell, kennzeichen };
+    debug.titleParts = { kennzeichen, marke, bezeichnung };
     debug.fieldLabels = fieldLabels;
 
     if (heroEnabled) {

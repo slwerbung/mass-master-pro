@@ -33,6 +33,7 @@ import Gestaltung from "./pages/Gestaltung";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import LabelPrint from "./pages/LabelPrint";
 import NotFound from "./pages/NotFound";
+import { MeetingRecorderProvider } from "@/components/MeetingRecorder";
 
 const queryClient = new QueryClient();
 
@@ -138,6 +139,7 @@ const App = () => {
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <MeetingRecorderProvider>
         <Routes>
           <Route path="/" element={<Auth />} />
           <Route path="/admin" element={<RoleGuard allowedRoles={["admin"]}><Admin /></RoleGuard>} />
@@ -171,6 +173,7 @@ const App = () => {
           <Route path="/datenschutz" element={<PrivacyPolicy />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </MeetingRecorderProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
