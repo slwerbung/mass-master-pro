@@ -3,15 +3,15 @@
 // Flow (action "process"):
 //   1. Auth: require a valid employee/admin session token.
 //   2. Download the uploaded audio from Storage (project-files bucket).
-//   3. Transcribe via OpenAI Whisper (German).
+//   3. Transcribe via Whisper (Groq or OpenAI), German.
 //   4. Summarise into a result protocol (Ergebnisprotokoll, NOT verbatim) plus
-//      an action plan (Maßnahmenplan) via OpenAI chat (JSON output).
+//      an action plan (Maßnahmenplan) via chat completion (JSON output).
 //   5. Write the note to the linked HERO project's logbook (best-effort).
 //   6. Store the note in meeting_notes and delete the raw audio again.
 //
 // Action "list": return recent notes for a project.
 //
-// Requires OPENAI_API_KEY in the function environment (Supabase secrets).
+// Requires GROQ_API_KEY (free) or OPENAI_API_KEY in the function environment.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
@@ -23,8 +23,22 @@ const corsHeaders = {
 };
 
 const HERO_GRAPHQL_URL = "https://login.hero-software.de/api/external/v9/graphql";
-const OPENAI_TRANSCRIBE_URL = "https://api.openai.com/v1/audio/transcriptions";
-const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
+
+// AI provider: prefer Groq (free tier, no card) if its key is set, else
+// OpenAI. Both expose an OpenAI-compatible /audio/transcriptions and
+// /chat/completions API, so only base URL + model + key differ.
+interface AIProvider { name: string; base: string; key: string; transcribeModel: string; chatModel: string }
+function resolveProvider(): AIProvider | null {
+  const groq = Deno.env.get("GROQ_API_KEY");
+  if (groq) {
+    return { name: "groq", base: "https://api.groq.com/openai/v1", key: groq, transcribeModel: "whisper-large-v3", chatModel: "llama-3.3-70b-versatile" };
+  }
+  const openai = Deno.env.get("OPENAI_API_KEY");
+  if (openai) {
+    return { name: "openai", base: "https://api.openai.com/v1", key: openai, transcribeModel: "whisper-1", chatModel: "gpt-4o-mini" };
+  }
+  return null;
+}
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -60,15 +74,15 @@ async function heroAddLogbook(apiKey: string, heroProjectId: number, title: stri
   }
 }
 
-async function transcribe(apiKey: string, audio: Blob, filename: string): Promise<string> {
+async function transcribe(p: AIProvider, audio: Blob, filename: string): Promise<string> {
   const form = new FormData();
   form.append("file", audio, filename);
-  form.append("model", "whisper-1");
+  form.append("model", p.transcribeModel);
   form.append("language", "de");
   form.append("response_format", "text");
-  const resp = await fetch(OPENAI_TRANSCRIBE_URL, {
+  const resp = await fetch(`${p.base}/audio/transcriptions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
+    headers: { Authorization: `Bearer ${p.key}` },
     body: form,
   });
   if (!resp.ok) throw new Error(`Transkription fehlgeschlagen (HTTP ${resp.status}): ${(await resp.text()).slice(0, 300)}`);
@@ -84,12 +98,12 @@ Gib ein JSON-Objekt zurück mit genau diesen Feldern:
 
 Antworte ausschließlich mit dem JSON-Objekt, ohne weitere Erklärung.`;
 
-async function summarise(apiKey: string, transcript: string): Promise<{ summary: string; actionPlan: string }> {
-  const resp = await fetch(OPENAI_CHAT_URL, {
+async function summarise(p: AIProvider, transcript: string): Promise<{ summary: string; actionPlan: string }> {
+  const resp = await fetch(`${p.base}/chat/completions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${p.key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: p.chatModel,
       temperature: 0.2,
       response_format: { type: "json_object" },
       messages: [
@@ -147,9 +161,9 @@ Deno.serve(async (req) => {
       const audioPath = String(body.audioPath || "").trim();
       if (!projectId || !audioPath) return json({ error: "projectId und audioPath erforderlich" }, 400);
 
-      const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-      if (!OPENAI_API_KEY) {
-        return json({ error: "OPENAI_API_KEY ist nicht konfiguriert (Supabase Secrets)." }, 500);
+      const provider = resolveProvider();
+      if (!provider) {
+        return json({ error: "Kein KI-Key konfiguriert (GROQ_API_KEY oder OPENAI_API_KEY in den Supabase Secrets)." }, 500);
       }
 
       // Download the uploaded audio.
@@ -163,7 +177,7 @@ Deno.serve(async (req) => {
       const filename = audioPath.split("/").pop() || "audio.webm";
       let transcript = "";
       try {
-        transcript = await transcribe(OPENAI_API_KEY, audio, filename);
+        transcript = await transcribe(provider, audio, filename);
       } catch (e: any) {
         await supabase.storage.from("project-files").remove([audioPath]).catch(() => {});
         return json({ error: e.message || "Transkription fehlgeschlagen" }, 502);
@@ -175,7 +189,7 @@ Deno.serve(async (req) => {
 
       let summary = "", actionPlan = "";
       try {
-        ({ summary, actionPlan } = await summarise(OPENAI_API_KEY, transcript));
+        ({ summary, actionPlan } = await summarise(provider, transcript));
       } catch (e: any) {
         await supabase.storage.from("project-files").remove([audioPath]).catch(() => {});
         return json({ error: e.message || "Zusammenfassung fehlgeschlagen" }, 502);
