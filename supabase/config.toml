@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.project-invite]
 verify_jwt = false
+
+[functions.hero-offer-action]
+verify_jwt = false
