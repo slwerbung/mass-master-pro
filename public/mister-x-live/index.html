@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mister X Live Prototype</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        #map { height: 60vh; width: 100%; border-radius: 12px; }
+        .mx-marker { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 9999px; border: 2px solid white; font-size: 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.5); }
+    </style>
+</head>
+<body class="bg-slate-900 text-white font-sans antialiased">
+
+    <div class="max-w-md mx-auto p-4 min-h-screen flex flex-col justify-between">
+
+        <header class="text-center py-4">
+            <h1 class="text-3xl font-black tracking-wider text-red-500 uppercase">Mister X <span class="text-white">Live</span></h1>
+            <p class="text-xs text-slate-400">Prototyp v1.0</p>
+        </header>
+
+        <div id="screen-lobby" class="bg-slate-800 p-6 rounded-2xl shadow-xl flex-1 flex flex-col justify-center space-y-6">
+            <div id="lobby-room-banner" class="hidden text-center bg-slate-700/60 border border-slate-600 rounded-lg p-3 text-sm">
+                Du trittst Raum <span id="lobby-room-code" class="font-mono font-bold text-red-400"></span> bei
+            </div>
+
+            <div class="space-y-2">
+                <label class="text-sm font-semibold text-slate-300">Dein Name</label>
+                <input type="text" id="username" placeholder="z.B. Jäger99" class="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-white focus:outline-none focus:border-red-500">
+            </div>
+
+            <div class="space-y-2">
+                <label class="text-sm font-semibold text-slate-300">Deine Rolle</label>
+                <div class="grid grid-cols-2 gap-4">
+                    <button id="btn-role-detector" onclick="setRole('detector')" class="p-4 rounded-lg bg-blue-600 font-bold border-2 border-transparent border-blue-400">🕵️‍♂️ Detektiv</button>
+                    <button id="btn-role-mrx" onclick="setRole('mrx')" class="p-4 rounded-lg bg-slate-700 font-bold border-2 border-transparent">❌ Mister X</button>
+                </div>
+            </div>
+
+            <div class="space-y-2">
+                <label class="text-sm font-semibold text-slate-300">Ping-Intervall (Minuten)</label>
+                <input type="number" id="ping-interval" value="2" min="1" class="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-white">
+            </div>
+
+            <button onclick="startGame()" class="w-full py-4 bg-red-600 hover:bg-red-700 transition font-black uppercase tracking-wide rounded-lg shadow-lg cursor-pointer">
+                Spiel Starten / Joinen
+            </button>
+        </div>
+
+        <div id="screen-game" class="hidden flex-1 flex flex-col space-y-4">
+            <div class="bg-slate-800 p-4 rounded-xl flex justify-between items-center shadow-md">
+                <div>
+                    <span id="player-badge" class="px-2 py-1 rounded text-xs font-bold bg-blue-500">Detektiv</span>
+                    <span id="player-name" class="ml-2 font-semibold">Name</span>
+                </div>
+                <div class="text-right">
+                    <p class="text-xs text-slate-400">Nächster X-Ping</p>
+                    <p id="countdown" class="text-xl font-mono font-bold text-red-400">02:00</p>
+                </div>
+            </div>
+
+            <button onclick="copyInviteLink()" class="w-full text-left bg-slate-800 hover:bg-slate-700 transition p-3 rounded-xl shadow-md text-sm">
+                🔗 Raum-Code: <span id="room-code-display" class="font-mono font-bold text-red-400">------</span>
+                <span class="float-right text-slate-400">Link kopieren</span>
+            </button>
+
+            <div id="map" class="shadow-inner"></div>
+
+            <div class="grid grid-cols-2 gap-2">
+                <button onclick="shareLocation()" class="p-3 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium">📍 StandOrt pingen</button>
+                <button onclick="triggerGameOver()" class="p-3 bg-red-900/50 text-red-300 border border-red-700 hover:bg-red-900 rounded-lg text-sm font-bold">🚨 X Gefangen!</button>
+            </div>
+        </div>
+
+        <footer class="text-center text-slate-500 text-xs py-4">
+            Über Einladungslink teilen & direkt losspielen.
+        </footer>
+    </div>
+
+    <script>
+        // --- KONFIGURATION & GLOBALE VARIABLEN ---
+        const SUPABASE_URL = "https://tocukaqhclkskpvvxmrr.supabase.co";
+        const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRvY3VrYXFoY2xrc2twdnZ4bXJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1OTQ1NTAsImV4cCI6MjA5MTE3MDU1MH0.bgBgpfrsiFGiOQaMDJww6aQoGQZrMCYqtYCnECMEpFQ";
+
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        const TABLE = "mister_x_players";
+        const DETECTOR_WRITE_THROTTLE_MS = 5000;
+
+        let map, userMarker;
+        let currentRole = 'detector'; // Standard
+        let currentName = '';
+        let roomCode = '';
+        let realtimeChannel = null;
+        let otherMarkers = {}; // name -> L.Marker
+        let currentLat = null, currentLng = null;
+        let lastDetectorWriteTs = 0;
+        let countdownIntervalId = null;
+
+        // --- RAUM-CODE (LOBBY-ID) ---
+        function generateRoomCode() {
+            const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // ohne verwechselbare Zeichen
+            let code = '';
+            for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+            return code;
+        }
+
+        function getRoomFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            return (params.get('room') || '').toUpperCase().trim();
+        }
+
+        function setRoomInUrl(code) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('room', code);
+            window.history.replaceState({}, '', url);
+        }
+
+        function copyInviteLink() {
+            const url = new URL(window.location.href);
+            url.searchParams.set('room', roomCode);
+            navigator.clipboard.writeText(url.toString())
+                .then(() => alert("Einladungslink kopiert:\n" + url.toString()))
+                .catch(() => prompt("Link kopieren:", url.toString()));
+        }
+
+        // Rolle wechseln im UI
+        function setRole(role) {
+            currentRole = role;
+            document.getElementById('btn-role-detector').classList.toggle('bg-blue-600', role === 'detector');
+            document.getElementById('btn-role-detector').classList.toggle('bg-slate-700', role !== 'detector');
+            document.getElementById('btn-role-mrx').classList.toggle('bg-red-600', role === 'mrx');
+            document.getElementById('btn-role-mrx').classList.toggle('bg-slate-700', role !== 'mrx');
+        }
+
+        // Spiel starten und Karte initialisieren
+        function startGame() {
+            const name = document.getElementById('username').value.trim();
+            if(!name) return alert("Bitte gib einen Namen ein!");
+
+            currentName = name;
+            roomCode = getRoomFromUrl() || generateRoomCode();
+            setRoomInUrl(roomCode);
+
+            // UI wechseln
+            document.getElementById('screen-lobby').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('hidden');
+
+            // Status updaten
+            document.getElementById('player-name').innerText = name;
+            document.getElementById('room-code-display').innerText = roomCode;
+            const badge = document.getElementById('player-badge');
+            if(currentRole === 'mrx') {
+                badge.innerText = "Mister X";
+                badge.className = "px-2 py-1 rounded text-xs font-bold bg-red-600";
+            }
+
+            // Karte laden (Standardmäßig auf zentriertes Deutschland/Zentrum gesetzt, falls GPS noch lädt)
+            map = L.map('map').setView([51.1657, 10.4515], 13);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+            }).addTo(map);
+
+            // GPS-Ortung starten
+            initGeoLocation();
+
+            // Realtime-Sync mit anderen Spielern starten
+            initRealtimeSync();
+
+            // Timer starten
+            startCountdown(document.getElementById('ping-interval').value * 60);
+        }
+
+        // Live-Standort des Handys abfragen
+        function initGeoLocation() {
+            if (!navigator.geolocation) return alert("Dein Browser unterstützt kein GPS.");
+
+            navigator.geolocation.watchPosition(
+                (position) => {
+                    currentLat = position.coords.latitude;
+                    currentLng = position.coords.longitude;
+
+                    // Eigenen Marker setzen oder verschieben
+                    if (!userMarker) {
+                        userMarker = L.marker([currentLat, currentLng]).addTo(map)
+                            .bindPopup('Du bist hier').openPopup();
+                        map.setView([currentLat, currentLng], 15);
+                    } else {
+                        userMarker.setLatLng([currentLat, currentLng]);
+                    }
+
+                    // Mister X sendet seine Position nur beim Ping (Intervall/manuell),
+                    // Detektive senden laufend (leicht gedrosselt) an die Datenbank.
+                    if (currentRole === 'detector') {
+                        const now = Date.now();
+                        if (now - lastDetectorWriteTs > DETECTOR_WRITE_THROTTLE_MS) {
+                            lastDetectorWriteTs = now;
+                            syncLocationWithDatabase(currentLat, currentLng);
+                        }
+                    }
+                },
+                (err) => console.error("GPS Fehler:", err),
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        }
+
+        // --- SUPABASE REALTIME ---
+        async function initRealtimeSync() {
+            // Bereits vorhandene Spieler im Raum initial laden
+            const { data, error } = await supabaseClient
+                .from(TABLE)
+                .select('*')
+                .eq('game_id', roomCode);
+
+            if (error) {
+                console.error("Fehler beim Laden der Mitspieler:", error);
+            } else {
+                (data || []).forEach(upsertMarkerFromRow);
+            }
+
+            // Live-Updates abonnieren
+            realtimeChannel = supabaseClient
+                .channel('mister-x-room-' + roomCode)
+                .on('postgres_changes', {
+                    event: '*',
+                    schema: 'public',
+                    table: TABLE,
+                    filter: `game_id=eq.${roomCode}`
+                }, (payload) => {
+                    if (payload.eventType === 'DELETE') {
+                        removeMarkerForRow(payload.old);
+                    } else {
+                        upsertMarkerFromRow(payload.new);
+                    }
+                })
+                .subscribe();
+        }
+
+        function markerIconForRole(role) {
+            const isMrx = role === 'mrx';
+            return L.divIcon({
+                className: '',
+                html: `<div class="mx-marker" style="background:${isMrx ? '#dc2626' : '#2563eb'}">${isMrx ? '❌' : '🕵️'}</div>`,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16]
+            });
+        }
+
+        function upsertMarkerFromRow(row) {
+            if (!row || row.name === currentName) return; // eigener Marker wird separat gezeichnet
+            if (row.lat == null || row.lng == null) return;
+
+            const popupText = `${row.name} (${row.role === 'mrx' ? 'Mister X' : 'Detektiv'})<br>` +
+                `Letzter Ping: ${new Date(row.last_ping).toLocaleTimeString()}`;
+
+            if (otherMarkers[row.name]) {
+                otherMarkers[row.name].setLatLng([row.lat, row.lng]).setPopupContent(popupText);
+            } else {
+                otherMarkers[row.name] = L.marker([row.lat, row.lng], { icon: markerIconForRole(row.role) })
+                    .addTo(map)
+                    .bindPopup(popupText);
+            }
+        }
+
+        function removeMarkerForRow(row) {
+            if (!row || !otherMarkers[row.name]) return;
+            map.removeLayer(otherMarkers[row.name]);
+            delete otherMarkers[row.name];
+        }
+
+        // Countdown-Logik für den Mister-X-Ping
+        function startCountdown(duration) {
+            let timer = duration, minutes, seconds;
+            countdownIntervalId = setInterval(() => {
+                minutes = parseInt(timer / 60, 10);
+                seconds = parseInt(timer % 60, 10);
+
+                minutes = minutes < 10 ? "0" + minutes : minutes;
+                seconds = seconds < 10 ? "0" + seconds : seconds;
+
+                document.getElementById('countdown').innerText = minutes + ":" + seconds;
+
+                if (--timer < 0) {
+                    timer = duration;
+                    if (currentRole === 'mrx') {
+                        syncLocationWithDatabase(currentLat, currentLng);
+                        alert("📍 PING! Mister X hat seine Position übertragen!");
+                    }
+                }
+            }, 1000);
+        }
+
+        function shareLocation() {
+            syncLocationWithDatabase(currentLat, currentLng);
+            alert("Dein Standort wurde manuell an die Gruppe gefunkt!");
+        }
+
+        function triggerGameOver() {
+            if (countdownIntervalId) clearInterval(countdownIntervalId);
+            supabaseClient.from(TABLE).delete().eq('game_id', roomCode).eq('name', currentName)
+                .then(() => {
+                    alert("Mister X wurde geschnappt! Spiel vorbei.");
+                    location.reload();
+                });
+        }
+
+        // Eigene Position (oder Ping) in Supabase schreiben & Realtime an alle im Raum verteilen
+        function syncLocationWithDatabase(lat, lng) {
+            if (lat == null || lng == null || !roomCode || !currentName) return;
+            supabaseClient.from(TABLE).upsert({
+                game_id: roomCode,
+                name: currentName,
+                role: currentRole,
+                lat: lat,
+                lng: lng,
+                last_ping: new Date().toISOString()
+            }, { onConflict: 'game_id,name' }).then(({ error }) => {
+                if (error) console.error("Sync-Fehler:", error);
+            });
+        }
+
+        // Beim Laden: falls ein Raum-Code in der URL ist, direkt im Lobby-Screen anzeigen
+        (function initLobbyFromUrl() {
+            const room = getRoomFromUrl();
+            if (room) {
+                document.getElementById('lobby-room-banner').classList.remove('hidden');
+                document.getElementById('lobby-room-code').innerText = room;
+            }
+        })();
+    </script>
+</body>
+</html>
