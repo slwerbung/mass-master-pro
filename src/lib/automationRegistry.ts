@@ -53,6 +53,11 @@ export const TRIGGERS: TriggerDef[] = [
     label: "Projekt vollständig freigegeben",
     description: "Der Kunde hat alle Standorte (bzw. das Fahrzeug-Layout) des Projekts freigegeben.",
   },
+  {
+    type: "hero_offer_response",
+    label: "HERO: Angebots-Rückmeldung (Kunde)",
+    description: "Der Kunde klickt in der HERO-Angebotsmail auf Annehmen / Ablehnen / Rücksprache. Wird NICHT durch ein App-Ereignis ausgelöst, sondern direkt durch den Klick des Kunden. Lege dazu die Aktion „HERO: Angebotsstatus setzen“ an und wähle je Rückmeldung den Zielstatus.",
+  },
 ];
 
 export const ACTIONS: ActionDef[] = [
@@ -101,6 +106,29 @@ export const ACTIONS: ActionDef[] = [
       { key: "time", label: "Uhrzeit", type: "time", default: "09:00" },
       { key: "durationMinutes", label: "Dauer (Minuten)", type: "number", default: 60 },
       { key: "categoryId", label: "Kategorie (HERO)", type: "select", optional: true, optionsSource: "hero_calendar_categories" },
+    ],
+  },
+  {
+    type: "hero_offer_status",
+    label: "HERO: Angebotsstatus setzen",
+    description: "Legt je Kunden-Rückmeldung (Annehmen/Ablehnen/Rücksprache) einen HERO-Logbucheintrag an und setzt den Projektstatus in der Plantafel. Nutze diese Aktion mit dem Trigger „HERO: Angebots-Rückmeldung“.",
+    requires: ["hero"],
+    configFields: [
+      {
+        key: "statusAnnehmen", label: "Status bei „Annehmen“", type: "select", optional: true,
+        optionsSource: "hero_status_steps",
+        help: "Zielstatus im HERO-Projekt, wenn der Kunde das Angebot annimmt.",
+      },
+      {
+        key: "statusAblehnen", label: "Status bei „Ablehnen“", type: "select", optional: true,
+        optionsSource: "hero_status_steps",
+        help: "Zielstatus, wenn der Kunde das Angebot ablehnt.",
+      },
+      {
+        key: "statusRuecksprache", label: "Status bei „Rücksprache“", type: "select", optional: true,
+        optionsSource: "hero_status_steps",
+        help: "Leer lassen = nur Logbucheintrag, kein Statuswechsel.",
+      },
     ],
   },
   {

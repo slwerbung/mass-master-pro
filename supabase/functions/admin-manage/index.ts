@@ -821,6 +821,20 @@ Deno.serve(async (req) => {
           return json({ options });
         }
 
+        if (source === "hero_status_steps") {
+          // Project status steps (Plantafel-Stufen) per project type. The value
+          // is the ProjectStatusStep id, set via update_project_match.step_id.
+          const r = await heroQuery(`query { project_types { id name project_status_steps { id name } } }`);
+          if (r.error) return json({ options: [], error: r.error });
+          const options: { value: string; label: string }[] = [];
+          for (const t of (r.data?.project_types || [])) {
+            for (const s of (t.project_status_steps || [])) {
+              if (s?.id != null) options.push({ value: String(s.id), label: `${t.name} → ${s.name || `#${s.id}`}` });
+            }
+          }
+          return json({ options });
+        }
+
         // Derive partners and/or resources from recent calendar events.
         const wantPartners = source === "hero_partners" || source === "hero_targets";
         const wantResources = source === "hero_resources" || source === "hero_targets";
