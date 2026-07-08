@@ -103,12 +103,15 @@ async function heroContext(supabase: any, projectId: string): Promise<{ apiKey: 
 }
 
 async function heroAddLogbook(apiKey: string, heroProjectId: number, title: string, text: string): Promise<{ ok: boolean; error?: string }> {
-  const mutation = `mutation($projectId: Int!, $title: String!, $text: String) { add_logbook_entry(project_match_id: $projectId, custom_title: $title, custom_text: $text) { id } }`;
+  // HERO v9: add_logbook_entry takes a single LogbookEntryInput (no title
+  // field); the title is folded into custom_text (required).
+  const mutation = `mutation($entry: LogbookEntryInput!) { add_logbook_entry(logbook_entry: $entry) { id } }`;
+  const customText = ([title, text].filter(Boolean).join("\n\n") || title).slice(0, 5000);
   try {
     const resp = await fetch(HERO_LOGBOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query: mutation, variables: { projectId: heroProjectId, title: title.slice(0, 500), text: text ? text.slice(0, 5000) : null } }),
+      body: JSON.stringify({ query: mutation, variables: { entry: { target: "project_match", target_id: heroProjectId, custom_text: customText } } }),
     });
     const t = await resp.text();
     if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}: ${t.slice(0, 200)}` };

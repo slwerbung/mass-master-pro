@@ -123,17 +123,20 @@ async function heroAddLogbookEntry(
   text: string,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
+    // HERO v9: add_logbook_entry takes a single LogbookEntryInput (no title
+    // field); the title is folded into custom_text (required).
     const mutation = `
-      mutation($projectId: Int!, $title: String!, $text: String) {
-        add_logbook_entry(project_match_id: $projectId, custom_title: $title, custom_text: $text) { id }
+      mutation($entry: LogbookEntryInput!) {
+        add_logbook_entry(logbook_entry: $entry) { id }
       }
     `;
+    const customText = ([title, text].filter(Boolean).join("\n\n") || title).slice(0, 5000);
     const r = await fetch(HERO_GRAPHQL_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         query: mutation,
-        variables: { projectId: projectMatchId, title: title.slice(0, 500), text: text.slice(0, 5000) },
+        variables: { entry: { target: "project_match", target_id: projectMatchId, custom_text: customText } },
       }),
     });
     const data = await r.json();
