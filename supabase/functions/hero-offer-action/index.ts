@@ -148,15 +148,22 @@ Deno.serve(async (req) => {
     if ((logRes as any).error) return json({ ok: false, error: `Logbucheintrag fehlgeschlagen: ${(logRes as any).error}` }, 502);
 
     // Status change (optional for ruecksprache / when unconfigured).
+    // HERO moves the pipeline step via the NESTED status object — a top-level
+    // step_id is silently ignored. We read the resulting step_id back and only
+    // report success when it actually matches the target.
     let statusChanged = false;
     if (Number.isFinite(stepId) && stepId > 0) {
       const upd = await heroPost(
         HERO_V7, apiKey,
-        `mutation($pm: ProjectMatchInput!){ update_project_match(project_match: $pm){ id } }`,
-        { pm: { id: resolved.id, step_id: stepId } },
+        `mutation($pm: ProjectMatchInput!){ update_project_match(project_match: $pm){ id current_project_match_status { step_id } } }`,
+        { pm: { id: resolved.id, current_project_match_status: { step_id: stepId } } },
       );
       if ((upd as any).error) return json({ ok: false, error: `Statuswechsel fehlgeschlagen: ${(upd as any).error}` }, 502);
-      statusChanged = !!(upd as any).data?.update_project_match?.id;
+      const newStep = Number((upd as any).data?.update_project_match?.current_project_match_status?.step_id);
+      statusChanged = newStep === stepId;
+      if (!statusChanged) {
+        return json({ ok: false, error: `Statuswechsel wurde von HERO nicht übernommen (Ziel-Step ${stepId}). Bitte prüfen, ob der Status zum Projekttyp passt.` }, 502);
+      }
     }
 
     // Best-effort audit trail.
