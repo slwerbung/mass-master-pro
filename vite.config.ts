@@ -48,6 +48,12 @@ export default defineConfig(() => ({
         // and remove this override.
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ["**/*.{js,css,html,ico,png,svg,jpg,jpeg}"],
+        // /mister-x-live is a standalone static page outside the SPA - keep
+        // it out of the precache and out of the service worker's navigation
+        // fallback so requests to it hit the network/CDN instead of getting
+        // redirected to this app's cached index.html.
+        globIgnores: ["mister-x-live/**"],
+        navigateFallbackDenylist: [/^\/mister-x-live\//],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
