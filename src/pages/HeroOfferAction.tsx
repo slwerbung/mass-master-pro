@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -6,11 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CheckCircle2, Loader2, AlertTriangle, FileCheck2 } from "lucide-react";
 
 // Public page: reached from the buttons in a HERO offer e-mail
-//   https://captfix.app/hero-aktion?p=<display_id>&a=<annehmen|ablehnen|ruecksprache>
+//   https://captfix.app/hero-aktion?pid={{ProjectMatch.id}}&a=<annehmen|ablehnen|ruecksprache>
+//     (optionally &doc={{CustomerDocument.id}})
 //
-// It deliberately does NOTHING on load — link/virus scanners open URLs via GET,
-// so we only show a confirmation. The actual action runs on the explicit
-// "Bestätigen" click via a POST to the hero-offer-action edge function.
+// It deliberately performs the action ONLY on the explicit "Bestätigen" click
+// (link/virus scanners open URLs but don't run JS, so they never trigger it).
+// On load it does a read-only lookup to show the friendly project number.
 
 type Action = "annehmen" | "ablehnen" | "ruecksprache";
 type Phase = "confirm" | "processing" | "done" | "error" | "invalid";
@@ -31,35 +32,64 @@ const DONE_TEXT: Record<Action, string> = {
   ruecksprache: "Vielen Dank – Ihre Anfrage zur Rücksprache ist eingegangen. Wir melden uns zeitnah bei Ihnen.",
 };
 
+async function invokeErr(fnErr: any): Promise<string> {
+  let msg = fnErr?.message || "Unbekannter Fehler";
+  try {
+    const ctx = fnErr?.context;
+    const b = ctx && typeof ctx.json === "function" ? await ctx.json() : null;
+    if (b?.error) msg = b.error;
+  } catch { /* keep generic */ }
+  return msg;
+}
+
 export default function HeroOfferAction() {
   const [params] = useSearchParams();
-  const displayId = (params.get("p") || "").trim();
+  const pid = (params.get("pid") || "").trim();       // internal ProjectMatch.id
+  const displayId = (params.get("p") || "").trim();   // fallback: project number
+  const documentId = (params.get("doc") || "").trim();
   const action = (params.get("a") || "").trim() as Action;
 
   const valid = useMemo(
-    () => !!displayId && ["annehmen", "ablehnen", "ruecksprache"].includes(action),
-    [displayId, action],
+    () => ["annehmen", "ablehnen", "ruecksprache"].includes(action) && (!!pid || !!displayId),
+    [action, pid, displayId],
   );
 
   const [phase, setPhase] = useState<Phase>(valid ? "confirm" : "invalid");
-  const [error, setError] = useState<string>("");
+  const [error, setError] = useState("");
+  const [projectLabel, setProjectLabel] = useState<string>(displayId || (pid ? `#${pid}` : ""));
+
+  const bodyBase = useMemo(
+    () => ({ action, projectMatchId: pid ? Number(pid) : undefined, displayId: displayId || undefined, documentId: documentId || undefined }),
+    [action, pid, displayId, documentId],
+  );
+
+  // Read-only lookup on load to show the friendly project number.
+  useEffect(() => {
+    if (!valid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error: fnErr } = await supabase.functions.invoke("hero-offer-action", {
+          body: { ...bodyBase, mode: "lookup" },
+        });
+        if (cancelled) return;
+        if (!fnErr && (data as any)?.ok && (data as any).projectNr) {
+          setProjectLabel((data as any).projectNr);
+        }
+      } catch { /* keep fallback label */ }
+    })();
+    return () => { cancelled = true; };
+  }, [valid, bodyBase]);
 
   const confirm = async () => {
     setPhase("processing");
     try {
       const { data, error: fnErr } = await supabase.functions.invoke("hero-offer-action", {
-        body: { displayId, action },
+        body: { ...bodyBase, mode: "execute" },
       });
-      if (fnErr) {
-        let msg = fnErr.message;
-        try {
-          const ctx = (fnErr as any).context;
-          const b = ctx && typeof ctx.json === "function" ? await ctx.json() : null;
-          if (b?.error) msg = b.error;
-        } catch { /* keep generic */ }
-        throw new Error(msg);
-      }
+      if (fnErr) throw new Error(await invokeErr(fnErr));
       if ((data as any)?.ok === false) throw new Error((data as any).error || "Aktion fehlgeschlagen");
+      if ((data as any)?.projectDisplayId) setProjectLabel((data as any).projectDisplayId);
       setPhase("done");
     } catch (e: any) {
       setError(e?.message || "Unbekannter Fehler");
@@ -89,7 +119,7 @@ export default function HeroOfferAction() {
           {phase === "confirm" && (
             <>
               <p className="text-center text-sm">
-                Möchten Sie das Angebot für Projekt <strong>{displayId}</strong> {ACTION_QUESTION[action]}?
+                Möchten Sie das Angebot für Projekt <strong>{projectLabel}</strong> {ACTION_QUESTION[action]}?
               </p>
               <Button className="w-full" size="lg" onClick={confirm}>
                 {ACTION_LABEL[action]} · Bestätigen
@@ -111,7 +141,7 @@ export default function HeroOfferAction() {
             <div className="text-center space-y-2 py-2">
               <CheckCircle2 className="mx-auto h-9 w-9 text-green-600" />
               <p className="text-sm">{DONE_TEXT[action]}</p>
-              <p className="text-xs text-muted-foreground">Projekt {displayId}</p>
+              <p className="text-xs text-muted-foreground">Projekt {projectLabel}</p>
             </div>
           )}
 
