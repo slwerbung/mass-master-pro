@@ -54,6 +54,11 @@ export const TRIGGERS: TriggerDef[] = [
     description: "Der Kunde hat alle Standorte (bzw. das Fahrzeug-Layout) des Projekts freigegeben.",
   },
   {
+    type: "vehicle_measured_uploaded",
+    label: "Bemaßtes Fahrzeugbild hochgeladen",
+    description: "Ein Mitarbeiter hat im Fahrzeug-Projekt ein bemaßtes Fahrzeugbild hinzugefügt (egal ob schon bemaßt oder nicht).",
+  },
+  {
     type: "hero_offer_response",
     label: "HERO: Angebots-Rückmeldung (Kunde)",
     description: "Der Kunde klickt in der HERO-Angebotsmail auf Annehmen / Ablehnen / Rücksprache. Wird NICHT durch ein App-Ereignis ausgelöst, sondern direkt durch den Klick des Kunden. Lege dazu die Aktion „HERO: Angebotsstatus setzen“ an und wähle je Rückmeldung den Zielstatus.",
@@ -106,6 +111,19 @@ export const ACTIONS: ActionDef[] = [
       { key: "time", label: "Uhrzeit", type: "time", default: "09:00" },
       { key: "durationMinutes", label: "Dauer (Minuten)", type: "number", default: 60 },
       { key: "categoryId", label: "Kategorie (HERO)", type: "select", optional: true, optionsSource: "hero_calendar_categories" },
+    ],
+  },
+  {
+    type: "hero_set_status",
+    label: "HERO: Projektstatus setzen",
+    description: "Setzt den Projektstatus (Plantafel-Stufe) im verknüpften HERO-Projekt auf einen festen Wert.",
+    requires: ["hero"],
+    configFields: [
+      {
+        key: "statusStep", label: "Zielstatus", type: "select",
+        optionsSource: "hero_status_steps",
+        help: "Auf welchen Status das HERO-Projekt gesetzt wird. Nimm einen Status aus dem passenden Projekttyp.",
+      },
     ],
   },
   {

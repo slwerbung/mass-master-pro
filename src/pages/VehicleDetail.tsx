@@ -16,6 +16,7 @@ import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
+import { enqueueHeroUploadIfLinked, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 
 interface VehicleFieldConfig {
   id: string;
@@ -239,6 +240,33 @@ const VehicleDetail = () => {
         uploaded_by: session?.name || "Mitarbeiter",
       });
       if (dbErr) throw dbErr;
+
+      // Always mirror EVERY measured image to HERO — regardless of whether it
+      // is annotated later. (Previously only the annotated version reached HERO
+      // via the editor, so un-annotated ones were never uploaded.)
+      const projectLike = { id: projectId!, customFields: project?.custom_fields as Record<string, string> | undefined };
+      try {
+        await enqueueHeroUploadIfLinked({
+          project: projectLike,
+          uploadType: "vehicle_measured_image",
+          blob: file,
+          filename: `fahrzeug-bemasst-${id.slice(0, 8)}-${file.name}`,
+        });
+      } catch (mirrorErr) {
+        console.warn("HERO mirror of measured image failed:", mirrorErr);
+      }
+
+      // Fire the "measured vehicle image uploaded" automation (e.g. HERO status
+      // change). Server-side dispatch; best-effort.
+      try {
+        const heroProjectId = getHeroProjectMatchId(projectLike);
+        await supabase.functions.invoke("run-automations", {
+          body: { trigger_type: "vehicle_measured_uploaded", context: { projectId, heroProjectId } },
+        });
+      } catch (autoErr) {
+        console.warn("vehicle_measured_uploaded automation dispatch failed:", autoErr);
+      }
+
       toast.success("Bild hochgeladen");
       loadAll();
     } catch (err: any) {

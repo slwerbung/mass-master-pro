@@ -264,6 +264,41 @@ async function runHeroUploadAufmassPdfAction(
   return { status: "error", message: res.error || "Upload fehlgeschlagen" };
 }
 
+// ── HERO: set project status (Plantafel step) ────────────────────────
+// Moves the linked HERO project to a fixed status step. HERO only accepts the
+// status via the NESTED current_project_match_status object (a top-level
+// step_id is silently ignored). v7 is where update_project_match is proven.
+async function runHeroSetStatusAction(
+  _supabase: SupabaseClient,
+  apiKey: string | undefined, heroEnabled: boolean,
+  cfg: Record<string, any>, ctx: AutomationContext,
+): Promise<ActionResult> {
+  if (!heroEnabled || !apiKey) return { status: "skipped", message: "HERO ist nicht aktiv" };
+  const projectMatchId = ctx.heroProjectId;
+  if (!projectMatchId) return { status: "skipped", message: "Projekt nicht mit HERO verknüpft" };
+  const stepId = cfg.statusStep != null && String(cfg.statusStep).trim() !== "" ? Number(cfg.statusStep) : NaN;
+  if (!Number.isFinite(stepId) || stepId <= 0) return { status: "skipped", message: "Kein Zielstatus konfiguriert" };
+  try {
+    const resp = await fetch("https://login.hero-software.de/api/external/v7/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        query: `mutation($pm: ProjectMatchInput!){ update_project_match(project_match: $pm){ id current_project_match_status { step_id } } }`,
+        variables: { pm: { id: projectMatchId, current_project_match_status: { step_id: stepId } } },
+      }),
+    });
+    const text = await resp.text();
+    if (!resp.ok) return { status: "error", message: `HTTP ${resp.status}: ${text.slice(0, 200)}` };
+    const data = JSON.parse(text);
+    if (data.errors?.length) return { status: "error", message: data.errors[0]?.message || "GraphQL-Fehler" };
+    const newStep = Number(data?.data?.update_project_match?.current_project_match_status?.step_id);
+    if (newStep !== stepId) return { status: "error", message: `Status nicht übernommen (Ziel-Step ${stepId}) – passt der Status zum Projekttyp?` };
+    return { status: "success", message: `HERO-Status gesetzt (Step ${stepId})` };
+  } catch (e) {
+    return { status: "error", message: (e as Error).message };
+  }
+}
+
 const ACTION_HANDLERS: Record<
   string,
   (supabase: SupabaseClient, apiKey: string | undefined, heroEnabled: boolean, cfg: any, ctx: AutomationContext) => Promise<ActionResult>
@@ -271,6 +306,7 @@ const ACTION_HANDLERS: Record<
   assign_employee: runAssignEmployeeAction,
   hero_create_calendar_event: runHeroCalendarAction,
   hero_upload_aufmass_pdf: runHeroUploadAufmassPdfAction,
+  hero_set_status: runHeroSetStatusAction,
 };
 
 // ── dispatch ─────────────────────────────────────────────────────────---
