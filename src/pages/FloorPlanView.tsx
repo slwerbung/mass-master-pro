@@ -9,6 +9,7 @@ import { deleteFloorPlanFromSupabase, getProjectRemoteTimestamp, hydrateProjectF
 import { Project, FloorPlanMarker } from "@/types/project";
 import { toast } from "sonner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { setEditorHandoff } from "@/lib/editorHandoff";
 
 const FloorPlanView = () => {
   const { projectId } = useParams();
@@ -17,14 +18,16 @@ const FloorPlanView = () => {
   const { cameraInput: floorCameraInput, triggerCamera: triggerFloorCamera } = useDirectCamera({
     onCapture: (imageData) => {
       setShowCaptureDialog(false);
-      navigate(`/projects/${projectId}/editor?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`, { state: { imageData } });
+      setEditorHandoff({ imageData });
+      navigate(`/projects/${projectId}/editor?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`);
     },
   });
   const { cameraInput: floorUploadInput, triggerCamera: triggerFloorUpload } = useDirectCamera({
     uploadMode: true,
     onCapture: (imageData) => {
       setShowCaptureDialog(false);
-      navigate(`/projects/${projectId}/editor?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`, { state: { imageData } });
+      setEditorHandoff({ imageData });
+      navigate(`/projects/${projectId}/editor?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`);
     },
   });
   const [project, setProject] = useState<Project | null>(null);

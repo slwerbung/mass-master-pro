@@ -17,6 +17,7 @@ import { scheduleSyncProject } from "@/lib/supabaseSync";
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 import { getSession } from "@/lib/session";
+import { takeEditorHandoff } from "@/lib/editorHandoff";
 
 interface FieldConfig {
   id: string;
@@ -57,7 +58,14 @@ const LocationDetails = () => {
   const floorPlanId = searchParams.get("floorPlan");
   const presetLocationId = searchParams.get("locationId");
 
-  const { imageData: stateImageData, originalImageData: stateOriginalImageData, areaMeasurements: stateAreaMeasurements } = location.state || {};
+  // The edited image arrives via the in-memory hand-off (see editorHandoff.ts);
+  // fall back to router state for legacy/edge navigations. Captured once so it
+  // survives re-renders (the hand-off is cleared on read).
+  const handoffRef = useRef<{ imageData?: string; originalImageData?: string; areaMeasurements?: unknown } | undefined>(undefined);
+  if (handoffRef.current === undefined) {
+    handoffRef.current = takeEditorHandoff() || location.state || {};
+  }
+  const { imageData: stateImageData, originalImageData: stateOriginalImageData, areaMeasurements: stateAreaMeasurements } = handoffRef.current;
 
   // Store image data in a ref immediately so it survives re-renders and React StrictMode double-mounts
   const imageDataRef = useRef<string | null>(stateImageData || null);
