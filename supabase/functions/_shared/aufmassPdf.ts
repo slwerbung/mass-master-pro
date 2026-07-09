@@ -53,17 +53,26 @@ export async function generateAufmassPdf(
   const fieldOrder: string[] = (fieldCfgRes.data || []).map((f: any) => f.field_key as string);
 
   const locationIds = locations.map((l: any) => l.id as string);
-  const { data: locImages } = await supabase
-    .from("location_images")
-    .select("location_id, storage_path")
-    .in("location_id", locationIds)
-    .eq("image_type", "annotated");
+  const [{ data: locImages }, { data: locPdfs }] = await Promise.all([
+    supabase.from("location_images").select("location_id, storage_path").in("location_id", locationIds).eq("image_type", "annotated"),
+    // Production/print files (Druckdaten) — always PDFs (see SplitPdfDialog).
+    // Mirroring the app view (LocationApprovalMedia) these are the MAIN media
+    // the customer approves; the old export dropped them entirely.
+    supabase.from("location_pdfs").select("location_id, storage_path, file_name").in("location_id", locationIds),
+  ]);
 
   const imagePathMap = new Map<string, string>(
     (locImages || []).map((img: any) => [img.location_id as string, img.storage_path as string]),
   );
+  const pdfMap = new Map<string, { storage_path: string; file_name: string }[]>();
+  for (const row of (locPdfs || []) as any[]) {
+    const arr = pdfMap.get(row.location_id) || [];
+    arr.push({ storage_path: row.storage_path, file_name: row.file_name || "Produktionsdatei" });
+    pdfMap.set(row.location_id, arr);
+  }
 
   const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
+  const publicUrl = (path: string) => `${supabaseUrl}/storage/v1/object/public/project-files/${path}`;
 
   const pdfDoc = await PDFDocument.create();
   pdfDoc.setTitle(`Captfix – ${projectNumber} – Freigabe`);
@@ -127,6 +136,8 @@ export async function generateAufmassPdf(
       rows.push([fieldLabels.get(key) || key, String(val)]);
     }
     if (loc.comment) rows.push(["Hinweis", String(loc.comment)]);
+    const prodFiles = pdfMap.get(loc.id) || [];
+    if (prodFiles.length > 0) rows.push(["Produktionsdatei", prodFiles.map((p) => p.file_name).join(", ")]);
 
     const COL1 = 120, ROW_H = 16;
     for (let ri = 0; ri < rows.length; ri++) {
@@ -164,6 +175,45 @@ export async function generateAufmassPdf(
     page.drawLine({ start: { x: ML, y: 28 }, end: { x: A4W - MR, y: 28 }, thickness: 0.5, color: rgb(0.85, 0.85, 0.85) });
     page.drawText(`${companyName} · Captfix · ${projectNumber}`, { x: ML, y: 16, size: 7, font: fontReg, color: rgb(0.65, 0.65, 0.65) });
     page.drawText(`Seite ${pdfDoc.getPageCount()}`, { x: A4W - MR - 30, y: 16, size: 7, font: fontReg, color: rgb(0.65, 0.65, 0.65) });
+
+    // Production files (Druckdaten) — each page of every production PDF is
+    // embedded on its own A4 page, so the exported document shows exactly the
+    // print data the customer approved (matching the app's location view).
+    const prodFilesForLoc = pdfMap.get(loc.id) || [];
+    for (const pf of prodFilesForLoc) {
+      let embeddedPages: any[] = [];
+      try {
+        const res = await fetch(publicUrl(pf.storage_path));
+        if (!res.ok) continue;
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+        embeddedPages = await pdfDoc.embedPdf(src, src.getPageIndices());
+      } catch {
+        continue; // broken/unsupported production file – skip, keep going
+      }
+      const multi = embeddedPages.length > 1;
+      embeddedPages.forEach((ep: any, pi: number) => {
+        const pp = pdfDoc.addPage([A4W, A4H]);
+        pp.drawRectangle({ x: 0, y: A4H - 52, width: A4W, height: 52, color: BRAND });
+        pp.drawRectangle({ x: 0, y: A4H - 8, width: A4W, height: 8, color: rgb(0.02, 0.3, 0.7) });
+        const pfLabel = multi ? `${pf.file_name} · S.${pi + 1}` : pf.file_name;
+        pp.drawText("Produktionsdatei", { x: ML, y: A4H - 34, size: 13, font: fontBold, color: WHITE });
+        pp.drawText(`${headerLabel || "Standort"}  ·  ${pfLabel}`, { x: ML, y: A4H - 47, size: 8, font: fontReg, color: rgb(0.78, 0.88, 1) });
+
+        // Fit the embedded page into the content area (upscaling a vector PDF
+        // is lossless, so fill the page for legibility).
+        const availW = CW;
+        const availH = (A4H - 52 - 12) - 40; // below header, above footer
+        const topY = A4H - 52 - 12;
+        const scale = Math.min(availW / ep.width, availH / ep.height);
+        const w = ep.width * scale, h = ep.height * scale;
+        pp.drawPage(ep, { x: ML + (CW - w) / 2, y: topY - h, width: w, height: h });
+
+        pp.drawLine({ start: { x: ML, y: 28 }, end: { x: A4W - MR, y: 28 }, thickness: 0.5, color: rgb(0.85, 0.85, 0.85) });
+        pp.drawText(`${companyName} · Captfix · ${projectNumber}`, { x: ML, y: 16, size: 7, font: fontReg, color: rgb(0.65, 0.65, 0.65) });
+        pp.drawText(`Seite ${pdfDoc.getPageCount()}`, { x: A4W - MR - 30, y: 16, size: 7, font: fontReg, color: rgb(0.65, 0.65, 0.65) });
+      });
+    }
   }
 
   return pdfDoc.save();
