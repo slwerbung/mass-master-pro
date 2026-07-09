@@ -147,6 +147,44 @@ async function heroAddLogbookEntry(
   }
 }
 
+// Appends text to the HERO project's internal notes field (partner_notes),
+// preserving whatever is already there. Uses the v7 API where project_matches
+// / update_project_match are proven. Best-effort.
+async function heroAppendProjectNotes(
+  apiKey: string,
+  projectMatchId: number,
+  addition: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const V7 = "https://login.hero-software.de/api/external/v7/graphql";
+  const post = async (query: string, variables: Record<string, unknown>): Promise<{ data?: any; error?: string }> => {
+    const r = await fetch(V7, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ query, variables }),
+    });
+    const t = await r.text();
+    if (!r.ok) return { error: `HTTP ${r.status}: ${t.slice(0, 200)}` };
+    let d: any;
+    try { d = JSON.parse(t); } catch { return { error: "kein JSON" }; }
+    if (d.errors?.length) return { error: d.errors.map((e: any) => e.message).join("; ") };
+    return { data: d.data };
+  };
+  try {
+    const cur = await post(`query($ids: [Int]){ project_matches(ids: $ids){ id partner_notes } }`, { ids: [projectMatchId] });
+    if (cur.error) return { ok: false, error: cur.error };
+    const existing = String(cur.data?.project_matches?.[0]?.partner_notes || "").trim();
+    const combined = [existing, addition].filter(Boolean).join("\n\n").slice(0, 50000);
+    const upd = await post(
+      `mutation($pm: ProjectMatchInput!){ update_project_match(project_match: $pm){ id } }`,
+      { pm: { id: projectMatchId, partner_notes: combined } },
+    );
+    if (upd.error) return { ok: false, error: upd.error };
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -265,7 +303,8 @@ serve(async (req) => {
           heroWarning = `Layout gespeichert, HERO-Upload teilweise fehlgeschlagen: ${heroErrors.join("; ")}`;
         }
 
-        // Add customer comment as a HERO logbook entry.
+        // Add customer comment as a HERO logbook entry AND append it to the
+        // project's internal notes field (partner_notes). Both best-effort.
         if (comment) {
           const logRes = await heroAddLogbookEntry(
             apiKey, heroProjectId,
@@ -274,6 +313,15 @@ serve(async (req) => {
           );
           if (!logRes.ok) {
             console.warn("HERO logbook entry failed:", logRes.error);
+          }
+          const d = new Date();
+          const stamp = `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
+          const noteRes = await heroAppendProjectNotes(
+            apiKey, heroProjectId,
+            `Kunden-Kommentar zum Layout (${stamp}):\n${comment}`,
+          );
+          if (!noteRes.ok) {
+            console.warn("HERO notes append failed:", noteRes.error);
           }
         }
       }
