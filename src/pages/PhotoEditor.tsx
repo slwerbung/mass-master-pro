@@ -12,6 +12,7 @@ import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers"
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import MeasurementInputDialog from "@/components/MeasurementInputDialog";
 import AreaMeasurementDialog from "@/components/AreaMeasurementDialog";
+import { setEditorHandoff, takeEditorHandoff } from "@/lib/editorHandoff";
 
 type Tool = "select" | "draw" | "text" | "measure" | "area";
 
@@ -34,7 +35,16 @@ const PhotoEditor = () => {
   const historyRef = useRef<string[]>([]);
   const historyStepRef = useRef(-1);
   const isRestoringHistoryRef = useRef(false);
-  const [imageDataState, setImageDataState] = useState<string | null>(location.state?.imageData || null);
+  // Incoming capture arrives via the in-memory hand-off (see editorHandoff.ts);
+  // fall back to router state for any legacy/edge navigations. Always consume
+  // (clear) the hand-off on mount, but only USE it for a fresh capture — a
+  // re-edit loads its image from IndexedDB/Storage instead.
+  const [imageDataState, setImageDataState] = useState<string | null>(() => {
+    const handoff = takeEditorHandoff();
+    if (location.state?.imageData) return location.state.imageData;
+    const reEdit = !!locationId || !!measuredId;
+    return reEdit ? null : (handoff?.imageData ?? null);
+  });
   const [loading, setLoading] = useState(false);
   const [savedMaxAreaIndex, setSavedMaxAreaIndex] = useState(0);
   const pinchStateRef = useRef<{ initialDistance: number; initialZoom: number; isPinching: boolean }>({ initialDistance: 0, initialZoom: 1, isPinching: false });
@@ -597,9 +607,8 @@ const PhotoEditor = () => {
           let query = "";
           if (detailParam === "true" && locationIdParam) query = `?detail=true&locationId=${locationIdParam}`;
           else if (floorPlanParam && locationIdParam) query = `?floorPlan=${floorPlanParam}&locationId=${locationIdParam}`;
-          navigate(`/projects/${projectId}/location-details${query}`, {
-            state: { imageData: dataUrl, originalImageData: imageDataState, areaMeasurements },
-          });
+          setEditorHandoff({ imageData: dataUrl, originalImageData: imageDataState, areaMeasurements });
+          navigate(`/projects/${projectId}/location-details${query}`);
         }
       } catch (e) {
         console.error("Error exporting edited image:", e);

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { X, Check, ImagePlus, Camera as CameraIcon } from "lucide-react";
 import { toast } from "sonner";
 import { readImageFileForEditor } from "@/lib/imageFile";
+import { setEditorHandoff } from "@/lib/editorHandoff";
 
 const Camera = () => {
   const { projectId } = useParams();
@@ -101,7 +102,10 @@ const Camera = () => {
     } else if (floorPlanId && presetLocationId) {
       query = `?floorPlan=${floorPlanId}&locationId=${presetLocationId}`;
     }
-    navigate(`/projects/${projectId}/editor${query}`, { state: { imageData } });
+    // Hand the (potentially multi-MB) image off in memory, not via router
+    // state — large history.state aborts the navigation on mobile Safari.
+    setEditorHandoff({ imageData });
+    navigate(`/projects/${projectId}/editor${query}`);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -123,8 +127,16 @@ const Camera = () => {
       const imageData = await readImageFileForEditor(file);
       const shouldSkipConfirmation = !isDesktop && mode !== "upload";
       if (shouldSkipConfirmation) {
-        navigateToEditor(imageData);
-        // Don't reset isProcessingFile – component will unmount after navigate
+        try {
+          navigateToEditor(imageData);
+          // Don't reset isProcessingFile – component will unmount after navigate
+        } catch (err) {
+          // If navigation ever fails, don't strand the user on a locked camera:
+          // fall back to the manual confirm screen so they can proceed/retry.
+          console.error("navigateToEditor failed:", err);
+          isProcessingFile.current = false;
+          setCapturedImage(imageData);
+        }
         return;
       }
       setCapturedImage(imageData);

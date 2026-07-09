@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from "react";
 import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate } from "react-router-dom";
+import { setEditorHandoff } from "@/lib/editorHandoff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, AlertTriangle } from "lucide-react";
@@ -70,7 +71,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
   const { cameraInput: detailCameraInput, triggerCamera: triggerDetailCamera } = useDirectCamera({
-    onCapture: (imageData) => navigate(`/projects/${projectId}/editor?detail=true&locationId=${location.id}`, { state: { imageData } }),
+    onCapture: (imageData) => { setEditorHandoff({ imageData }); navigate(`/projects/${projectId}/editor?detail=true&locationId=${location.id}`); },
   });
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState<string | null>(null);

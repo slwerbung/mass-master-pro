@@ -28,6 +28,7 @@ import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 import { readImageFileForEditor } from "@/lib/imageFile";
 import { useDirectCamera } from "@/lib/useDirectCamera";
+import { setEditorHandoff } from "@/lib/editorHandoff";
 import ProjectInfoFields from "@/components/ProjectInfoFields";
 import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import { SplitPdfDialog } from "@/components/SplitPdfDialog";
@@ -51,7 +52,7 @@ const ProjectDetail = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
   const { cameraInput, triggerCamera } = useDirectCamera({
-    onCapture: (imageData) => navigate(`/projects/${projectId}/editor`, { state: { imageData } }),
+    onCapture: (imageData) => { setEditorHandoff({ imageData }); navigate(`/projects/${projectId}/editor`); },
   });
 
   useEffect(() => {
@@ -199,7 +200,8 @@ const ProjectDetail = () => {
     }
     try {
       const imageData = await readImageFileForEditor(file);
-      navigate(`/projects/${projectId}/editor`, { state: { imageData } });
+      setEditorHandoff({ imageData });
+      navigate(`/projects/${projectId}/editor`);
     } catch {
       toast.error("Fehler beim Laden des Bildes");
     }
