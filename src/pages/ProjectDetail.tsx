@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map, FileText, ExternalLink, Mail, Upload, CheckCheck, AlertTriangle, Clock } from "lucide-react";
+import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map, FileText, ExternalLink, Mail, Upload, CheckCheck, Clock } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
@@ -47,7 +47,7 @@ const ProjectDetail = () => {
   const [projectFieldConfigs, setProjectFieldConfigs] = useState<any[]>([]);
   const [customerUploads, setCustomerUploads] = useState<any[]>([]);
   const [viewSettings, setViewSettings] = useState(defaultViewSettings);
-  const [approvalSummary, setApprovalSummary] = useState<{ state: "approved" | "corrections" | "open"; approved: number; total: number } | null>(null);
+  const [approvalSummary, setApprovalSummary] = useState<{ approved: number; total: number } | null>(null);
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
@@ -219,10 +219,10 @@ const ProjectDetail = () => {
     [project?.locations],
   );
 
-  // Projektweiter Freigabestatus (spiegelt die Kundenansicht): "Komplett
-  // freigegeben" (alle Standorte freigegeben), "Korrekturen" (mind. eine
-  // offene Kundenkorrektur) oder "Offen". Standortübergreifend aus
-  // location_approvals + location_feedback berechnet.
+  // Projektweiter Freigabestatus – spiegelt exakt die Kundenansicht wider.
+  // Der Kunde sieht dort nur „X von Y Standorten freigegeben“ (aus
+  // location_approvals), keinen separaten „Korrekturen“-Status. Wir zeigen
+  // dieselbe Zählung, damit Mitarbeiter- und Kundenansicht deckungsgleich sind.
   useEffect(() => {
     if (!project || project.locations.length === 0) {
       setApprovalSummary(null);
@@ -232,18 +232,14 @@ const ProjectDetail = () => {
     let cancelled = false;
     (async () => {
       try {
-        const [approvalsRes, feedbackRes] = await Promise.all([
-          supabase.from("location_approvals").select("location_id").in("location_id", locationIds).eq("approved", true),
-          (supabase as any).from("location_feedback").select("location_id").in("location_id", locationIds).eq("author_type", "customer").eq("status", "open"),
-        ]);
+        const approvalsRes = await supabase
+          .from("location_approvals")
+          .select("location_id")
+          .in("location_id", locationIds)
+          .eq("approved", true);
         if (cancelled) return;
         const approvedSet = new Set((approvalsRes.data || []).map((r: any) => r.location_id));
-        const total = locationIds.length;
-        const approved = approvedSet.size;
-        const openCorrections = ((feedbackRes.data as any[]) || []).length > 0;
-        const state: "approved" | "corrections" | "open" =
-          total > 0 && approved === total ? "approved" : openCorrections ? "corrections" : "open";
-        setApprovalSummary({ state, approved, total });
+        setApprovalSummary({ approved: approvedSet.size, total: locationIds.length });
       } catch {
         if (!cancelled) setApprovalSummary(null);
       }
@@ -324,20 +320,13 @@ const ProjectDetail = () => {
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-bold tracking-tight">Projekt {project.projectNumber}</h1>
             {approvalSummary && (
-              approvalSummary.state === "approved" ? (
+              approvalSummary.total > 0 && approvalSummary.approved === approvalSummary.total ? (
                 <span className="inline-flex items-center gap-1.5 text-sm px-3 py-1 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium">
                   <CheckCheck className="h-4 w-4" /> Komplett freigegeben
                 </span>
-              ) : approvalSummary.state === "corrections" ? (
-                <span className="inline-flex items-center gap-1.5 text-sm px-3 py-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-medium">
-                  <AlertTriangle className="h-4 w-4" /> Korrekturen
-                </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 text-sm px-3 py-1 rounded-full bg-muted text-muted-foreground font-medium">
-                  <Clock className="h-4 w-4" /> Offen
-                  {approvalSummary.approved > 0 && (
-                    <span className="text-xs opacity-80">· {approvalSummary.approved}/{approvalSummary.total} freigegeben</span>
-                  )}
+                  <Clock className="h-4 w-4" /> {approvalSummary.approved} von {approvalSummary.total} freigegeben
                 </span>
               )
             )}
