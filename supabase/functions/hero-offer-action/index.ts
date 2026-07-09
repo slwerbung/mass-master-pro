@@ -87,6 +87,16 @@ async function resolveMatch(
   return { error: "Projekt fehlt (weder ID noch Nummer übergeben).", status: 400 };
 }
 
+// Resolve the offer (Angebot) number from its HERO CustomerDocument id.
+// Best-effort — returns null if unavailable.
+async function heroOfferNr(apiKey: string, documentId: number): Promise<string | null> {
+  if (!Number.isFinite(documentId) || documentId <= 0) return null;
+  const r = await heroPost(HERO_V7, apiKey, `query($ids: [Int]){ customer_documents(ids: $ids){ id nr } }`, { ids: [documentId] });
+  if ((r as any).error) return null;
+  const nr = String((r as any).data?.customer_documents?.[0]?.nr || "").trim();
+  return nr || null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
@@ -116,9 +126,12 @@ Deno.serve(async (req) => {
     const resolved = await resolveMatch(apiKey, projectMatchId, displayId);
     if ("error" in resolved) return json({ ok: false, error: resolved.error }, resolved.status);
 
+    // Resolve the offer (Angebot) number from its document id — best-effort.
+    const offerNr = await heroOfferNr(apiKey, Number(documentId));
+
     // Read-only lookup for the confirmation page: no side effects.
     if (mode === "lookup") {
-      return json({ ok: true, projectMatchId: resolved.id, projectNr: resolved.nr });
+      return json({ ok: true, projectMatchId: resolved.id, projectNr: resolved.nr, offerNr });
     }
 
     // Active status mapping from the configured automation (first enabled row).
@@ -136,10 +149,10 @@ Deno.serve(async (req) => {
     const projLabel = resolved.nr || `#${resolved.id}`;
 
     // Logbook entry (HERO v9 LogbookEntryInput; title folded into custom_text).
+    const offerLabel = offerNr || (documentId ? `#${documentId}` : "(unbekannt)");
     const customText =
       `${LABELS[action]}\n\n` +
-      `Der Kunde hat über die Angebotsmail für Projekt ${projLabel} die Aktion „${action}“ ausgelöst.` +
-      (documentId ? `\nAngebot-Nr.: ${documentId}` : "");
+      `Der Kunde hat über die Angebotsmail das Angebot ${offerLabel} (Projekt ${projLabel}) mit „${action}“ beantwortet.`;
     const logRes = await heroPost(
       HERO_V9, apiKey,
       `mutation($entry: LogbookEntryInput!) { add_logbook_entry(logbook_entry: $entry) { id } }`,
@@ -174,12 +187,12 @@ Deno.serve(async (req) => {
         trigger_type: "hero_offer_response",
         action_type: "hero_offer_status",
         status: "success",
-        message: `${LABELS[action]} · ${projLabel}${statusChanged ? ` · Status → ${stepId}` : " · nur Logbuch"}`,
-        context: { projectMatchId: resolved.id, projectNr: resolved.nr, action, documentId: documentId || null, statusChanged },
+        message: `${LABELS[action]} · Angebot ${offerLabel} · ${projLabel}${statusChanged ? ` · Status → ${stepId}` : " · nur Logbuch"}`,
+        context: { projectMatchId: resolved.id, projectNr: resolved.nr, offerNr: offerNr || null, action, documentId: documentId || null, statusChanged },
       });
     } catch { /* audit is best-effort */ }
 
-    return json({ ok: true, projectDisplayId: projLabel, action, statusChanged });
+    return json({ ok: true, projectDisplayId: projLabel, offerNr, action, statusChanged });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || String(e) }, 500);
   }

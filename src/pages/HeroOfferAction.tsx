@@ -57,6 +57,27 @@ export default function HeroOfferAction() {
   const [phase, setPhase] = useState<Phase>(valid ? "confirm" : "invalid");
   const [error, setError] = useState("");
   const [projectLabel, setProjectLabel] = useState<string>(displayId || (pid ? `#${pid}` : ""));
+  const [offerLabel, setOfferLabel] = useState<string>(documentId ? `#${documentId}` : "");
+  const [brand, setBrand] = useState<{ logo: string | null; name: string }>({ logo: null, name: "" });
+
+  // Company branding from the admin dashboard (public actions, no token).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [logoRes, legalRes] = await Promise.all([
+          supabase.functions.invoke("admin-manage", { body: { action: "get_logo" } }),
+          supabase.functions.invoke("admin-manage", { body: { action: "get_legal_info" } }),
+        ]);
+        if (cancelled) return;
+        setBrand({
+          logo: (logoRes.data as any)?.logo || null,
+          name: (legalRes.data as any)?.info?.companyName || "",
+        });
+      } catch { /* keep neutral header */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const bodyBase = useMemo(
     () => ({ action, projectMatchId: pid ? Number(pid) : undefined, displayId: displayId || undefined, documentId: documentId || undefined }),
@@ -73,8 +94,9 @@ export default function HeroOfferAction() {
           body: { ...bodyBase, mode: "lookup" },
         });
         if (cancelled) return;
-        if (!fnErr && (data as any)?.ok && (data as any).projectNr) {
-          setProjectLabel((data as any).projectNr);
+        if (!fnErr && (data as any)?.ok) {
+          if ((data as any).projectNr) setProjectLabel((data as any).projectNr);
+          if ((data as any).offerNr) setOfferLabel((data as any).offerNr);
         }
       } catch { /* keep fallback label */ }
     })();
@@ -90,6 +112,7 @@ export default function HeroOfferAction() {
       if (fnErr) throw new Error(await invokeErr(fnErr));
       if ((data as any)?.ok === false) throw new Error((data as any).error || "Aktion fehlgeschlagen");
       if ((data as any)?.projectDisplayId) setProjectLabel((data as any).projectDisplayId);
+      if ((data as any)?.offerNr) setOfferLabel((data as any).offerNr);
       setPhase("done");
     } catch (e: any) {
       setError(e?.message || "Unbekannter Fehler");
@@ -101,10 +124,15 @@ export default function HeroOfferAction() {
     <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader className="text-center">
-          <div className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <FileCheck2 className="h-6 w-6" />
-          </div>
-          <CardTitle className="text-xl">Captfix · Angebots-Rückmeldung</CardTitle>
+          {brand.logo ? (
+            <img src={brand.logo} alt={brand.name || "Logo"} className="mx-auto mb-2 max-h-16 w-auto object-contain" />
+          ) : (
+            <div className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <FileCheck2 className="h-6 w-6" />
+            </div>
+          )}
+          <CardTitle className="text-xl">{brand.name || "Angebots-Rückmeldung"}</CardTitle>
+          <p className="text-sm text-muted-foreground mt-0.5">Angebots-Rückmeldung</p>
         </CardHeader>
         <CardContent className="space-y-5">
           {phase === "invalid" && (
@@ -119,8 +147,11 @@ export default function HeroOfferAction() {
           {phase === "confirm" && (
             <>
               <p className="text-center text-sm">
-                Möchten Sie das Angebot für Projekt <strong>{projectLabel}</strong> {ACTION_QUESTION[action]}?
+                Möchten Sie das Angebot <strong>{offerLabel || "—"}</strong> {ACTION_QUESTION[action]}?
               </p>
+              {projectLabel && (
+                <p className="text-center text-xs text-muted-foreground -mt-2">Projekt {projectLabel}</p>
+              )}
               <Button className="w-full" size="lg" onClick={confirm}>
                 {ACTION_LABEL[action]} · Bestätigen
               </Button>
@@ -141,7 +172,9 @@ export default function HeroOfferAction() {
             <div className="text-center space-y-2 py-2">
               <CheckCircle2 className="mx-auto h-9 w-9 text-green-600" />
               <p className="text-sm">{DONE_TEXT[action]}</p>
-              <p className="text-xs text-muted-foreground">Projekt {projectLabel}</p>
+              <p className="text-xs text-muted-foreground">
+                Angebot {offerLabel || "—"}{projectLabel ? ` · Projekt ${projectLabel}` : ""}
+              </p>
             </div>
           )}
 
