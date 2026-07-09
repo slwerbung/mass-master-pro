@@ -116,7 +116,32 @@ Gib ein JSON-Objekt zurück mit genau diesen Feldern:
 
 Antworte ausschließlich mit dem JSON-Objekt, ohne weitere Erklärung.`;
 
-async function summarise(p: AIProvider, transcript: string): Promise<{ summary: string; actionPlan: string }> {
+// Generic prompt for the standalone protocol app (/protokoll). The user gives
+// a briefing (context + how the protocol should be made) beforehand, which is
+// injected below so the AI knows what kind of meeting it is (e.g. a committee /
+// board session – Gremiensitzung) and how to structure the result.
+const SUMMARY_SYSTEM_GENERIC = `Du bist ein Assistent, der aus dem Transkript eines gesprochenen Termins ein professionelles Ergebnisprotokoll auf Deutsch erstellt – KEIN Wortprotokoll.
+
+Gib ein JSON-Objekt zurück mit genau diesen Feldern:
+- "summary": Markdown-Ergebnisprotokoll. Nutze Überschriften ("## ") für Themen/Tagesordnungspunkte, darunter kurze Stichpunkte ("- ") mit den besprochenen Inhalten, getroffenen Entscheidungen und Beschlüssen. Keine Floskeln, nur Ergebnisse.
+- "actionPlan": Markdown-Checkliste mit konkreten Maßnahmen / nächsten Schritten ("- [ ] Aufgabe"). Wenn erkennbar, Verantwortliche und Fristen ergänzen. Wenn keine Maßnahmen erkennbar sind: "- [ ] Keine offenen Punkte".
+
+Halte dich strikt an den vom Nutzer vorgegebenen Kontext und die Protokoll-Anweisung. Antworte ausschließlich mit dem JSON-Objekt, ohne weitere Erklärung.`
+
+// Builds the system prompt. Without a briefing the original project prompt is
+// used (unchanged). With a briefing the generic prompt + the user's context
+// and instructions are used.
+function buildSummarySystem(briefing?: { context?: string; instructions?: string }): string {
+  const context = (briefing?.context || "").trim();
+  const instructions = (briefing?.instructions || "").trim();
+  if (!context && !instructions) return SUMMARY_SYSTEM;
+  let out = SUMMARY_SYSTEM_GENERIC;
+  if (context) out += `\n\nKONTEXT DES TERMINS (vom Nutzer vorab):\n${context.slice(0, 4000)}`;
+  if (instructions) out += `\n\nSO SOLL DAS PROTOKOLL ERSTELLT WERDEN (Anweisung des Nutzers):\n${instructions.slice(0, 4000)}`;
+  return out;
+}
+
+async function summarise(p: AIProvider, transcript: string, system: string): Promise<{ summary: string; actionPlan: string }> {
   const resp = await fetch(`${p.base}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${p.key}`, "Content-Type": "application/json" },
@@ -125,7 +150,7 @@ async function summarise(p: AIProvider, transcript: string): Promise<{ summary: 
       temperature: 0.2,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: SUMMARY_SYSTEM },
+        { role: "system", content: system },
         { role: "user", content: transcript.slice(0, 50000) },
       ],
     }),
@@ -163,6 +188,16 @@ Deno.serve(async (req) => {
     );
 
     if (action === "list") {
+      // Standalone protocols (/protokoll app): projectless notes, newest first.
+      if (body.standalone === true) {
+        const { data } = await supabase
+          .from("meeting_notes")
+          .select("id, title, summary, action_plan, context, created_by, created_at")
+          .is("project_id", null)
+          .order("created_at", { ascending: false })
+          .limit(30);
+        return json({ notes: data || [] });
+      }
       const projectId = String(body.projectId || "").trim();
       if (!projectId) return json({ notes: [] });
       const { data } = await supabase
@@ -177,7 +212,14 @@ Deno.serve(async (req) => {
     if (action === "process") {
       const projectId = String(body.projectId || "").trim();
       const audioPath = String(body.audioPath || "").trim();
-      if (!projectId || !audioPath) return json({ error: "projectId und audioPath erforderlich" }, 400);
+      // Standalone (projectless) protocols come with a briefing instead of a
+      // project. Everything runs the same way; only HERO logging is skipped.
+      const standalone = !projectId;
+      const briefContext = String(body.context || "").trim();
+      const briefInstructions = String(body.instructions || "").trim();
+      const briefTitle = String(body.title || "").trim();
+      if (!audioPath) return json({ error: "audioPath erforderlich" }, 400);
+      if (!standalone && !projectId) return json({ error: "projectId erforderlich" }, 400);
 
       const provider = resolveProvider();
       if (!provider) {
@@ -207,40 +249,48 @@ Deno.serve(async (req) => {
 
       let summary = "", actionPlan = "";
       try {
-        ({ summary, actionPlan } = await summarise(provider, transcript));
+        const system = buildSummarySystem(standalone ? { context: briefContext, instructions: briefInstructions } : undefined);
+        ({ summary, actionPlan } = await summarise(provider, transcript, system));
       } catch (e: any) {
         await supabase.storage.from("project-files").remove([audioPath]).catch(() => {});
         return json({ error: e.message || "Zusammenfassung fehlgeschlagen" }, 502);
       }
 
-      // Project number for the logbook title.
-      const { data: proj } = await supabase.from("projects").select("project_number").eq("id", projectId).maybeSingle();
-      const projectNumber = proj?.project_number || projectId.slice(0, 8);
-
-      // HERO logbook (best-effort). Surface WHY it failed instead of a
-      // misleading generic "not linked" message.
+      // HERO logbook only for project-bound notes (standalone protocols like
+      // Gremiensitzungen have no linked HERO project).
+      let projectNumber = "";
       let heroLogged = false;
       let heroError: string | undefined;
-      try {
-        const hctx = await heroContext(supabase, projectId);
-        if (!hctx) {
-          heroError = "Projekt nicht mit HERO verknüpft oder Integration aus.";
-        } else {
-          const text =
-            `ERGEBNISPROTOKOLL\n\n${summary}\n\n` +
-            `MASSNAHMENPLAN\n\n${actionPlan}`;
-          const res = await heroAddLogbook(hctx.apiKey, hctx.heroId, `Captfix: Gesprächsnotiz · ${projectNumber}`, text);
-          heroLogged = res.ok;
-          if (!res.ok) heroError = res.error;
+      if (!standalone) {
+        const { data: proj } = await supabase.from("projects").select("project_number").eq("id", projectId).maybeSingle();
+        projectNumber = proj?.project_number || projectId.slice(0, 8);
+        // Best-effort. Surface WHY it failed instead of a misleading generic
+        // "not linked" message.
+        try {
+          const hctx = await heroContext(supabase, projectId);
+          if (!hctx) {
+            heroError = "Projekt nicht mit HERO verknüpft oder Integration aus.";
+          } else {
+            const text =
+              `ERGEBNISPROTOKOLL\n\n${summary}\n\n` +
+              `MASSNAHMENPLAN\n\n${actionPlan}`;
+            const res = await heroAddLogbook(hctx.apiKey, hctx.heroId, `Captfix: Gesprächsnotiz · ${projectNumber}`, text);
+            heroLogged = res.ok;
+            if (!res.ok) heroError = res.error;
+          }
+        } catch (e: any) {
+          heroError = e?.message || String(e);
         }
-      } catch (e: any) {
-        heroError = e?.message || String(e);
       }
 
       // Store the note; drop the raw audio.
       const createdBy = (payload as any).name || (payload.role === "admin" ? "Admin" : "Mitarbeiter");
+      const briefingCombined = [briefContext, briefInstructions].filter(Boolean).join("\n\n---\n\n") || null;
       const { data: inserted } = await supabase.from("meeting_notes").insert({
-        project_id: projectId,
+        project_id: standalone ? null : projectId,
+        kind: standalone ? "standalone" : "project",
+        title: briefTitle || null,
+        context: standalone ? briefingCombined : null,
         summary,
         action_plan: actionPlan,
         transcript,
@@ -250,7 +300,7 @@ Deno.serve(async (req) => {
 
       await supabase.storage.from("project-files").remove([audioPath]).catch(() => {});
 
-      return json({ id: inserted?.id, summary, actionPlan, heroLogged, heroError, projectNumber });
+      return json({ id: inserted?.id, title: briefTitle, summary, actionPlan, heroLogged, heroError, projectNumber, standalone });
     }
 
     return json({ error: `Unbekannte Aktion: ${action}` }, 400);

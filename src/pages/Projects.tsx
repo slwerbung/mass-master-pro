@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw, Trash2,
-  CheckSquare, X, Archive, ArchiveRestore, UserPlus, Tag, MapPin, Car,
+  CheckSquare, X, Archive, ArchiveRestore, UserPlus, Tag, MapPin, Car, Mic,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -326,6 +326,7 @@ const Projects = () => {
               <>
                 <Button size="sm" variant="ghost" onClick={() => navigate("/projects/customers")} title="Kunden"><Users className="h-4 w-4" /></Button>
                 <Button size="sm" variant="ghost" onClick={() => navigate("/etiketten")} title="Etiketten"><Tag className="h-4 w-4" /></Button>
+                <Button size="sm" variant="ghost" onClick={() => navigate("/protokoll")} title="Protokoll (Diktat)"><Mic className="h-4 w-4" /></Button>
                 <Button size="sm" variant="ghost" onClick={syncToSupabase} disabled={isSyncing} title="Synchronisieren"><RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} /></Button>
                 <Button size="sm" variant="ghost" onClick={handleLogout} title="Abmelden"><LogOut className="h-4 w-4" /></Button>
                 <Button size="sm" onClick={() => navigate("/projects/new")} className="ml-1">
