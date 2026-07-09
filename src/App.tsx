@@ -33,6 +33,7 @@ import Gestaltung from "./pages/Gestaltung";
 import HeroOfferAction from "./pages/HeroOfferAction";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import LabelPrint from "./pages/LabelPrint";
+import Protokoll from "./pages/Protokoll";
 import NotFound from "./pages/NotFound";
 import { MeetingRecorderProvider } from "@/components/MeetingRecorder";
 
@@ -148,6 +149,7 @@ const App = () => {
           <Route path="/projects/new" element={<RoleGuard allowedRoles={["admin", "employee"]}><NewProject /></RoleGuard>} />
           <Route path="/projects/customers" element={<RoleGuard allowedRoles={["admin", "employee"]}><CustomerManage /></RoleGuard>} />
           <Route path="/etiketten" element={<RoleGuard allowedRoles={["admin", "employee"]}><LabelPrint /></RoleGuard>} />
+          <Route path="/protokoll" element={<RoleGuard allowedRoles={["admin", "employee"]}><Protokoll /></RoleGuard>} />
           <Route path="/projects/:projectId" element={<RoleGuard allowedRoles={["admin", "employee"]}><ProjectDetail /></RoleGuard>} />
           <Route path="/projects/:projectId/camera" element={<RoleGuard allowedRoles={["admin", "employee"]}><Camera /></RoleGuard>} />
           <Route path="/projects/:projectId/editor" element={<RoleGuard allowedRoles={["admin", "employee"]}><PhotoEditor /></RoleGuard>} />
