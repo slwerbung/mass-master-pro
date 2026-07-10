@@ -868,6 +868,38 @@ export const indexedDBStorage = {
     await tx.done;
     return removed;
   },
+
+  // Details of the permanently-failed items (attempts >= 5) so the UI can
+  // show WHICH files failed and WHY instead of just a count. Blobs are
+  // omitted to keep the payload small.
+  async getFailedHeroUploads(): Promise<{ id: string; filename: string; uploadType: string; projectId: string; lastError: string | null }[]> {
+    const db = await getDB();
+    const all = await db.getAll('hero-upload-queue');
+    return all
+      .filter((x) => x.attempts >= 5)
+      .map((x) => ({ id: x.id, filename: x.filename, uploadType: x.uploadType, projectId: x.projectId, lastError: x.lastError }));
+  },
+
+  // Re-arm all permanently-failed items for another run: reset the attempt
+  // counter and make them due immediately. Used by the "Erneut versuchen"
+  // button so a transient HERO/network outage (or a fixed config) can be
+  // retried without re-capturing anything. Returns the number re-armed.
+  async retryFailedHeroUploads(): Promise<number> {
+    const db = await getDB();
+    const tx = db.transaction('hero-upload-queue', 'readwrite');
+    const store = tx.objectStore('hero-upload-queue');
+    const all = await store.getAll();
+    const now = Date.now();
+    let reArmed = 0;
+    for (const item of all) {
+      if (item.attempts >= 5) {
+        await store.put({ ...item, attempts: 0, nextAttemptAt: now, lastError: null });
+        reArmed++;
+      }
+    }
+    await tx.done;
+    return reArmed;
+  },
 };
 
 // Format bytes to human readable
