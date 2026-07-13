@@ -179,24 +179,27 @@ const LabelPrint = () => {
       const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
       const filename = `Lageretikett_${safeNr}_${datePart}.pdf`;
 
-      // Blob holen für duale Aktion: Tab öffnen + Download
       const blob = pdf.output("blob");
       const blobUrl = URL.createObjectURL(blob);
 
-      // 1) Neuer Tab mit Vorschau (Browser zeigt PDF inline)
-      window.open(blobUrl, "_blank");
+      // Nur EINE Aktion: das PDF in einem neuen Tab zum Ansehen/Drucken
+      // öffnen. Früher wurde zusätzlich per Anchor ein Download derselben
+      // blob:-URL angestoßen – viele Browser behandeln das nicht als
+      // Download, sondern öffnen einen zweiten, leeren „blob:"-Tab. Nur
+      // wenn der Popup-Blocker das Öffnen verhindert, laden wir als
+      // Fallback herunter, damit der Nutzer das Etikett trotzdem bekommt.
+      const win = window.open(blobUrl, "_blank");
+      if (!win) {
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
 
-      // 2) Download anstoßen über versteckten Anchor.
-      //    Beide Aktionen mit gleicher Blob-URL nutzbar.
-      const link = document.createElement("a");
-      link.href = blobUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      // Blob-URL nach kurzer Zeit freigeben (geben dem Browser Zeit, den
-      // Tab zu öffnen und den Download zu starten).
+      // Blob-URL nach kurzer Zeit freigeben (dem Browser Zeit geben, den
+      // Tab zu öffnen bzw. den Download zu starten).
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
 
       // HERO-Upload: wenn das Projekt aus HERO-Suche kommt, gibts immer
@@ -352,8 +355,9 @@ const LabelPrint = () => {
           <CardContent className="space-y-4">
             <div className="text-sm text-muted-foreground">
               Vorschau im Maßstab 1:1. Klick auf "PDF erstellen" öffnet das
-              fertige Etikett in einem neuen Tab und startet gleichzeitig den
-              Download. Das PDF hat genau die Etiketten-Größe als Seitenformat.
+              fertige Etikett in einem neuen Tab zum Drucken und speichert es
+              zusätzlich in HERO. Das PDF hat genau die Etiketten-Größe als
+              Seitenformat.
             </div>
 
             <LabelPreview
