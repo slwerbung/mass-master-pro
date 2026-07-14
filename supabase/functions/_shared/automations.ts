@@ -9,6 +9,7 @@
 
 import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { generateAufmassPdf, uploadPdfToHero, fmtDate } from "./aufmassPdf.ts";
+import { loadDropboxSettings, getDropboxAccessToken, dbxEnsureTree, buildName } from "./dropbox.ts";
 
 // Calendar mutations live on the documented current API version. If HERO
 // retires the (deprecated) create_calendar_event, swap the mutation here.
@@ -299,6 +300,80 @@ async function runHeroSetStatusAction(
   }
 }
 
+// ── Dropbox: Kundenordner anlegen ─────────────────────────────────────
+// Basis-Pfad + Kundenordner (Namensmuster aus der Dropbox-Karte im Admin).
+// Idempotent: existierende Ordner sind kein Fehler.
+async function runDropboxCustomerFolderAction(
+  supabase: SupabaseClient,
+  _apiKey: string | undefined, _heroEnabled: boolean,
+  _cfg: Record<string, any>, ctx: AutomationContext,
+): Promise<ActionResult> {
+  const settings = await loadDropboxSettings(supabase);
+  if (!settings.enabled) return { status: "skipped", message: "Dropbox-Integration ist nicht aktiv" };
+  const customerName = String(ctx.customerName || "").trim();
+  if (!customerName) return { status: "skipped", message: "Kein Kundenname im Kontext" };
+
+  const tokenRes = await getDropboxAccessToken(supabase);
+  if ("error" in tokenRes) return { status: "error", message: tokenRes.error };
+
+  const folder = buildName(settings.customerPattern, {
+    kunde: customerName,
+    kundennr: ctx.heroCustomerId != null ? String(ctx.heroCustomerId) : "",
+  });
+  const path = `${settings.basePath}/${folder}`;
+  const res = await dbxEnsureTree(tokenRes.token, path, []);
+  if (!res.ok) return { status: "error", message: res.error || "Dropbox-Fehler" };
+
+  if (ctx.heroCustomerId) {
+    await supabase.from("dropbox_synced")
+      .update({ dropbox_path: path })
+      .eq("kind", "customer").eq("hero_id", Number(ctx.heroCustomerId));
+  }
+  return { status: "success", message: `Kundenordner ${res.created.length > 0 ? "angelegt" : "vorhanden"}: ${path}` };
+}
+
+// ── Dropbox: Projektordner + Unterordner-Vorlage anlegen ──────────────
+// Legt (falls nötig auch) den Kundenordner an, darin den Projektordner und
+// die im Admin konfigurierte Unterordner-Struktur.
+async function runDropboxProjectFolderAction(
+  supabase: SupabaseClient,
+  _apiKey: string | undefined, _heroEnabled: boolean,
+  _cfg: Record<string, any>, ctx: AutomationContext,
+): Promise<ActionResult> {
+  const settings = await loadDropboxSettings(supabase);
+  if (!settings.enabled) return { status: "skipped", message: "Dropbox-Integration ist nicht aktiv" };
+  const projectNr = String(ctx.projectNr || "").trim();
+  const projectName = String(ctx.projectName || "").trim();
+  const customerName = String(ctx.customerName || "").trim();
+  if (!projectNr && !projectName) return { status: "skipped", message: "Keine Projektdaten im Kontext" };
+
+  const tokenRes = await getDropboxAccessToken(supabase);
+  if ("error" in tokenRes) return { status: "error", message: tokenRes.error };
+
+  const customerFolder = buildName(settings.customerPattern, {
+    kunde: customerName || "Ohne Kunde",
+    kundennr: ctx.heroCustomerId != null ? String(ctx.heroCustomerId) : "",
+  });
+  const projectFolder = buildName(settings.projectPattern, {
+    projektnr: projectNr,
+    projektname: projectName,
+    kunde: customerName,
+  });
+  const path = `${settings.basePath}/${customerFolder}/${projectFolder}`;
+  const res = await dbxEnsureTree(tokenRes.token, path, settings.subfolders);
+  if (!res.ok) return { status: "error", message: res.error || "Dropbox-Fehler" };
+
+  if (ctx.heroProjectId) {
+    await supabase.from("dropbox_synced")
+      .update({ dropbox_path: path })
+      .eq("kind", "project").eq("hero_id", Number(ctx.heroProjectId));
+  }
+  return {
+    status: "success",
+    message: `Projektordner ${path} (${res.created.length} neu, ${settings.subfolders.length} Unterordner geprüft)`,
+  };
+}
+
 const ACTION_HANDLERS: Record<
   string,
   (supabase: SupabaseClient, apiKey: string | undefined, heroEnabled: boolean, cfg: any, ctx: AutomationContext) => Promise<ActionResult>
@@ -307,6 +382,8 @@ const ACTION_HANDLERS: Record<
   hero_create_calendar_event: runHeroCalendarAction,
   hero_upload_aufmass_pdf: runHeroUploadAufmassPdfAction,
   hero_set_status: runHeroSetStatusAction,
+  dropbox_create_customer_folder: runDropboxCustomerFolderAction,
+  dropbox_create_project_folder: runDropboxProjectFolderAction,
 };
 
 // ── dispatch ─────────────────────────────────────────────────────────---

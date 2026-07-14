@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AutomationsTab from "@/components/admin/AutomationsTab";
+import { DropboxCard } from "@/components/admin/DropboxCard";
 import { Label } from "@/components/ui/label";
 import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle, Mail, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -1879,6 +1880,8 @@ const Admin = () => {
                 </div>
               </CardContent>
             </Card>
+
+            <DropboxCard adminToken={adminToken} />
 
             <Card>
               <CardHeader>
