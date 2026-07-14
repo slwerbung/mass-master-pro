@@ -59,6 +59,16 @@ export const TRIGGERS: TriggerDef[] = [
     description: "Ein Mitarbeiter hat im Fahrzeug-Projekt ein bemaßtes Fahrzeugbild hinzugefügt (egal ob schon bemaßt oder nicht).",
   },
   {
+    type: "hero_project_created",
+    label: "HERO: Neues Projekt angelegt",
+    description: "In HERO wurde ein neues Projekt erstellt. Captfix erkennt das automatisch per Abgleich (ca. alle 10 Minuten). Typische Aktion: „Dropbox: Projektordner anlegen“.",
+  },
+  {
+    type: "hero_customer_created",
+    label: "HERO: Neuer Kunde angelegt",
+    description: "In HERO wurde ein neuer Kunde/Kontakt erstellt (per Abgleich erkannt, ca. alle 10 Minuten). Typische Aktion: „Dropbox: Kundenordner anlegen“.",
+  },
+  {
     type: "hero_offer_response",
     label: "HERO: Angebots-Rückmeldung (Kunde)",
     description: "Der Kunde klickt in der HERO-Angebotsmail auf Annehmen / Ablehnen / Rücksprache. Wird NICHT durch ein App-Ereignis ausgelöst, sondern direkt durch den Klick des Kunden. Lege dazu die Aktion „HERO: Angebotsstatus setzen“ an und wähle je Rückmeldung den Zielstatus.",
@@ -148,6 +158,20 @@ export const ACTIONS: ActionDef[] = [
         help: "Leer lassen = nur Logbucheintrag, kein Statuswechsel.",
       },
     ],
+  },
+  {
+    type: "dropbox_create_project_folder",
+    label: "Dropbox: Projektordner anlegen",
+    description: "Legt in der Firmen-Dropbox den Kundenordner (falls nötig) und darin den Projektordner samt der Unterordner-Vorlage an. Basis-Pfad, Namensmuster und Vorlage stellst du unter Integrationen → Dropbox ein.",
+    requires: ["dropbox"],
+    configFields: [],
+  },
+  {
+    type: "dropbox_create_customer_folder",
+    label: "Dropbox: Kundenordner anlegen",
+    description: "Legt in der Firmen-Dropbox einen Ordner für den neuen Kunden an (unter dem Basis-Pfad aus Integrationen → Dropbox).",
+    requires: ["dropbox"],
+    configFields: [],
   },
   {
     type: "hero_upload_aufmass_pdf",
