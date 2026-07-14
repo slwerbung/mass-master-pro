@@ -325,9 +325,10 @@ async function runDropboxCustomerFolderAction(
   if (!res.ok) return { status: "error", message: res.error || "Dropbox-Fehler" };
 
   if (ctx.heroCustomerId) {
-    await supabase.from("dropbox_synced")
-      .update({ dropbox_path: path })
-      .eq("kind", "customer").eq("hero_id", Number(ctx.heroCustomerId));
+    await supabase.from("dropbox_synced").upsert(
+      { kind: "customer", hero_id: Number(ctx.heroCustomerId), dropbox_path: path },
+      { onConflict: "kind,hero_id" },
+    );
   }
   return { status: "success", message: `Kundenordner ${res.created.length > 0 ? "angelegt" : "vorhanden"}: ${path}` };
 }
@@ -350,16 +351,30 @@ async function runDropboxProjectFolderAction(
   const tokenRes = await getDropboxAccessToken(supabase);
   if ("error" in tokenRes) return { status: "error", message: tokenRes.error };
 
-  const customerFolder = buildName(settings.customerPattern, {
-    kunde: customerName || "Ohne Kunde",
-    kundennr: ctx.heroCustomerId != null ? String(ctx.heroCustomerId) : "",
-  });
+  // Kundenordner bestimmen. Wenn Captfix für diese HERO-Kunden-ID schon
+  // einmal einen Ordner angelegt hat, ist dessen echter Pfad in
+  // dropbox_synced gespeichert → wir verwenden GENAU diesen wieder (auch
+  // wenn das Namensmuster inzwischen geändert wurde), statt ihn neu zu
+  // berechnen. Nur ohne gespeicherten Pfad wird er aus dem Muster gebaut.
+  let customerPath: string | null = null;
+  if (ctx.heroCustomerId) {
+    const { data: known } = await supabase.from("dropbox_synced")
+      .select("dropbox_path").eq("kind", "customer").eq("hero_id", Number(ctx.heroCustomerId)).maybeSingle();
+    if (known?.dropbox_path) customerPath = known.dropbox_path as string;
+  }
+  if (!customerPath) {
+    const customerFolder = buildName(settings.customerPattern, {
+      kunde: customerName || "Ohne Kunde",
+      kundennr: ctx.heroCustomerId != null ? String(ctx.heroCustomerId) : "",
+    });
+    customerPath = `${settings.basePath}/${customerFolder}`;
+  }
   const projectFolder = buildName(settings.projectPattern, {
     projektnr: projectNr,
     projektname: projectName,
     kunde: customerName,
   });
-  const path = `${settings.basePath}/${customerFolder}/${projectFolder}`;
+  const path = `${customerPath}/${projectFolder}`;
   const res = await dbxEnsureTree(tokenRes.token, path, settings.subfolders);
   if (!res.ok) return { status: "error", message: res.error || "Dropbox-Fehler" };
 
@@ -367,6 +382,14 @@ async function runDropboxProjectFolderAction(
     await supabase.from("dropbox_synced")
       .update({ dropbox_path: path })
       .eq("kind", "project").eq("hero_id", Number(ctx.heroProjectId));
+  }
+  // Kundenordner-Pfad für diese HERO-Kunden-ID merken, damit spätere
+  // Projekte desselben Kunden immer denselben Ordner nutzen.
+  if (ctx.heroCustomerId) {
+    await supabase.from("dropbox_synced").upsert(
+      { kind: "customer", hero_id: Number(ctx.heroCustomerId), dropbox_path: customerPath },
+      { onConflict: "kind,hero_id" },
+    );
   }
   return {
     status: "success",
