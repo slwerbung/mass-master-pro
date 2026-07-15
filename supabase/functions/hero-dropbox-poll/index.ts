@@ -177,41 +177,55 @@ Deno.serve(async (req) => {
       .filter((p: any) => Number.isFinite(Number(p?.id)) && Number(p.id) > wmProject)
       .sort((a: any, b: any) => Number(a.id) - Number(b.id));
 
-    // ── Neue Kunden: markieren + Automation feuern ─────────────────────
-    // Wasserstand wird lückenlos-aufsteigend nachgezogen: advanceCustomer
-    // wandert nur so weit, wie alles darunter erledigt ist (fired ODER bereits
-    // in dropbox_synced). Beim Cap bleibt der Rest oberhalb -> nächster Lauf.
+    // ── Neue Kunden: Automation feuern, DANN (nur bei Erfolg) markieren ──
+    // WICHTIG: erst den Ordner anlegen lassen, dann als erledigt markieren.
+    // Schlägt das Anlegen fehl (z.B. Dropbox-Token/Netz), bleibt der Eintrag
+    // unmarkiert und wird im nächsten Lauf erneut versucht - statt still zu
+    // verschwinden. Der Wasserstand wird nur bis zum ersten Fehler nachgezogen
+    // (Lücke), damit genau dieser Eintrag Kandidat bleibt.
     let fired = 0;
     let customersHandled = 0;
     let advanceCustomer = wmCustomer;
+    let customerBlocked = false;
     for (const [id, name] of newCustomers) {
-      if (seenCustomers.has(id)) { advanceCustomer = id; continue; }
+      if (seenCustomers.has(id)) { if (!customerBlocked) advanceCustomer = id; continue; }
       if (fired >= MAX_EVENTS_PER_RUN) break;
-      await supabase.from("dropbox_synced").upsert({ kind: "customer", hero_id: id }, { onConflict: "kind,hero_id" });
-      await dispatchAutomations(supabase, "hero_customer_created", {
+      const res = await dispatchAutomations(supabase, "hero_customer_created", {
         heroCustomerId: id,
         customerName: name,
       });
-      advanceCustomer = id;
-      fired++; customersHandled++;
+      fired++;
+      if (res.errors === 0) {
+        await supabase.from("dropbox_synced").upsert({ kind: "customer", hero_id: id }, { onConflict: "kind,hero_id" });
+        customersHandled++;
+        if (!customerBlocked) advanceCustomer = id;
+      } else {
+        customerBlocked = true; // Wasserstand ab hier einfrieren -> Retry nächster Lauf
+      }
     }
 
     let projectsHandled = 0;
     let advanceProject = wmProject;
+    let projectBlocked = false;
     for (const p of newProjects) {
       const pid = Number(p.id);
-      if (seenProjects.has(pid)) { advanceProject = pid; continue; }
+      if (seenProjects.has(pid)) { if (!projectBlocked) advanceProject = pid; continue; }
       if (fired >= MAX_EVENTS_PER_RUN) break;
-      await supabase.from("dropbox_synced").upsert({ kind: "project", hero_id: pid }, { onConflict: "kind,hero_id" });
-      await dispatchAutomations(supabase, "hero_project_created", {
+      const res = await dispatchAutomations(supabase, "hero_project_created", {
         heroProjectId: pid,
         projectNr: String(p.project_nr || ""),
         projectName: String(p.name || ""),
         heroCustomerId: Number(p?.customer?.id) || null,
         customerName: customerDisplayName(p.customer),
       });
-      advanceProject = pid;
-      fired++; projectsHandled++;
+      fired++;
+      if (res.errors === 0) {
+        await supabase.from("dropbox_synced").upsert({ kind: "project", hero_id: pid }, { onConflict: "kind,hero_id" });
+        projectsHandled++;
+        if (!projectBlocked) advanceProject = pid;
+      } else {
+        projectBlocked = true;
+      }
     }
 
     // Wasserstand nachziehen (nur vorwärts).

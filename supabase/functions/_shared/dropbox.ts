@@ -55,15 +55,26 @@ export function letterBucket(name: string): string {
 }
 
 // Kundenname auf einen Vergleichskern reduzieren: Kleinbuchstaben, ohne
-// Diakritika, ohne Rechtsform-Zusätze (GmbH, AG, KG …) und Sonderzeichen.
-// So matcht "Mustermann GmbH & Co. KG" auf einen Ordner "Mustermann".
-const LEGAL_FORMS = /\b(gmbh|mbh|ug|ag|kg|kgaa|ohg|gbr|ev|e ?v|ek|e ?k|se|co|kg aa|ltd|inc|haftungsbeschraenkt|und co|co kg)\b/g;
+// Diakritika, ohne Sonderzeichen und ohne die üblichen Rechtsform-Zusätze
+// (GmbH, AG, KG …). So matcht "Mustermann GmbH & Co. KG" auf einen Ordner
+// "Mustermann".
+//
+// WICHTIG: Rechtsform-Token werden nur am NAMENSENDE entfernt (dort stehen sie
+// konventionell). Früher wurde jedes Vorkommen global gestrippt, wodurch kurze
+// Tokens wie "SE", "AG", "CO", "EK" mitten im Namen echte Namensteile löschten
+// (z.B. "EK Automotive" -> "automotive"). Am Ende zu strippen vermeidet das.
+const LEGAL_TOKENS = new Set([
+  "gmbh", "mbh", "ug", "ag", "kg", "kgaa", "ohg", "gbr", "ev", "ek", "se",
+  "co", "ltd", "inc", "haftungsbeschraenkt", "und", // "und" räumt Reste von "& Co" ab
+]);
 export function normCustomer(s: string): string {
   let x = stripDiacritics(String(s || "").toLowerCase());
   x = x.replace(/&/g, " und ");
   x = x.replace(/[^a-z0-9]+/g, " ");
-  x = x.replace(LEGAL_FORMS, " ");
-  return x.replace(/\s+/g, " ").trim();
+  const tokens = x.split(/\s+/).filter(Boolean);
+  // Rechtsform-/Füll-Token nur am Ende abschneiden, nie den letzten echten Namen.
+  while (tokens.length > 1 && LEGAL_TOKENS.has(tokens[tokens.length - 1])) tokens.pop();
+  return tokens.join(" ").trim();
 }
 
 // Ordnernamen (nur Ordner) unter einem Pfad auflisten. Existiert der Pfad
@@ -123,18 +134,29 @@ export async function resolveCustomerFolder(
 
   // 2) vorhandenen Ordner erkennen (normalisierter Abgleich)
   const target = normCustomer(customerName);
-  if (target) {
+  if (target && target.length >= 3) {
     const existing = await dbxListFolders(token, parent);
-    // exakter normalisierter Treffer zuerst
-    let hit = existing.find((f) => normCustomer(f.name) === target);
-    // sonst: einer ist Präfix des anderen (min. 4 Zeichen), z.B. "Mustermann" ⊂ "Mustermann Bau"
-    if (!hit) {
-      hit = existing.find((f) => {
-        const n = normCustomer(f.name);
-        return n.length >= 4 && target.length >= 4 && (n.startsWith(target) || target.startsWith(n));
-      });
+    const scored = existing
+      .map((f) => ({ f, n: normCustomer(f.name) }))
+      .filter((x) => x.n && x.f.path);
+
+    // a) exakter normalisierter Treffer (Schreibweise/Rechtsform-unabhängig).
+    //    Deckt den Regelfall ab: "Mustermann GmbH" == Ordner "Mustermann".
+    const exact = scored.filter((x) => x.n === target);
+    if (exact.length === 1) return { path: exact[0].f.path, parent, matched: "existing" };
+
+    // b) Präfix-Treffer NUR wenn er eindeutig ist (genau ein Kandidat) und die
+    //    Grenze auf Wort-Ebene liegt. Verhindert Fehl-Zusammenlegungen: sind
+    //    z.B. "Meyer Bau" UND "Meyer Elektro" vorhanden, ist "Meyer" mehrdeutig
+    //    -> wir raten NICHT, sondern legen einen exakten neuen Ordner an.
+    if (exact.length === 0) {
+      const tokenPrefix = (a: string, b: string) =>
+        a === b || a.startsWith(b + " ") || b.startsWith(a + " ");
+      const pref = scored.filter(
+        (x) => x.n.length >= 4 && target.length >= 4 && tokenPrefix(x.n, target),
+      );
+      if (pref.length === 1) return { path: pref[0].f.path, parent, matched: "existing" };
     }
-    if (hit && hit.path) return { path: hit.path, parent, matched: "existing" };
   }
 
   // 3) neu berechnen

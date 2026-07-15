@@ -366,10 +366,13 @@ async function runDropboxProjectFolderAction(
   const res = await dbxEnsureTree(tokenRes.token, path, settings.subfolders);
   if (!res.ok) return { status: "error", message: res.error || "Dropbox-Fehler" };
 
+  // upsert (nicht update): der Poller markiert die Projekt-Zeile jetzt erst NACH
+  // erfolgreichem Anlegen, daher existiert sie hier evtl. noch nicht.
   if (ctx.heroProjectId) {
-    await supabase.from("dropbox_synced")
-      .update({ dropbox_path: path })
-      .eq("kind", "project").eq("hero_id", Number(ctx.heroProjectId));
+    await supabase.from("dropbox_synced").upsert(
+      { kind: "project", hero_id: Number(ctx.heroProjectId), dropbox_path: path },
+      { onConflict: "kind,hero_id" },
+    );
   }
   // Kundenordner-Pfad für diese HERO-Kunden-ID merken, damit spätere
   // Projekte desselben Kunden immer denselben Ordner nutzen.
@@ -400,7 +403,7 @@ const ACTION_HANDLERS: Record<
 // ── dispatch ─────────────────────────────────────────────────────────---
 export async function dispatchAutomations(
   supabase: SupabaseClient, triggerType: string, ctx: AutomationContext
-): Promise<{ ran: number }> {
+): Promise<{ ran: number; errors: number }> {
   const { data: rules } = await supabase
     .from("automations")
     .select("id,name,trigger_type,action_type,action_config")
@@ -409,7 +412,7 @@ export async function dispatchAutomations(
     .order("sort_order");
 
   const list = (rules || []) as AutomationRow[];
-  if (list.length === 0) return { ran: 0 };
+  if (list.length === 0) return { ran: 0, errors: 0 };
 
   // Read HERO config once for all matching rules.
   const { data: cfgRows } = await supabase
@@ -418,6 +421,7 @@ export async function dispatchAutomations(
   const apiKey = (conf.get("hero_api_key") as string) || undefined;
   const heroEnabled = conf.get("hero_enabled") === "true" || conf.get("hero_enabled") === true;
 
+  let errors = 0;
   for (const rule of list) {
     const handler = ACTION_HANDLERS[rule.action_type];
     let result: ActionResult;
@@ -430,6 +434,7 @@ export async function dispatchAutomations(
         result = { status: "error", message: (e as Error).message };
       }
     }
+    if (result.status === "error") errors++;
     await supabase.from("automation_runs").insert({
       automation_id: rule.id,
       automation_name: rule.name,
@@ -440,5 +445,7 @@ export async function dispatchAutomations(
       context: ctx,
     });
   }
-  return { ran: list.length };
+  // errors lets the caller (poll) decide whether to mark the entity as
+  // "handled" or leave it for a retry on the next run.
+  return { ran: list.length, errors };
 }
