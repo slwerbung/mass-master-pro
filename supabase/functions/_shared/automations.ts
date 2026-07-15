@@ -9,7 +9,7 @@
 
 import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { generateAufmassPdf, uploadPdfToHero, fmtDate } from "./aufmassPdf.ts";
-import { loadDropboxSettings, getDropboxAccessToken, dbxEnsureTree, buildName } from "./dropbox.ts";
+import { loadDropboxSettings, getDropboxAccessToken, dbxEnsureTree, buildName, resolveCustomerFolder } from "./dropbox.ts";
 
 // Calendar mutations live on the documented current API version. If HERO
 // retires the (deprecated) create_calendar_event, swap the mutation here.
@@ -316,21 +316,20 @@ async function runDropboxCustomerFolderAction(
   const tokenRes = await getDropboxAccessToken(supabase);
   if ("error" in tokenRes) return { status: "error", message: tokenRes.error };
 
-  const folder = buildName(settings.customerPattern, {
-    kunde: customerName,
-    kundennr: ctx.heroCustomerId != null ? String(ctx.heroCustomerId) : "",
+  const resolved = await resolveCustomerFolder(supabase, tokenRes.token, settings, {
+    customerName, heroCustomerId: ctx.heroCustomerId as number | null | undefined,
   });
-  const path = `${settings.basePath}/${folder}`;
-  const res = await dbxEnsureTree(tokenRes.token, path, []);
+  const res = await dbxEnsureTree(tokenRes.token, resolved.path, []);
   if (!res.ok) return { status: "error", message: res.error || "Dropbox-Fehler" };
 
   if (ctx.heroCustomerId) {
     await supabase.from("dropbox_synced").upsert(
-      { kind: "customer", hero_id: Number(ctx.heroCustomerId), dropbox_path: path },
+      { kind: "customer", hero_id: Number(ctx.heroCustomerId), dropbox_path: resolved.path },
       { onConflict: "kind,hero_id" },
     );
   }
-  return { status: "success", message: `Kundenordner ${res.created.length > 0 ? "angelegt" : "vorhanden"}: ${path}` };
+  const note = resolved.matched === "existing" ? "vorhandener erkannt" : res.created.length > 0 ? "angelegt" : "vorhanden";
+  return { status: "success", message: `Kundenordner (${note}): ${resolved.path}` };
 }
 
 // ── Dropbox: Projektordner + Unterordner-Vorlage anlegen ──────────────
@@ -351,24 +350,13 @@ async function runDropboxProjectFolderAction(
   const tokenRes = await getDropboxAccessToken(supabase);
   if ("error" in tokenRes) return { status: "error", message: tokenRes.error };
 
-  // Kundenordner bestimmen. Wenn Captfix für diese HERO-Kunden-ID schon
-  // einmal einen Ordner angelegt hat, ist dessen echter Pfad in
-  // dropbox_synced gespeichert → wir verwenden GENAU diesen wieder (auch
-  // wenn das Namensmuster inzwischen geändert wurde), statt ihn neu zu
-  // berechnen. Nur ohne gespeicherten Pfad wird er aus dem Muster gebaut.
-  let customerPath: string | null = null;
-  if (ctx.heroCustomerId) {
-    const { data: known } = await supabase.from("dropbox_synced")
-      .select("dropbox_path").eq("kind", "customer").eq("hero_id", Number(ctx.heroCustomerId)).maybeSingle();
-    if (known?.dropbox_path) customerPath = known.dropbox_path as string;
-  }
-  if (!customerPath) {
-    const customerFolder = buildName(settings.customerPattern, {
-      kunde: customerName || "Ohne Kunde",
-      kundennr: ctx.heroCustomerId != null ? String(ctx.heroCustomerId) : "",
-    });
-    customerPath = `${settings.basePath}/${customerFolder}`;
-  }
+  // Kundenordner bestimmen (gemerkter Pfad → vorhandener Ordner erkannt →
+  // neu). Berücksichtigt alphabetische Unterordner und abweichende
+  // Schreibweisen, damit KEIN Doppel-Ordner für bestehende Kunden entsteht.
+  const resolvedCustomer = await resolveCustomerFolder(supabase, tokenRes.token, settings, {
+    customerName, heroCustomerId: ctx.heroCustomerId as number | null | undefined,
+  });
+  const customerPath = resolvedCustomer.path;
   const projectFolder = buildName(settings.projectPattern, {
     projektnr: projectNr,
     projektname: projectName,

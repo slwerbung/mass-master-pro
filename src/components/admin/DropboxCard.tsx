@@ -30,6 +30,7 @@ interface DropboxConfig {
   customerPattern: string;
   projectPattern: string;
   projectSubfolders: string;
+  alphaBuckets: boolean;
 }
 
 export function DropboxCard({ adminToken }: { adminToken: string }) {
@@ -40,6 +41,7 @@ export function DropboxCard({ adminToken }: { adminToken: string }) {
   const [customerPattern, setCustomerPattern] = useState("");
   const [projectPattern, setProjectPattern] = useState("");
   const [subfolders, setSubfolders] = useState("");
+  const [alphaBuckets, setAlphaBuckets] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -56,6 +58,7 @@ export function DropboxCard({ adminToken }: { adminToken: string }) {
     setCustomerPattern(c.customerPattern);
     setProjectPattern(c.projectPattern);
     setSubfolders(c.projectSubfolders);
+    setAlphaBuckets(c.alphaBuckets);
     setEnabled(c.enabled);
   };
 
@@ -83,7 +86,7 @@ export function DropboxCard({ adminToken }: { adminToken: string }) {
           action: "set_config", adminToken,
           appKey: appKey.trim() || undefined,
           appSecret: appSecret.trim() || undefined,
-          enabled,
+          enabled, alphaBuckets,
           basePath, customerPattern, projectPattern, projectSubfolders: subfolders,
         },
       });
@@ -211,6 +214,15 @@ export function DropboxCard({ adminToken }: { adminToken: string }) {
                   <Textarea rows={6} value={subfolders} onChange={(e) => setSubfolders(e.target.value)} placeholder={"01 Aufmaß\n02 Layout\n03 Freigaben"} />
                   <p className="text-xs text-muted-foreground">Eine Zeile = ein Ordner. Verschachtelung mit „/" möglich, z.B. „04 Produktion/Druckdaten".</p>
                 </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <Switch checked={alphaBuckets} onCheckedChange={setAlphaBuckets} id="dbx-alpha" />
+                <Label htmlFor="dbx-alpha" className="text-sm cursor-pointer">
+                  Kunden in alphabetischen Unterordnern (A, B, C …) ablegen
+                  <span className="block text-xs text-muted-foreground font-normal">
+                    Kundenordner landen unter dem Anfangsbuchstaben, z.B. „…/Kunden/M/Mustermann". Vorhandene Ordner werden erkannt, auch bei abweichender Schreibweise.
+                  </span>
+                </Label>
               </div>
               <div className="flex items-center gap-2">
                 <Switch checked={enabled} onCheckedChange={setEnabled} id="dbx-enabled" />
