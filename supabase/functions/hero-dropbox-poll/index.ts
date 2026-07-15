@@ -118,12 +118,21 @@ Deno.serve(async (req) => {
     }
 
     // ── Bereits Gesehenes laden ────────────────────────────────────────
-    const { data: syncedRows } = await supabase.from("dropbox_synced").select("kind, hero_id");
+    // WICHTIG: paginiert lesen. Ein einfaches select() liefert nur die ersten
+    // 1000 Zeilen; sobald dropbox_synced größer ist, wären die restlichen
+    // Einträge nicht im "gesehen"-Set und würden bei jedem Lauf erneut als neu
+    // gelten (Endlos-Wiederholung derselben Kunden/Projekte).
     const seenProjects = new Set<number>();
     const seenCustomers = new Set<number>();
-    for (const r of (syncedRows || []) as any[]) {
-      if (r.kind === "project") seenProjects.add(Number(r.hero_id));
-      if (r.kind === "customer") seenCustomers.add(Number(r.hero_id));
+    for (let from = 0; ; from += 1000) {
+      const { data: chunk, error: chunkErr } = await supabase
+        .from("dropbox_synced").select("kind, hero_id").range(from, from + 999);
+      if (chunkErr) break;
+      for (const r of (chunk || []) as any[]) {
+        if (r.kind === "project") seenProjects.add(Number(r.hero_id));
+        else if (r.kind === "customer") seenCustomers.add(Number(r.hero_id));
+      }
+      if (!chunk || chunk.length < 1000) break;
     }
 
     const newCustomers = [...customers.entries()].filter(([id]) => !seenCustomers.has(id));
