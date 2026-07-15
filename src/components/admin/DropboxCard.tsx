@@ -132,7 +132,7 @@ export function DropboxCard({ adminToken }: { adminToken: string }) {
       });
       if (error || data?.error) throw new Error(data?.error || error?.message);
       if (data?.baseline) {
-        toast.success(`Startabgleich abgeschlossen: ${data.markedProjects} Projekte / ${data.markedCustomers} Kunden als bekannt markiert. Ab jetzt werden nur NEUE erkannt.`);
+        toast.success(`Startabgleich abgeschlossen: aktueller Bestand als Grenze gemerkt (Projekt-ID ≤ ${data.watermarkProjectId}, Kunden-ID ≤ ${data.watermarkCustomerId}). Ab jetzt lösen nur echte Neuanlagen aus.`);
       } else if (data?.skipped) {
         toast.info(`Übersprungen: ${data.reason}`);
       } else {

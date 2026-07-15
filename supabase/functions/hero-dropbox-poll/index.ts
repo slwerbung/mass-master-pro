@@ -5,9 +5,12 @@
 // the behaviour in the familiar Automationen tab and every run is logged in
 // automation_runs.
 //
-// Dedupe: dropbox_synced stores every HERO id we've already seen. The very
-// first successful run only records the current state as baseline (no
-// folders for historic projects); afterwards each poll handles what's new.
+// Was zählt als "neu": ein harter ID-Wasserstand (app_config
+// dropbox_watermark_project_id / _customer_id). HERO vergibt fortlaufende,
+// aufsteigende IDs; beim ersten Lauf wird der aktuelle Höchststand gemerkt.
+// Danach gelten NUR IDs oberhalb dieser Grenze als Kandidaten -> alles, was
+// beim Einrichten schon existierte, kann nie auslösen. dropbox_synced dient
+// nur noch als zweite Sicherung gegen doppelte Ordner desselben Neueintrags.
 //
 // Auth: called by pg_cron (header x-poll-secret == app_config
 // dropbox_poll_secret) or manually from the admin UI (adminToken).
@@ -88,12 +91,21 @@ Deno.serve(async (req) => {
 
     // ── Config ─────────────────────────────────────────────────────────
     const { data: cfgRows } = await supabase.from("app_config").select("key, value")
-      .in("key", ["hero_api_key", "hero_enabled", "dropbox_enabled", "dropbox_poll_baseline_done"]);
+      .in("key", ["hero_api_key", "hero_enabled", "dropbox_enabled", "dropbox_poll_baseline_done",
+        "dropbox_watermark_project_id", "dropbox_watermark_customer_id"]);
     const cfg = new Map((cfgRows || []).map((r: any) => [r.key, r.value]));
     const apiKey = cfg.get("hero_api_key") as string | undefined;
     if (cfg.get("hero_enabled") !== "true" || !apiKey) return json({ skipped: true, reason: "HERO nicht aktiv" });
     if (cfg.get("dropbox_enabled") !== "true") return json({ skipped: true, reason: "Dropbox-Integration nicht aktiv" });
-    const baselineDone = cfg.get("dropbox_poll_baseline_done") === "true";
+
+    // Harter Wasserstand: höchste bekannte HERO-ID. Leer/NULL = noch nicht
+    // gesetzt. Nur IDs OBERHALB gelten als Kandidaten -> Bestand kann nie feuern.
+    const parseWm = (v: unknown) => {
+      const n = Number(v);
+      return String(v ?? "").trim() !== "" && Number.isFinite(n) ? n : null;
+    };
+    const wmProject = parseWm(cfg.get("dropbox_watermark_project_id"));
+    const wmCustomer = parseWm(cfg.get("dropbox_watermark_customer_id"));
 
     // ── HERO abfragen ──────────────────────────────────────────────────
     const projRes = await fetchAll(apiKey, "project_matches",
@@ -117,11 +129,34 @@ Deno.serve(async (req) => {
       if (Number.isFinite(id) && id > 0 && !customers.has(id)) customers.set(id, customerDisplayName(p.customer));
     }
 
-    // ── Bereits Gesehenes laden ────────────────────────────────────────
-    // WICHTIG: paginiert lesen. Ein einfaches select() liefert nur die ersten
-    // 1000 Zeilen; sobald dropbox_synced größer ist, wären die restlichen
-    // Einträge nicht im "gesehen"-Set und würden bei jedem Lauf erneut als neu
-    // gelten (Endlos-Wiederholung derselben Kunden/Projekte).
+    // Höchststände der aktuellen HERO-Daten (für Wasserstand-Init/Vergleich).
+    const projIds = projects.map((p: any) => Number(p?.id)).filter((n: number) => Number.isFinite(n) && n > 0);
+    const custIds = [...customers.keys()];
+    const maxProjectId = projIds.length ? Math.max(...projIds) : 0;
+    const maxCustomerId = custIds.length ? Math.max(...custIds) : 0;
+
+    // ── Wasserstand initialisieren (Baseline) ──────────────────────────
+    // Kein Wasserstand gesetzt = Erst-Einrichtung ODER Upgrade von der alten
+    // Logik. In beiden Fällen: aktuellen Höchststand als Grenze merken und
+    // NICHTS auslösen. Alle jetzt vorhandenen Kunden/Projekte gelten damit
+    // dauerhaft als Bestand und können nie wieder feuern.
+    if (wmProject === null || wmCustomer === null) {
+      await supabase.from("app_config").upsert([
+        { key: "dropbox_watermark_project_id",  value: String(maxProjectId) },
+        { key: "dropbox_watermark_customer_id", value: String(maxCustomerId) },
+        { key: "dropbox_poll_baseline_done",    value: "true" },
+      ], { onConflict: "key" });
+      return json({
+        baseline: true,
+        watermarkProjectId: maxProjectId,
+        watermarkCustomerId: maxCustomerId,
+        note: "Bestand als Grenze gemerkt. Ab jetzt lösen nur Neuanlagen oberhalb dieser IDs aus.",
+      });
+    }
+
+    // ── Bereits verarbeitete IDs laden (zweite Sicherung gegen Doppel-
+    // anlage). WICHTIG paginiert lesen: ein einfaches select() liefert nur die
+    // ersten 1000 Zeilen. ────────────────────────────────────────────────
     const seenProjects = new Set<number>();
     const seenCustomers = new Set<number>();
     for (let from = 0; ; from += 1000) {
@@ -135,39 +170,38 @@ Deno.serve(async (req) => {
       if (!chunk || chunk.length < 1000) break;
     }
 
-    const newCustomers = [...customers.entries()].filter(([id]) => !seenCustomers.has(id));
-    const newProjects = projects.filter((p: any) => Number.isFinite(Number(p?.id)) && !seenProjects.has(Number(p.id)));
+    // Kandidaten = NUR IDs oberhalb des Wasserstands, aufsteigend sortiert.
+    const newCustomers = [...customers.entries()]
+      .filter(([id]) => id > wmCustomer).sort((a, b) => a[0] - b[0]);
+    const newProjects = projects
+      .filter((p: any) => Number.isFinite(Number(p?.id)) && Number(p.id) > wmProject)
+      .sort((a: any, b: any) => Number(a.id) - Number(b.id));
 
-    // ── Baseline: aktuellen Stand nur markieren, nichts anlegen ────────
-    if (!baselineDone) {
-      const rows = [
-        ...newCustomers.map(([id]) => ({ kind: "customer", hero_id: id })),
-        ...newProjects.map((p: any) => ({ kind: "project", hero_id: Number(p.id) })),
-      ];
-      for (let i = 0; i < rows.length; i += 500) {
-        await supabase.from("dropbox_synced").upsert(rows.slice(i, i + 500), { onConflict: "kind,hero_id" });
-      }
-      await supabase.from("app_config").upsert({ key: "dropbox_poll_baseline_done", value: "true" }, { onConflict: "key" });
-      return json({ baseline: true, markedProjects: newProjects.length, markedCustomers: newCustomers.length });
-    }
-
-    // ── Neue Einträge: markieren + Automationen feuern ─────────────────
+    // ── Neue Kunden: markieren + Automation feuern ─────────────────────
+    // Wasserstand wird lückenlos-aufsteigend nachgezogen: advanceCustomer
+    // wandert nur so weit, wie alles darunter erledigt ist (fired ODER bereits
+    // in dropbox_synced). Beim Cap bleibt der Rest oberhalb -> nächster Lauf.
     let fired = 0;
     let customersHandled = 0;
+    let advanceCustomer = wmCustomer;
     for (const [id, name] of newCustomers) {
+      if (seenCustomers.has(id)) { advanceCustomer = id; continue; }
       if (fired >= MAX_EVENTS_PER_RUN) break;
       await supabase.from("dropbox_synced").upsert({ kind: "customer", hero_id: id }, { onConflict: "kind,hero_id" });
       await dispatchAutomations(supabase, "hero_customer_created", {
         heroCustomerId: id,
         customerName: name,
       });
+      advanceCustomer = id;
       fired++; customersHandled++;
     }
 
     let projectsHandled = 0;
+    let advanceProject = wmProject;
     for (const p of newProjects) {
-      if (fired >= MAX_EVENTS_PER_RUN) break;
       const pid = Number(p.id);
+      if (seenProjects.has(pid)) { advanceProject = pid; continue; }
+      if (fired >= MAX_EVENTS_PER_RUN) break;
       await supabase.from("dropbox_synced").upsert({ kind: "project", hero_id: pid }, { onConflict: "kind,hero_id" });
       await dispatchAutomations(supabase, "hero_project_created", {
         heroProjectId: pid,
@@ -176,14 +210,23 @@ Deno.serve(async (req) => {
         heroCustomerId: Number(p?.customer?.id) || null,
         customerName: customerDisplayName(p.customer),
       });
+      advanceProject = pid;
       fired++; projectsHandled++;
     }
+
+    // Wasserstand nachziehen (nur vorwärts).
+    const wmUpdates: { key: string; value: string }[] = [];
+    if (advanceCustomer > wmCustomer) wmUpdates.push({ key: "dropbox_watermark_customer_id", value: String(advanceCustomer) });
+    if (advanceProject > wmProject) wmUpdates.push({ key: "dropbox_watermark_project_id", value: String(advanceProject) });
+    if (wmUpdates.length) await supabase.from("app_config").upsert(wmUpdates, { onConflict: "key" });
 
     return json({
       ok: true,
       newCustomers: customersHandled,
       newProjects: projectsHandled,
-      pendingNextRun: Math.max(0, newCustomers.length + newProjects.length - fired),
+      pendingNextRun: Math.max(0, newCustomers.length + newProjects.length - customersHandled - projectsHandled),
+      watermarkProjectId: advanceProject,
+      watermarkCustomerId: advanceCustomer,
       contactsQueryOk: !contactRes.error,
     });
   } catch (e: any) {
