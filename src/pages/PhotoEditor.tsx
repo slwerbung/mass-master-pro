@@ -512,7 +512,7 @@ const PhotoEditor = () => {
               // upload, the old image is still there and intact.
               const { data: row } = await supabase
                 .from("vehicle_measured_images")
-                .select("storage_path, project_id")
+                .select("storage_path, original_storage_path, project_id")
                 .eq("id", measuredId)
                 .maybeSingle();
               if (!row) throw new Error("Bemaßtes Bild nicht gefunden");
@@ -531,19 +531,19 @@ const PhotoEditor = () => {
                 .eq("id", measuredId);
               if (updErr) throw updErr;
 
-              // Best-effort delete of the old file. If this fails, we
-              // log and move on - a stale file in storage isn't worth
-              // failing the user-facing save flow over.
+              // Best-effort delete of the previous ANNOTATED file. Never
+              // delete the original - it must stay available (and in HERO).
+              // On the first bemaßen storage_path still equals the original,
+              // so the guard leaves that untouched.
               const oldPath = row.storage_path;
-              if (oldPath && oldPath !== newPath) {
+              if (oldPath && oldPath !== newPath && oldPath !== row.original_storage_path) {
                 supabase.storage.from("project-files").remove([oldPath])
                   .catch(e => console.warn("Old file cleanup failed:", e));
               }
 
-              // Mirror to HERO. Original isn't re-uploaded - users only
-              // edit the bemaßt version, the original in HERO is still
-              // valid. Filename includes a timestamp so it doesn't
-              // collide with prior uploads of this same image.
+              // Mirror the bemaßt version to HERO (like Aufmaß' location_image).
+              // The original was already uploaded when the image was added, so
+              // this only sends the measured variant.
               const { data: proj } = await supabase
                 .from("projects")
                 .select("id, custom_fields")
@@ -554,7 +554,7 @@ const PhotoEditor = () => {
                   project: { id: proj.id, customFields: proj.custom_fields as any },
                   uploadType: "vehicle_measured_image",
                   blob,
-                  filename: `bemasst-${measuredId.slice(0, 8)}-rev-${Date.now()}.jpg`,
+                  filename: `fahrzeug-bemasst-${measuredId.slice(0, 8)}.jpg`,
                 });
               }
 

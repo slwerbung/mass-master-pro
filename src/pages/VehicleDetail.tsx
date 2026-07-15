@@ -133,6 +133,7 @@ const VehicleDetail = () => {
     const imageFiles = Array.from(files).filter(f => f.type.startsWith("image/"));
     if (imageFiles.length === 0) { toast.error("Bitte Bilddateien auswählen"); return; }
     setUploadingImage(true);
+    const projectLike = { id: projectId!, customFields: project?.custom_fields as Record<string, string> | undefined };
     let uploaded = 0;
     let lastError = "";
     for (const file of imageFiles) {
@@ -155,6 +156,18 @@ const VehicleDetail = () => {
           uploaded_by: session?.name || "Mitarbeiter",
         });
         if (dbError) { lastError = dbError.message; continue; }
+        // Always mirror regular vehicle photos to HERO (like Aufmaß). One
+        // upload per image; enqueue is best-effort and never blocks the save.
+        try {
+          await enqueueHeroUploadIfLinked({
+            project: projectLike,
+            uploadType: "vehicle_image",
+            blob: file,
+            filename: `fahrzeug-${file.name}`,
+          });
+        } catch (mirrorErr) {
+          console.warn("HERO mirror of vehicle image failed:", mirrorErr);
+        }
         uploaded++;
       } catch (e: any) { lastError = e?.message || "Unbekannter Fehler"; }
     }
@@ -235,25 +248,28 @@ const VehicleDetail = () => {
       const path = `vehicle-measured/${projectId}/${id}`;
       const { error: upErr } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type });
       if (upErr) throw upErr;
+      // The freshly added file is the ORIGINAL (un-annotated). Keep it as both
+      // storage_path (shown until it's bemaßt) and original_storage_path, so
+      // the original survives later re-edits and stays available in HERO.
       const { error: dbErr } = await supabase.from("vehicle_measured_images").insert({
-        id, project_id: projectId, storage_path: path,
+        id, project_id: projectId, storage_path: path, original_storage_path: path,
         uploaded_by: session?.name || "Mitarbeiter",
       });
       if (dbErr) throw dbErr;
 
-      // Always mirror EVERY measured image to HERO — regardless of whether it
-      // is annotated later. (Previously only the annotated version reached HERO
-      // via the editor, so un-annotated ones were never uploaded.)
+      // Mirror the ORIGINAL to HERO once (like Aufmaß' location_image_original).
+      // The bemaßt version is uploaded separately from the editor, so this no
+      // longer double-uploads the same image as "measured".
       const projectLike = { id: projectId!, customFields: project?.custom_fields as Record<string, string> | undefined };
       try {
         await enqueueHeroUploadIfLinked({
           project: projectLike,
-          uploadType: "vehicle_measured_image",
+          uploadType: "vehicle_measured_image_original",
           blob: file,
-          filename: `fahrzeug-bemasst-${id.slice(0, 8)}-${file.name}`,
+          filename: `fahrzeug-original-${id.slice(0, 8)}-${file.name}`,
         });
       } catch (mirrorErr) {
-        console.warn("HERO mirror of measured image failed:", mirrorErr);
+        console.warn("HERO mirror of original measured image failed:", mirrorErr);
       }
 
       // Fire the "measured vehicle image uploaded" automation (e.g. HERO status
