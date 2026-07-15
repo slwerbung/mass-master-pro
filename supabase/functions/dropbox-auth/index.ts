@@ -151,7 +151,7 @@ Deno.serve(async (req) => {
         supabase.from("dropbox_account").select("app_key, app_secret, refresh_token, account_name, connected_at").eq("id", 1).maybeSingle(),
         supabase.from("app_config").select("key, value").in("key", [
           "dropbox_enabled", "dropbox_base_path", "dropbox_customer_pattern",
-          "dropbox_project_pattern", "dropbox_project_subfolders",
+          "dropbox_project_pattern", "dropbox_project_subfolders", "dropbox_customer_alpha_buckets",
         ]),
       ]);
       const cfg = new Map((cfgRows || []).map((r: any) => [r.key, r.value]));
@@ -166,6 +166,7 @@ Deno.serve(async (req) => {
         customerPattern: cfg.get("dropbox_customer_pattern") ?? "{kunde}",
         projectPattern: cfg.get("dropbox_project_pattern") ?? "{projektnr} {projektname}",
         projectSubfolders: cfg.get("dropbox_project_subfolders") ?? "",
+        alphaBuckets: cfg.get("dropbox_customer_alpha_buckets") === "true",
       });
     }
 
@@ -186,6 +187,7 @@ Deno.serve(async (req) => {
       if (typeof body.customerPattern === "string") rows.push({ key: "dropbox_customer_pattern", value: body.customerPattern.trim() || "{kunde}" });
       if (typeof body.projectPattern === "string") rows.push({ key: "dropbox_project_pattern", value: body.projectPattern.trim() || "{projektnr} {projektname}" });
       if (typeof body.projectSubfolders === "string") rows.push({ key: "dropbox_project_subfolders", value: body.projectSubfolders });
+      if (body.alphaBuckets !== undefined) rows.push({ key: "dropbox_customer_alpha_buckets", value: String(!!body.alphaBuckets) });
       if (rows.length > 0) {
         const { error } = await supabase.from("app_config").upsert(rows, { onConflict: "key" });
         if (error) return json({ error: error.message }, 500);

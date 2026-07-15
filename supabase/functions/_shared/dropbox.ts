@@ -18,12 +18,13 @@ export interface DropboxSettings {
   customerPattern: string;
   projectPattern: string;
   subfolders: string[];
+  alphaBuckets: boolean;
 }
 
 export async function loadDropboxSettings(supabase: SupabaseClient): Promise<DropboxSettings> {
   const { data } = await supabase.from("app_config").select("key, value").in("key", [
     "dropbox_enabled", "dropbox_base_path", "dropbox_customer_pattern",
-    "dropbox_project_pattern", "dropbox_project_subfolders",
+    "dropbox_project_pattern", "dropbox_project_subfolders", "dropbox_customer_alpha_buckets",
   ]);
   const map = new Map((data || []).map((r: any) => [r.key, r.value as string]));
   const subfolders = String(map.get("dropbox_project_subfolders") || "")
@@ -34,7 +35,114 @@ export async function loadDropboxSettings(supabase: SupabaseClient): Promise<Dro
     customerPattern: String(map.get("dropbox_customer_pattern") || "{kunde}"),
     projectPattern: String(map.get("dropbox_project_pattern") || "{projektnr} {projektname}"),
     subfolders,
+    alphaBuckets: map.get("dropbox_customer_alpha_buckets") === "true",
   };
+}
+
+// ── Kundenordner-Erkennung ("Intelligenz") ────────────────────────────
+// Diäkritika entfernen (Ä→A, ü→u …), damit Buckets & Vergleiche stabil sind.
+export function stripDiacritics(s: string): string {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+// Alphabetischer Unterordner (A, B, C … / "0-9" / "#") aus dem Kundennamen.
+export function letterBucket(name: string): string {
+  const x = stripDiacritics(String(name || "").trim().toLowerCase());
+  const c = (x.match(/[a-z0-9]/) || [])[0];
+  if (!c) return "#";
+  if (c >= "0" && c <= "9") return "0-9";
+  return c.toUpperCase();
+}
+
+// Kundenname auf einen Vergleichskern reduzieren: Kleinbuchstaben, ohne
+// Diakritika, ohne Rechtsform-Zusätze (GmbH, AG, KG …) und Sonderzeichen.
+// So matcht "Mustermann GmbH & Co. KG" auf einen Ordner "Mustermann".
+const LEGAL_FORMS = /\b(gmbh|mbh|ug|ag|kg|kgaa|ohg|gbr|ev|e ?v|ek|e ?k|se|co|kg aa|ltd|inc|haftungsbeschraenkt|und co|co kg)\b/g;
+export function normCustomer(s: string): string {
+  let x = stripDiacritics(String(s || "").toLowerCase());
+  x = x.replace(/&/g, " und ");
+  x = x.replace(/[^a-z0-9]+/g, " ");
+  x = x.replace(LEGAL_FORMS, " ");
+  return x.replace(/\s+/g, " ").trim();
+}
+
+// Ordnernamen (nur Ordner) unter einem Pfad auflisten. Existiert der Pfad
+// nicht, kommt eine leere Liste zurück (kein Fehler).
+export async function dbxListFolders(token: string, path: string): Promise<{ name: string; path: string }[]> {
+  const out: { name: string; path: string }[] = [];
+  const collect = (entries: any[]) => {
+    for (const e of entries || []) {
+      if (e?.[".tag"] === "folder") out.push({ name: String(e.name || ""), path: String(e.path_display || e.path_lower || "") });
+    }
+  };
+  try {
+    let resp = await fetch(`${API_BASE}/files/list_folder`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ path, recursive: false, limit: 2000 }),
+    });
+    let text = await resp.text();
+    if (!resp.ok) return out; // z.B. not_found -> Ordner existiert noch nicht
+    let data = JSON.parse(text);
+    collect(data.entries);
+    while (data.has_more && data.cursor) {
+      resp = await fetch(`${API_BASE}/files/list_folder/continue`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ cursor: data.cursor }),
+      });
+      text = await resp.text();
+      if (!resp.ok) break;
+      data = JSON.parse(text);
+      collect(data.entries);
+    }
+  } catch { /* best-effort */ }
+  return out;
+}
+
+// Ermittelt den Zielpfad des Kundenordners:
+//   1) gemerkter Pfad (dropbox_synced, per HERO-Kunden-ID) – exakt wiederverwenden
+//   2) vorhandener Ordner im (alphabetischen) Elternordner, dessen Name
+//      normalisiert zum Kunden passt – auch bei abweichender Schreibweise
+//   3) sonst neu berechneter Pfad aus Muster (+ Buchstaben-Bucket)
+// matched: "mapping" | "existing" | "new" – nur bei "new" muss neu angelegt werden.
+export async function resolveCustomerFolder(
+  supabase: SupabaseClient, token: string, settings: DropboxSettings,
+  opts: { customerName: string; heroCustomerId?: number | null },
+): Promise<{ path: string; parent: string; matched: "mapping" | "existing" | "new" }> {
+  const customerName = String(opts.customerName || "").trim();
+  const bucket = settings.alphaBuckets ? letterBucket(customerName || "#") : "";
+  const parent = bucket ? `${settings.basePath}/${bucket}` : settings.basePath;
+
+  // 1) gemerkter Pfad
+  if (opts.heroCustomerId) {
+    const { data: known } = await supabase.from("dropbox_synced")
+      .select("dropbox_path").eq("kind", "customer").eq("hero_id", Number(opts.heroCustomerId)).maybeSingle();
+    if (known?.dropbox_path) return { path: known.dropbox_path as string, parent, matched: "mapping" };
+  }
+
+  // 2) vorhandenen Ordner erkennen (normalisierter Abgleich)
+  const target = normCustomer(customerName);
+  if (target) {
+    const existing = await dbxListFolders(token, parent);
+    // exakter normalisierter Treffer zuerst
+    let hit = existing.find((f) => normCustomer(f.name) === target);
+    // sonst: einer ist Präfix des anderen (min. 4 Zeichen), z.B. "Mustermann" ⊂ "Mustermann Bau"
+    if (!hit) {
+      hit = existing.find((f) => {
+        const n = normCustomer(f.name);
+        return n.length >= 4 && target.length >= 4 && (n.startsWith(target) || target.startsWith(n));
+      });
+    }
+    if (hit && hit.path) return { path: hit.path, parent, matched: "existing" };
+  }
+
+  // 3) neu berechnen
+  const folder = buildName(settings.customerPattern, {
+    kunde: customerName || "Ohne Kunde",
+    kundennr: opts.heroCustomerId != null ? String(opts.heroCustomerId) : "",
+  });
+  return { path: `${parent}/${folder}`, parent, matched: "new" };
 }
 
 // A single path segment must not contain slashes or characters Dropbox
