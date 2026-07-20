@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock } from "lucide-react";
+import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock, Mail } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
@@ -17,6 +17,18 @@ import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
 import { enqueueHeroUploadIfLinked, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
+import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
+import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
+import LocationChat, { ChatMessage } from "@/components/LocationChat";
+
+// Which layout files can be previewed inline (PDF via pdf.js, images via <img>).
+// .ai/.eps and similar stay as a download link only.
+function layoutPreviewKind(name: string): "pdf" | "image" | null {
+  const n = (name || "").toLowerCase();
+  if (/\.pdf$/.test(n)) return "pdf";
+  if (/\.(png|jpe?g|webp|gif|svg)$/.test(n)) return "image";
+  return null;
+}
 
 interface VehicleFieldConfig {
   id: string;
@@ -52,6 +64,7 @@ interface FeedbackItem {
   message: string;
   author_name: string;
   author_customer_id: string | null;
+  author_type?: string;
   status: "open" | "done";
   created_at: string;
 }
@@ -79,6 +92,9 @@ const VehicleDetail = () => {
   const [editingCaptionId, setEditingCaptionId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [captionDraft, setCaptionDraft] = useState("");
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [sendingMsg, setSendingMsg] = useState(false);
+  const [busyFeedbackId, setBusyFeedbackId] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const layoutInputRef = useRef<HTMLInputElement>(null);
   const measuredInputRef = useRef<HTMLInputElement>(null);
@@ -347,6 +363,42 @@ const VehicleDetail = () => {
     toast.success("Rückmeldung gelöscht");
   };
 
+  // Employee reply in the layout correction thread (same flow as Aufmaß).
+  const sendEmployeeMessage = async (text: string) => {
+    const message = text.trim();
+    if (!message || !projectId) return;
+    setSendingMsg(true);
+    try {
+      const { data, error } = await supabase.from("vehicle_layout_feedback").insert({
+        project_id: projectId,
+        message,
+        author_name: session?.name || "Mitarbeiter",
+        author_customer_id: null,
+        author_type: "employee",
+        status: "open",
+      }).select().single();
+      if (error) throw error;
+      setFeedbacks(prev => [...prev, data as FeedbackItem]);
+    } catch (e: any) {
+      toast.error("Nachricht konnte nicht gesendet werden: " + (e?.message || "Fehler"));
+    } finally {
+      setSendingMsg(false);
+    }
+  };
+
+  // Maps a stored feedback row to the LocationChat shape. author_type may be
+  // missing on very old rows; fall back to customer for anything not marked
+  // as an employee reply.
+  const chatMessages: ChatMessage[] = feedbacks.map((f) => ({
+    id: f.id,
+    author_name: f.author_name,
+    author_type: f.author_type === "employee" ? "employee" : "customer",
+    message: f.message,
+    status: f.status,
+    created_at: f.created_at,
+    author_customer_id: f.author_customer_id,
+  }));
+
   const handleDeleteProject = async () => {
     try {
       // Clean up vehicle-specific data
@@ -408,6 +460,13 @@ const VehicleDetail = () => {
           <div className="flex items-center gap-0.5 shrink-0">
             <Button
               variant="ghost" size="icon" className="h-9 w-9"
+              onClick={() => setInviteOpen(true)}
+              title="Kunde per Mail einladen"
+            >
+              <Mail className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost" size="icon" className="h-9 w-9"
               onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/guest/${projectId}`); toast.success("Gast-Link kopiert!"); }}
               title="Gast-Link kopieren"
             >
@@ -455,6 +514,51 @@ const VehicleDetail = () => {
           </div>
           {project.customer_name && <p className="text-sm text-muted-foreground mt-0.5">{project.customer_name}</p>}
         </div>
+
+        {/* Layout / Produktionsdatei — oben und sichtbar (wie das Aufmaß-Bild) */}
+        <Card>
+          <CardHeader className="p-4 pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Layout / Produktionsdatei</CardTitle>
+              <Button size="sm" variant="outline" onClick={() => layoutInputRef.current?.click()} disabled={uploadingLayout}>
+                <Upload className="h-4 w-4 mr-1" />
+                {uploadingLayout ? "Lädt..." : layout ? "Ersetzen" : "Hochladen"}
+              </Button>
+              <input ref={layoutInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.svg,.ai,.eps" className="hidden" onChange={handleLayoutUpload} />
+            </div>
+          </CardHeader>
+          <CardContent className="p-4 space-y-3">
+            {!layout ? (
+              <p className="text-sm text-muted-foreground text-center py-4">Noch kein Layout hochgeladen.</p>
+            ) : (
+              <>
+                {(() => {
+                  const kind = layoutPreviewKind(layout.file_name);
+                  const url = getPublicUrl(layout.storage_path);
+                  const thumb = images[0] ? getPublicUrl(images[0].storage_path) : undefined;
+                  if (kind === "pdf") return <LocationApprovalMedia pdfs={[{ url, name: layout.file_name }]} annotatedUrl={thumb} />;
+                  if (kind === "image") return <LocationApprovalMedia pdfs={[]} annotatedUrl={url} />;
+                  return null;
+                })()}
+                <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/20">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="h-5 w-5 text-primary shrink-0" />
+                    <span className="text-sm font-medium truncate">{layout.file_name}</span>
+                    <span className="text-xs text-muted-foreground shrink-0">{formatDateTimeSafe(layout.uploaded_at)}</span>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => window.open(getPublicUrl(layout.storage_path), "_blank")}>
+                      <Download className="h-4 w-4" />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={deleteLayout}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Gesprächsnotizen (Diktiergerät → Transkript → Protokoll → HERO) */}
         <MeetingNotesCard projectId={projectId!} projectNumber={project.project_number} />
@@ -556,41 +660,6 @@ const VehicleDetail = () => {
           </Card>
         )}
 
-        {/* Layout */}
-        <Card>
-          <CardHeader className="p-4 pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Layout / Produktionsdatei</CardTitle>
-              <Button size="sm" variant="outline" onClick={() => layoutInputRef.current?.click()} disabled={uploadingLayout}>
-                <Upload className="h-4 w-4 mr-1" />
-                {uploadingLayout ? "Lädt..." : layout ? "Ersetzen" : "Hochladen"}
-              </Button>
-              <input ref={layoutInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.svg,.ai,.eps" className="hidden" onChange={handleLayoutUpload} />
-            </div>
-          </CardHeader>
-          <CardContent className="p-4">
-            {!layout ? (
-              <p className="text-sm text-muted-foreground text-center py-4">Noch kein Layout hochgeladen.</p>
-            ) : (
-              <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/20">
-                <div className="flex items-center gap-2 min-w-0">
-                  <FileText className="h-5 w-5 text-primary shrink-0" />
-                  <span className="text-sm font-medium truncate">{layout.file_name}</span>
-                  <span className="text-xs text-muted-foreground shrink-0">{formatDateTimeSafe(layout.uploaded_at)}</span>
-                </div>
-                <div className="flex gap-1">
-                  <Button size="sm" variant="ghost" onClick={async () => { window.open(getPublicUrl(layout.storage_path), "_blank"); }}>
-                    <Download className="h-4 w-4" />
-                  </Button>
-                  <Button size="sm" variant="ghost" className="text-destructive" onClick={deleteLayout}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
         {/* Bilder bemaßt */}
         <Card>
           <CardHeader className="p-4 pb-2">
@@ -648,39 +717,42 @@ const VehicleDetail = () => {
           </CardContent>
         </Card>
 
-        {/* Feedback (read-only for employees, but they can mark as done) */}
-        {feedbacks.length > 0 && (
-          <Card>
-            <CardHeader className="p-4 pb-2">
-              <CardTitle className="text-base">Kundenfeedback zum Layout</CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 space-y-3">
-              {feedbacks.map(fb => (
-                <div key={fb.id} className="rounded-lg border p-3 bg-muted/20 space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-medium">{fb.author_name}</p>
-                      <p className="text-xs text-muted-foreground">{formatDateTimeSafe(fb.created_at)}</p>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => toggleFeedbackStatus(fb)}
-                        className={`text-xs px-2 py-0.5 rounded cursor-pointer ${fb.status === "done" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}
-                      >
-                        {fb.status === "done" ? "Umgesetzt" : "Offen"}
-                      </button>
-                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" onClick={() => deleteFeedback(fb.id)}>
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="text-sm whitespace-pre-wrap">{fb.message}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
+        {/* Freigabe & Korrekturen zum Layout — Chat wie beim Aufmaß */}
+        <Card>
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-base">Freigabe &amp; Korrekturen zum Layout</CardTitle>
+          </CardHeader>
+          <CardContent className="p-4">
+            <LocationChat
+              messages={chatMessages}
+              viewerSide="employee"
+              sending={sendingMsg}
+              onSend={sendEmployeeMessage}
+              busyId={busyFeedbackId}
+              onToggleDone={async (m) => {
+                const fb = feedbacks.find((f) => f.id === m.id);
+                if (!fb) return;
+                setBusyFeedbackId(m.id);
+                await toggleFeedbackStatus(fb);
+                setBusyFeedbackId(null);
+              }}
+              canDelete={() => true}
+              onDelete={(m) => deleteFeedback(m.id)}
+              placeholder="Antwort an den Kunden schreiben…"
+            />
+          </CardContent>
+        </Card>
       </div>
+
+      {projectId && (
+        <InviteCustomerDialog
+          open={inviteOpen}
+          onOpenChange={setInviteOpen}
+          projectId={projectId}
+          projectNumber={project.project_number}
+          heroProjectId={getHeroProjectMatchId({ id: projectId, customFields: project.custom_fields as Record<string, string> | undefined })}
+        />
+      )}
     </div>
   );
 };

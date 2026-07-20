@@ -853,6 +853,34 @@ const CustomerView = () => {
     finally { setSavingVehicleFeedback(false); }
   };
 
+  // Threaded layout correction (same UX as Aufmaß LocationChat). Written
+  // directly to vehicle_layout_feedback — works for logged-in customers and
+  // guests alike (anon insert is allowed by RLS).
+  const sendVehicleCustomerMessage = async (text: string) => {
+    const message = text.trim();
+    if (!message || !selectedAssignment) return;
+    setSavingVehicleFeedback(true);
+    try {
+      const { data, error } = await supabase.from("vehicle_layout_feedback").insert({
+        project_id: selectedAssignment.project_id,
+        message,
+        author_name: session?.name || localStorage.getItem("guest_name") || "Kunde",
+        author_customer_id: isRealCustomerId(session?.id) ? session!.id : null,
+        author_type: "customer",
+        status: "open",
+      }).select().single();
+      if (error) throw error;
+      setVehicleFeedbacks(prev => [...prev, data]);
+      triggerNotification("comment");
+    } catch { toast.error("Fehler beim Speichern"); }
+    finally { setSavingVehicleFeedback(false); }
+  };
+
+  const deleteVehicleMessage = async (id: string) => {
+    await supabase.from("vehicle_layout_feedback").delete().eq("id", id);
+    setVehicleFeedbacks(prev => prev.filter((f: any) => f.id !== id));
+  };
+
   const toggleVehicleApproval = async () => {
     if (!selectedAssignment || isLimitedGuestMode) return;
     const newVal = !vehicleApproved;
@@ -1093,6 +1121,42 @@ const CustomerView = () => {
               <p className="font-medium">Fahrzeugbeschriftung</p>
             </div>
 
+            {/* Fahrzeuglayout — oben & sichtbar, mit Freigabe (wie beim Aufmaß) */}
+            <Card className={vehicleApproved ? "border-green-500/50 bg-green-50/30 dark:bg-green-950/10" : ""}>
+              <CardHeader className="p-4 pb-2">
+                <div className="flex items-start justify-between gap-3">
+                  <CardTitle className="text-base">Fahrzeuglayout</CardTitle>
+                  {vehicleLayout && !isLimitedGuestMode && (
+                    <Button size="sm" variant={vehicleApproved ? "outline" : "default"} onClick={toggleVehicleApproval} disabled={savingVehicleApproval}>
+                      <Check className="h-4 w-4 mr-1" /> {vehicleApproved ? "Freigabe zurücknehmen" : "Layout freigeben"}
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="p-4 space-y-3">
+                {!vehicleLayout ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">Noch kein Layout vorhanden.</p>
+                ) : (
+                  <>
+                    {(() => {
+                      const name = vehicleLayout.file_name || "";
+                      const url = getVehiclePublicUrl(vehicleLayout.storage_path);
+                      const thumb = vehicleImages[0] ? getVehiclePublicUrl(vehicleImages[0].storage_path) : undefined;
+                      if (/\.pdf$/i.test(name)) return <LocationApprovalMedia pdfs={[{ url, name }]} annotatedUrl={thumb} />;
+                      if (/\.(png|jpe?g|webp|gif|svg)$/i.test(name)) return <LocationApprovalMedia pdfs={[]} annotatedUrl={url} />;
+                      return null;
+                    })()}
+                    <a href={getVehiclePublicUrl(vehicleLayout.storage_path)} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-2 p-3 rounded-lg border bg-muted/20 hover:bg-muted/40 transition-colors">
+                      <FileText className="h-5 w-5 text-primary shrink-0" />
+                      <span className="text-sm font-medium flex-1 truncate">{vehicleLayout.file_name}</span>
+                      <Download className="h-4 w-4 text-muted-foreground" />
+                    </a>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
             {/* Vehicle Images */}
             <Card>
               <CardHeader className="p-4 pb-2"><CardTitle className="text-base">Fahrzeugbilder</CardTitle></CardHeader>
@@ -1161,96 +1225,83 @@ const CustomerView = () => {
                     )}
                   </div>
                 </CardHeader>
-                <CardContent className="p-4 space-y-3">
-                  {vehicleFieldConfigs.map((cfg: any) => {
-                    let fieldOptions: string[] = [];
-                    try { fieldOptions = cfg.field_options ? JSON.parse(cfg.field_options) : []; } catch {}
-                    const draftVal = vehicleDraftValues[cfg.field_key] || "";
-                    const updateDraft = (v: string) => setVehicleDraftValues(prev => ({ ...prev, [cfg.field_key]: v }));
-                    return (
-                    <div key={cfg.field_key} className="space-y-1">
-                      <Label className="text-sm text-muted-foreground">{cfg.field_label}{cfg.is_required ? " *" : ""}</Label>
-                      {editingVehicleFields ? (
-                        cfg.field_type === "textarea" ? (
-                          <Textarea value={draftVal} onChange={e => updateDraft(e.target.value)} rows={2} className="text-sm" />
-                        ) : cfg.field_type === "dropdown" ? (
-                          <select value={draftVal} onChange={e => updateDraft(e.target.value)} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-                            <option value="">Bitte wählen</option>
-                            {fieldOptions.map((o: string) => <option key={o} value={o}>{o}</option>)}
-                          </select>
-                        ) : cfg.field_type === "checkbox" ? (
-                          <div className="flex items-center gap-2 h-9">
-                            <input type="checkbox" checked={draftVal === "true"} onChange={e => updateDraft(e.target.checked ? "true" : "false")} className="h-4 w-4" />
-                            <span className="text-sm text-muted-foreground">Ja / Nein</span>
+                <CardContent className="p-4">
+                  {editingVehicleFields ? (
+                    <div className="space-y-3">
+                      {vehicleFieldConfigs.map((cfg: any) => {
+                        let fieldOptions: string[] = [];
+                        try { fieldOptions = cfg.field_options ? JSON.parse(cfg.field_options) : []; } catch {}
+                        const draftVal = vehicleDraftValues[cfg.field_key] || "";
+                        const updateDraft = (v: string) => setVehicleDraftValues(prev => ({ ...prev, [cfg.field_key]: v }));
+                        return (
+                          <div key={cfg.field_key} className="space-y-1">
+                            <Label className="text-sm text-muted-foreground">{cfg.field_label}{cfg.is_required ? " *" : ""}</Label>
+                            {cfg.field_type === "textarea" ? (
+                              <Textarea value={draftVal} onChange={e => updateDraft(e.target.value)} rows={2} className="text-sm" />
+                            ) : cfg.field_type === "dropdown" ? (
+                              <select value={draftVal} onChange={e => updateDraft(e.target.value)} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                                <option value="">Bitte wählen</option>
+                                {fieldOptions.map((o: string) => <option key={o} value={o}>{o}</option>)}
+                              </select>
+                            ) : cfg.field_type === "checkbox" ? (
+                              <div className="flex items-center gap-2 h-9">
+                                <input type="checkbox" checked={draftVal === "true"} onChange={e => updateDraft(e.target.checked ? "true" : "false")} className="h-4 w-4" />
+                                <span className="text-sm text-muted-foreground">Ja / Nein</span>
+                              </div>
+                            ) : (
+                              <Input value={draftVal} onChange={e => updateDraft(e.target.value)} className="text-sm" />
+                            )}
                           </div>
-                        ) : (
-                          <Input value={draftVal} onChange={e => updateDraft(e.target.value)} className="text-sm" />
-                        )
-                      ) : (
-                        <p className="text-sm font-medium min-h-[1.25rem]">
-                          {vehicleFieldValues[cfg.field_key]
-                            ? cfg.field_type === "checkbox"
-                              ? vehicleFieldValues[cfg.field_key] === "true" ? "Ja" : "Nein"
-                              : vehicleFieldValues[cfg.field_key]
-                            : <span className="text-muted-foreground italic">–</span>}
-                        </p>
-                      )}
+                        );
+                      })}
                     </div>
-                  );
-                  })}
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Layout */}
-            {vehicleLayout && (
-              <Card>
-                <CardHeader className="p-4 pb-2"><CardTitle className="text-base">Layout / Produktionsdatei</CardTitle></CardHeader>
-                <CardContent className="p-4 space-y-3">
-                  <a href={getVehiclePublicUrl(vehicleLayout.storage_path)} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-2 p-3 rounded-lg border bg-muted/20 hover:bg-muted/40 transition-colors">
-                    <FileText className="h-5 w-5 text-primary shrink-0" />
-                    <span className="text-sm font-medium flex-1">{vehicleLayout.file_name}</span>
-                    <Download className="h-4 w-4 text-muted-foreground" />
-                  </a>
-
-                  {/* Layout approval */}
-                  {!isLimitedGuestMode && (
-                    <div className="flex items-center justify-between p-3 rounded-lg border bg-primary/5">
-                      <div>
-                        <p className="text-sm font-medium">{vehicleApproved ? "Layout freigegeben ✓" : "Layout noch nicht freigegeben"}</p>
-                        <p className="text-xs text-muted-foreground">Gib das Layout frei wenn alles passt</p>
-                      </div>
-                      <Button size="sm" variant={vehicleApproved ? "outline" : "default"} onClick={toggleVehicleApproval} disabled={savingVehicleApproval}>
-                        <Check className="h-4 w-4 mr-1" /> {vehicleApproved ? "Freigabe zurücknehmen" : "Layout freigeben"}
-                      </Button>
-                    </div>
-                  )}
-
-                  {/* Feedback */}
-                  <div className="space-y-2">
-                    <Label>Hinweise / Korrekturen zum Layout</Label>
-                    {vehicleFeedbacks.length > 0 && (
-                      <div className="space-y-2">
-                        {vehicleFeedbacks.map((fb: any) => (
-                          <div key={fb.id} className="rounded-lg border p-3 bg-muted/20 space-y-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-sm font-medium">{fb.author_name}</p>
-                              <span className={`text-xs px-2 py-0.5 rounded ${fb.status === "done" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{fb.status === "done" ? "Umgesetzt" : "Offen"}</span>
-                            </div>
-                            <p className="text-sm whitespace-pre-wrap">{fb.message}</p>
+                  ) : (() => {
+                    // Read mode: individual bordered fields in a 2-column grid, exactly like the Aufmaß info.
+                    const rows = vehicleFieldConfigs.map((cfg: any) => {
+                      const raw = vehicleFieldValues[cfg.field_key];
+                      if (raw === undefined || raw === null || raw === "") return null;
+                      const val = cfg.field_type === "checkbox" ? (raw === "true" ? "Ja" : "Nein") : String(raw);
+                      return { key: cfg.field_key, label: cfg.field_label, val };
+                    }).filter(Boolean) as { key: string; label: string; val: string }[];
+                    if (rows.length === 0) return <p className="text-sm text-muted-foreground">Noch keine Angaben.</p>;
+                    return (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {rows.map((r) => (
+                          <div key={r.key} className="space-y-1 rounded-lg border p-3 bg-muted/20">
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{r.label}</p>
+                            <p className="text-sm whitespace-pre-wrap">{r.val}</p>
                           </div>
                         ))}
                       </div>
-                    )}
-                    <Textarea placeholder="Hinweis oder Korrektur zum Layout eingeben..." value={vehicleFeedbackDraft} onChange={e => setVehicleFeedbackDraft(e.target.value)} rows={3} />
-                    <Button size="sm" onClick={saveVehicleFeedback} disabled={savingVehicleFeedback || !vehicleFeedbackDraft.trim()}>
-                      <Save className="h-4 w-4 mr-1" />{savingVehicleFeedback ? "Speichert..." : "Hinweis speichern"}
-                    </Button>
-                  </div>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             )}
+
+            {/* Hinweise / Korrekturen — Chat wie beim Aufmaß */}
+            <Card>
+              <CardHeader className="p-4 pb-2"><CardTitle className="text-base">Hinweise / Korrekturen zum Layout</CardTitle></CardHeader>
+              <CardContent className="p-4">
+                <LocationChat
+                  messages={vehicleFeedbacks.map((f: any) => ({
+                    id: f.id,
+                    author_name: f.author_name,
+                    author_type: f.author_type === "employee" ? "employee" : "customer",
+                    message: f.message,
+                    status: f.status,
+                    created_at: f.created_at,
+                    author_customer_id: f.author_customer_id,
+                  }))}
+                  viewerSide="customer"
+                  sending={savingVehicleFeedback}
+                  onSend={sendVehicleCustomerMessage}
+                  canDelete={(m) => m.author_type !== "employee" && isRealCustomerId(session?.id) && m.author_customer_id === session?.id}
+                  onDelete={(m) => deleteVehicleMessage(m.id)}
+                  placeholder="Hinweis oder Korrektur zum Layout…"
+                />
+              </CardContent>
+            </Card>
           </div>
         ) : locations.length === 0 ? (
           <p className="text-center text-muted-foreground py-12">Keine Standorte vorhanden.</p>
