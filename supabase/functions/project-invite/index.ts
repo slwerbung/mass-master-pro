@@ -44,14 +44,18 @@ async function heroQuery(apiKey: string, query: string, variables: Record<string
   }
 }
 
-// Best-effort: try a few plausible shapes to read the customer email of a
-// HERO project_match. Returns the first email found, plus debug for tuning.
+// Best-effort: read the customer email of a HERO project_match. The
+// Ansprechpartner (contact person) is preferred; only when the project has no
+// contact do we fall back to the general customer ("Kunde") email. The queries
+// are ordered accordingly and the first non-empty hit wins.
 async function lookupHeroEmail(apiKey: string, matchId: number): Promise<{ email: string | null; debug: string[] }> {
   const debug: string[] = [];
   const attempts: { q: string; pick: (m: any) => string | undefined }[] = [
-    { q: `query($ids:[Int]){ project_matches(ids:$ids){ id customer{ id email } } }`, pick: (m) => m?.customer?.email },
+    // 1) Ansprechpartner (contact person) — bevorzugt.
     { q: `query($ids:[Int]){ project_matches(ids:$ids){ id contact{ id email } } }`, pick: (m) => m?.contact?.email },
     { q: `query($ids:[Int]){ project_matches(ids:$ids){ id customer{ contact_person{ email } } } }`, pick: (m) => m?.customer?.contact_person?.email },
+    // 2) allgemeine Kunden-Mailadresse — nur als Fallback.
+    { q: `query($ids:[Int]){ project_matches(ids:$ids){ id customer{ id email } } }`, pick: (m) => m?.customer?.email },
   ];
   for (const a of attempts) {
     const r = await heroQuery(apiKey, a.q, { ids: [matchId] });
@@ -61,15 +65,16 @@ async function lookupHeroEmail(apiKey: string, matchId: number): Promise<{ email
     if (email) return { email, debug };
   }
   // Fallback: resolve an id field on the match, then read the contact's email.
+  // Same priority — the contact (Ansprechpartner) id before the customer id.
   const idAttempts = [
-    `query($ids:[Int]){ project_matches(ids:$ids){ id customer_id } }`,
     `query($ids:[Int]){ project_matches(ids:$ids){ id contact_id } }`,
+    `query($ids:[Int]){ project_matches(ids:$ids){ id customer_id } }`,
   ];
   for (const q of idAttempts) {
     const r = await heroQuery(apiKey, q, { ids: [matchId] });
     if (r.error) { debug.push(r.error); continue; }
     const m = (r.data as any)?.project_matches?.[0];
-    const cid = m?.customer_id ?? m?.contact_id;
+    const cid = m?.contact_id ?? m?.customer_id;
     if (cid) {
       const cr = await heroQuery(apiKey, `query($ids:[Int]){ contacts(ids:$ids){ id email } }`, { ids: [Number(cid)] });
       if (cr.error) { debug.push(cr.error); continue; }
