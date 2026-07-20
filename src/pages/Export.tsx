@@ -330,8 +330,12 @@ const Export = () => {
   // pro Standort wird – wie in der Kunden-/Mitarbeiteransicht – die
   // Produktionsdatei als Hauptbild gezeigt (PDF via pdf.js gerendert) mit
   // dem Foto als Thumbnail; ohne Produktionsdatei das Foto selbst.
+  // Mirrors the app's location view (LocationApprovalMedia): when a production
+  // file exists it is the MAIN image (first page), with the on-site photo shown
+  // as a small thumbnail; further production pages follow as their own pages.
+  // Without a production file the photo is the main image.
   type LocMedia = {
-    main?: string; mainLabel: string;
+    photo?: string;
     productionPages: { src: string; label: string }[];
     printNames: string[];
   };
@@ -366,7 +370,7 @@ const Export = () => {
           } catch { /* skip a broken file, keep going */ }
         }
       }
-      return { main: photo, mainLabel: "Standortfoto", productionPages, printNames };
+      return { photo, productionPages, printNames };
     };
 
     const buildFields = (location: any, printNames: string[]): FieldRow[] => {
@@ -411,7 +415,9 @@ const Export = () => {
     for (const location of sortedLocations) {
       locationPage.set(location.id, ++page);
       const m = mediaByLoc.get(location.id)!;
-      page += m.productionPages.length;
+      // Production page 1 sits on the location page itself; only the remaining
+      // production pages get their own pages.
+      page += Math.max(0, m.productionPages.length - 1);
       if (showDetailImages && location.detailImages && location.detailImages.length > 0) page += 1;
     }
 
@@ -451,20 +457,26 @@ const Export = () => {
     for (const location of sortedLocations) {
       const m = mediaByLoc.get(location.id)!;
       let p = locationPage.get(location.id)!;
+      const hasProduction = m.productionPages.length > 0;
+      const mainImage = hasProduction ? m.productionPages[0].src : m.photo;
+      const mainLabel = hasProduction ? m.productionPages[0].label : "Standortfoto";
       pdf.addPage();
       await drawLocationPage(pdf, {
         number: location.locationNumber,
         name: location.locationName,
         projectNumber: project.projectNumber,
         pill: pillFor(location),
-        mainImage: m.main,
-        mainLabel: m.mainLabel,
+        mainImage,
+        mainLabel,
+        // Photo as thumbnail only when the production file is the main image.
+        thumbImage: hasProduction ? m.photo : undefined,
+        thumbLabel: hasProduction ? "Foto" : undefined,
         fields: buildFields(location, m.printNames),
         pageNumber: p,
       });
 
-      // Produktionsdaten als eigene Seiten (folgen dem Standortfoto)
-      for (const pp of m.productionPages) {
+      // Weitere Produktionsseiten (Seite 2+) folgen als eigene Seiten.
+      for (const pp of m.productionPages.slice(1)) {
         pdf.addPage();
         p += 1;
         await drawMediaPage(pdf, {

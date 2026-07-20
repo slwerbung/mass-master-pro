@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
+import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Mic, Square, Loader2, FileText, CheckCircle2, ChevronRight } from "lucide-react";
+import { Mic, Square, Loader2, FileText, CheckCircle2, ChevronRight, Pencil, Save, Mail } from "lucide-react";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { useMeetingRecorder, MeetingMarkdown } from "@/components/MeetingRecorder";
+import { SendProtocolDialog } from "@/components/SendProtocolDialog";
+import { buildProtocolEmailBody } from "@/lib/protocolText";
 
 interface Note {
   id: string;
@@ -22,6 +26,45 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState<Note | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editSummary, setEditSummary] = useState("");
+  const [editActionPlan, setEditActionPlan] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+
+  const openNote = (n: Note) => { setEditing(false); setOpen(n); };
+
+  const startEdit = () => {
+    if (!open) return;
+    setEditSummary(open.summary || "");
+    setEditActionPlan(open.action_plan || "");
+    setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    if (!open) return;
+    setSaving(true);
+    try {
+      const session = getSession();
+      const { data, error } = await supabase.functions.invoke("meeting-notes", {
+        body: { action: "update", token: session?.authToken, id: open.id, summary: editSummary, actionPlan: editActionPlan },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      const d = data as any;
+      const updated: Note = { ...open, summary: d?.summary ?? editSummary, action_plan: d?.actionPlan ?? editActionPlan, hero_logged: d?.heroLogged ?? open.hero_logged };
+      setOpen(updated);
+      setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
+      setEditing(false);
+      if (d?.heroLogged) toast.success("Gespeichert & im HERO-Logbuch aktualisiert");
+      else if (d?.heroError) toast.success("Gespeichert · HERO: " + d.heroError);
+      else toast.success("Gespeichert");
+    } catch (e: any) {
+      toast.error("Speichern fehlgeschlagen: " + (e.message || "Unbekannter Fehler"));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const isThisRecording = phase === "recording" && activeProjectId === projectId;
   const isThisProcessing = phase === "processing" && activeProjectId === projectId;
@@ -85,7 +128,7 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
             {notes.map((n) => (
               <button
                 key={n.id}
-                onClick={() => setOpen(n)}
+                onClick={() => openNote(n)}
                 className="w-full text-left flex items-start gap-2 rounded-lg border bg-muted/30 p-3 hover:bg-muted/50 transition-colors"
               >
                 <FileText className="h-4 w-4 text-primary shrink-0 mt-0.5" />
@@ -114,18 +157,59 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
                 {formatDateTimeSafe(open.created_at)}{open.created_by ? ` · ${open.created_by}` : ""}
                 {open.hero_logged && <span className="inline-flex items-center gap-1 ml-1 text-green-600"><CheckCircle2 className="h-3 w-3" /> HERO-Logbuch</span>}
               </p>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Ergebnisprotokoll</p>
-                <MeetingMarkdown text={open.summary} />
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Maßnahmenplan</p>
-                <MeetingMarkdown text={open.action_plan} />
-              </div>
+
+              {editing ? (
+                <>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ergebnisprotokoll</p>
+                    <Textarea value={editSummary} onChange={(e) => setEditSummary(e.target.value)} rows={7} className="text-sm" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Maßnahmenplan</p>
+                    <Textarea value={editActionPlan} onChange={(e) => setEditActionPlan(e.target.value)} rows={6} className="text-sm" />
+                    <p className="text-xs text-muted-foreground">Jede Maßnahme in eine eigene Zeile mit „- " am Anfang.</p>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setEditing(false)} disabled={saving}>Abbrechen</Button>
+                    <Button onClick={saveEdit} disabled={saving}>
+                      {saving ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />} Speichern
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Ergebnisprotokoll</p>
+                    <MeetingMarkdown text={open.summary} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Maßnahmenplan</p>
+                    <MeetingMarkdown text={open.action_plan} />
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-2 pt-1">
+                    <Button variant="outline" size="sm" onClick={startEdit}>
+                      <Pencil className="h-3.5 w-3.5 mr-1.5" /> Bearbeiten
+                    </Button>
+                    <Button size="sm" onClick={() => setSendOpen(true)}>
+                      <Mail className="h-3.5 w-3.5 mr-1.5" /> An Kunden senden
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      {open && (
+        <SendProtocolDialog
+          open={sendOpen}
+          onOpenChange={setSendOpen}
+          projectId={projectId}
+          defaultSubject={`Protokoll · Projekt ${projectNumber}`}
+          defaultBody={buildProtocolEmailBody({ summary: open.summary, actionPlan: open.action_plan })}
+        />
+      )}
     </Card>
   );
 }

@@ -189,27 +189,35 @@ export function MeetingRecorderProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// ─── Markdown-light Renderer (Stichpunkte + Checkliste) ──────────────────────--
+// ─── Markdown-light Renderer (Stichpunkte) ────────────────────────────────────
+// Ergebnisprotokoll and Maßnahmenplan both render as bullet lists. Legacy notes
+// (and the occasional model slip) may contain checkbox syntax ("- [ ] …") or
+// several items packed into one line with inline "[ ]" markers; normalizeLines
+// flattens all of that into plain bullets so everything reads consistently.
+function normalizeLines(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of (text || "").split("\n")) {
+    const line = raw.trim();
+    if (!line) { out.push(""); continue; }
+    if (line.startsWith("## ")) { out.push(line); continue; }
+    const isList = /^[-*•]\s+/.test(line) || /\[[ xX]?\]/.test(line);
+    if (!isList) { out.push(line); continue; }
+    const body = line.replace(/^[-*•]\s*/, "");
+    const parts = body.split(/\s*\[[ xX]?\]\s*/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length === 0) out.push(`- ${body}`);
+    else for (const part of parts) out.push(`- ${part}`);
+  }
+  return out;
+}
+
 export function MeetingMarkdown({ text }: { text: string }) {
-  const lines = (text || "").split("\n");
+  const lines = normalizeLines(text);
   return (
     <div className="space-y-1 text-sm">
       {lines.map((raw, i) => {
-        const line = raw.trim();
+        const line = raw;
         if (!line) return <div key={i} className="h-1.5" />;
         if (line.startsWith("## ")) return <p key={i} className="font-semibold mt-2">{line.slice(3)}</p>;
-        const check = line.match(/^- \[( |x|X)\]\s*(.*)$/);
-        if (check) {
-          const done = check[1].toLowerCase() === "x";
-          return (
-            <div key={i} className="flex items-start gap-2">
-              <span className={`mt-0.5 inline-flex h-4 w-4 items-center justify-center rounded border shrink-0 ${done ? "bg-green-600 border-green-600 text-white" : "border-muted-foreground/40"}`}>
-                {done ? <CheckCircle2 className="h-3 w-3" /> : null}
-              </span>
-              <span className={done ? "line-through text-muted-foreground" : ""}>{check[2]}</span>
-            </div>
-          );
-        }
         if (line.startsWith("- ") || line.startsWith("• ")) {
           return (
             <div key={i} className="flex items-start gap-2">

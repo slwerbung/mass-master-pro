@@ -144,6 +144,35 @@ function buildInviteMail(companyName: string, projectNumber: string, projectId: 
   return { subject, html };
 }
 
+// Wraps the employee-edited plain-text protocol in the branded mail shell.
+// Bullet lines ("- …") become a proper list; blank lines become spacing;
+// everything else becomes a paragraph. Kept intentionally simple so the text
+// the employee sees in the composer is what the customer receives.
+function buildProtocolMail(companyName: string, bodyText: string): string {
+  const blocks: string[] = [];
+  let listItems: string[] = [];
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    blocks.push(`<ul style="margin:8px 0;padding-left:20px">${listItems.map((li) => `<li style="margin:2px 0">${li}</li>`).join("")}</ul>`);
+    listItems = [];
+  };
+  for (const raw of bodyText.split("\n")) {
+    const line = raw.trim();
+    if (!line) { flushList(); continue; }
+    const bullet = line.match(/^[-*•]\s+(.*)$/);
+    if (bullet) { listItems.push(escapeHtml(bullet[1])); continue; }
+    flushList();
+    blocks.push(`<p style="margin:12px 0">${escapeHtml(line)}</p>`);
+  }
+  flushList();
+  return `
+    <div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:600px;line-height:1.5">
+      ${blocks.join("\n")}
+      <hr style="margin:24px 0;border:none;border-top:1px solid #eee">
+      <p style="font-size:13px;color:#666;margin:0">Mit freundlichen Grüßen<br>${escapeHtml(companyName)}</p>
+    </div>`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
@@ -169,6 +198,65 @@ Deno.serve(async (req) => {
       if (!apiKey) return json({ email: null });
       const { email, debug } = await lookupHeroEmail(apiKey, heroProjectId);
       return json({ email, ...(body.debug ? { debug } : {}) });
+    }
+
+    // Like lookup_email but resolves the HERO project id from a Captfix
+    // projectId (used by the protocol-send dialog, which knows the project but
+    // not the HERO id). Returns { email: null } silently when nothing matches.
+    if (action === "protocol_lookup_email") {
+      const projectId = String(body.projectId || "").trim();
+      if (!projectId) return json({ email: null });
+      const hctx = await heroContext(supabase, projectId);
+      if (!hctx) return json({ email: null });
+      const { email } = await lookupHeroEmail(hctx.apiKey, hctx.heroId);
+      return json({ email });
+    }
+
+    // Sends a meeting protocol to a customer/recipient. The employee edits the
+    // subject and body in the app; we wrap the (plain-text) body in the branded
+    // mail shell and log the send to HERO when the note is project-bound.
+    if (action === "send_protocol") {
+      const email = String(body.email || "").trim();
+      const subject = String(body.subject || "").trim() || "Protokoll";
+      const bodyText = String(body.bodyText || "");
+      const projectId = String(body.projectId || "").trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "Ungültige E-Mail-Adresse" }, 400);
+      if (!bodyText.trim()) return json({ error: "Kein Inhalt" }, 400);
+
+      let companyName = "SL WERBUNG";
+      const { data: legalRow } = await supabase.from("app_config").select("value").eq("key", "legal_info").maybeSingle();
+      if (legalRow?.value) {
+        try {
+          const info = JSON.parse(legalRow.value);
+          if (info?.companyName && String(info.companyName).trim()) companyName = String(info.companyName).trim();
+        } catch { /* keep default */ }
+      }
+
+      const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+      if (!RESEND_API_KEY) return json({ error: "RESEND_API_KEY not configured" }, 500);
+
+      const html = buildProtocolMail(companyName, bodyText);
+      const emailRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from: "Captfix <notifications@captfix.app>", to: [email], subject, html }),
+      });
+      if (!emailRes.ok) {
+        const errText = await emailRes.text();
+        return json({ error: `Mailversand fehlgeschlagen: ${errText.slice(0, 200)}` }, 502);
+      }
+
+      // HERO logbook entry (best-effort) when the protocol belongs to a project.
+      if (projectId) {
+        try {
+          const hctx = await heroContext(supabase, projectId);
+          if (hctx) {
+            await heroAddLogbook(hctx.apiKey, hctx.heroId, "Captfix: Protokoll an Kunde gesendet", `An: ${email}\nBetreff: ${subject}\n\n${bodyText}`.slice(0, 5000));
+          }
+        } catch { /* logbook is best-effort */ }
+      }
+
+      return json({ success: true });
     }
 
     if (action === "send") {

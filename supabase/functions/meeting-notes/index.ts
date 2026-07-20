@@ -112,7 +112,7 @@ Aus dem folgenden Transkript eines Gesprächs (Kunde/Mitarbeiter) erstellst du K
 
 Gib ein JSON-Objekt zurück mit genau diesen Feldern:
 - "summary": Markdown mit den wichtigsten besprochenen Punkten und getroffenen Entscheidungen als kurze Stichpunkte (Aufzählung mit "- "). Keine Floskeln, nur Ergebnisse.
-- "actionPlan": Markdown-Checkliste mit konkreten nächsten Schritten / Maßnahmen ("- [ ] Aufgabe"). Wenn erkennbar, Verantwortliche und Fristen ergänzen. Wenn keine Maßnahmen erkennbar sind, eine leere Liste bzw. "- [ ] Keine offenen Punkte".
+- "actionPlan": Markdown-Aufzählung mit konkreten nächsten Schritten / Maßnahmen. Jede Maßnahme als eigener Stichpunkt mit "- " (KEINE Kästchen wie "[ ]", KEIN Fließtext). Wenn erkennbar, Verantwortliche und Fristen ergänzen. Wenn keine Maßnahmen erkennbar sind: "- Keine offenen Punkte".
 
 Antworte ausschließlich mit dem JSON-Objekt, ohne weitere Erklärung.`;
 
@@ -124,7 +124,7 @@ const SUMMARY_SYSTEM_GENERIC = `Du bist ein Assistent, der aus dem Transkript ei
 
 Gib ein JSON-Objekt zurück mit genau diesen Feldern:
 - "summary": Markdown-Ergebnisprotokoll. Nutze Überschriften ("## ") für Themen/Tagesordnungspunkte, darunter kurze Stichpunkte ("- ") mit den besprochenen Inhalten, getroffenen Entscheidungen und Beschlüssen. Keine Floskeln, nur Ergebnisse.
-- "actionPlan": Markdown-Checkliste mit konkreten Maßnahmen / nächsten Schritten ("- [ ] Aufgabe"). Wenn erkennbar, Verantwortliche und Fristen ergänzen. Wenn keine Maßnahmen erkennbar sind: "- [ ] Keine offenen Punkte".
+- "actionPlan": Markdown-Aufzählung mit konkreten Maßnahmen / nächsten Schritten. Jede Maßnahme als eigener Stichpunkt mit "- " (KEINE Kästchen wie "[ ]", KEIN Fließtext). Wenn erkennbar, Verantwortliche und Fristen ergänzen. Wenn keine Maßnahmen erkennbar sind: "- Keine offenen Punkte".
 
 Halte dich strikt an den vom Nutzer vorgegebenen Kontext und die Protokoll-Anweisung. Antworte ausschließlich mit dem JSON-Objekt, ohne weitere Erklärung.`
 
@@ -139,6 +139,27 @@ function buildSummarySystem(briefing?: { context?: string; instructions?: string
   if (context) out += `\n\nKONTEXT DES TERMINS (vom Nutzer vorab):\n${context.slice(0, 4000)}`;
   if (instructions) out += `\n\nSO SOLL DAS PROTOKOLL ERSTELLT WERDEN (Anweisung des Nutzers):\n${instructions.slice(0, 4000)}`;
   return out;
+}
+
+// Normalises an action plan into plain bullet points ("- "). Some models still
+// emit checkbox syntax ("- [ ] …") or pack several items with inline "[ ]"
+// markers into one flowing line; both are turned into separate bullets so the
+// Maßnahmenplan reads like the Ergebnisprotokoll everywhere.
+function normalizeActionPlan(text: string): string {
+  if (!text) return "";
+  const out: string[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line) { out.push(""); continue; }
+    if (line.startsWith("## ")) { out.push(line); continue; }
+    // Strip a leading list marker, then split the remainder on inline checkbox
+    // tokens so "[ ] A [ ] B" becomes two bullets.
+    const body = line.replace(/^[-*•]\s*/, "");
+    const parts = body.split(/\s*\[[ xX]?\]\s*/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length === 0) { out.push(`- ${body}`); continue; }
+    for (const part of parts) out.push(`- ${part}`);
+  }
+  return out.join("\n").trim();
 }
 
 async function summarise(p: AIProvider, transcript: string, system: string): Promise<{ summary: string; actionPlan: string }> {
@@ -162,10 +183,10 @@ async function summarise(p: AIProvider, transcript: string, system: string): Pro
     const parsed = JSON.parse(content);
     return {
       summary: String(parsed.summary || "").trim() || "_Keine Zusammenfassung erkannt._",
-      actionPlan: String(parsed.actionPlan || "").trim() || "- [ ] Keine offenen Punkte",
+      actionPlan: normalizeActionPlan(String(parsed.actionPlan || "").trim()) || "- Keine offenen Punkte",
     };
   } catch {
-    return { summary: content.slice(0, 4000), actionPlan: "- [ ] Keine offenen Punkte" };
+    return { summary: content.slice(0, 4000), actionPlan: "- Keine offenen Punkte" };
   }
 }
 
@@ -207,6 +228,59 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false })
         .limit(20);
       return json({ notes: data || [] });
+    }
+
+    if (action === "update") {
+      // Edit an existing note's Ergebnisprotokoll / Maßnahmenplan. For a
+      // project-bound note that is linked to HERO we add a fresh logbook entry
+      // with the updated text (HERO's add_logbook_entry has no edit API, so the
+      // newest entry always reflects the current version).
+      const id = String(body.id || "").trim();
+      if (!id) return json({ error: "id erforderlich" }, 400);
+      const { data: existing } = await supabase
+        .from("meeting_notes")
+        .select("id, project_id, title")
+        .eq("id", id)
+        .maybeSingle();
+      if (!existing) return json({ error: "Notiz nicht gefunden" }, 404);
+
+      const summary = String(body.summary ?? "").trim();
+      const actionPlan = normalizeActionPlan(String(body.actionPlan ?? "").trim()) || "- Keine offenen Punkte";
+      const update: Record<string, unknown> = { summary, action_plan: actionPlan };
+      if (Object.prototype.hasOwnProperty.call(body, "title")) {
+        update.title = String(body.title || "").trim() || null;
+      }
+
+      const { error: upErr } = await supabase.from("meeting_notes").update(update).eq("id", id);
+      if (upErr) return json({ error: "Speichern fehlgeschlagen: " + upErr.message }, 500);
+
+      let heroLogged = false;
+      let heroError: string | undefined;
+      let projectNumber = "";
+      if (existing.project_id) {
+        try {
+          const { data: proj } = await supabase.from("projects").select("project_number").eq("id", existing.project_id).maybeSingle();
+          projectNumber = proj?.project_number || String(existing.project_id).slice(0, 8);
+          const hctx = await heroContext(supabase, existing.project_id as string);
+          if (!hctx) {
+            heroError = "Projekt nicht mit HERO verknüpft oder Integration aus.";
+          } else {
+            const text =
+              `ERGEBNISPROTOKOLL\n\n${summary}\n\n` +
+              `MASSNAHMENPLAN\n\n${actionPlan}`;
+            const res = await heroAddLogbook(hctx.apiKey, hctx.heroId, `Captfix: Gesprächsnotiz (aktualisiert) · ${projectNumber}`, text);
+            heroLogged = res.ok;
+            if (!res.ok) heroError = res.error;
+          }
+        } catch (e: any) {
+          heroError = e?.message || String(e);
+        }
+        if (heroLogged) {
+          try { await supabase.from("meeting_notes").update({ hero_logged: true }).eq("id", id); } catch { /* best-effort */ }
+        }
+      }
+
+      return json({ id, summary, actionPlan, heroLogged, heroError, projectNumber });
     }
 
     if (action === "process") {

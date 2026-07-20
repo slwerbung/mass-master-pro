@@ -9,9 +9,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ArrowLeft, Mic, Square, Loader2, FileText, ChevronRight, X, RotateCcw } from "lucide-react";
+import { ArrowLeft, Mic, Square, Loader2, FileText, ChevronRight, X, RotateCcw, Pencil, Save, Mail } from "lucide-react";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { MeetingMarkdown, type MeetingResult } from "@/components/MeetingRecorder";
+import { SendProtocolDialog } from "@/components/SendProtocolDialog";
+import { buildProtocolEmailBody, buildProtocolSubject } from "@/lib/protocolText";
 
 // ─── Recording helpers (self-contained, foreground) ──────────────────────────
 function pickMime(): string {
@@ -91,6 +93,43 @@ const Protokoll = () => {
   const [notes, setNotes] = useState<StandaloneNote[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(true);
   const [openNote, setOpenNote] = useState<StandaloneNote | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editSummary, setEditSummary] = useState("");
+  const [editActionPlan, setEditActionPlan] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+
+  const showNote = (n: StandaloneNote) => { setEditing(false); setOpenNote(n); };
+
+  const startEdit = () => {
+    if (!openNote) return;
+    setEditSummary(openNote.summary || "");
+    setEditActionPlan(openNote.action_plan || "");
+    setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    if (!openNote) return;
+    setSaving(true);
+    try {
+      const session = getSession();
+      const { data, error } = await supabase.functions.invoke("meeting-notes", {
+        body: { action: "update", token: session?.authToken, id: openNote.id, summary: editSummary, actionPlan: editActionPlan },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      const d = data as any;
+      const updated: StandaloneNote = { ...openNote, summary: d?.summary ?? editSummary, action_plan: d?.actionPlan ?? editActionPlan };
+      setOpenNote(updated);
+      setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
+      setEditing(false);
+      toast.success("Gespeichert");
+    } catch (e: any) {
+      toast.error("Speichern fehlgeschlagen: " + (e.message || "Unbekannter Fehler"));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -334,7 +373,7 @@ const Protokoll = () => {
               {notes.map((n) => (
                 <button
                   key={n.id}
-                  onClick={() => setOpenNote(n)}
+                  onClick={() => showNote(n)}
                   className="w-full text-left flex items-start gap-2 rounded-lg border bg-background p-3 hover:bg-muted/50 transition-colors"
                 >
                   <FileText className="h-4 w-4 text-primary shrink-0 mt-0.5" />
@@ -390,24 +429,64 @@ const Protokoll = () => {
               <p className="text-xs text-muted-foreground">
                 {formatDateTimeSafe(openNote.created_at)}{openNote.created_by ? ` · ${openNote.created_by}` : ""}
               </p>
-              {openNote.context && (
+              {openNote.context && !editing && (
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Briefing</p>
                   <p className="text-sm whitespace-pre-wrap text-muted-foreground">{openNote.context}</p>
                 </div>
               )}
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Ergebnisprotokoll</p>
-                <MeetingMarkdown text={openNote.summary} />
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Maßnahmenplan</p>
-                <MeetingMarkdown text={openNote.action_plan} />
-              </div>
+
+              {editing ? (
+                <>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ergebnisprotokoll</p>
+                    <Textarea value={editSummary} onChange={(e) => setEditSummary(e.target.value)} rows={8} className="text-sm" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Maßnahmenplan</p>
+                    <Textarea value={editActionPlan} onChange={(e) => setEditActionPlan(e.target.value)} rows={6} className="text-sm" />
+                    <p className="text-xs text-muted-foreground">Jede Maßnahme in eine eigene Zeile mit „- " am Anfang.</p>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setEditing(false)} disabled={saving}>Abbrechen</Button>
+                    <Button onClick={saveEdit} disabled={saving}>
+                      {saving ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />} Speichern
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Ergebnisprotokoll</p>
+                    <MeetingMarkdown text={openNote.summary} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Maßnahmenplan</p>
+                    <MeetingMarkdown text={openNote.action_plan} />
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-2 pt-1">
+                    <Button variant="outline" size="sm" onClick={startEdit}>
+                      <Pencil className="h-3.5 w-3.5 mr-1.5" /> Bearbeiten
+                    </Button>
+                    <Button size="sm" onClick={() => setSendOpen(true)}>
+                      <Mail className="h-3.5 w-3.5 mr-1.5" /> An Kunden senden
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      {openNote && (
+        <SendProtocolDialog
+          open={sendOpen}
+          onOpenChange={setSendOpen}
+          defaultSubject={buildProtocolSubject(openNote.title)}
+          defaultBody={buildProtocolEmailBody({ title: openNote.title, summary: openNote.summary, actionPlan: openNote.action_plan })}
+        />
+      )}
     </div>
   );
 };
