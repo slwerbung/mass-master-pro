@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock, Mail } from "lucide-react";
+import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock, Mail, Camera } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
@@ -96,8 +96,13 @@ const VehicleDetail = () => {
   const [sendingMsg, setSendingMsg] = useState(false);
   const [busyFeedbackId, setBusyFeedbackId] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const imageCameraRef = useRef<HTMLInputElement>(null);
   const layoutInputRef = useRef<HTMLInputElement>(null);
   const measuredInputRef = useRef<HTMLInputElement>(null);
+  const measuredCameraRef = useRef<HTMLInputElement>(null);
+  // Touch devices get a dedicated camera button (capture input); on desktop it
+  // is hidden since "capture" just opens the file dialog there anyway.
+  const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
 
   useEffect(() => {
     if (!projectId) return;
@@ -566,13 +571,21 @@ const VehicleDetail = () => {
         {/* Vehicle Images */}
         <Card>
           <CardHeader className="p-4 pb-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-base">Fahrzeugbilder</CardTitle>
-              <Button size="sm" variant="outline" onClick={() => imageInputRef.current?.click()} disabled={uploadingImage}>
-                <ImagePlus className="h-4 w-4 mr-1" />
-                {uploadingImage ? "Lädt..." : "Bild hinzufügen"}
-              </Button>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => imageInputRef.current?.click()} disabled={uploadingImage}>
+                  <ImagePlus className="h-4 w-4 mr-1" />
+                  {uploadingImage ? "Lädt..." : "Hochladen"}
+                </Button>
+                {isMobile && (
+                  <Button size="sm" variant="outline" onClick={() => imageCameraRef.current?.click()} disabled={uploadingImage}>
+                    <Camera className="h-4 w-4 mr-1" /> Kamera
+                  </Button>
+                )}
+              </div>
               <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
+              <input ref={imageCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageUpload} />
             </div>
           </CardHeader>
           <CardContent className="p-4">
@@ -663,13 +676,21 @@ const VehicleDetail = () => {
         {/* Bilder bemaßt */}
         <Card>
           <CardHeader className="p-4 pb-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-base">Bilder bemaßt</CardTitle>
-              <Button size="sm" variant="outline" onClick={() => measuredInputRef.current?.click()} disabled={uploadingMeasured}>
-                <ImagePlus className="h-4 w-4 mr-1" />
-                {uploadingMeasured ? "Lädt..." : "Bild hinzufügen"}
-              </Button>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => measuredInputRef.current?.click()} disabled={uploadingMeasured}>
+                  <ImagePlus className="h-4 w-4 mr-1" />
+                  {uploadingMeasured ? "Lädt..." : "Hochladen"}
+                </Button>
+                {isMobile && (
+                  <Button size="sm" variant="outline" onClick={() => measuredCameraRef.current?.click()} disabled={uploadingMeasured}>
+                    <Camera className="h-4 w-4 mr-1" /> Kamera
+                  </Button>
+                )}
+              </div>
               <input ref={measuredInputRef} type="file" accept="image/*" className="hidden" onChange={handleMeasuredUpload} />
+              <input ref={measuredCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleMeasuredUpload} />
             </div>
           </CardHeader>
           <CardContent className="p-4">

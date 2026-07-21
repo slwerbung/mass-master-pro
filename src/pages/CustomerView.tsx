@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import LocationChat from "@/components/LocationChat";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check, Trash2, Upload, Download, Car, ImagePlus } from "lucide-react";
+import { LogOut, Save, ArrowLeft, CheckCheck, FileText, Pencil, Check, Trash2, Upload, Download, Car, ImagePlus, Camera } from "lucide-react";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
@@ -1162,20 +1162,30 @@ const CustomerView = () => {
               <CardHeader className="p-4 pb-2"><CardTitle className="text-base">Fahrzeugbilder</CardTitle></CardHeader>
               <CardContent className="p-4">
                 {vehicleImages.length === 0 && !isLimitedGuestMode ? (
-                  <label
-                    className={`flex flex-col items-center justify-center gap-3 border-2 border-dashed rounded-xl p-8 cursor-pointer transition-colors ${vehicleDragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"}`}
-                    onDragOver={e => { e.preventDefault(); setVehicleDragOver(true); }}
-                    onDragLeave={() => setVehicleDragOver(false)}
-                    onDrop={handleVehicleDrop}
-                  >
-                    <input type="file" accept="image/*" multiple className="hidden" onChange={handleVehicleImageUpload} />
-                    <ImagePlus className="h-10 w-10 text-muted-foreground" />
-                    <div className="text-center">
-                      <p className="text-sm font-medium">Bilder hierher ziehen</p>
-                      <p className="text-xs text-muted-foreground mt-1">oder tippen zum Auswählen — mehrere Bilder möglich</p>
-                    </div>
-                    {uploadingVehicleImage && <p className="text-sm text-primary">Lädt hoch...</p>}
-                  </label>
+                  <>
+                    <label
+                      className={`flex flex-col items-center justify-center gap-3 border-2 border-dashed rounded-xl p-8 cursor-pointer transition-colors ${vehicleDragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"}`}
+                      onDragOver={e => { e.preventDefault(); setVehicleDragOver(true); }}
+                      onDragLeave={() => setVehicleDragOver(false)}
+                      onDrop={handleVehicleDrop}
+                    >
+                      <input type="file" accept="image/*" multiple className="hidden" onChange={handleVehicleImageUpload} />
+                      <ImagePlus className="h-10 w-10 text-muted-foreground" />
+                      <div className="text-center">
+                        <p className="text-sm font-medium">Bilder hierher ziehen</p>
+                        <p className="text-xs text-muted-foreground mt-1">oder tippen zum Auswählen — mehrere Bilder möglich</p>
+                      </div>
+                      {uploadingVehicleImage && <p className="text-sm text-primary">Lädt hoch...</p>}
+                    </label>
+                    {navigator.maxTouchPoints > 0 && (
+                      <label className="mt-3 flex items-center gap-2 cursor-pointer w-fit">
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleVehicleImageUpload} disabled={uploadingVehicleImage} />
+                        <Button size="sm" variant="outline" asChild disabled={uploadingVehicleImage}>
+                          <span><Camera className="h-4 w-4 mr-1" /> Mit Kamera aufnehmen</span>
+                        </Button>
+                      </label>
+                    )}
+                  </>
                 ) : vehicleImages.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">Noch keine Bilder vorhanden.</p>
                 ) : (
@@ -1189,17 +1199,27 @@ const CustomerView = () => {
                       ))}
                     </div>
                     {!isLimitedGuestMode && (
-                      <label
-                        className="mt-3 flex items-center gap-2 cursor-pointer w-fit"
-                        onDragOver={e => { e.preventDefault(); setVehicleDragOver(true); }}
-                        onDragLeave={() => setVehicleDragOver(false)}
-                        onDrop={handleVehicleDrop}
-                      >
-                        <input type="file" accept="image/*" multiple className="hidden" onChange={handleVehicleImageUpload} disabled={uploadingVehicleImage} />
-                        <Button size="sm" variant="outline" asChild disabled={uploadingVehicleImage}>
-                          <span><ImagePlus className="h-4 w-4 mr-1" />{uploadingVehicleImage ? "Lädt..." : "Weitere Bilder hinzufügen"}</span>
-                        </Button>
-                      </label>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <label
+                          className="flex items-center gap-2 cursor-pointer"
+                          onDragOver={e => { e.preventDefault(); setVehicleDragOver(true); }}
+                          onDragLeave={() => setVehicleDragOver(false)}
+                          onDrop={handleVehicleDrop}
+                        >
+                          <input type="file" accept="image/*" multiple className="hidden" onChange={handleVehicleImageUpload} disabled={uploadingVehicleImage} />
+                          <Button size="sm" variant="outline" asChild disabled={uploadingVehicleImage}>
+                            <span><ImagePlus className="h-4 w-4 mr-1" />{uploadingVehicleImage ? "Lädt..." : "Hochladen"}</span>
+                          </Button>
+                        </label>
+                        {navigator.maxTouchPoints > 0 && (
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleVehicleImageUpload} disabled={uploadingVehicleImage} />
+                            <Button size="sm" variant="outline" asChild disabled={uploadingVehicleImage}>
+                              <span><Camera className="h-4 w-4 mr-1" /> Kamera</span>
+                            </Button>
+                          </label>
+                        )}
+                      </div>
                     )}
                   </>
                 )}
@@ -1310,14 +1330,14 @@ const CustomerView = () => {
             {!isLimitedGuestMode && (
               <Card className="border-primary/30 bg-primary/5">
                 <CardContent className="p-4">
-                  <div className="flex items-center justify-between gap-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                     <div>
                       <p className="font-medium text-sm">Gesamtfreigabe</p>
                       <p className="text-xs text-muted-foreground">
                         {locations.filter(l => approvals[l.id]).length} von {locations.length} Standorten freigegeben
                       </p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       {someApproved && (
                         <Button size="sm" variant="outline" onClick={() => approveAll(false)} disabled={savingApprovals}>Alle zurücknehmen</Button>
                       )}

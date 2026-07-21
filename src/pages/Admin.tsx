@@ -989,7 +989,7 @@ const Admin = () => {
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground shrink-0">HERO-Mitarbeiter (optional):</span>
                       <Select value={newEmployeeHeroPartner || "none"} onValueChange={(v) => setNewEmployeeHeroPartner(v === "none" ? "" : v)}>
-                        <SelectTrigger className="h-8 text-xs w-[240px]"><SelectValue placeholder="Zuordnen…" /></SelectTrigger>
+                        <SelectTrigger className="h-8 text-xs w-[240px] max-w-full"><SelectValue placeholder="Zuordnen…" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">— Keine Zuordnung —</SelectItem>
                           {heroPartnerOptions.map((o: any) => (
@@ -1025,7 +1025,7 @@ const Admin = () => {
                               value={emp.hero_partner_id ? String(emp.hero_partner_id) : "none"}
                               onValueChange={(v) => setEmployeeHeroPartner(emp.id, v === "none" ? null : v)}
                             >
-                              <SelectTrigger className="h-7 text-xs w-[200px]">
+                              <SelectTrigger className="h-7 text-xs w-[200px] max-w-full">
                                 <SelectValue placeholder="HERO-Mitarbeiter zuordnen" />
                               </SelectTrigger>
                               <SelectContent>
