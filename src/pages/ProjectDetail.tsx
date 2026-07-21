@@ -450,24 +450,24 @@ const ProjectDetail = () => {
             </Button>
           ) : (
             <>
-              <Button size="lg" variant="outline" className="flex-1 h-12" onClick={() => fileInputRef.current?.click()}>
+              <Button size="lg" variant="outline" className="flex-1 min-w-0 h-12 px-2" onClick={() => fileInputRef.current?.click()}>
                 <ImagePlus className="mr-1.5 h-4 w-4 shrink-0" />
-                <span className="text-sm">Hochladen</span>
+                <span className="text-sm truncate">Hochladen</span>
               </Button>
               <Button
                 size="lg"
                 variant="outline"
-                className="flex-1 h-12"
+                className="flex-1 min-w-0 h-12 px-2"
                 onClick={() => { if (isMobile) { triggerCamera(); } else { navigate(`/projects/${projectId}/camera`); } }}
               >
                 <Camera className="mr-1.5 h-4 w-4 shrink-0" />
-                <span className="text-sm">Kamera</span>
+                <span className="text-sm truncate">Kamera</span>
               </Button>
             </>
           )}
-          <Button size="lg" variant="outline" className="flex-1 h-12" onClick={() => navigate(`/projects/${projectId}/export`)}>
+          <Button size="lg" variant="outline" className="flex-1 min-w-0 h-12 px-2" onClick={() => navigate(`/projects/${projectId}/export`)}>
             <Download className="mr-1.5 h-4 w-4 shrink-0" />
-            <span className="text-sm">Export</span>
+            <span className="text-sm truncate">Export</span>
           </Button>
         </div>
       </div>
