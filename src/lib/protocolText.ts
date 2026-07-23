@@ -31,10 +31,11 @@ export interface ProtocolParts {
 
 /** A ready-to-edit e-mail body containing the full protocol. */
 export function buildProtocolEmailBody({ title, summary, actionPlan, customerName }: ProtocolParts): string {
+  // Neutral wording — no direct address (neither "Sie" nor "du").
   const greeting = customerName?.trim() ? `Guten Tag ${customerName.trim()},` : "Guten Tag,";
   const intro = title?.trim()
-    ? `anbei erhalten Sie das Protokoll zu „${title.trim()}".`
-    : "anbei erhalten Sie das Protokoll unseres Gesprächs.";
+    ? `anbei das Protokoll zu „${title.trim()}".`
+    : "anbei das Protokoll unseres Gesprächs.";
 
   const lines: string[] = [greeting, "", intro, ""];
   lines.push("Ergebnisprotokoll", "");
