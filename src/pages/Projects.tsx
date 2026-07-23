@@ -5,9 +5,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw, Trash2,
-  CheckSquare, X, Archive, ArchiveRestore, UserPlus, Tag, MapPin, Car, Mic,
+  CheckSquare, X, Archive, ArchiveRestore, UserPlus, Tag, MapPin, Car, Mic, Search,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -64,6 +65,7 @@ const Projects = () => {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [showArchived, setShowArchived] = useState(false);
   const [showUnassigned, setShowUnassigned] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const navigate = useNavigate();
   const session = getSession();
   const syncDoneRef = useRef(false);
@@ -281,7 +283,25 @@ const Projects = () => {
     archived: projects.filter(p => p.archivedAt).length,
   };
 
+  // Full-text search over the project overview: project number, customer,
+  // type label and all custom field values. When a query is active it searches
+  // across ALL projects (active + archived, ignoring the tab filters) so any
+  // project can be found; empty query keeps the normal tab behaviour.
+  const searchTokens = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const typeLabel = (t?: string) =>
+    t === "fahrzeugbeschriftung" ? "fahrzeug" : t === "aufmass_mit_plan" ? "grundriss plan aufmass" : "aufmass";
+  const matchesSearch = (p: ProjectListItem) => {
+    const hay = [
+      p.projectNumber,
+      p.customerName,
+      typeLabel(p.projectType),
+      ...Object.values(p.customFields || {}),
+    ].filter(Boolean).join(" ").toLowerCase();
+    return searchTokens.every((t) => hay.includes(t));
+  };
+
   const visibleProjects = projects.filter(p => {
+    if (searchTokens.length > 0) return matchesSearch(p);
     if (showArchived) return !!p.archivedAt;
     if (p.archivedAt) return false;
     if (showUnassigned) return !p.employeeId;
@@ -339,6 +359,28 @@ const Projects = () => {
 
         <HeroSyncIndicator />
 
+        {/* Full-text search over the project overview */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            type="search"
+            inputMode="search"
+            placeholder="Projekte durchsuchen (Nummer, Kunde, Felder …)"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 pr-9"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              title="Suche löschen"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
         {/* Pill filter tabs */}
         <div className="bg-muted rounded-xl p-1 flex gap-0.5 overflow-x-auto scrollbar-hide">
           {filterTabs.map(tab => (
@@ -375,9 +417,9 @@ const Projects = () => {
             <CardContent className="flex flex-col items-center justify-center py-16 text-center">
               <FolderOpen className="h-12 w-12 text-muted-foreground/40 mx-auto mb-4" />
               <p className="text-muted-foreground text-sm">
-                {showArchived ? "Keine archivierten Projekte." : projects.length === 0 ? "Noch keine Projekte vorhanden." : "Keine Projekte in dieser Kategorie."}
+                {searchTokens.length > 0 ? `Keine Treffer für „${searchQuery.trim()}".` : showArchived ? "Keine archivierten Projekte." : projects.length === 0 ? "Noch keine Projekte vorhanden." : "Keine Projekte in dieser Kategorie."}
               </p>
-              {!showArchived && projects.length === 0 && (
+              {!showArchived && searchTokens.length === 0 && projects.length === 0 && (
                 <Button className="mt-4" onClick={() => navigate("/projects/new")}>
                   <Plus className="mr-2 h-4 w-4" />Erstes Projekt erstellen
                 </Button>
