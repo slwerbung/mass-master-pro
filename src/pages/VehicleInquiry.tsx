@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ImagePlus, X, Loader2, CheckCircle2, Plus, FileUp, Wand2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { formatPlate, isValidPlate, isPlateField } from "@/lib/licensePlate";
 
 // Public-facing form for customers to request vehicle lettering. Submits
 // via the submit-vehicle-request edge function, which:
@@ -95,14 +96,14 @@ const VehicleInquiry = () => {
     // project_title in HERO, so the project would otherwise show up
     // with an empty name. We match the field by key OR label so a
     // rename in admin doesn't break the rule.
-    const kennzeichenField = fieldConfigs.find(f => {
-      const k = f.field_key.toLowerCase();
-      const l = (f.field_label || "").toLowerCase();
-      return k.includes("kennzeichen") || k.includes("nummernschild") ||
-             l.includes("kennzeichen") || l.includes("nummernschild");
-    });
-    if (kennzeichenField && !(fieldValues[kennzeichenField.field_key] || "").trim()) {
-      e[`field-${kennzeichenField.field_key}`] = `Bitte Kennzeichen eingeben`;
+    const kennzeichenField = fieldConfigs.find(f => isPlateField(f.field_key, f.field_label));
+    if (kennzeichenField) {
+      const plate = (fieldValues[kennzeichenField.field_key] || "").trim();
+      if (!plate) {
+        e[`field-${kennzeichenField.field_key}`] = `Bitte Kennzeichen eingeben`;
+      } else if (!isValidPlate(plate)) {
+        e[`field-${kennzeichenField.field_key}`] = `Bitte im Format XX-XX 1234 eingeben`;
+      }
     }
 
     // At least one image required - the team needs to see the vehicle
@@ -378,6 +379,7 @@ const VehicleInquiry = () => {
                   {fieldConfigs.map(f => {
                     const errKey = `field-${f.field_key}`;
                     const fieldErr = errors[errKey];
+                    const isPlate = isPlateField(f.field_key, f.field_label);
                     return (
                       <div key={f.field_key} className="space-y-2">
                         <Label htmlFor={errKey}>
@@ -386,11 +388,22 @@ const VehicleInquiry = () => {
                         <Input
                           id={errKey}
                           value={fieldValues[f.field_key] || ""}
-                          onChange={e => setFieldValues(p => ({ ...p, [f.field_key]: e.target.value }))}
+                          // The plate is normalised to "XX-XX 1234" while typing.
+                          onChange={e => {
+                            const v = isPlate ? formatPlate(e.target.value) : e.target.value;
+                            setFieldValues(p => ({ ...p, [f.field_key]: v }));
+                          }}
+                          placeholder={isPlate ? "XX-XX 1234" : undefined}
+                          inputMode={isPlate ? "text" : undefined}
+                          autoCapitalize={isPlate ? "characters" : undefined}
+                          maxLength={isPlate ? 12 : undefined}
                           required={f.is_required}
                           aria-invalid={!!fieldErr}
                           className={fieldErr ? "border-red-500 focus-visible:ring-red-500" : ""}
                         />
+                        {isPlate && !fieldErr && (
+                          <p className="text-xs text-muted-foreground">Format: XX-XX 1234</p>
+                        )}
                         {fieldErr && <p className="text-sm text-red-600">{fieldErr}</p>}
                       </div>
                     );

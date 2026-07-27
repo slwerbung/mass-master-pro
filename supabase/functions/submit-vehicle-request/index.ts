@@ -240,9 +240,15 @@ async function heroCreateProjectGraphQL(apiKey: string, opts: {
       },
     },
   };
-  // project_title is optional - HERO defaults to "<project_nr> | <customer>"
-  // when empty. We only set it when we have something useful.
-  if (opts.projectTitle) projectMatch.project_title = opts.projectTitle;
+  // The project NAME in HERO is `name` — that's the field shown as the
+  // project's title in the UI. `project_title` is computed by HERO from
+  // project_nr + address ("-1849 | --, --, --") and silently ignores what we
+  // write, which is why vehicle projects used to show up unnamed. We set both:
+  // `name` is the one that actually sticks.
+  if (opts.projectTitle) {
+    projectMatch.name = opts.projectTitle;
+    projectMatch.project_title = opts.projectTitle;
+  }
   const mutation = `
     mutation CreateProject($project_match: ProjectMatchInput) {
       create_project_match(project_match: $project_match) { id project_nr }
@@ -395,16 +401,18 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
       projectMatchId = heroInternalId;
     }
 
-    // Lead API doesn't accept project_title; set it afterwards via
-    // update_project_match. We now check the response so a failure is visible
-    // in debug instead of being silently swallowed (this was why HERO project
-    // names from the vehicle form stayed empty).
+    // Lead API doesn't accept the project name; set it afterwards via
+    // update_project_match. IMPORTANT: the field that actually shows up as the
+    // project name in HERO is `name`. `project_title` is derived by HERO from
+    // project_nr + address ("-1849 | --, --, --") and ignores writes — setting
+    // only that one was why vehicle projects stayed unnamed. We write `name`
+    // and read it back to verify.
     let titleUpdate: any = null;
     if (projectMatchId && opts.projectTitle) {
       try {
         const updateMutation = `
           mutation Upd($pm: ProjectMatchInput) {
-            update_project_match(project_match: $pm) { id project_title }
+            update_project_match(project_match: $pm) { id name project_title }
           }
         `;
         const upResp = await fetch(HERO_GRAPHQL_URL, {
@@ -412,19 +420,21 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
           body: JSON.stringify({
             query: updateMutation,
-            variables: { pm: { id: projectMatchId, project_title: opts.projectTitle } },
+            variables: { pm: { id: projectMatchId, name: opts.projectTitle, project_title: opts.projectTitle } },
           }),
         });
         const upData = await upResp.json();
         if (upData.errors?.length) {
           titleUpdate = { ok: false, error: upData.errors.map((e: any) => e.message).join("; ") };
-          console.warn("project_title update returned errors", titleUpdate.error);
+          console.warn("project name update returned errors", titleUpdate.error);
         } else {
-          titleUpdate = { ok: true, title: upData?.data?.update_project_match?.project_title ?? opts.projectTitle };
+          const savedName = upData?.data?.update_project_match?.name;
+          titleUpdate = { ok: savedName === opts.projectTitle, name: savedName, wanted: opts.projectTitle };
+          if (!titleUpdate.ok) console.warn("project name not applied by HERO", titleUpdate);
         }
       } catch (e: any) {
         titleUpdate = { ok: false, error: e.message || String(e) };
-        console.warn("project_title update failed", e);
+        console.warn("project name update failed", e);
       }
     }
 
@@ -827,13 +837,14 @@ serve(async (req) => {
       }
       return "";
     };
-    // Project name in HERO = Kennzeichen + Marke + Fahrzeugbezeichnung (in that
-    // order), each looked up by label/key with common aliases so an admin
-    // rename doesn't break it. Empty parts are simply skipped.
+    // Project name in HERO = Modellbezeichnung + Kennzeichen, e.g.
+    // "VW Transporter WN-VS 1519". Each part is looked up by label/key with
+    // common aliases so an admin rename doesn't break it; empty parts are
+    // simply skipped.
     const kennzeichen = pickField("kennzeichen", "nummernschild", "kennz", "amtliches");
     const marke = pickField("hersteller", "marke", "fabrikat");
     const bezeichnung = pickField("fahrzeugbezeichnung", "bezeichnung", "modell", "model", "typ");
-    const projectTitle = [kennzeichen, marke, bezeichnung].filter(Boolean).join(" ").trim();
+    const projectTitle = [marke, bezeichnung, kennzeichen].filter(Boolean).join(" ").trim();
     debug.projectTitle = projectTitle;
     debug.titleParts = { kennzeichen, marke, bezeichnung };
     debug.fieldLabels = fieldLabels;

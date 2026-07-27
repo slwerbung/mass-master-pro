@@ -12,37 +12,36 @@ import { CompanyHeader } from "@/components/CompanyHeader";
 import { PrivacyLink } from "@/components/PrivacyLink";
 import { toast } from "sonner";
 
-// All German legal forms (Rechtsformen), including non-profits and public bodies.
+// Legal forms (Firmierungen) — the exact spellings HERO uses, so the value we
+// send in company_legal_form matches HERO's own dropdown instead of landing
+// there as an odd free-text variant. The first block is verified against the
+// values actually stored on HERO contacts; the rest follow the same short
+// notation (no explanatory parentheses, which HERO does not use).
 const LEGAL_FORMS = [
-  // Kapitalgesellschaften
+  // Verified in HERO (in order of how often they occur there)
   "GmbH",
-  "UG (haftungsbeschränkt)",
-  "AG",
-  "KGaA",
-  "SE (Europäische Gesellschaft)",
-  // Personengesellschaften
-  "GbR",
-  "OHG",
-  "KG",
-  "GmbH & Co. KG",
-  "Partnerschaftsgesellschaft (PartG)",
-  "PartG mbB",
-  // Einzelunternehmen & Freiberufler
   "Einzelunternehmen",
-  "e.K. (eingetragener Kaufmann)",
+  "GmbH & Co. KG",
+  "GbR",
+  "KG",
+  "AG",
+  "OHG",
+  "gGmbH",
+  // Further common German legal forms, same short notation
+  "UG (haftungsbeschränkt)",
+  "UG (haftungsbeschränkt) & Co. KG",
+  "AG & Co. KG",
+  "KGaA",
+  "SE",
+  "e.K.",
+  "e.V.",
+  "eG",
+  "PartG",
+  "PartG mbB",
   "Freiberufler",
-  // Genossenschaften & Vereine
-  "eG (eingetragene Genossenschaft)",
-  "e.V. (eingetragener Verein)",
-  "Verein",
-  // Stiftungen & Anstalten
   "Stiftung",
-  "rechtsfähige Stiftung",
-  "Stiftung bürgerlichen Rechts",
-  // Öffentlich
   "Körperschaft des öffentlichen Rechts",
   "Anstalt des öffentlichen Rechts",
-  // Privat
   "Privatperson",
   "Sonstige",
 ];
