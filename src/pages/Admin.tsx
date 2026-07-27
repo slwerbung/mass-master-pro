@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AutomationsTab from "@/components/admin/AutomationsTab";
 import { DropboxCard } from "@/components/admin/DropboxCard";
 import { Label } from "@/components/ui/label";
-import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle, Mail, RefreshCw } from "lucide-react";
+import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle, Mail, RefreshCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { mergeWithDefaultProjectFields, isProtectedProjectField } from "@/lib/projectFields";
@@ -179,6 +179,8 @@ const Admin = () => {
   const [passwordDialogEmployee, setPasswordDialogEmployee] = useState<any | null>(null);
   const [dialogPassword, setDialogPassword] = useState("");
   const [savingEmpPassword, setSavingEmpPassword] = useState(false);
+  // Welche Mitarbeiter haben bereits ein Supabase-Auth-Konto?
+  const [empLogins, setEmpLogins] = useState<Record<string, { hasLogin: boolean; email: string | null; isActive: boolean | null }>>({});
   const [viewSettings, setViewSettings] = useState({
     internalShowPrintFiles: true,
     customerShowPrintFiles: true,
@@ -192,6 +194,17 @@ const Admin = () => {
   const invoke = useCallback(async (action: string, params: Record<string, any> = {}) => {
     const { data, error } = await supabase.functions.invoke("admin-manage", {
       body: { adminToken, action, ...params },
+    });
+    if (error) throw new Error(data?.error || error.message || "Netzwerkfehler");
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }, [adminToken]);
+
+  // Login-Verwaltung laeuft ueber eine eigene kleine Function, damit
+  // admin-manage nicht noch groesser wird.
+  const invokeAuth = useCallback(async (action: string, params: Record<string, any> = {}) => {
+    const { data, error } = await supabase.functions.invoke("employee-auth", {
+      body: { token: adminToken, action, ...params },
     });
     if (error) throw new Error(data?.error || error.message || "Netzwerkfehler");
     if (data?.error) throw new Error(data.error);
@@ -257,7 +270,17 @@ const Admin = () => {
       setAssignments(assignRes.assignments || []);
       setProjectEmployeeAssignments(projectEmpAssignRes.assignments || []);
     } catch (e: any) { toast.error(e.message || "Fehler beim Laden"); }
-  }, [invoke]);
+    // Bewusst separat und ohne Fehlermeldung: fehlt der Login-Status, bleibt
+    // die Mitarbeiterverwaltung trotzdem voll bedienbar.
+    try {
+      const res = await invokeAuth("status");
+      const map: Record<string, { hasLogin: boolean; email: string | null; isActive: boolean | null }> = {};
+      for (const e of res?.employees || []) {
+        map[e.employeeId] = { hasLogin: !!e.hasLogin, email: e.email ?? null, isActive: e.isActive ?? null };
+      }
+      setEmpLogins(map);
+    } catch { /* ignore */ }
+  }, [invoke, invokeAuth]);
 
   const saveAdminPassword = async () => {
     if (!newAdminPassword.trim()) return;
@@ -851,12 +874,23 @@ const Admin = () => {
   const addEmployee = async () => {
     if (!newEmployeeName.trim()) return;
     try {
-      await invoke("create_employee", {
+      const email = newEmployeeEmail.trim();
+      const password = newEmployeePasswordInput.trim();
+      const res = await invoke("create_employee", {
         name: newEmployeeName.trim(),
-        password: newEmployeePasswordInput.trim() || undefined,
-        email: newEmployeeEmail.trim() || undefined,
+        password: password || undefined,
+        email: email || undefined,
         heroPartnerId: newEmployeeHeroPartner || undefined,
       });
+      // Mit E-Mail und Passwort bekommt der Mitarbeiter direkt ein richtiges
+      // Auth-Konto. Anmelden tut er sich weiterhin mit Name + Passwort.
+      if (res?.employee?.id && email && password.length >= 8) {
+        try {
+          await invokeAuth("create_login", { employeeId: res.employee.id, email, password });
+        } catch (e: any) { toast.error("Login konnte nicht angelegt werden: " + e.message); }
+      } else if (email && password && password.length < 8) {
+        toast.warning("Passwort zu kurz für einen sicheren Login (min. 8 Zeichen) – es wurde nur das alte Passwort gesetzt.");
+      }
       setNewEmployeeName(""); setNewEmployeePasswordInput(""); setNewEmployeeEmail(""); setNewEmployeeHeroPartner("");
       toast.success("Mitarbeiter erstellt"); loadAll();
     } catch (e: any) { toast.error(e.message); }
@@ -877,7 +911,12 @@ const Admin = () => {
   const saveEmployeeEmail = async () => {
     if (!emailDialogEmployee) return;
     try {
-      await invoke("set_employee_email", { employeeId: emailDialogEmployee.id, email: emailDialogValue.trim() });
+      const email = emailDialogValue.trim();
+      await invoke("set_employee_email", { employeeId: emailDialogEmployee.id, email });
+      // Besteht schon ein Auth-Konto, muss dessen Adresse mitwandern.
+      if (email && empLogins[emailDialogEmployee.id]?.hasLogin) {
+        await invokeAuth("update_login", { employeeId: emailDialogEmployee.id, email });
+      }
       toast.success("E-Mail gespeichert");
       setEmailDialogEmployee(null);
       loadAll();
@@ -895,7 +934,21 @@ const Admin = () => {
     if (!passwordDialogEmployee || !dialogPassword.trim()) return;
     setSavingEmpPassword(true);
     try {
-      await invoke("set_employee_password", { employeeId: passwordDialogEmployee.id, password: dialogPassword.trim() });
+      const emp = passwordDialogEmployee;
+      const password = dialogPassword.trim();
+      const login = empLogins[emp.id];
+      const email = (login?.email || emp.email || "").trim();
+
+      if (login?.hasLogin) {
+        // Auth-Konto vorhanden: dort ist das Passwort massgeblich.
+        await invokeAuth("update_login", { employeeId: emp.id, password });
+      } else if (email && password.length >= 8) {
+        // E-Mail hinterlegt: jetzt auf ein richtiges Auth-Konto umstellen.
+        await invokeAuth("create_login", { employeeId: emp.id, email, password });
+      } else {
+        // Ohne E-Mail bleibt es beim bisherigen Passwort-Login.
+        await invoke("set_employee_password", { employeeId: emp.id, password });
+      }
       toast.success("Passwort gespeichert");
       setPasswordDialogEmployee(null); setDialogPassword("");
       loadAll();
@@ -1001,6 +1054,8 @@ const Admin = () => {
                   )}
                   <p className="text-xs text-muted-foreground">
                     Mit hinterlegter E-Mail kann der Mitarbeiter Benachrichtigungen für die ihm zugeordneten Projekte empfangen.
+                    E-Mail plus Passwort (min. 8 Zeichen) legt zusätzlich einen sicheren Login an – angemeldet wird sich
+                    weiterhin nur mit Name und Passwort, die Adresse wird dabei nie eingegeben.
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -1009,8 +1064,10 @@ const Admin = () => {
                       <div className="flex flex-col gap-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium">{emp.name}</span>
-                          {emp.hasPassword ? (
-                            <Badge variant="default" className="text-xs"><Lock className="h-3 w-3 mr-1" />Passwort gesetzt</Badge>
+                          {empLogins[emp.id]?.hasLogin ? (
+                            <Badge variant="default" className="text-xs"><ShieldCheck className="h-3 w-3 mr-1" />Sicherer Login</Badge>
+                          ) : emp.hasPassword ? (
+                            <Badge variant="secondary" className="text-xs"><Lock className="h-3 w-3 mr-1" />Passwort gesetzt</Badge>
                           ) : (
                             <Badge variant="secondary" className="text-xs">Kein Passwort</Badge>
                           )}
@@ -1044,7 +1101,7 @@ const Admin = () => {
                       <div className="flex gap-1 shrink-0">
                         <Button variant="ghost" size="sm" onClick={() => openEmailDialog(emp)} title="E-Mail setzen/ändern"><Mail className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="sm" onClick={() => openPasswordDialog(emp)} title="Passwort setzen/ändern"><KeyRound className="h-4 w-4" /></Button>
-                        {emp.hasPassword && (
+                        {emp.hasPassword && !empLogins[emp.id]?.hasLogin && (
                           <AlertDialog>
                             <AlertDialogTrigger asChild>
                               <Button variant="ghost" size="sm" title="Passwort löschen"><Lock className="h-4 w-4 text-amber-500" /></Button>
@@ -2095,6 +2152,13 @@ const Admin = () => {
             <Label htmlFor="emp-dialog-pw">Neues Passwort</Label>
             <Input id="emp-dialog-pw" type="password" value={dialogPassword} onChange={(e) => setDialogPassword(e.target.value)}
               placeholder="Passwort eingeben" autoFocus onKeyDown={(e) => e.key === "Enter" && saveEmployeePassword()} />
+            <p className="text-xs text-muted-foreground">
+              {passwordDialogEmployee && empLogins[passwordDialogEmployee.id]?.hasLogin
+                ? "Gilt für den sicheren Login. Angemeldet wird sich weiterhin mit Name + Passwort."
+                : passwordDialogEmployee?.email
+                  ? "Ab 8 Zeichen wird daraus ein sicherer Login (Supabase Auth). Am Anmeldebildschirm ändert sich nichts."
+                  : "Für einen sicheren Login zuerst eine E-Mail-Adresse hinterlegen. Sie wird nur intern verwendet, nicht beim Anmelden eingegeben."}
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPasswordDialogEmployee(null)}>Abbrechen</Button>

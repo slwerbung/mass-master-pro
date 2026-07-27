@@ -31,6 +31,12 @@ export function setSession(session: Session) {
 
 export function clearSession() {
   localStorage.removeItem(SESSION_KEY);
+  // Mitarbeiter haben zusaetzlich eine echte Supabase-Session. Beim Abmelden
+  // muss auch die weg, sonst bleibt der Browser als `authenticated` angemeldet.
+  // Bewusst ohne await: die Abmeldung darf die Navigation nicht aufhalten.
+  void import("@/integrations/supabase/client")
+    .then(({ supabase }) => supabase.auth.signOut())
+    .catch(() => {});
 }
 
 export function hasRoleToken(session: Session | null) {

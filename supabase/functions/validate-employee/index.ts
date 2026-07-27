@@ -21,6 +21,16 @@ Deno.serve(async (req) => {
     const { data: employee } = await supabase.from("employees").select("id, name, password_hash").eq("id", employeeId).maybeSingle();
     if (!employee) return json({ valid: false }, 200);
 
+    // Existiert bereits ein Supabase-Auth-Account, ist dieser massgeblich:
+    // der Login laeuft dann ueber employee-auth. Der alte bcrypt-Pfad wird
+    // gesperrt, damit ein Konto nicht zwei gueltige Passwoerter hat.
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("employee_id", employeeId)
+      .maybeSingle();
+    if (profile) return json({ valid: false, requiresPassword: true, useAuthAccount: true });
+
     // Individual password model: check employee's own password_hash
     if (employee.password_hash) {
       if (!password) return json({ valid: false, requiresPassword: true });

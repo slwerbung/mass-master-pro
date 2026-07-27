@@ -128,6 +128,7 @@ const Auth = () => {
         }
       } else if (data?.token) {
         resetRateLimit();
+        await supabase.auth.signOut().catch(() => {});
         setSession({ role: "admin", id: "admin", name: "Admin", authToken: data.token, expiresAt: data.expiresAt });
         setLoginCache("admin", data.token, "admin");
         toast.success("Als Admin angemeldet");
@@ -135,6 +136,17 @@ const Auth = () => {
       }
     } catch { toast.error("Verbindungsfehler"); }
     setLoading(false);
+  };
+
+  // Gemeinsamer Abschluss beider Mitarbeiter-Login-Wege.
+  const finishEmployeeLogin = async (emp: { id: string; name: string }, token: string, expiresAt?: string) => {
+    resetRateLimit();
+    const prev = getSession();
+    if (prev?.id && prev.id !== emp.id) await indexedDBStorage.clearAll();
+    setSession({ role: "employee", id: emp.id, name: emp.name, authToken: token, expiresAt });
+    setLoginCache("employee", token, emp.id);
+    toast.success(`Angemeldet als ${emp.name}`);
+    navigate(getPostLoginTarget("/projects"));
   };
 
   const handleEmployeeSelect = async (emp: { id: string; name: string }) => {
@@ -151,13 +163,8 @@ const Auth = () => {
       if (data?.requiresPassword) {
         setSelectedEmployee(emp);
       } else if (data?.valid && data?.token) {
-        resetRateLimit();
-        const prev = getSession();
-        if (prev?.id && prev.id !== emp.id) await indexedDBStorage.clearAll();
-        setSession({ role: "employee", id: emp.id, name: emp.name, authToken: data.token, expiresAt: data.expiresAt });
-        setLoginCache("employee", data.token, emp.id);
-        toast.success(`Angemeldet als ${emp.name}`);
-        navigate(getPostLoginTarget("/projects"));
+        await supabase.auth.signOut().catch(() => {});
+        await finishEmployeeLogin(emp, data.token, data.expiresAt);
       } else {
         toast.error("Login fehlgeschlagen");
       }
@@ -178,16 +185,32 @@ const Auth = () => {
     }
     setLoading(true);
     try {
+      // Zuerst Supabase Auth. Fuer den Mitarbeiter sieht der Login gleich aus –
+      // Name waehlen, Passwort eingeben. Die E-Mail des Auth-Kontos wird
+      // serverseitig aufgeloest und nie eingegeben.
+      const authRes = await supabase.functions.invoke("employee-auth", {
+        body: { action: "login", employeeId: selectedEmployee.id, password: employeePassword },
+      });
+      const authData = authRes.data as any;
+      if (!authRes.error && authData?.valid && authData?.token) {
+        if (authData.session?.access_token && authData.session?.refresh_token) {
+          await supabase.auth.setSession({
+            access_token: authData.session.access_token,
+            refresh_token: authData.session.refresh_token,
+          });
+        }
+        await finishEmployeeLogin(selectedEmployee, authData.token, authData.expiresAt);
+        return;
+      }
+
+      // Kein Auth-Konto (oder falsches Passwort): alter bcrypt-Weg. Fuer bereits
+      // migrierte Mitarbeiter liefert validate-employee bewusst valid:false,
+      // damit es nicht zwei gueltige Passwoerter gibt.
       const { data, error } = await supabase.functions.invoke("validate-employee", { body: { employeeId: selectedEmployee.id, password: employeePassword } });
       if (error) { toast.error("Verbindungsfehler"); }
       else if (data?.valid && data?.token) {
-        resetRateLimit();
-        const prev = getSession();
-        if (prev?.id && prev.id !== selectedEmployee.id) await indexedDBStorage.clearAll();
-        setSession({ role: "employee", id: selectedEmployee.id, name: selectedEmployee.name, authToken: data.token, expiresAt: data.expiresAt });
-        setLoginCache("employee", data.token, selectedEmployee.id);
-        toast.success(`Angemeldet als ${selectedEmployee.name}`);
-        navigate(getPostLoginTarget("/projects"));
+        await supabase.auth.signOut().catch(() => {});
+        await finishEmployeeLogin(selectedEmployee, data.token, data.expiresAt);
       } else {
         recordFailedAttempt();
         const newRl = checkRateLimit();
@@ -235,6 +258,7 @@ const Auth = () => {
         return;
       }
       resetRateLimit();
+      await supabase.auth.signOut().catch(() => {});
       setSession({
         role: "customer",
         id: data.customer.id,
