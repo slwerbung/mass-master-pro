@@ -21,15 +21,24 @@ Deno.serve(async (req) => {
     const { data: employee } = await supabase.from("employees").select("id, name, password_hash").eq("id", employeeId).maybeSingle();
     if (!employee) return json({ valid: false }, 200);
 
-    // Existiert bereits ein Supabase-Auth-Account, ist dieser massgeblich:
-    // der Login laeuft dann ueber employee-auth. Der alte bcrypt-Pfad wird
-    // gesperrt, damit ein Konto nicht zwei gueltige Passwoerter hat.
+    // Dieser Weg bleibt bewusst erhalten, auch wenn der Mitarbeiter laengst
+    // ein Supabase-Auth-Konto hat: Die App ist eine PWA, ein Browser kann also
+    // noch eine aeltere, gecachte Version ausliefern, die employee-auth gar
+    // nicht kennt. Wuerde hier abgelehnt, koennte sich derjenige bis zum
+    // naechsten Update nicht anmelden.
+    //
+    // Zwei Passwoerter entstehen dadurch nicht: employee-auth schreibt jede
+    // Passwortaenderung auch als bcrypt-Hash nach employees zurueck, und die
+    // Konten wurden mit genau diesen Hashes angelegt.
+    //
+    // Wenn ein Auth-Konto existiert, ist ein Passwort in jedem Fall Pflicht --
+    // sonst koennte ein geleerter password_hash den passwortlosen Login oeffnen.
     const { data: profile } = await supabase
       .from("profiles")
       .select("id")
       .eq("employee_id", employeeId)
       .maybeSingle();
-    if (profile) return json({ valid: false, requiresPassword: true, useAuthAccount: true });
+    if (profile && !employee.password_hash) return json({ valid: false, requiresPassword: true });
 
     // Individual password model: check employee's own password_hash
     if (employee.password_hash) {

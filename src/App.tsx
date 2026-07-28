@@ -5,7 +5,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { getSession } from "@/lib/session";
+import { getSession, clearSession } from "@/lib/session";
+import { toast } from "sonner";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
 import { startHeroUploadWorker } from "@/lib/heroUploadWorker";
 import { supabase } from "@/integrations/supabase/client";
@@ -83,6 +84,25 @@ const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; childre
 
   const [validated, setValidated] = useState<boolean | null>(getInitialState);
 
+  // Betriebsdaten sind nur noch mit echter Supabase-Session lesbar. Fehlt sie
+  // – etwa weil der Browser noch eine aeltere, gecachte App-Version geladen
+  // hatte, die den neuen Login-Weg nicht kennt – waere die Ansicht einfach
+  // leer. Dann lieber sauber zurueck zum Login mit klarer Ansage.
+  // Admin ist ausgenommen: dieser Zugang laeuft weiterhin rein ueber Passwort
+  // und Edge Functions, ohne Supabase-Konto.
+  const [supabaseSessionMissing, setSupabaseSessionMissing] = useState(false);
+  useEffect(() => {
+    if (!session || (session.role !== "employee" && session.role !== "customer")) return;
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted || data.session) return;
+      clearSession();
+      toast.error("Bitte einmal neu anmelden – die Sitzung ist nicht mehr vollständig.");
+      setSupabaseSessionMissing(true);
+    });
+    return () => { mounted = false; };
+  }, [session?.role, session?.id]);
+
   useEffect(() => {
     // Only run async validation if cache missed (validated === null)
     if (validated !== null) return;
@@ -105,6 +125,7 @@ const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; childre
     return () => { mounted = false; };
   }, [validated, session?.role, session?.authToken, session?.id]);
 
+  if (supabaseSessionMissing) return <Navigate to="/" replace />;
   if (validated === null) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Sitzung wird geprüft...</div>;
   if (!validated) {
     // Preserve the path + search the user was trying to reach so we can

@@ -18,7 +18,26 @@ Kunden können Projekte online einsehen und freigeben.
 - `customer` – Kundenansicht, Freigaben, Feedback
 - `guest` – Direktzugang per Projekt-Link (nutzt separaten `guest_token`)
 
-## Auth-Modell (Stand Batch A+B, April 2026)
+## Auth-Modell (Stand Juli 2026 – Supabase Auth, Phase 1+2)
+- Mitarbeiter und Kunden haben zusätzlich ein **echtes Supabase-Auth-Konto**
+  und bekommen beim Anmelden eine Supabase-Session. Der Login sieht unverändert
+  aus: Mitarbeiter wählen ihren Namen und tippen ihr Passwort, Kunden tippen
+  nur ihren Namen. Die E-Mail-Adresse ist reine Technik (aus `profiles`
+  aufgelöst), sie wird nie eingegeben.
+- `public.profiles` verbindet `auth.users` mit `employees` bzw. `customers`.
+  Rollen: `admin`, `mitarbeiter`, `kunde`.
+- Policies: `is_staff()` → Vollzugriff auf Betriebsdaten;
+  `current_customer_id()` / `has_customer_project()` / `has_customer_location()`
+  → Kunde sieht nur seine zugewiesenen Projekte.
+- **Der Anon-Key darf keine Betriebsdaten mehr lesen oder schreiben.** Offen
+  bleiben nur `employees_public` (View für die Login-Liste) und
+  `vehicle_field_config` (SELECT, für `/fahrzeug-anfrage`).
+- Das HMAC-Token-System bleibt daneben bestehen; alle Edge Functions prüfen
+  weiterhin dieses Token. `employee-auth`/`validate-customer` stellen beides aus.
+- Admin läuft weiterhin rein über Passwort + Edge Functions, ohne Auth-Konto.
+- Details: `docs/auth-rollout.md`, `docs/phase2-rls.md`.
+
+## Auth-Modell (Stand Batch A+B, April 2026 – Grundlage)
 - Admin, Employee und Customer loggen sich über eine Edge Function ein und
   bekommen einen **HMAC-signierten Session-Token** zurück (12 h gültig).
 - Signing-Secret: `SESSION_SIGNING_SECRET` in Supabase Secrets. Muss mind. 32
@@ -71,9 +90,10 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 - `update-guest-info` – Gastinfos aktualisieren
 - `hero-integration` – HERO-Software GraphQL-Gateway, verlangt echten Token
 
-## Offene Baustellen (Batch C – separate Session)
-1. Anon-RLS auf `SELECT` beschränken, Writes nur noch über Edge Functions
-2. Bucket privat + Signed URLs via Edge Function
+## Offene Baustellen
+1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)
+2. Bucket `project-files` privat + Signed URLs (Phase 3, noch offen –
+   der Bucket ist weiterhin public, Dateien sind bei bekanntem Pfad abrufbar)
 3. Konflikt-Sync: Location-Level-Timestamps oder Operations-Queue statt
    last-write-wins auf Projekt-Ebene
 

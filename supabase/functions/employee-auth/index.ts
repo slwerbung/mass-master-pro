@@ -17,6 +17,7 @@
 // closing the wide-open anon policies in phase 2.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import bcrypt from "https://esm.sh/bcryptjs@3.0.2";
 import { createSessionToken, getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 
 const corsHeaders = {
@@ -84,8 +85,29 @@ Deno.serve(async (req) => {
         Deno.env.get("SUPABASE_ANON_KEY")!,
         { auth: { autoRefreshToken: false, persistSession: false } },
       );
-      const { data: signIn, error: signInErr } = await anon.auth.signInWithPassword({ email, password });
-      if (signInErr || !signIn?.session) return json({ valid: false, error: "Falsches Passwort" }, 401);
+      let { data: signIn, error: signInErr } = await anon.auth.signInWithPassword({ email, password });
+
+      // Sicherheitsnetz fuer die Migration: Die Auth-Konten wurden mit den
+      // bestehenden bcrypt-Hashes der employees-Tabelle angelegt, damit
+      // niemand sein Passwort aendern muss. Sollte ein Hash wider Erwarten
+      // nicht akzeptiert werden, pruefen wir hier gegen den alten Hash und
+      // reparieren das Konto still. So kann sich niemand aussperren.
+      if (signInErr || !signIn?.session) {
+        const { data: legacy } = await sb
+          .from("employees")
+          .select("password_hash")
+          .eq("id", employeeId)
+          .maybeSingle();
+        const legacyOk = legacy?.password_hash
+          ? bcrypt.compareSync(password, legacy.password_hash as string)
+          : false;
+        if (!legacyOk) return json({ valid: false, error: "Falsches Passwort" }, 401);
+
+        const { error: repairErr } = await sb.auth.admin.updateUserById(profile.id as string, { password });
+        if (repairErr) return json({ valid: false, error: "Falsches Passwort" }, 401);
+        ({ data: signIn, error: signInErr } = await anon.auth.signInWithPassword({ email, password }));
+        if (signInErr || !signIn?.session) return json({ valid: false, error: "Falsches Passwort" }, 401);
+      }
 
       // Zusaetzlich das bestehende HMAC-Token ausstellen: alle Edge Functions
       // erwarten es weiterhin. So aendert sich fuer den Rest der App nichts.
@@ -157,7 +179,11 @@ Deno.serve(async (req) => {
 
       // Dieselbe Adresse auf dem employees-Datensatz spiegeln: dort holt sie
       // send-notification fuer den Empfaenger "zugeordneter Mitarbeiter".
-      await sb.from("employees").update({ email }).eq("id", employeeId);
+      // Und denselben Passwort-Hash, damit der alte Login-Weg (aeltere, noch
+      // gecachte App-Version im Browser) dasselbe Passwort akzeptiert.
+      await sb.from("employees")
+        .update({ email, password_hash: bcrypt.hashSync(password, 10) })
+        .eq("id", employeeId);
 
       return json({ success: true, userId: created.user.id, name: emp.name, role });
     }
@@ -181,6 +207,10 @@ Deno.serve(async (req) => {
       if (body.password != null && String(body.password)) {
         if (String(body.password).length < 8) return json({ error: "Passwort muss mindestens 8 Zeichen haben" }, 400);
         attrs.password = String(body.password);
+        // Alten Hash mitziehen, damit beide Login-Wege dasselbe Passwort haben.
+        await sb.from("employees")
+          .update({ password_hash: bcrypt.hashSync(String(body.password), 10) })
+          .eq("id", employeeId);
       }
       if (Object.keys(attrs).length > 0) {
         const { error } = await sb.auth.admin.updateUserById(profile.id as string, attrs as any);
