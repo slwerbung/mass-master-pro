@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { getSession, setSession } from "@/lib/session";
+import { getSession, setSession, applySupabaseSession } from "@/lib/session";
 
 const isRealCustomerId = (value?: string | null) => !!value && !String(value).startsWith("guest:");
 
@@ -44,6 +44,7 @@ const GuestProject = () => {
           return;
         }
         localStorage.removeItem("guest_token");
+        await applySupabaseSession(data.session);
         setSession({
           role: "customer",
           id: data.customer.id,

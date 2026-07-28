@@ -282,7 +282,11 @@ const VehicleDetail = () => {
       try {
         const heroProjectId = getHeroProjectMatchId(projectLike);
         await supabase.functions.invoke("run-automations", {
-          body: { trigger_type: "vehicle_measured_uploaded", context: { projectId, heroProjectId } },
+          body: {
+            trigger_type: "vehicle_measured_uploaded",
+            context: { projectId, heroProjectId },
+            token: getSession()?.authToken,
+          },
         });
       } catch (autoErr) {
         console.warn("vehicle_measured_uploaded automation dispatch failed:", autoErr);

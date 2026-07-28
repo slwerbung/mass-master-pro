@@ -42,7 +42,9 @@ export async function loadDropboxSettings(supabase: SupabaseClient): Promise<Dro
 // ── Kundenordner-Erkennung ("Intelligenz") ────────────────────────────
 // Diäkritika entfernen (Ä→A, ü→u …), damit Buckets & Vergleiche stabil sind.
 export function stripDiacritics(s: string): string {
-  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+  // Kombinierende Akzente (U+0300-U+036F) explizit als Escape, damit die
+  // Klasse nicht von unsichtbaren Zeichen im Quelltext abhaengt.
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
 // Alphabetischer Unterordner (A, B, C … / "0-9" / "#") aus dem Kundennamen.

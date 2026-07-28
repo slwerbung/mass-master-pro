@@ -12,7 +12,7 @@ import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { toast } from "sonner";
-import { getSession, clearSession } from "@/lib/session";
+import { getSession, clearSession, applySupabaseSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { mergeWithDefaultProjectFields } from "@/lib/projectFields";
 import LocationInfoFields from "@/components/LocationInfoFields";
@@ -200,6 +200,9 @@ const CustomerView = () => {
       const { data, error } = await supabase.functions.invoke("ensure-customer-assignment", {
         body: { projectId, customerName: session.name },
       });
+      // Stellt sicher, dass auch dieser Einstieg eine echte Supabase-Session
+      // hat -- sonst liefe die Ansicht weiter auf dem oeffentlichen Anon-Key.
+      if (!error && data?.success) await applySupabaseSession(data.session);
       return !error && !!data?.success;
     } catch {
       return false;

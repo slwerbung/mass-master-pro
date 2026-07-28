@@ -29,6 +29,24 @@ export function setSession(session: Session) {
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 }
 
+/**
+ * Übernimmt die vom Server ausgestellte Supabase-Session in den Browser.
+ * Für Mitarbeiter und Kunden gleichermaßen: ohne sie läuft jede Abfrage
+ * weiterhin über den öffentlichen Anon-Key. Fehlt die Session (ältere
+ * Function-Version, Netzwerkproblem), passiert nichts – der Login gilt
+ * trotzdem, die Ansicht bleibt bedienbar.
+ */
+export async function applySupabaseSession(session: unknown) {
+  const s = session as { access_token?: string; refresh_token?: string } | null | undefined;
+  if (!s?.access_token || !s?.refresh_token) return;
+  try {
+    const { supabase } = await import("@/integrations/supabase/client");
+    await supabase.auth.setSession({ access_token: s.access_token, refresh_token: s.refresh_token });
+  } catch {
+    /* Ansicht funktioniert auch ohne */
+  }
+}
+
 export function clearSession() {
   localStorage.removeItem(SESSION_KEY);
   // Mitarbeiter haben zusaetzlich eine echte Supabase-Session. Beim Abmelden

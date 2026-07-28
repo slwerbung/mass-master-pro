@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Users } from "lucide-react";
 import { toast } from "sonner";
-import { setSession, getSession } from "@/lib/session";
+import { setSession, getSession, applySupabaseSession } from "@/lib/session";
 import { CompanyHeader } from "@/components/CompanyHeader";
 
 const SESSION_CACHE_KEY = "session_validation_cache";
@@ -53,6 +53,7 @@ const CustomerLogin = () => {
         return;
       }
 
+      await applySupabaseSession(data.session);
       setSession({
         role: "customer",
         id: data.customer.id,

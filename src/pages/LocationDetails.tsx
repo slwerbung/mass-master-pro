@@ -307,6 +307,7 @@ const LocationDetails = () => {
             body: {
               trigger_type: "first_location_created",
               context: { projectId: project.id, heroProjectId, actingEmployeeId },
+              token: sess?.authToken,
             },
           }).catch(() => { /* best-effort, darf den Speichern-Flow nie blockieren */ });
         }

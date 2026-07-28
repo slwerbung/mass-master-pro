@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createSessionToken, getSessionSecret } from "../_shared/session.ts";
+import { issueCustomerSession } from "../_shared/customerSession.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -65,11 +66,16 @@ Deno.serve(async (req) => {
       { role: "customer", userId: customer.id, exp },
       getSessionSecret()
     );
+    // Zusaetzlich eine echte Supabase-Session, damit die Kundenansicht nicht
+    // mehr auf dem Anon-Key laeuft. Fuer den Kunden aendert sich nichts.
+    const session = await issueCustomerSession(supabase, customer.id, customer.name);
+
     return json({
       valid: true,
       token,
       expiresAt: new Date(exp * 1000).toISOString(),
       customer: { id: customer.id, name: customer.name },
+      session,
     });
   } catch {
     return json({ valid: false, error: "Server error" }, 500);

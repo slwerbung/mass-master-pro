@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Shield, User, Users, ArrowLeft, Lock, Car, UserPlus } from "lucide-react";
 import { toast } from "sonner";
-import { setSession, getSession } from "@/lib/session";
+import { setSession, getSession, applySupabaseSession } from "@/lib/session";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
@@ -259,6 +259,7 @@ const Auth = () => {
       }
       resetRateLimit();
       await supabase.auth.signOut().catch(() => {});
+      await applySupabaseSession(data.session);
       setSession({
         role: "customer",
         id: data.customer.id,

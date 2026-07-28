@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createSessionToken, getSessionSecret } from "../_shared/session.ts";
+import { issueCustomerSession } from "../_shared/customerSession.ts";
 
 /**
  * Ensures a customer record + project assignment exist for a given name
@@ -92,11 +93,16 @@ Deno.serve(async (req) => {
       getSessionSecret()
     );
 
+    // Direktlink-Besucher bekommen damit dieselbe echte Supabase-Session wie
+    // ein regulaerer Kundenlogin -- und dieselben Grenzen in der Datenbank.
+    const session = await issueCustomerSession(supabase, customerId, customerDisplayName);
+
     return json({
       success: true,
       customer: { id: customerId, name: customerDisplayName },
       token,
       expiresAt: new Date(exp * 1000).toISOString(),
+      session,
     });
   } catch (e: any) {
     console.error("ensure-customer-assignment failed:", e);

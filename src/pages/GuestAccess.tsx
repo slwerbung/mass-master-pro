@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Lock } from "lucide-react";
 import { toast } from "sonner";
-import { setSession } from "@/lib/session";
+import { setSession, applySupabaseSession } from "@/lib/session";
 
 const GuestAccess = () => {
   const { projectId } = useParams();
@@ -88,6 +88,7 @@ const GuestAccess = () => {
       // Set up a full customer session - same shape as the regular
       // /kunde login. From here on the app treats this user like any
       // other logged-in customer; no more "limited guest" mode.
+      await applySupabaseSession(data.session);
       setSession({
         role: "customer",
         id: customerId,

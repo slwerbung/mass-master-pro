@@ -2,12 +2,15 @@
 //
 // Called by the client (e.g. when the first location is created) or by other
 // edge functions. Uses the service role and reads HERO config itself, so the
-// API key never leaves the server. Safe to expose: it only runs the
-// automations that an admin has configured for the given trigger + context,
-// and the context carries the project reference.
+// API key never leaves the server.
+//
+// Der Aufruf verlangt ein gueltiges Admin- oder Mitarbeiter-Token. Vorher war
+// die Function offen erreichbar: Fremde konnten damit Automationen ausloesen
+// (HERO-Statuswechsel, Mails) -- nicht dramatisch, aber unnoetig.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { dispatchAutomations } from "../_shared/automations.ts";
+import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,8 +28,15 @@ function json(data: unknown, status = 200) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { trigger_type, context } = await req.json();
+    const { trigger_type, context, token } = await req.json();
     if (!trigger_type) return json({ ok: false, error: "trigger_type fehlt" }, 400);
+
+    const payload = typeof token === "string" && token
+      ? await verifySessionToken(token, getSessionSecret())
+      : null;
+    if (!payload || (payload.role !== "admin" && payload.role !== "employee")) {
+      return json({ ok: false, error: "Unauthorized" }, 401);
+    }
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
