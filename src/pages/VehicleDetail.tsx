@@ -20,6 +20,8 @@ import { enqueueHeroUploadIfLinked, getHeroProjectMatchId } from "@/lib/heroSync
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import LocationChat, { ChatMessage } from "@/components/LocationChat";
+import { useSignedUrls } from "@/hooks/useSignedUrls";
+import { signedFileUrl } from "@/lib/storageUrl";
 
 // Which layout files can be previewed inline (PDF via pdf.js, images via <img>).
 // .ai/.eps and similar stay as a download link only.
@@ -426,9 +428,22 @@ const VehicleDetail = () => {
     }
   };
 
-  const getPublicUrl = (path: string) => {
-    const { data } = supabase.storage.from("project-files").getPublicUrl(path);
-    return data.publicUrl;
+  // Der Bucket ist privat: Bilder und Layouts brauchen einen signierten Link.
+  // Der Hook loest alle Pfade dieser Ansicht in einem Aufruf auf.
+  const { urlFor } = useSignedUrls([
+    layout?.storage_path,
+    ...images.map((i) => i.storage_path),
+    ...measuredImages.map((i: any) => i.storage_path),
+  ]);
+
+  // Zum Herunterladen: bevorzugt den bereits aufgeloesten Link nehmen, damit
+  // window.open im Klick-Kontext bleibt und nicht vom Popup-Blocker gestoppt wird.
+  const openStorageFile = async (path: string) => {
+    const ready = urlFor(path);
+    if (ready) { window.open(ready, "_blank"); return; }
+    const url = await signedFileUrl(path);
+    if (url) window.open(url, "_blank");
+    else toast.error("Datei nicht abrufbar");
   };
 
   const renderFieldValue = (config: VehicleFieldConfig, value: string, onChange: (v: string) => void) => {
@@ -543,8 +558,8 @@ const VehicleDetail = () => {
               <>
                 {(() => {
                   const kind = layoutPreviewKind(layout.file_name);
-                  const url = getPublicUrl(layout.storage_path);
-                  const thumb = images[0] ? getPublicUrl(images[0].storage_path) : undefined;
+                  const url = urlFor(layout.storage_path);
+                  const thumb = images[0] ? urlFor(images[0].storage_path) : undefined;
                   if (kind === "pdf") return <LocationApprovalMedia pdfs={[{ url, name: layout.file_name }]} annotatedUrl={thumb} />;
                   if (kind === "image") return <LocationApprovalMedia pdfs={[]} annotatedUrl={url} />;
                   return null;
@@ -556,7 +571,7 @@ const VehicleDetail = () => {
                     <span className="text-xs text-muted-foreground shrink-0">{formatDateTimeSafe(layout.uploaded_at)}</span>
                   </div>
                   <div className="flex gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => window.open(getPublicUrl(layout.storage_path), "_blank")}>
+                    <Button size="sm" variant="ghost" onClick={() => openStorageFile(layout.storage_path)}>
                       <Download className="h-4 w-4" />
                     </Button>
                     <Button size="sm" variant="ghost" className="text-destructive" onClick={deleteLayout}>
@@ -613,7 +628,7 @@ const VehicleDetail = () => {
               <div className="grid grid-cols-2 gap-3">
                 {images.map(img => (
                   <div key={img.id} className="relative group rounded-lg overflow-hidden border bg-muted">
-                    <img src={getPublicUrl(img.storage_path)} alt={img.caption || "Fahrzeugbild"} className="w-full h-40 object-cover" />
+                    <img src={urlFor(img.storage_path)} alt={img.caption || "Fahrzeugbild"} className="w-full h-40 object-cover" />
                     <div className="p-2 space-y-1">
                       {editingCaptionId === img.id ? (
                         <div className="flex gap-1">
@@ -707,7 +722,7 @@ const VehicleDetail = () => {
                 {measuredImages.map((img) => (
                   <div key={img.id} className="relative group rounded-lg overflow-hidden border">
                     <img
-                      src={getPublicUrl(img.storage_path)}
+                      src={urlFor(img.storage_path)}
                       alt={img.caption || "Bemaßtes Bild"}
                       className="w-full h-36 object-cover cursor-pointer"
                       onClick={() => navigate(`/projects/${projectId}/vehicle/measured/${img.id}/edit-image`)}

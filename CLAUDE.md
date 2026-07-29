@@ -62,11 +62,11 @@ Kunden können Projekte online einsehen und freigeben.
 - `src/pages/CustomerView.tsx` – Kundenansicht (alle Writes über customer-data mit Token)
 
 ## Bekannte Architektur-Entscheidungen
-- Storage Bucket `project-files` ist aktuell **public** (siehe Migration
-  `20260415140000_make_bucket_public.sql`). `getPublicUrl` ist hier korrekt.
-  → TODO Batch C: Bucket wieder privat + Signed URLs via neue Edge Function
-  `get-signed-url`. Bis dahin sind Storage-Pfade vorhersagbar; nicht schön,
-  aber funktionsfähig.
+- Storage Bucket `project-files` ist **privat** (Phase 3, `docs/phase3-storage.md`).
+  Dateien nur über signierte Links: `signedFileUrl()` / `signedFileUrls()` aus
+  `src/lib/storageUrl.ts`, für Listen der Hook `useSignedUrls`. **Kein
+  `getPublicUrl` mehr verwenden.** Edge Functions laden mit
+  `storage.download()` (service_role).
 - Bilder werden als **Blob** in IndexedDB gespeichert, nicht als Base64
 - Admin-Operationen gehen immer über `invoke("admin-manage", ...)` mit `adminToken`
 - Image Hash Cache (SHA-256) in localStorage verhindert Re-Uploads unveränderter Bilder
@@ -92,8 +92,10 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 
 ## Offene Baustellen
 1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)
-2. Bucket `project-files` privat + Signed URLs (Phase 3, noch offen –
-   der Bucket ist weiterhin public, Dateien sind bei bekanntem Pfad abrufbar)
+2. ~~Bucket privat + Signed URLs~~ – erledigt (Phase 3, `docs/phase3-storage.md`).
+   Offen dort: `run-automations`, `hero-dropbox-poll` und
+   `submit-vehicle-request` tragen noch die alte `aufmassPdf.ts` im Bundle –
+   beim nächsten Anfassen neu deployen.
 3. Konflikt-Sync: Location-Level-Timestamps oder Operations-Queue statt
    last-write-wins auf Projekt-Ebene
 

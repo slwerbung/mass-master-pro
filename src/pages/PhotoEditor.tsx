@@ -8,6 +8,7 @@ import { createMeasurementGroup } from "@/lib/measurement";
 import { createAreaMeasurementGroup } from "@/lib/areaMeasurement";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { supabase } from "@/integrations/supabase/client";
+import { signedFileUrl } from "@/lib/storageUrl";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers";
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import MeasurementInputDialog from "@/components/MeasurementInputDialog";
@@ -102,11 +103,16 @@ const PhotoEditor = () => {
             navigate(`/projects/${projectId}/vehicle`);
             return;
           }
-          // Convert the public URL to a data URL the Fabric canvas can
+          // Convert the signed URL to a data URL the Fabric canvas can
           // load synchronously. fetch->blob->FileReader pattern matches
           // what compressImage and other paths in the app already do.
-          const { data: pub } = supabase.storage.from("project-files").getPublicUrl(row.storage_path);
-          const resp = await fetch(pub.publicUrl);
+          const signed = await signedFileUrl(row.storage_path);
+          if (!signed) {
+            toast.error("Bemaßtes Bild nicht abrufbar");
+            navigate(`/projects/${projectId}/vehicle`);
+            return;
+          }
+          const resp = await fetch(signed);
           const blob = await resp.blob();
           const dataUrl = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();

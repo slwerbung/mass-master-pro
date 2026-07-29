@@ -108,8 +108,13 @@ export async function generateAufmassPdf(
     pdfMap.set(row.location_id, arr);
   }
 
-  const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
-  const publicUrl = (path: string) => `${supabaseUrl}/storage/v1/object/public/project-files/${path}`;
+  // Der Bucket ist privat. Diese Function laeuft mit service_role und laedt
+  // die Dateien deshalb direkt herunter, statt sich einen Link zu bauen.
+  const loadFile = async (path: string): Promise<Uint8Array | null> => {
+    const { data, error } = await supabase.storage.from("project-files").download(path);
+    if (error || !data) return null;
+    return new Uint8Array(await data.arrayBuffer());
+  };
 
   const pdfDoc = await PDFDocument.create();
   pdfDoc.setTitle(`Captfix – ${projectNumber} – Freigabe`);
@@ -177,9 +182,8 @@ export async function generateAufmassPdf(
       let prodFailed = false;
       for (const pf of prodFiles) {
         try {
-          const res = await fetch(publicUrl(pf.storage_path));
-          if (!res.ok) { prodFailed = true; continue; }
-          const bytes = new Uint8Array(await res.arrayBuffer());
+          const bytes = await loadFile(pf.storage_path);
+          if (!bytes) { prodFailed = true; continue; }
           const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
           const eps = await pdfDoc.embedPdf(src, src.getPageIndices());
           const multi = eps.length > 1;
@@ -196,9 +200,8 @@ export async function generateAufmassPdf(
       const imgPath = imagePathMap.get(loc.id);
       if (imgPath) {
         try {
-          const imgRes = await fetch(`${supabaseUrl}/storage/v1/object/public/project-files/${imgPath}`);
-          if (imgRes.ok) {
-            const imgBytes = new Uint8Array(await imgRes.arrayBuffer());
+          const imgBytes = await loadFile(imgPath);
+          if (imgBytes) {
             const fmt = detectImageType(imgBytes);
             if (fmt) photoEmbed = fmt === "jpg" ? await pdfDoc.embedJpg(imgBytes) : await pdfDoc.embedPng(imgBytes);
           }

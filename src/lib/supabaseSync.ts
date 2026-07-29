@@ -4,6 +4,7 @@ import { getSession } from "./session";
 import { Project, DetailImage, FloorPlan } from "@/types/project";
 import { finishSyncError, finishSyncSuccess, startSync } from "./syncStatus";
 import { compressImage } from "./imageCompression";
+import { signedFileUrl } from "./storageUrl";
 
 // ─── Image hash cache ────────────────────────────────────────────────────────
 // Persists to localStorage. Skips re-upload of unchanged images across sessions.
@@ -68,12 +69,8 @@ function invalidateImageCache(key: string) {
 }
 
 // ─── Storage URL helper ──────────────────────────────────────────────────────
-// Bucket is public – getPublicUrl is synchronous, no auth required.
-
-function getStorageUrl(path: string): string {
-  const { data } = supabase.storage.from("project-files").getPublicUrl(path);
-  return data.publicUrl;
-}
+// Der Bucket ist privat: Dateien gibt es nur noch ueber einen signierten,
+// zeitlich begrenzten Link (siehe lib/storageUrl.ts).
 
 // ─── Sync debounce ────────────────────────────────────────────────────────────
 // Prevents rapid sequential changes from each triggering a full sync.
@@ -310,7 +307,7 @@ async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Prom
 
 async function pathToBase64(path: string): Promise<string | null> {
   try {
-    const url = getStorageUrl(path);
+    const url = await signedFileUrl(path);
     if (!url) return null;
     const response = await fetch(url);
     if (!response.ok) return null;

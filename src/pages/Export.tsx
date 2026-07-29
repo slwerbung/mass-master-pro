@@ -10,6 +10,7 @@ import jsPDF from "jspdf";
 import JSZip from "jszip";
 import { enqueueHeroUploadIfLinked, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 import { supabase } from "@/integrations/supabase/client";
+import { signedFileUrl } from "@/lib/storageUrl";
 import {
   downloadImage,
   downloadBlob,
@@ -35,7 +36,8 @@ import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 // Public URL for a stored print file (the project-files bucket is public).
-const publicFileUrl = (path: string) => supabase.storage.from("project-files").getPublicUrl(path).data.publicUrl;
+// Bucket ist privat -> signierter Link statt oeffentlicher URL.
+const fileUrl = (path: string) => signedFileUrl(path);
 
 async function urlToDataUrl(url: string): Promise<string | null> {
   try {
@@ -358,7 +360,8 @@ const Export = () => {
       const productionPages: { src: string; label: string }[] = [];
       if (showPrintFiles && printFiles.length > 0) {
         for (const pf of printFiles) {
-          const url = publicFileUrl(pf.storage_path);
+          const url = await fileUrl(pf.storage_path);
+          if (!url) continue;
           const isPdf = /\.pdf$/i.test(pf.file_name || "") || /\.pdf$/i.test(pf.storage_path || "");
           try {
             if (isPdf) {

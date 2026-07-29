@@ -831,6 +831,13 @@ const CustomerView = () => {
       setVehicleFeedbacks(fbs || []);
       // Projektweit: freigegeben, sobald irgendein Kunde freigegeben hat.
       setVehicleApproved(((approval as any[]) || []).some((a: any) => a.approved));
+
+      // Bucket ist privat -> Layout und Bilder brauchen signierte Links.
+      const vehiclePaths = [
+        ...(layouts || []).map((l: any) => l.storage_path),
+        ...(imgs || []).map((i: any) => i.storage_path),
+      ].filter(Boolean);
+      if (vehiclePaths.length > 0) resolveSignedUrls(vehiclePaths);
     } catch (e) {
       toast.error("Fehler beim Laden der Fahrzeugdaten");
     }
@@ -984,10 +991,9 @@ const CustomerView = () => {
     return <Input value={value} onChange={e => onChange(e.target.value)} className="text-sm" />;
   };
 
-  const getVehiclePublicUrl = (path: string) => {
-    const { data } = supabase.storage.from("project-files").getPublicUrl(path);
-    return data.publicUrl;
-  };
+  // Fahrzeugdateien laufen ueber denselben signierten Cache wie die
+  // Standortbilder -- der Bucket ist privat.
+  const getVehiclePublicUrl = (path: string) => getSignedImageUrl(path);
 
   const loadCustomerUploads = async (projectId: string) => {
     const { data } = await supabase.from("customer_uploads").select("*").eq("project_id", projectId).order("created_at", { ascending: false });

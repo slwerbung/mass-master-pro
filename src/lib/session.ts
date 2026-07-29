@@ -49,6 +49,8 @@ export async function applySupabaseSession(session: unknown) {
 
 export function clearSession() {
   localStorage.removeItem(SESSION_KEY);
+  // Signierte Storage-Links gehoerten zur alten Sitzung.
+  void import("./storageUrl").then(({ clearSignedUrlCache }) => clearSignedUrlCache()).catch(() => {});
   // Mitarbeiter haben zusaetzlich eine echte Supabase-Session. Beim Abmelden
   // muss auch die weg, sonst bleibt der Browser als `authenticated` angemeldet.
   // Bewusst ohne await: die Abmeldung darf die Navigation nicht aufhalten.
