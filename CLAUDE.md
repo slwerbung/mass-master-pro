@@ -73,7 +73,7 @@ Kunden können Projekte online einsehen und freigeben.
 - Admin-Operationen gehen immer über `invoke("admin-manage", ...)` mit `adminToken`
 - Image Hash Cache (SHA-256) in localStorage verhindert Re-Uploads unveränderter Bilder
 - Sync läuft debounced (2,5 s) und batched (6er-Gruppen)
-- Kein Lovable mehr – nur Vercel + Supabase
+- Deployment läuft ausschließlich über Vercel + Supabase
 
 ## Supabase Edge Functions
 Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-System).

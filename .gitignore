@@ -23,9 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 
-# Lovable
-.lovable
-
 # Environment variables
 .env
 .env.local
