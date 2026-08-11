@@ -29,13 +29,13 @@ const corsHeaders = {
 
 const PROBO_BASE = "https://api.proboprints.com";
 
-// Hosts, von denen der Bild-Proxy laden darf. Ohne diese Liste wäre die
-// Function ein offener Proxy (SSRF): jeder mit gültiger Session könnte
-// interne Adressen über unsere Infrastruktur abfragen.
 // Base64 bläht um ein Drittel auf und die Function hat begrenzten Speicher –
 // ein Produktbild jenseits davon ist ohnehin kein Katalogbild mehr.
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
+// Hosts, von denen der Bild-Proxy laden darf. Ohne diese Liste wäre die
+// Function ein offener Proxy (SSRF): jeder mit gültiger Session könnte
+// interne Adressen über unsere Infrastruktur abfragen.
 const ALLOWED_IMAGE_HOSTS = [
   "proboprints.com",
   "probo.nl",
