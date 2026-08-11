@@ -60,6 +60,8 @@ Kunden können Projekte online einsehen und freigeben.
 - `src/pages/LocationDetails.tsx` – Standort speichern
 - `src/pages/ProjectDetail.tsx` – Projektansicht
 - `src/pages/CustomerView.tsx` – Kundenansicht (alle Writes über customer-data mit Token)
+- `src/pages/ProboCatalog.tsx` – interner Probo-Katalog-Generator, Route
+  `/probo-katalog` (unverlinkt, lazy, `docs/probo-katalog.md`)
 
 ## Bekannte Architektur-Entscheidungen
 - Storage Bucket `project-files` ist **privat** (Phase 3, `docs/phase3-storage.md`).
@@ -89,6 +91,9 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 - `send-notification` – E-Mail-Benachrichtigung via Resend
 - `update-guest-info` – Gastinfos aktualisieren
 - `hero-integration` – HERO-Software GraphQL-Gateway, verlangt echten Token
+- `probo-catalog` – Probo-Reseller-API (`list`/`detail`/`image`-Proxy) für den
+  internen Katalog-Generator, verlangt Admin- oder Employee-Token
+  (`docs/probo-katalog.md`)
 
 ## Offene Baustellen
 1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)

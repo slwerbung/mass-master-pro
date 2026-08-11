@@ -3,7 +3,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 // @ts-ignore - QueryClient export may not resolve during partial installs
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { getSession, clearSession } from "@/lib/session";
 import { toast } from "sonner";
@@ -37,6 +37,10 @@ import LabelPrint from "./pages/LabelPrint";
 import Protokoll from "./pages/Protokoll";
 import NotFound from "./pages/NotFound";
 import { MeetingRecorderProvider } from "@/components/MeetingRecorder";
+
+// Interner Probo-Katalog-Generator: bewusst lazy, damit @react-pdf/renderer
+// nicht im Haupt-Bundle landet, das alle Mitarbeiter laden.
+const ProboCatalog = lazy(() => import("./pages/ProboCatalog"));
 
 const queryClient = new QueryClient();
 
@@ -196,6 +200,25 @@ const App = () => {
           <Route path="/gestaltung" element={<Gestaltung />} />
           <Route path="/hero-aktion" element={<HeroOfferAction />} />
           <Route path="/datenschutz" element={<PrivacyPolicy />} />
+          {/* Internes Werkzeug: absichtlich nirgends verlinkt. Der Pfad steht
+              zwar im JS-Bundle, aber Seite und Edge Function verlangen eine
+              gueltige Mitarbeiter-/Admin-Sitzung. */}
+          <Route
+            path="/probo-katalog"
+            element={
+              <RoleGuard allowedRoles={["admin", "employee"]}>
+                <Suspense
+                  fallback={
+                    <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
+                      Katalog wird geladen...
+                    </div>
+                  }
+                >
+                  <ProboCatalog />
+                </Suspense>
+              </RoleGuard>
+            }
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
         </MeetingRecorderProvider>
