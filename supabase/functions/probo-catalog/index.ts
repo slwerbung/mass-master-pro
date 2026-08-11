@@ -6,13 +6,12 @@
 //     hier als Supabase-Secret `PROBO_API_TOKEN`.
 //   - Probos CDN schickt für Produktbilder keine garantiert permissiven
 //     CORS-Header. `@react-pdf/renderer` lädt Bilder client-seitig, deshalb
-//     holt die Action `image` das Bild serverseitig und gibt eine Data-URL
-//     zurück.
+//     liefert `detail` das Bild gleich als Data-URL mit.
 //
 // Aktionen (Body oder Query-Param `action`):
-//   list                  -> GET /products
-//   detail  code=<code>   -> GET /products/product/<code>
-//   image   url=<cdn-url> -> Bild-Proxy, liefert { dataUrl }
+//   list                  -> GET /products (über alle Seiten)
+//   detail  code=<code>   -> GET /products/product/<code> inkl. Bild
+//   image   url=<cdn-url> -> Bild-Proxy, liefert { dataUrl } (Rückfallebene)
 //
 // Auth: wie `hero-integration` ein echter signierter Admin- oder
 // Employee-Token. Die Route im Frontend ist nur unverlinkt, nicht privat –
@@ -107,6 +106,116 @@ async function proboGet(path: string): Promise<{ status: number; body: unknown }
     body = text;
   }
   return { status: resp.status, body };
+}
+
+/**
+ * Sucht im Antwort-Body den Weg zur nächsten Seite.
+ *
+ * Probo paginiert `/products`; ohne das kamen nur die ersten paar Produkte
+ * an. Welche Spielart genau geliefert wird, ließ sich hier nicht gegen die
+ * Doku prüfen, deshalb werden die zwei üblichen abgedeckt:
+ *   - `links.next` / `next_page_url` als fertige URL
+ *   - `meta.current_page` + `meta.last_page` (Laravel-Stil)
+ * Findet sich keins von beidem, wird `?page=N` blind weiterprobiert – die
+ * Schleife stoppt ohnehin, sobald eine Seite keine neuen Codes mehr bringt.
+ */
+function findNextPath(body: unknown, currentPage: number): string | null {
+  const record = asRecord(body);
+  const links = asRecord(record["links"]);
+
+  const rawNext =
+    (typeof links["next"] === "string" && links["next"]) ||
+    (typeof record["next_page_url"] === "string" && record["next_page_url"]) ||
+    (typeof record["next"] === "string" && record["next"]) ||
+    "";
+
+  if (rawNext) {
+    // Absolute URL auf den Pfad zurückschneiden, damit PROBO_BASE davor passt.
+    try {
+      const parsed = new URL(rawNext, PROBO_BASE);
+      return `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return null;
+    }
+  }
+
+  const meta = asRecord(record["meta"]);
+  const current = Number(meta["current_page"] ?? record["current_page"] ?? currentPage);
+  const last = Number(meta["last_page"] ?? record["last_page"] ?? NaN);
+  if (Number.isFinite(current) && Number.isFinite(last)) {
+    return current < last ? `/products?page=${current + 1}` : null;
+  }
+
+  return `/products?page=${currentPage + 1}`;
+}
+
+/** Obergrenze, damit eine kaputte Pagination nicht endlos Seiten zieht. */
+const MAX_PRODUCT_PAGES = 50;
+
+/**
+ * Holt die komplette Produktliste über alle Seiten.
+ *
+ * Abbruch, sobald eine Seite keinen einzigen neuen Produktcode mehr liefert –
+ * das fängt auch den Fall ab, dass die API einen unbekannten `page`-Parameter
+ * ignoriert und stur die erste Seite zurückgibt.
+ */
+async function fetchAllProducts(): Promise<{ products: ReturnType<typeof normalizeListEntry>[]; pages: number }> {
+  const products: ReturnType<typeof normalizeListEntry>[] = [];
+  const seen = new Set<string>();
+  let path: string | null = "/products";
+  let pages = 0;
+
+  while (path && pages < MAX_PRODUCT_PAGES) {
+    const { status, body } = await proboGet(path);
+    if (status !== 200) {
+      // Die erste Seite muss klappen; bricht eine Folgeseite weg, liefern
+      // wir lieber die bis dahin gesammelten Produkte als gar nichts.
+      if (pages === 0) throw new ProboHttpError(status, path);
+      break;
+    }
+
+    const entries = extractList(body);
+    if (pages === 0) {
+      // Einmalige Formdiagnose: damit sich in den Supabase-Logs ablesen
+      // lässt, wie Probo wirklich antwortet – die Doku ist aus der
+      // Build-Umgebung nicht erreichbar.
+      const shape = Array.isArray(body) ? "array" : Object.keys(asRecord(body)).join(",");
+      console.log(
+        `probo-catalog list: Antwortform [${shape}], ${entries.length} Eintrag/Einträge auf Seite 1` +
+        `, Felder je Eintrag [${Object.keys(entries[0] ?? {}).join(",")}]`,
+      );
+    }
+    if (!entries.length) break;
+
+    let added = 0;
+    for (const entry of entries) {
+      const product = normalizeListEntry(entry);
+      if (!product.code || seen.has(product.code)) continue;
+      seen.add(product.code);
+      products.push(product);
+      added++;
+    }
+
+    pages++;
+    if (!added) break;
+
+    path = findNextPath(body, pages);
+  }
+
+  return { products, pages };
+}
+
+/** Trägt den Statuscode, damit der Handler die richtige Meldung bauen kann. */
+class ProboHttpError extends Error {
+  status: number;
+  path: string;
+
+  constructor(status: number, path: string) {
+    super(proboErrorMessage(status, path));
+    this.name = "ProboHttpError";
+    this.status = status;
+    this.path = path;
+  }
 }
 
 /** Übersetzt Probo-Statuscodes in eine verständliche deutsche Meldung. */
@@ -297,6 +406,27 @@ function normalizeDetail(body: unknown) {
 
 // ---- Bild-Proxy --------------------------------------------------------
 
+/** Hostname nur fürs Logging – wirft nie. */
+function hostOf(raw: string): string {
+  try {
+    return new URL(raw).hostname;
+  } catch {
+    return "?";
+  }
+}
+
+/**
+ * Bild mit Sprachpriorität wählen: gewünschte Sprache -> "all" -> erstes.
+ */
+function pickImageUrl(images: { language: string; url: string }[], language: string): string | null {
+  if (!images.length) return null;
+  const wanted = images.find((image) => image.language.toLowerCase() === language.toLowerCase());
+  if (wanted) return wanted.url;
+  const generic = images.find((image) => image.language.toLowerCase() === "all");
+  if (generic) return generic.url;
+  return images[0].url;
+}
+
 function isAllowedImageUrl(raw: string): boolean {
   let parsed: URL;
   try {
@@ -387,12 +517,17 @@ Deno.serve(async (req) => {
         const cached = cacheGet("list");
         if (cached) return json({ products: cached });
 
-        const { status, body: listBody } = await proboGet("/products");
-        if (status !== 200) return json({ error: proboErrorMessage(status, "/products") }, status);
-
-        const products = extractList(listBody)
-          .map(normalizeListEntry)
-          .filter((product) => !!product.code);
+        let products: ReturnType<typeof normalizeListEntry>[];
+        try {
+          const result = await fetchAllProducts();
+          products = result.products;
+          console.log(`probo-catalog list: ${products.length} Produkte aus ${result.pages} Seite(n)`);
+        } catch (error) {
+          if (error instanceof ProboHttpError) {
+            return json({ error: error.message }, error.status);
+          }
+          throw error;
+        }
 
         if (!products.length) {
           return json({
@@ -430,14 +565,44 @@ Deno.serve(async (req) => {
         if (status !== 200) return json({ error: proboErrorMessage(status, path) }, status);
 
         const product = normalizeDetail(detailBody);
-        cacheSet(cacheKey, product);
-        return json({ product });
+
+        // Das Bild gleich hier mitliefern, statt das Frontend nochmal mit der
+        // CDN-URL zurückkommen zu lassen. Die URL stammt aus Probos eigener
+        // Antwort, die wir gerade geholt haben – sie muss also durch keine
+        // Host-Allowlist, und es ist egal, auf welchem CDN Probo seine Bilder
+        // liegen hat. Genau daran scheiterten Bilder vorher stillschweigend.
+        const language = param("language") || "de";
+        const imageUrl = pickImageUrl(product.images, language);
+        let imageDataUrl: string | null = null;
+        if (imageUrl) {
+          try {
+            imageDataUrl = (await fetchImageAsDataUrl(imageUrl)).dataUrl;
+          } catch (imageError) {
+            // Ein Produkt ohne Bild ist brauchbar, ein Abbruch nicht.
+            console.warn(
+              `probo-catalog detail ${code}: Bild fehlgeschlagen (${hostOf(imageUrl)}):`,
+              imageError instanceof Error ? imageError.message : imageError,
+            );
+          }
+        }
+        console.log(
+          `probo-catalog detail ${code}: ${product.images.length} Bild(er)` +
+          `${imageUrl ? `, Host ${hostOf(imageUrl)}` : ""}` +
+          `, eingebettet: ${imageDataUrl ? "ja" : "nein"}` +
+          `, ${product.properties.length} Eigenschaft(en)`,
+        );
+
+        const withImage = { ...product, imageDataUrl };
+        cacheSet(cacheKey, withImage);
+        return json({ product: withImage });
       }
 
       case "image": {
         const imageUrl = param("url");
         if (!imageUrl) return json({ error: "Parameter `url` fehlt." }, 400);
         if (!isAllowedImageUrl(imageUrl)) {
+          // Taucht das im Log auf, gehoert der Host in ALLOWED_IMAGE_HOSTS.
+          console.warn(`probo-catalog image: Host abgelehnt: ${hostOf(imageUrl)}`);
           return json({ error: `Bild-URL nicht erlaubt: ${imageUrl}` }, 400);
         }
         const image = await fetchImageAsDataUrl(imageUrl);
