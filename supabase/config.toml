@@ -32,3 +32,6 @@ verify_jwt = false
 
 [functions.hero-offer-action]
 verify_jwt = false
+
+[functions.probo-catalog]
+verify_jwt = false

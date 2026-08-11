@@ -52,7 +52,11 @@ export default defineConfig(() => ({
         // it out of the precache and out of the service worker's navigation
         // fallback so requests to it hit the network/CDN instead of getting
         // redirected to this app's cached index.html.
-        globIgnores: ["mister-x-live/**"],
+        // @react-pdf/renderer (~1,3 MB) gehoert nur zum internen
+        // /probo-katalog. Ohne diesen Ausschluss zoege jeder Mitarbeiter das
+        // Bundle beim Installieren mit, obwohl es niemand ausser Silas
+        // braucht. Die Seite laedt es bei Bedarf aus dem Netz nach.
+        globIgnores: ["mister-x-live/**", "assets/react-pdf.browser-*.js"],
         navigateFallbackDenylist: [/^\/mister-x-live\//],
         runtimeCaching: [
           {
