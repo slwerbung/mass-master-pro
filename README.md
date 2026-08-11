@@ -1,73 +1,61 @@
-# Welcome to your Lovable project
+# Captfix (Mass Master Pro)
 
-## Project info
+Aufmaß-App für Schilder- und Werbetechnikbetriebe. Mitarbeiter fotografieren
+Standorte, annotieren die Bilder, erzeugen PDFs; Kunden sehen ihre Projekte
+online ein und geben sie frei.
 
-**URL**: https://lovable.dev/projects/966d8f3d-1357-432b-a7db-6081b19621eb
+**Produktion:** https://mass-master-pro.vercel.app
 
-## How can I edit this code?
+## Stack
 
-There are several ways of editing your application.
+- **Frontend:** React + TypeScript + Vite + Tailwind + shadcn/ui
+- **Backend:** Supabase (Frankfurt) — Postgres, Auth, Storage, Edge Functions
+- **Hosting:** Vercel (deployt automatisch auf Push)
+- **Offline:** IndexedDB (via `idb`), Sync gegen Supabase
 
-**Use Lovable**
+## Lokal starten
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/966d8f3d-1357-432b-a7db-6081b19621eb) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+Voraussetzung: Node.js und npm.
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+npm install
+npm run dev          # Dev-Server auf Port 8080
 ```
 
-**Edit a file directly in GitHub**
+Weitere Skripte:
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```sh
+npm run build        # Produktions-Build
+npm run lint         # ESLint
+npm test             # Playwright E2E
+```
 
-**Use GitHub Codespaces**
+Die Supabase-Zugangsdaten kommen aus `.env` bzw. den Vercel-Environment-
+Variablen (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`).
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Edge Functions
 
-## What technologies are used for this project?
+Alle serverseitige Logik liegt in `supabase/functions/`. Deploy und
+Migrationen laufen über die Supabase CLI:
 
-This project is built with:
+```sh
+supabase functions deploy <name>
+supabase db push
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+Betriebsdaten sind per RLS geschlossen; der Anon-Key darf sie nicht lesen.
+Anmeldungen laufen über signierte Session-Tokens plus echte Supabase-Auth-
+Sitzungen.
 
-## How can I deploy this project?
+## Dokumentation
 
-Simply open [Lovable](https://lovable.dev/projects/966d8f3d-1357-432b-a7db-6081b19621eb) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+| Thema | Datei |
+| --- | --- |
+| Projektkontext und Konventionen | `CLAUDE.md` |
+| Auth-Rollout (Supabase Auth) | `docs/auth-rollout.md` |
+| RLS-Härtung | `docs/phase2-rls.md` |
+| Privater Storage-Bucket | `docs/phase3-storage.md` |
+| Security-Inventar | `docs/security-inventory.md` |
+| HERO-Integration | `docs/HERO_INTEGRATION.md` |
+| Probo-Produktkatalog | `docs/probo-katalog.md` |
+| Deployment | `DEPLOYMENT.md` |
