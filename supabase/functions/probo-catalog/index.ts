@@ -184,17 +184,6 @@ async function fetchAllProducts(): Promise<{
     }
 
     const entries = extractList(body);
-    if (pages === 0) {
-      // Einmalige Formdiagnose: damit sich in den Supabase-Logs ablesen
-      // lässt, wie Probo wirklich antwortet – die Doku ist aus der
-      // Build-Umgebung nicht erreichbar.
-      const shape = Array.isArray(body) ? "array" : Object.keys(asRecord(body)).join(",");
-      console.log(
-        `probo-catalog list: Antwortform [${shape}], ${entries.length} Eintrag/Einträge auf Seite 1` +
-        `, Felder je Eintrag [${Object.keys(entries[0] ?? {}).join(",")}]` +
-        `, translations: ${JSON.stringify(entries[0]?.["translations"] ?? null).slice(0, 400)}`,
-      );
-    }
     if (!entries.length) break;
 
     let added = 0;
@@ -250,12 +239,13 @@ function proboErrorMessage(status: number, path: string): string {
 
 // ---- Normalisierung ----------------------------------------------------
 //
-// Die exakte Response-Form von `GET /products` konnte beim Bau nicht gegen
-// die Doku verifiziert werden (apidocs.proboprints.com war aus der Build-
-// Umgebung nicht erreichbar). Deshalb greifen die Normalisierer bewusst
-// mehrere plausible Formen ab – Array, { data: [...] }, { products: [...] }
-// – und ziehen Felder über Kandidatenlisten. Wenn die echte Form bekannt
-// ist, kann das hier gefahrlos zusammengestrichen werden.
+// Gegen die echten Antworten gebaut (die Doku war aus der Build-Umgebung
+// nicht erreichbar). Probo liefert:
+//   Liste:  { meta, data: [{ active, active_to, replaced_by_product, code,
+//                            article_group_name, unit_code, translations }] }
+//   Detail: { active, active_to, replaced_by_product, code, translations,
+//             article_group_name, images, options }
+// Namen und Beschreibungen stecken ausschließlich in `translations`.
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -343,7 +333,7 @@ function pickTranslated(entry: Record<string, unknown>, keys: string[]): string 
   return pickString(entry, keys);
 }
 
-const NAME_KEYS = ["name", "title", "label", "display_name"];
+const NAME_KEYS = ["title", "name", "label", "display_name"];
 const DESCRIPTION_KEYS = [
   "description",
   "short_description",
@@ -353,12 +343,22 @@ const DESCRIPTION_KEYS = [
   "text",
 ];
 
+/**
+ * Probo wiederholt in `description` oft wortgleich den Titel ("Dekostoff" /
+ * "Dekostoff"). Im PDF wäre das nur eine doppelte Zeile.
+ */
+function dropIfSameAsName(name: string, description: string): string {
+  return description.trim().toLowerCase() === name.trim().toLowerCase() ? "" : description;
+}
+
 function normalizeListEntry(entry: Record<string, unknown>) {
+  const name = pickTranslated(entry, NAME_KEYS);
   return {
     code: pickString(entry, ["code", "product_code", "productCode", "slug", "id"]),
-    name: pickTranslated(entry, NAME_KEYS),
-    description: pickTranslated(entry, DESCRIPTION_KEYS),
+    name,
+    description: dropIfSameAsName(name, pickTranslated(entry, DESCRIPTION_KEYS)),
     category: pickString(entry, ["article_group_name", "category", "group", "product_group"]),
+    unit: pickString(entry, ["unit_code"]),
   };
 }
 
@@ -398,12 +398,16 @@ function normalizeImages(entry: Record<string, unknown>): { language: string; ur
 }
 
 /**
- * Zieht ein paar sprechende Materialeigenschaften aus dem Detail-Datensatz.
+ * Baut die Stichpunkte für die Produktseite.
  *
- * Probo liefert einen Optionsbaum; für den Katalog reichen zwei bis vier
- * Stichpunkte (Material, Stärke, Anwendung ...). Preise werden hier bewusst
- * **nicht** berechnet – Probo warnt selbst davor, aus gecachten Optionen
- * Preise abzuleiten. Richtpreise kommen im Frontend aus den Overrides.
+ * Wichtig: Probo liefert **keine** Materialeigenschaften. Der Detail-Datensatz
+ * besteht aus `translations`, `article_group_name`, `images` und `options` –
+ * mehr ist nicht da (aus den echten Antworten bestätigt). Was sich sinnvoll
+ * zeigen lässt, ist deshalb die Warengruppe und das, was am Produkt
+ * konfigurierbar ist.
+ *
+ * Preise werden bewusst **nicht** aus dem Optionsbaum berechnet – Probo warnt
+ * selbst davor. Richtpreise kommen im Frontend aus den Overrides.
  */
 function normalizeProperties(entry: Record<string, unknown>): { label: string; value: string }[] {
   const out: { label: string; value: string }[] = [];
@@ -419,43 +423,23 @@ function normalizeProperties(entry: Record<string, unknown>): { label: string; v
     out.push({ label: cleanLabel, value: cleanValue });
   };
 
-  // a) Flache Eigenschaften-Listen
-  for (const key of ["properties", "specifications", "specs", "attributes", "characteristics"]) {
-    const value = entry[key];
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const record = asRecord(item);
-        push(
-          pickTranslated(record, ["label", "name", "key", "title"]),
-          pickTranslated(record, ["value", "text", "description", "content"]),
-        );
-      }
-    } else if (value && typeof value === "object") {
-      for (const [label, raw] of Object.entries(asRecord(value))) {
-        if (typeof raw === "string" || typeof raw === "number") push(label, String(raw));
-      }
-    }
-  }
+  push("Warengruppe", pickString(entry, ["article_group_name"]));
 
-  // b) Optionsbaum: die ersten Optionsgruppen als "Material: A, B, C"
   const options = entry["options"];
   if (Array.isArray(options)) {
-    for (const option of options.slice(0, 6)) {
-      const record = asRecord(option);
-      const label = pickTranslated(record, ["name", "label", "title", "code"]);
-      const values = record["values"] ?? record["choices"] ?? record["items"];
-      let value = pickTranslated(record, ["value", "default", "description"]);
-      if (!value && Array.isArray(values)) {
-        value = values
-          .slice(0, 3)
-          .map((item) =>
-            typeof item === "string" ? item : pickTranslated(asRecord(item), ["name", "label", "title", "value"])
-          )
-          .filter(Boolean)
-          .join(", ");
-      }
-      push(label, value);
-    }
+    const names = options
+      .map(asRecord)
+      .filter((option) => {
+        // Die Menge ist eine Bestellangabe, keine Produkteigenschaft.
+        const code = pickString(option, ["code"]).toLowerCase();
+        const typeCode = pickString(option, ["type_code"]).toLowerCase();
+        return code !== "amount" && !typeCode.includes("amount");
+      })
+      .map((option) => pickTranslated(option, ["name", "title", "label"]))
+      .filter(Boolean);
+
+    const unique = [...new Set(names)];
+    if (unique.length) push("Konfigurierbar", unique.slice(0, 6).join(", "));
   }
 
   return out.slice(0, 4);
@@ -478,17 +462,11 @@ function normalizeDetail(body: unknown) {
     }
   }
 
-  // Einmalige Formdiagnose fürs Log: die Doku ist aus der Build-Umgebung
-  // nicht erreichbar, also wird die echte Antwort zur Referenz.
-  console.log(
-    `probo-catalog detail-Form: [${Object.keys(source).join(",")}]` +
-    `, options: ${JSON.stringify(source["options"] ?? null).slice(0, 500)}`,
-  );
-
+  const name = pickTranslated(source, NAME_KEYS);
   return {
     code: pickString(source, ["code", "product_code", "productCode", "slug", "id"]),
-    name: pickTranslated(source, NAME_KEYS),
-    description: pickTranslated(source, DESCRIPTION_KEYS),
+    name,
+    description: dropIfSameAsName(name, pickTranslated(source, DESCRIPTION_KEYS)),
     images: normalizeImages(source),
     properties: normalizeProperties(source),
   };
@@ -627,7 +605,7 @@ Deno.serve(async (req) => {
             products: [],
             warning:
               "Probo hat geantwortet, aber es ließ sich keine Produktliste erkennen. " +
-              "Response-Form in der Doku prüfen und die Normalisierung in probo-catalog anpassen.",
+              "Response-Form prüfen und die Normalisierung in probo-catalog anpassen.",
           });
         }
 

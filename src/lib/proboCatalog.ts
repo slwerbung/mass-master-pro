@@ -11,6 +11,22 @@ export interface ProboProduct {
   name: string;
   description: string;
   category: string;
+  /** Abrechnungseinheit, z. B. "m2" oder "pcs" (nur in der Liste enthalten). */
+  unit?: string;
+}
+
+/** Probos Einheiten-Kürzel lesbar machen – sie landen im Kunden-PDF. */
+const UNIT_LABELS: Record<string, string> = {
+  m2: "m²",
+  m: "laufender Meter",
+  pcs: "Stück",
+  pc: "Stück",
+  piece: "Stück",
+  set: "Set",
+};
+
+export function unitLabel(unit: string): string {
+  return UNIT_LABELS[unit.trim().toLowerCase()] ?? unit;
 }
 
 export interface ProboProductDetail {

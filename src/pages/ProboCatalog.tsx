@@ -26,6 +26,7 @@ import {
   pickImageUrl,
   runInBatches,
   toPdfCompatibleImage,
+  unitLabel,
 } from "@/lib/proboCatalog";
 import type { CatalogProduct } from "@/components/probo/CatalogDocument";
 
@@ -175,11 +176,18 @@ const ProboCatalog = () => {
             withoutImage.push(code);
           }
 
+          // Die Abrechnungseinheit steht nur am Listeneintrag, nicht am
+          // Detail – hier zusammenführen.
+          const properties = [...detail.properties];
+          if (listEntry?.unit) {
+            properties.unshift({ label: "Einheit", value: unitLabel(listEntry.unit) });
+          }
+
           collected[index] = {
             code,
             name: override.name.trim() || detail.name || listEntry?.name || code,
             description: override.note.trim() || detail.description || listEntry?.description || "",
-            properties: detail.properties,
+            properties: properties.slice(0, 4),
             imageDataUrl,
             price: override.price.trim() || undefined,
           };

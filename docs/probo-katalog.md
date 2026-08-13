@@ -81,20 +81,55 @@ supabase functions deploy probo-catalog
 # Frontend: git push -> Vercel deployed automatisch
 ```
 
-## Offener Punkt: Response-Form von `GET /products`
+## Die echte Probo-Antwort
 
-Die Probo-Doku (`apidocs.proboprints.com`) war aus der Build-Umgebung nicht
-erreichbar, die exakte Antwortstruktur von `GET /products` konnte also nicht
-gegen die Doku verifiziert werden. Die Normalisierer in der Function greifen
-deshalb mehrere plausible Formen ab — nacktes Array, `{ data: [...] }`,
-`{ products: [...] }` — und ziehen Felder über Kandidatenlisten
-(`code`/`product_code`/`slug`, `name`/`title`/`label` …).
+Die Doku (`apidocs.proboprints.com`) war aus der Build-Umgebung per
+Egress-Policy gesperrt. Die Normalisierung ist deshalb gegen die echten
+Antworten gebaut, abgelesen aus den Supabase-Function-Logs.
 
-Erkennt die Function keine Liste, liefert sie `products: []` plus eine
-`warning`, die das Frontend als Toast anzeigt. **Beim ersten echten Testlauf
-gegen die API also die Antwort ansehen und die Normalisierung in
-`normalizeListEntry` / `normalizeDetail` / `normalizeProperties` auf die
-tatsächliche Form zusammenstreichen.**
+**Liste** — `GET /products` ist paginiert: `{ meta, data }`, 20 Einträge je
+Seite, rund 29 Seiten, ~560 Produkte. Ein Eintrag:
+
+```
+active, active_to, replaced_by_product, code,
+article_group_name, unit_code, translations, created_at, updated_at
+```
+
+**Detail** — `GET /products/product/{code}`:
+
+```
+active, active_to, replaced_by_product, code,
+translations, article_group_name, images, options
+```
+
+Wichtig, weil es der Stolperstein war: **es gibt kein flaches `name` und kein
+flaches `description`.** Beides steckt in `translations`, als Objekt je
+Sprache:
+
+```json
+"translations": {
+  "de": { "title": "Dekostoff", "description": "Dekostoff" },
+  "en": { "title": "Dekostof", "description": "Deko fabric" }
+}
+```
+
+Produkte benutzen dort `title`, Optionen `name` — `pickTranslated()` deckt
+beides ab, mit Sprachreihenfolge de → en → nl. `description` wiederholt oft
+wortgleich den Titel; solche Dopplungen fliegen raus.
+
+**Bilder** liegen auf `cdn.print-uploader.com`, nicht auf einer
+Probo-Domain. Deshalb lädt `detail` das Bild selbst und gibt es als Data-URL
+mit, statt das Frontend mit der CDN-URL zurückkommen zu lassen.
+
+**Materialeigenschaften liefert Probo nicht.** Es gibt nur den Optionsbaum
+(`options`), und dessen erster Eintrag ist die Bestellmenge. Die Produktseite
+zeigt deshalb `Warengruppe` (aus `article_group_name`), `Einheit` (aus
+`unit_code` der Liste) und `Konfigurierbar` (die Namen der Optionsgruppen
+ohne die Menge). Wer mehr will, müsste die Texte selbst pflegen — dafür sind
+die Overrides im Formular da.
+
+Ausgemusterte Produkte (`active: false` oder abgelaufenes `active_to`)
+werden aussortiert; beim letzten Lauf waren das 23 von 561.
 
 ## Preise
 
