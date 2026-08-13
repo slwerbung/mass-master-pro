@@ -19,6 +19,13 @@ export interface ProboProductDetail {
   description: string;
   images: { language: string; url: string }[];
   properties: { label: string; value: string }[];
+  /**
+   * Produktbild als Data-URL, serverseitig geladen. Die Edge Function liefert
+   * es direkt mit, weil sie die CDN-URL ohnehin gerade in der Hand hat –
+   * spart einen zweiten Aufruf und ist unabhängig davon, auf welchem Host
+   * Probo seine Bilder liegen hat.
+   */
+  imageDataUrl?: string | null;
 }
 
 /** Fehler mit Statuscode, damit Aufrufer 404 (Produkt fehlt) erkennen können. */

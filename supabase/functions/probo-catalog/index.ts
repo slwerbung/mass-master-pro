@@ -6,13 +6,12 @@
 //     hier als Supabase-Secret `PROBO_API_TOKEN`.
 //   - Probos CDN schickt für Produktbilder keine garantiert permissiven
 //     CORS-Header. `@react-pdf/renderer` lädt Bilder client-seitig, deshalb
-//     holt die Action `image` das Bild serverseitig und gibt eine Data-URL
-//     zurück.
+//     liefert `detail` das Bild gleich als Data-URL mit.
 //
 // Aktionen (Body oder Query-Param `action`):
-//   list                  -> GET /products
-//   detail  code=<code>   -> GET /products/product/<code>
-//   image   url=<cdn-url> -> Bild-Proxy, liefert { dataUrl }
+//   list                  -> GET /products (über alle Seiten)
+//   detail  code=<code>   -> GET /products/product/<code> inkl. Bild
+//   image   url=<cdn-url> -> Bild-Proxy, liefert { dataUrl } (Rückfallebene)
 //
 // Auth: wie `hero-integration` ein echter signierter Admin- oder
 // Employee-Token. Die Route im Frontend ist nur unverlinkt, nicht privat –
@@ -29,14 +28,18 @@ const corsHeaders = {
 
 const PROBO_BASE = "https://api.proboprints.com";
 
-// Hosts, von denen der Bild-Proxy laden darf. Ohne diese Liste wäre die
-// Function ein offener Proxy (SSRF): jeder mit gültiger Session könnte
-// interne Adressen über unsere Infrastruktur abfragen.
 // Base64 bläht um ein Drittel auf und die Function hat begrenzten Speicher –
 // ein Produktbild jenseits davon ist ohnehin kein Katalogbild mehr.
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
+// Hosts, von denen der Bild-Proxy laden darf. Ohne diese Liste wäre die
+// Function ein offener Proxy (SSRF): jeder mit gültiger Session könnte
+// interne Adressen über unsere Infrastruktur abfragen.
 const ALLOWED_IMAGE_HOSTS = [
+  // Probo liefert Produktbilder tatsächlich über print-uploader.com aus –
+  // aus den Logs bestätigt, nicht geraten.
+  "cdn.print-uploader.com",
+  "print-uploader.com",
   "proboprints.com",
   "probo.nl",
   "probosign.com",
@@ -109,6 +112,128 @@ async function proboGet(path: string): Promise<{ status: number; body: unknown }
   return { status: resp.status, body };
 }
 
+/**
+ * Sucht im Antwort-Body den Weg zur nächsten Seite.
+ *
+ * Probo paginiert `/products`; ohne das kamen nur die ersten paar Produkte
+ * an. Welche Spielart genau geliefert wird, ließ sich hier nicht gegen die
+ * Doku prüfen, deshalb werden die zwei üblichen abgedeckt:
+ *   - `links.next` / `next_page_url` als fertige URL
+ *   - `meta.current_page` + `meta.last_page` (Laravel-Stil)
+ * Findet sich keins von beidem, wird `?page=N` blind weiterprobiert – die
+ * Schleife stoppt ohnehin, sobald eine Seite keine neuen Codes mehr bringt.
+ */
+function findNextPath(body: unknown, currentPage: number): string | null {
+  const record = asRecord(body);
+  const links = asRecord(record["links"]);
+
+  const rawNext =
+    (typeof links["next"] === "string" && links["next"]) ||
+    (typeof record["next_page_url"] === "string" && record["next_page_url"]) ||
+    (typeof record["next"] === "string" && record["next"]) ||
+    "";
+
+  if (rawNext) {
+    // Absolute URL auf den Pfad zurückschneiden, damit PROBO_BASE davor passt.
+    try {
+      const parsed = new URL(rawNext, PROBO_BASE);
+      return `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return null;
+    }
+  }
+
+  const meta = asRecord(record["meta"]);
+  const current = Number(meta["current_page"] ?? record["current_page"] ?? currentPage);
+  const last = Number(meta["last_page"] ?? record["last_page"] ?? NaN);
+  if (Number.isFinite(current) && Number.isFinite(last)) {
+    return current < last ? `/products?page=${current + 1}` : null;
+  }
+
+  return `/products?page=${currentPage + 1}`;
+}
+
+/** Obergrenze, damit eine kaputte Pagination nicht endlos Seiten zieht. */
+const MAX_PRODUCT_PAGES = 50;
+
+/**
+ * Holt die komplette Produktliste über alle Seiten.
+ *
+ * Abbruch, sobald eine Seite keinen einzigen neuen Produktcode mehr liefert –
+ * das fängt auch den Fall ab, dass die API einen unbekannten `page`-Parameter
+ * ignoriert und stur die erste Seite zurückgibt.
+ */
+async function fetchAllProducts(): Promise<{
+  products: ReturnType<typeof normalizeListEntry>[];
+  pages: number;
+  skipped: number;
+}> {
+  const products: ReturnType<typeof normalizeListEntry>[] = [];
+  const seen = new Set<string>();
+  let path: string | null = "/products";
+  let pages = 0;
+  let skipped = 0;
+
+  while (path && pages < MAX_PRODUCT_PAGES) {
+    const { status, body } = await proboGet(path);
+    if (status !== 200) {
+      // Die erste Seite muss klappen; bricht eine Folgeseite weg, liefern
+      // wir lieber die bis dahin gesammelten Produkte als gar nichts.
+      if (pages === 0) throw new ProboHttpError(status, path);
+      break;
+    }
+
+    const entries = extractList(body);
+    if (pages === 0) {
+      // Einmalige Formdiagnose: damit sich in den Supabase-Logs ablesen
+      // lässt, wie Probo wirklich antwortet – die Doku ist aus der
+      // Build-Umgebung nicht erreichbar.
+      const shape = Array.isArray(body) ? "array" : Object.keys(asRecord(body)).join(",");
+      console.log(
+        `probo-catalog list: Antwortform [${shape}], ${entries.length} Eintrag/Einträge auf Seite 1` +
+        `, Felder je Eintrag [${Object.keys(entries[0] ?? {}).join(",")}]` +
+        `, translations: ${JSON.stringify(entries[0]?.["translations"] ?? null).slice(0, 400)}`,
+      );
+    }
+    if (!entries.length) break;
+
+    let added = 0;
+    for (const entry of entries) {
+      const product = normalizeListEntry(entry);
+      if (!product.code || seen.has(product.code)) continue;
+      seen.add(product.code);
+      // Zählt auch als "gesehen", damit die Schleife nicht wegen lauter
+      // ausgemusterter Produkte vorzeitig abbricht.
+      added++;
+      if (!isActiveProduct(entry)) {
+        skipped++;
+        continue;
+      }
+      products.push(product);
+    }
+
+    pages++;
+    if (!added) break;
+
+    path = findNextPath(body, pages);
+  }
+
+  return { products, pages, skipped };
+}
+
+/** Trägt den Statuscode, damit der Handler die richtige Meldung bauen kann. */
+class ProboHttpError extends Error {
+  status: number;
+  path: string;
+
+  constructor(status: number, path: string) {
+    super(proboErrorMessage(status, path));
+    this.name = "ProboHttpError";
+    this.status = status;
+    this.path = path;
+  }
+}
+
 /** Übersetzt Probo-Statuscodes in eine verständliche deutsche Meldung. */
 function proboErrorMessage(status: number, path: string): string {
   if (status === 401 || status === 403) {
@@ -172,13 +297,86 @@ function extractList(body: unknown): Record<string, unknown>[] {
   return [];
 }
 
+/** Sprachreihenfolge für Texte und Bilder. */
+const LANGUAGE_PREFERENCE = ["de", "en", "nl", "all"];
+
+/**
+ * Holt einen Text aus dem `translations`-Block.
+ *
+ * Probo legt Name und Beschreibung nicht flach ans Produkt, sondern in
+ * `translations` – aus den Logs bestätigt. Welche Form genau, ist nicht
+ * dokumentiert erreichbar, deshalb beide üblichen:
+ *   - Liste:  [{ language: "de", name: "...", description: "..." }, ...]
+ *   - Objekt: { de: { name: "...", ... }, en: { ... } }
+ * Fällt am Ende auf ein flaches Feld am Produkt selbst zurück.
+ */
+function pickTranslated(entry: Record<string, unknown>, keys: string[]): string {
+  const translations = entry["translations"];
+  const candidates: Record<string, unknown>[] = [];
+
+  if (Array.isArray(translations)) {
+    const byLanguage = (language: string) =>
+      translations
+        .map(asRecord)
+        .find((item) => pickString(item, ["language", "lang", "locale"]).toLowerCase() === language);
+    for (const language of LANGUAGE_PREFERENCE) {
+      const hit = byLanguage(language);
+      if (hit) candidates.push(hit);
+    }
+    // Falls keine Sprache passt: einfach alle in gegebener Reihenfolge.
+    translations.map(asRecord).forEach((item) => candidates.push(item));
+  } else if (translations && typeof translations === "object") {
+    const record = asRecord(translations);
+    for (const language of LANGUAGE_PREFERENCE) {
+      const nested = record[language];
+      if (nested && typeof nested === "object") candidates.push(asRecord(nested));
+    }
+    for (const value of Object.values(record)) {
+      if (value && typeof value === "object") candidates.push(asRecord(value));
+    }
+  }
+
+  for (const candidate of candidates) {
+    const value = pickString(candidate, keys);
+    if (value) return value;
+  }
+  return pickString(entry, keys);
+}
+
+const NAME_KEYS = ["name", "title", "label", "display_name"];
+const DESCRIPTION_KEYS = [
+  "description",
+  "short_description",
+  "long_description",
+  "summary",
+  "subtitle",
+  "text",
+];
+
 function normalizeListEntry(entry: Record<string, unknown>) {
   return {
     code: pickString(entry, ["code", "product_code", "productCode", "slug", "id"]),
-    name: pickString(entry, ["name", "title", "label", "display_name"]),
-    description: pickString(entry, ["description", "short_description", "subtitle", "summary"]),
-    category: pickString(entry, ["category", "group", "product_group", "type"]),
+    name: pickTranslated(entry, NAME_KEYS),
+    description: pickTranslated(entry, DESCRIPTION_KEYS),
+    category: pickString(entry, ["article_group_name", "category", "group", "product_group"]),
   };
+}
+
+/**
+ * Abgelaufene und ersetzte Produkte gehören nicht in einen Kundenkatalog.
+ * Nur aussortieren, wenn Probo das ausdrücklich sagt – ein fehlendes Feld
+ * gilt als aktiv.
+ */
+function isActiveProduct(entry: Record<string, unknown>): boolean {
+  const active = entry["active"];
+  if (active === false || active === 0 || active === "0") return false;
+
+  const activeTo = entry["active_to"];
+  if (typeof activeTo === "string" && activeTo) {
+    const until = Date.parse(activeTo);
+    if (Number.isFinite(until) && until < Date.now()) return false;
+  }
+  return true;
 }
 
 /**
@@ -228,8 +426,8 @@ function normalizeProperties(entry: Record<string, unknown>): { label: string; v
       for (const item of value) {
         const record = asRecord(item);
         push(
-          pickString(record, ["label", "name", "key", "title"]),
-          pickString(record, ["value", "text", "description", "content"]),
+          pickTranslated(record, ["label", "name", "key", "title"]),
+          pickTranslated(record, ["value", "text", "description", "content"]),
         );
       }
     } else if (value && typeof value === "object") {
@@ -244,14 +442,14 @@ function normalizeProperties(entry: Record<string, unknown>): { label: string; v
   if (Array.isArray(options)) {
     for (const option of options.slice(0, 6)) {
       const record = asRecord(option);
-      const label = pickString(record, ["name", "label", "title", "code"]);
+      const label = pickTranslated(record, ["name", "label", "title", "code"]);
       const values = record["values"] ?? record["choices"] ?? record["items"];
-      let value = pickString(record, ["value", "default", "description"]);
+      let value = pickTranslated(record, ["value", "default", "description"]);
       if (!value && Array.isArray(values)) {
         value = values
           .slice(0, 3)
           .map((item) =>
-            typeof item === "string" ? item : pickString(asRecord(item), ["name", "label", "title", "value"])
+            typeof item === "string" ? item : pickTranslated(asRecord(item), ["name", "label", "title", "value"])
           )
           .filter(Boolean)
           .join(", ");
@@ -266,7 +464,7 @@ function normalizeProperties(entry: Record<string, unknown>): { label: string; v
 function normalizeDetail(body: unknown) {
   const record = asRecord(body);
   const looksLikeProduct = (candidate: Record<string, unknown>) =>
-    !!(candidate["name"] || candidate["code"] || candidate["images"]);
+    !!(candidate["name"] || candidate["code"] || candidate["images"] || candidate["translations"]);
 
   // Manche Endpunkte packen das Produkt in { data: {...} } / { product: {...} }
   let source = record;
@@ -280,22 +478,44 @@ function normalizeDetail(body: unknown) {
     }
   }
 
+  // Einmalige Formdiagnose fürs Log: die Doku ist aus der Build-Umgebung
+  // nicht erreichbar, also wird die echte Antwort zur Referenz.
+  console.log(
+    `probo-catalog detail-Form: [${Object.keys(source).join(",")}]` +
+    `, options: ${JSON.stringify(source["options"] ?? null).slice(0, 500)}`,
+  );
+
   return {
     code: pickString(source, ["code", "product_code", "productCode", "slug", "id"]),
-    name: pickString(source, ["name", "title", "label", "display_name"]),
-    description: pickString(source, [
-      "description",
-      "short_description",
-      "long_description",
-      "summary",
-      "subtitle",
-    ]),
+    name: pickTranslated(source, NAME_KEYS),
+    description: pickTranslated(source, DESCRIPTION_KEYS),
     images: normalizeImages(source),
     properties: normalizeProperties(source),
   };
 }
 
 // ---- Bild-Proxy --------------------------------------------------------
+
+/** Hostname nur fürs Logging – wirft nie. */
+function hostOf(raw: string): string {
+  try {
+    return new URL(raw).hostname;
+  } catch {
+    return "?";
+  }
+}
+
+/**
+ * Bild mit Sprachpriorität wählen: gewünschte Sprache -> "all" -> erstes.
+ */
+function pickImageUrl(images: { language: string; url: string }[], language: string): string | null {
+  if (!images.length) return null;
+  const wanted = images.find((image) => image.language.toLowerCase() === language.toLowerCase());
+  if (wanted) return wanted.url;
+  const generic = images.find((image) => image.language.toLowerCase() === "all");
+  if (generic) return generic.url;
+  return images[0].url;
+}
 
 function isAllowedImageUrl(raw: string): boolean {
   let parsed: URL;
@@ -387,12 +607,20 @@ Deno.serve(async (req) => {
         const cached = cacheGet("list");
         if (cached) return json({ products: cached });
 
-        const { status, body: listBody } = await proboGet("/products");
-        if (status !== 200) return json({ error: proboErrorMessage(status, "/products") }, status);
-
-        const products = extractList(listBody)
-          .map(normalizeListEntry)
-          .filter((product) => !!product.code);
+        let products: ReturnType<typeof normalizeListEntry>[];
+        try {
+          const result = await fetchAllProducts();
+          products = result.products;
+          console.log(
+            `probo-catalog list: ${products.length} Produkte aus ${result.pages} Seite(n)` +
+            `, ${result.skipped} ausgemustert`,
+          );
+        } catch (error) {
+          if (error instanceof ProboHttpError) {
+            return json({ error: error.message }, error.status);
+          }
+          throw error;
+        }
 
         if (!products.length) {
           return json({
@@ -430,14 +658,45 @@ Deno.serve(async (req) => {
         if (status !== 200) return json({ error: proboErrorMessage(status, path) }, status);
 
         const product = normalizeDetail(detailBody);
-        cacheSet(cacheKey, product);
-        return json({ product });
+
+        // Das Bild gleich hier mitliefern, statt das Frontend nochmal mit der
+        // CDN-URL zurückkommen zu lassen. Die URL stammt aus Probos eigener
+        // Antwort, die wir gerade geholt haben – sie muss also durch keine
+        // Host-Allowlist, und es ist egal, auf welchem CDN Probo seine Bilder
+        // liegen hat. Genau daran scheiterten Bilder vorher stillschweigend.
+        const language = param("language") || "de";
+        const imageUrl = pickImageUrl(product.images, language);
+        let imageDataUrl: string | null = null;
+        if (imageUrl) {
+          try {
+            imageDataUrl = (await fetchImageAsDataUrl(imageUrl)).dataUrl;
+          } catch (imageError) {
+            // Ein Produkt ohne Bild ist brauchbar, ein Abbruch nicht.
+            console.warn(
+              `probo-catalog detail ${code}: Bild fehlgeschlagen (${hostOf(imageUrl)}):`,
+              imageError instanceof Error ? imageError.message : imageError,
+            );
+          }
+        }
+        console.log(
+          `probo-catalog detail ${code}: ${product.images.length} Bild(er)` +
+          `${imageUrl ? `, Host ${hostOf(imageUrl)}` : ""}` +
+          `, eingebettet: ${imageDataUrl ? "ja" : "nein"}` +
+          `, Name "${product.name}"` +
+          `, ${product.properties.length} Eigenschaft(en)`,
+        );
+
+        const withImage = { ...product, imageDataUrl };
+        cacheSet(cacheKey, withImage);
+        return json({ product: withImage });
       }
 
       case "image": {
         const imageUrl = param("url");
         if (!imageUrl) return json({ error: "Parameter `url` fehlt." }, 400);
         if (!isAllowedImageUrl(imageUrl)) {
+          // Taucht das im Log auf, gehoert der Host in ALLOWED_IMAGE_HOSTS.
+          console.warn(`probo-catalog image: Host abgelehnt: ${hostOf(imageUrl)}`);
           return json({ error: `Bild-URL nicht erlaubt: ${imageUrl}` }, 400);
         }
         const image = await fetchImageAsDataUrl(imageUrl);

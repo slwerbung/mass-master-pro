@@ -153,11 +153,19 @@ const ProboCatalog = () => {
         try {
           const detail = await fetchProboProductDetail(code);
 
+          // Die Edge Function liefert das Bild in der Regel schon mit; der
+          // Proxy-Aufruf bleibt als Rückfallebene bestehen.
           let imageDataUrl: string | null = null;
           const imageUrl = pickImageUrl(detail.images, "de");
-          if (imageUrl) {
+          const rawImage = detail.imageDataUrl
+            ? Promise.resolve(detail.imageDataUrl)
+            : imageUrl
+              ? fetchProboImage(imageUrl)
+              : null;
+
+          if (rawImage) {
             try {
-              imageDataUrl = await toPdfCompatibleImage(await fetchProboImage(imageUrl));
+              imageDataUrl = await toPdfCompatibleImage(await rawImage);
             } catch {
               // Ein fehlendes Bild ist kein Grund, den ganzen Katalog zu
               // verlieren – die Seite entsteht dann ohne Bild.
