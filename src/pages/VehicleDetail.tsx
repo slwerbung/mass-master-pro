@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,7 +16,8 @@ import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
-import { enqueueHeroUploadIfLinked, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
+import { enqueueHeroUploadIfLinked, getHeroProjectMatchId, dataUrlToBlob } from "@/lib/heroSyncHelpers";
+import { setEditorHandoff } from "@/lib/editorHandoff";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import LocationChat, { ChatMessage } from "@/components/LocationChat";
@@ -74,7 +75,10 @@ interface FeedbackItem {
 const VehicleDetail = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const session = getSession();
+  // Guards the one-shot consumption of an image handed back from the editor.
+  const handledMeasuredRef = useRef(false);
 
   const [project, setProject] = useState<any>(null);
   const [fieldConfigs, setFieldConfigs] = useState<VehicleFieldConfig[]>([]);
@@ -249,38 +253,55 @@ const VehicleDetail = () => {
     }
   };
 
-  const handleMeasuredUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Measured/proof images go STRAIGHT into the editor (like Aufmaß): the
+  // picked/captured file is handed to the editor, which returns the annotated
+  // + original image via router state (consumed in the effect below). No more
+  // "upload first, edit later".
+  const pickMeasuredFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEditorHandoff({ imageData: String(reader.result || "") });
+      navigate(`/projects/${projectId}/editor?vehicle=true`);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Persist an image handed back from the editor: annotated + original, mirror
+  // the annotated version to HERO, fire the automation. Drawing is optional —
+  // saving without any annotation simply yields a plain proof photo (Belegbild).
+  const saveMeasuredFromEditor = async (annotated: string, original?: string) => {
     setUploadingMeasured(true);
     try {
       const id = crypto.randomUUID();
-      const path = `vehicle-measured/${projectId}/${id}`;
-      const { error: upErr } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type });
-      if (upErr) throw upErr;
+      const annBlob = dataUrlToBlob(annotated);
+      const origBlob = dataUrlToBlob(original || annotated);
+      const annPath = `vehicle-measured/${projectId}/${id}`;
+      const origPath = `vehicle-measured/${projectId}/${id}-original`;
+      const { error: annErr } = await supabase.storage.from("project-files").upload(annPath, annBlob, { contentType: "image/jpeg" });
+      if (annErr) throw annErr;
+      const { error: origErr } = await supabase.storage.from("project-files").upload(origPath, origBlob, { contentType: "image/jpeg" });
+      if (origErr) throw origErr;
       const { error: dbErr } = await supabase.from("vehicle_measured_images").insert({
-        id, project_id: projectId, storage_path: path,
+        id, project_id: projectId, storage_path: annPath, original_storage_path: origPath,
         uploaded_by: session?.name || "Mitarbeiter",
       });
       if (dbErr) throw dbErr;
 
-      // Always mirror EVERY measured image to HERO — regardless of whether it
-      // is annotated later. (Previously only the annotated version reached HERO
-      // via the editor, so un-annotated ones were never uploaded.)
       const projectLike = { id: projectId!, customFields: project?.custom_fields as Record<string, string> | undefined };
       try {
         await enqueueHeroUploadIfLinked({
           project: projectLike,
           uploadType: "vehicle_measured_image",
-          blob: file,
-          filename: `fahrzeug-bemasst-${id.slice(0, 8)}-${file.name}`,
+          blob: annBlob,
+          filename: `fahrzeug-bemasst-${id.slice(0, 8)}.jpg`,
         });
       } catch (mirrorErr) {
         console.warn("HERO mirror of measured image failed:", mirrorErr);
       }
 
-      // Fire the "measured vehicle image uploaded" automation (e.g. HERO status
-      // change). Server-side dispatch; best-effort.
       try {
         const heroProjectId = getHeroProjectMatchId(projectLike);
         await supabase.functions.invoke("run-automations", {
@@ -294,15 +315,25 @@ const VehicleDetail = () => {
         console.warn("vehicle_measured_uploaded automation dispatch failed:", autoErr);
       }
 
-      toast.success("Bild hochgeladen");
+      toast.success("Bild gespeichert");
       loadAll();
     } catch (err: any) {
-      toast.error("Upload fehlgeschlagen: " + err.message);
+      toast.error("Speichern fehlgeschlagen: " + (err?.message || "Unbekannter Fehler"));
     } finally {
       setUploadingMeasured(false);
-      if (measuredInputRef.current) measuredInputRef.current.value = "";
     }
   };
+
+  // Consume an image handed back from the editor exactly once (after the
+  // project is loaded, so the HERO link is available for mirroring).
+  useEffect(() => {
+    const st = location.state as any;
+    if (!st?.measuredImageData || handledMeasuredRef.current || isLoading) return;
+    handledMeasuredRef.current = true;
+    navigate(location.pathname, { replace: true, state: null });
+    saveMeasuredFromEditor(st.measuredImageData, st.measuredOriginalImageData);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, isLoading]);
 
   const deleteMeasuredImage = async (img: any) => {
     try {
@@ -708,14 +739,14 @@ const VehicleDetail = () => {
                   </Button>
                 )}
               </div>
-              <input ref={measuredInputRef} type="file" accept="image/*" className="hidden" onChange={handleMeasuredUpload} />
-              <input ref={measuredCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleMeasuredUpload} />
+              <input ref={measuredInputRef} type="file" accept="image/*" className="hidden" onChange={pickMeasuredFile} />
+              <input ref={measuredCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={pickMeasuredFile} />
             </div>
           </CardHeader>
           <CardContent className="p-4">
             {measuredImages.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">
-                Noch keine bemaßten Bilder. Bild hochladen, dann im Editor bemaßen.
+                Noch keine bemaßten Bilder. Foto aufnehmen oder hochladen — es öffnet direkt der Editor (Bemaßen optional).
               </p>
             ) : (
               <div className="grid grid-cols-2 gap-3">
