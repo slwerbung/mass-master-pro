@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { setEditorHandoff } from "@/lib/editorHandoff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, Maximize2, X } from "lucide-react";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import { Location } from "@/types/project";
 import { format } from "date-fns";
@@ -75,6 +75,8 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   });
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState<string | null>(null);
+  // Large-view overlay for looking at an image without opening the editor.
+  const [lightbox, setLightbox] = useState<string | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState(false);
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
   const [updatingFeedbackId, setUpdatingFeedbackId] = useState<string | null>(null);
@@ -344,6 +346,15 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
             <Pencil className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
+          {/* Always-visible "view large" (no editing). */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setLightbox(location.imageData); }}
+            className="absolute top-2 right-2 z-10 rounded-md bg-black/55 hover:bg-black/75 text-white p-1.5"
+            title="Groß ansehen (ohne bearbeiten)"
+          >
+            <Maximize2 className="h-4 w-4" />
+          </button>
         </div>
       )}
       <CardContent className="p-4 space-y-3">
@@ -486,7 +497,16 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
                   <img src={detail.imageData} alt={detail.caption || "Detailbild"}
                     className="w-full h-auto max-h-[240px] object-contain cursor-pointer"
                     onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`)} />
-                  {detail.caption && <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate">{detail.caption}</div>}
+                  {/* Always-visible "view large" (no editing). */}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setLightbox(detail.imageData); }}
+                    className="absolute bottom-1 right-1 z-10 rounded-md bg-black/55 hover:bg-black/75 text-white p-1"
+                    title="Groß ansehen (ohne bearbeiten)"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  </button>
+                  {detail.caption && <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate pr-8">{detail.caption}</div>}
                   <Button variant="ghost" size="sm" className="absolute top-0 left-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-muted/80 hover:bg-muted text-foreground rounded-none rounded-br" onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit`); }}>
                     <Pencil className="h-3 w-3" />
                   </Button>
@@ -520,6 +540,16 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
 
       {detailCameraInput}
       <input ref={pdfInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,.ai,.eps" onChange={handlePrintFileUpload} className="hidden" />
+
+      {/* Lightbox: view an image large without opening the editor */}
+      {lightbox && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="Großansicht" className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
+          <Button variant="secondary" size="icon" className="absolute top-4 right-4" onClick={() => setLightbox(null)}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
     </Card>
   );
 };
