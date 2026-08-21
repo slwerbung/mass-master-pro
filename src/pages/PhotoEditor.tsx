@@ -13,7 +13,7 @@ import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers"
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import MeasurementInputDialog from "@/components/MeasurementInputDialog";
 import AreaMeasurementDialog from "@/components/AreaMeasurementDialog";
-import { setEditorHandoff, takeEditorHandoff } from "@/lib/editorHandoff";
+import { setEditorHandoff, takeEditorHandoff, setMeasuredResult } from "@/lib/editorHandoff";
 
 type Tool = "select" | "draw" | "text" | "measure" | "area";
 
@@ -599,14 +599,13 @@ const PhotoEditor = () => {
           const floorPlanParam = searchParams.get("floorPlan");
           const vehicleParam = searchParams.get("vehicle");
 
-          // Vehicle measured image path: route back to VehicleDetail
-          // rather than LocationDetails. VehicleDetail picks the two
-          // image variants out of location.state and uploads them to
-          // Supabase Storage + vehicle_measured_images table.
+          // Vehicle measured image path: route back to VehicleDetail rather
+          // than LocationDetails. The annotated + original images are multi-MB,
+          // so we hand them over in memory (like the Aufmaß capture flow) — NOT
+          // via router state, which crashes mobile WebKit on large payloads.
           if (vehicleParam === "true") {
-            navigate(`/projects/${projectId}/vehicle`, {
-              state: { measuredImageData: dataUrl, measuredOriginalImageData: imageDataState },
-            });
+            setMeasuredResult({ annotated: dataUrl, original: imageDataState || undefined });
+            navigate(`/projects/${projectId}/vehicle`);
             return;
           }
 

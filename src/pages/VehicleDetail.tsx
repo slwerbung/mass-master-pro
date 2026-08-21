@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +18,7 @@ import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
 import { enqueueHeroUploadIfLinked, getHeroProjectMatchId, dataUrlToBlob } from "@/lib/heroSyncHelpers";
-import { setEditorHandoff } from "@/lib/editorHandoff";
+import { setEditorHandoff, takeMeasuredResult } from "@/lib/editorHandoff";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import LocationChat, { ChatMessage } from "@/components/LocationChat";
@@ -76,7 +76,6 @@ interface FeedbackItem {
 const VehicleDetail = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
   const session = getSession();
   // Guards the one-shot consumption of an image handed back from the editor.
   const handledMeasuredRef = useRef(false);
@@ -336,16 +335,23 @@ const VehicleDetail = () => {
     }
   };
 
-  // Consume an image handed back from the editor exactly once (after the
-  // project is loaded, so the HERO link is available for mirroring).
+  // Consume the image handed back from the editor via the in-memory channel
+  // (not router state — large payloads crash mobile WebKit). Read once on
+  // mount, then persist after the project is loaded so the HERO link is
+  // available for mirroring.
+  const [pendingMeasured, setPendingMeasured] = useState<{ annotated: string; original?: string } | null>(null);
   useEffect(() => {
-    const st = location.state as any;
-    if (!st?.measuredImageData || handledMeasuredRef.current || isLoading) return;
+    const r = takeMeasuredResult();
+    if (r) setPendingMeasured(r);
+  }, []);
+  useEffect(() => {
+    if (!pendingMeasured || isLoading || handledMeasuredRef.current) return;
     handledMeasuredRef.current = true;
-    navigate(location.pathname, { replace: true, state: null });
-    saveMeasuredFromEditor(st.measuredImageData, st.measuredOriginalImageData);
+    const r = pendingMeasured;
+    setPendingMeasured(null);
+    saveMeasuredFromEditor(r.annotated, r.original);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state, isLoading]);
+  }, [pendingMeasured, isLoading]);
 
   const deleteMeasuredImage = async (img: any) => {
     try {

@@ -28,3 +28,25 @@ export function takeEditorHandoff(): EditorHandoff | null {
   payload = null;
   return p;
 }
+
+// Result of a vehicle measured/proof image edit, handed from the editor back
+// to the vehicle page. Same reason as above: the annotated + original images
+// are multi-MB, so passing them via router state crashes mobile WebKit. Kept
+// in memory and consumed once by VehicleDetail.
+export interface MeasuredResult {
+  annotated: string;
+  original?: string;
+}
+
+let measured: MeasuredResult | null = null;
+
+export function setMeasuredResult(r: MeasuredResult): void {
+  measured = r;
+}
+
+/** Reads and clears the pending measured result (single consumption). */
+export function takeMeasuredResult(): MeasuredResult | null {
+  const r = measured;
+  measured = null;
+  return r;
+}
