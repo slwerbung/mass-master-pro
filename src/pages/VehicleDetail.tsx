@@ -7,7 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock, Mail, Camera } from "lucide-react";
+import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock, Mail, Camera, ChevronDown, Maximize2 } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
@@ -79,6 +80,17 @@ const VehicleDetail = () => {
   const session = getSession();
   // Guards the one-shot consumption of an image handed back from the editor.
   const handledMeasuredRef = useRef(false);
+  // Large-view overlay for the (view-only) customer photos.
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  // Collapsible state, remembered per project: the customer photos and the
+  // vehicle info are only relevant early on, so they can be folded away.
+  const readOpen = (key: string, fallback: boolean) => {
+    try { const v = localStorage.getItem(key); return v === null ? fallback : v === "1"; } catch { return fallback; }
+  };
+  const [infoOpen, setInfoOpen] = useState<boolean>(() => readOpen(`veh-info-open-${projectId}`, true));
+  const [unlabeledOpen, setUnlabeledOpen] = useState<boolean>(() => readOpen(`veh-unlabeled-open-${projectId}`, true));
+  useEffect(() => { try { localStorage.setItem(`veh-info-open-${projectId}`, infoOpen ? "1" : "0"); } catch { /* ignore */ } }, [infoOpen, projectId]);
+  useEffect(() => { try { localStorage.setItem(`veh-unlabeled-open-${projectId}`, unlabeledOpen ? "1" : "0"); } catch { /* ignore */ } }, [unlabeledOpen, projectId]);
 
   const [project, setProject] = useState<any>(null);
   const [fieldConfigs, setFieldConfigs] = useState<VehicleFieldConfig[]>([]);
@@ -618,11 +630,18 @@ const VehicleDetail = () => {
         {/* Gesprächsnotizen (Diktiergerät → Transkript → Protokoll → HERO) */}
         <MeetingNotesCard projectId={projectId!} projectNumber={project.project_number} />
 
-        {/* Vehicle Images */}
+        {/* Fahrzeugbilder (unbeschriftet, i.d.R. vom Kunden) — ansehen & einklappbar */}
+        <Collapsible open={unlabeledOpen} onOpenChange={setUnlabeledOpen}>
         <Card>
           <CardHeader className="p-4 pb-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle className="text-base">Fahrzeugbilder</CardTitle>
+              <CollapsibleTrigger asChild>
+                <button className="flex items-center gap-2 flex-1 min-w-0 text-left">
+                  <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${unlabeledOpen ? "rotate-180" : ""}`} />
+                  <CardTitle className="text-base">Fahrzeugbilder</CardTitle>
+                  <span className="text-xs text-muted-foreground">{images.length}</span>
+                </button>
+              </CollapsibleTrigger>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => imageInputRef.current?.click()} disabled={uploadingImage}>
                   <ImagePlus className="h-4 w-4 mr-1" />
@@ -638,6 +657,7 @@ const VehicleDetail = () => {
               <input ref={imageCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageUpload} />
             </div>
           </CardHeader>
+          <CollapsibleContent>
           <CardContent className="p-4">
             {images.length === 0 ? (
               <label
@@ -659,7 +679,7 @@ const VehicleDetail = () => {
               <div className="grid grid-cols-2 gap-3">
                 {images.map(img => (
                   <div key={img.id} className="relative group rounded-lg overflow-hidden border bg-muted">
-                    <img src={urlFor(img.storage_path)} alt={img.caption || "Fahrzeugbild"} className="w-full h-40 object-cover" />
+                    <img src={urlFor(img.storage_path)} alt={img.caption || "Fahrzeugbild"} className="w-full h-40 object-cover cursor-pointer" onClick={() => setLightbox(urlFor(img.storage_path))} title="Groß ansehen" />
                     <div className="p-2 space-y-1">
                       {editingCaptionId === img.id ? (
                         <div className="flex gap-1">
@@ -683,24 +703,33 @@ const VehicleDetail = () => {
               </div>
             )}
           </CardContent>
+          </CollapsibleContent>
         </Card>
+        </Collapsible>
 
-        {/* Vehicle Information */}
+        {/* Vehicle Information — einklappbar */}
         {fieldConfigs.length > 0 && (
+          <Collapsible open={infoOpen} onOpenChange={setInfoOpen}>
           <Card>
             <CardHeader className="p-4 pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Fahrzeuginformationen</CardTitle>
-                {!editingFields ? (
+              <div className="flex items-center justify-between gap-2">
+                <CollapsibleTrigger asChild>
+                  <button className="flex items-center gap-2 flex-1 min-w-0 text-left">
+                    <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${infoOpen ? "rotate-180" : ""}`} />
+                    <CardTitle className="text-base">Fahrzeuginformationen</CardTitle>
+                  </button>
+                </CollapsibleTrigger>
+                {infoOpen && (!editingFields ? (
                   <Button size="sm" variant="outline" onClick={startEditFields}><Pencil className="h-3 w-3 mr-1" /> Bearbeiten</Button>
                 ) : (
                   <div className="flex gap-2">
                     <Button size="sm" variant="ghost" onClick={() => setEditingFields(false)}>Abbrechen</Button>
                     <Button size="sm" onClick={saveFields} disabled={savingFields}>{savingFields ? "Speichert..." : "Speichern"}</Button>
                   </div>
-                )}
+                ))}
               </div>
             </CardHeader>
+            <CollapsibleContent>
             <CardContent className="p-4 space-y-3">
               {fieldConfigs.map(config => (
                 <div key={config.field_key} className="space-y-1">
@@ -720,7 +749,9 @@ const VehicleDetail = () => {
                 </div>
               ))}
             </CardContent>
+            </CollapsibleContent>
           </Card>
+          </Collapsible>
         )}
 
         {/* Bilder bemaßt */}
@@ -823,6 +854,16 @@ const VehicleDetail = () => {
           projectNumber={project.project_number}
           heroProjectId={getHeroProjectMatchId({ id: projectId, customFields: project.custom_fields as Record<string, string> | undefined })}
         />
+      )}
+
+      {/* Lightbox: view a customer photo large */}
+      {lightbox && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="Großansicht" className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
+          <Button variant="secondary" size="icon" className="absolute top-4 right-4" onClick={() => setLightbox(null)}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       )}
     </div>
   );
