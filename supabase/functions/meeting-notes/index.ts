@@ -27,15 +27,27 @@ const HERO_GRAPHQL_URL = "https://login.hero-software.de/api/external/v9/graphql
 // AI provider: prefer Groq (free tier, no card) if its key is set, else
 // OpenAI. Both expose an OpenAI-compatible /audio/transcriptions and
 // /chat/completions API, so only base URL + model + key differ.
+// Groq chat models, tried in order until one is accepted. Groq periodically
+// retires models — "llama-3.3-70b-versatile" started returning HTTP 404
+// model_not_found — so we never hard-depend on a single name. An admin can
+// pin a preferred model via the GROQ_CHAT_MODEL secret (tried first). The
+// summary keeps working even after a model is decommissioned.
+const GROQ_CHAT_MODELS: string[] = [
+  Deno.env.get("GROQ_CHAT_MODEL") || "",
+  "llama-3.1-8b-instant",
+  "openai/gpt-oss-120b",
+  "llama-3.3-70b-versatile",
+].filter((m, i, a) => m && a.indexOf(m) === i);
+
 interface AIProvider { name: string; base: string; key: string; transcribeModel: string; chatModel: string }
 function resolveProvider(): AIProvider | null {
   const groq = Deno.env.get("GROQ_API_KEY");
   if (groq) {
-    return { name: "groq", base: "https://api.groq.com/openai/v1", key: groq, transcribeModel: "whisper-large-v3", chatModel: "llama-3.3-70b-versatile" };
+    return { name: "groq", base: "https://api.groq.com/openai/v1", key: groq, transcribeModel: "whisper-large-v3", chatModel: GROQ_CHAT_MODELS[0] };
   }
   const openai = Deno.env.get("OPENAI_API_KEY");
   if (openai) {
-    return { name: "openai", base: "https://api.openai.com/v1", key: openai, transcribeModel: "whisper-1", chatModel: "gpt-4o-mini" };
+    return { name: "openai", base: "https://api.openai.com/v1", key: openai, transcribeModel: "whisper-1", chatModel: Deno.env.get("OPENAI_CHAT_MODEL") || "gpt-4o-mini" };
   }
   return null;
 }
@@ -162,23 +174,7 @@ function normalizeActionPlan(text: string): string {
   return out.join("\n").trim();
 }
 
-async function summarise(p: AIProvider, transcript: string, system: string): Promise<{ summary: string; actionPlan: string }> {
-  const resp = await fetch(`${p.base}/chat/completions`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${p.key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: p.chatModel,
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: transcript.slice(0, 50000) },
-      ],
-    }),
-  });
-  if (!resp.ok) throw new Error(`Zusammenfassung fehlgeschlagen (HTTP ${resp.status}): ${(await resp.text()).slice(0, 300)}`);
-  const data = await resp.json();
-  const content = data?.choices?.[0]?.message?.content || "{}";
+function parseSummary(content: string): { summary: string; actionPlan: string } {
   try {
     const parsed = JSON.parse(content);
     return {
@@ -188,6 +184,39 @@ async function summarise(p: AIProvider, transcript: string, system: string): Pro
   } catch {
     return { summary: content.slice(0, 4000), actionPlan: "- Keine offenen Punkte" };
   }
+}
+
+async function summarise(p: AIProvider, transcript: string, system: string): Promise<{ summary: string; actionPlan: string }> {
+  // Groq: try the model candidates in order and fall through only when the
+  // model itself is the problem (retired/unknown). OpenAI: single model.
+  const models = p.name === "groq" ? GROQ_CHAT_MODELS : [p.chatModel];
+  let lastErr = "unbekannter Fehler";
+  for (const model of models) {
+    const resp = await fetch(`${p.base}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${p.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: transcript.slice(0, 50000) },
+        ],
+      }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      return parseSummary(data?.choices?.[0]?.message?.content || "{}");
+    }
+    const errText = (await resp.text()).slice(0, 300);
+    lastErr = `HTTP ${resp.status}: ${errText}`;
+    // Only try the next model when THIS model is the issue (unknown/retired).
+    // Other failures (rate limit, auth, server) won't be fixed by swapping it.
+    const isModelProblem = resp.status === 404 || /model_not_found|does not exist|decommission|deprecat/i.test(errText);
+    if (!isModelProblem) break;
+  }
+  throw new Error(`Zusammenfassung fehlgeschlagen (${lastErr})`);
 }
 
 Deno.serve(async (req) => {
