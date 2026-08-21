@@ -789,6 +789,15 @@ const VehicleDetail = () => {
                       className="w-full h-36 object-cover cursor-pointer"
                       onClick={() => navigate(`/projects/${projectId}/vehicle/measured/${img.id}/edit-image`)}
                     />
+                    {/* Always-visible "view large" (no editing) — works on touch too. */}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setLightbox(urlFor(img.storage_path)); }}
+                      className="absolute top-1.5 right-1.5 rounded-md bg-black/55 hover:bg-black/75 text-white p-1.5"
+                      title="Groß ansehen (ohne bearbeiten)"
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    </button>
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                       <Button size="sm" variant="secondary" onClick={() => navigate(`/projects/${projectId}/vehicle/measured/${img.id}/edit-image`)}>
                         <Pencil className="h-3 w-3 mr-1" /> Bemaßen
