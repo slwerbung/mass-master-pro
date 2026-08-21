@@ -793,7 +793,7 @@ const VehicleDetail = () => {
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setLightbox(urlFor(img.storage_path)); }}
-                      className="absolute top-1.5 right-1.5 rounded-md bg-black/55 hover:bg-black/75 text-white p-1.5"
+                      className="absolute top-1.5 right-1.5 z-10 rounded-md bg-black/55 hover:bg-black/75 text-white p-1.5"
                       title="Groß ansehen (ohne bearbeiten)"
                     >
                       <Maximize2 className="h-3.5 w-3.5" />
