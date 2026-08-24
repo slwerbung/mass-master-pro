@@ -99,8 +99,10 @@ const Admin = () => {
   // Reminder settings
   const [reminderEnabled, setReminderEnabled] = useState(false);
   const [reminderDays, setReminderDays] = useState(3);
+  const [reminderEmailSubject, setReminderEmailSubject] = useState("");
   const [reminderEmailText, setReminderEmailText] = useState("");
   const [reminderPending, setReminderPending] = useState(0);
+  const [reminderLog, setReminderLog] = useState<Array<{ email: string; project_number: string | null; status: string; created_at: string }>>([]);
   const [savingReminder, setSavingReminder] = useState(false);
   const [sendingReminders, setSendingReminders] = useState(false);
 
@@ -204,6 +206,17 @@ const Admin = () => {
   // admin-manage nicht noch groesser wird.
   const invokeAuth = useCallback(async (action: string, params: Record<string, any> = {}) => {
     const { data, error } = await supabase.functions.invoke("employee-auth", {
+      body: { token: adminToken, action, ...params },
+    });
+    if (error) throw new Error(data?.error || error.message || "Netzwerkfehler");
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }, [adminToken]);
+
+  // Reminder settings + log live in their own small function (reminder-admin)
+  // so admin-manage does not keep growing.
+  const invokeReminder = useCallback(async (action: string, params: Record<string, any> = {}) => {
+    const { data, error } = await supabase.functions.invoke("reminder-admin", {
       body: { token: adminToken, action, ...params },
     });
     if (error) throw new Error(data?.error || error.message || "Netzwerkfehler");
@@ -411,22 +424,35 @@ const Admin = () => {
     setNotifSettings(prev => ({ ...prev, [event]: { ...prev[event], ...partial } }));
   };
 
+  // Defaults MUST match send-reminders so what is shown is what gets sent.
+  // Placeholders {firma}, {projektnummer}, {link} are filled in per recipient.
+  const DEFAULT_REMINDER_SUBJECT = "Erinnerung: Freigabe ausstehend – Projekt {projektnummer}";
+  const DEFAULT_REMINDER_BODY = "Guten Tag,\n\nwir erinnern freundlich daran, dass von {firma} Standorte für Ihr Projekt {projektnummer} auf Ihre Freigabe warten.\n\nMit einem Klick auf den Button unten können Sie die Standorte prüfen und freigeben oder Korrekturen hinterlassen.";
+
   const loadReminderSettings = async () => {
     try {
-      const data = await invoke("get_reminder_settings");
+      const data = await invokeReminder("get_reminder_settings");
       setReminderEnabled(!!data?.enabled);
       setReminderDays(data?.days ?? 3);
-      setReminderEmailText(data?.emailText || "");
+      // Prefill with the defaults when nothing is stored yet, so the admin can
+      // see and edit the actual mail text.
+      setReminderEmailSubject(data?.emailSubject || DEFAULT_REMINDER_SUBJECT);
+      setReminderEmailText(data?.emailText || DEFAULT_REMINDER_BODY);
       setReminderPending(data?.pendingInvites ?? 0);
-    } catch {}
+    } catch { /* ignore */ }
+    try {
+      const log = await invokeReminder("get_reminder_log");
+      setReminderLog(log?.log || []);
+    } catch { /* ignore */ }
   };
 
   const saveReminderSettings = async () => {
     setSavingReminder(true);
     try {
-      await invoke("set_reminder_settings", {
+      await invokeReminder("set_reminder_settings", {
         enabled: reminderEnabled,
         days: reminderDays,
+        emailSubject: reminderEmailSubject,
         emailText: reminderEmailText,
       });
       toast.success("Erinnerungseinstellungen gespeichert");
@@ -1366,16 +1392,28 @@ const Admin = () => {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="reminder-text">Zusätzlicher Text in der Erinnerungsmail (optional)</Label>
+                  <Label htmlFor="reminder-subject">Betreff</Label>
+                  <Input
+                    id="reminder-subject"
+                    value={reminderEmailSubject}
+                    onChange={(e) => setReminderEmailSubject(e.target.value)}
+                    disabled={!reminderEnabled}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="reminder-text">Nachrichtentext</Label>
                   <textarea
                     id="reminder-text"
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
-                    rows={3}
-                    placeholder="z.B. Bitte nehmen Sie sich kurz die Zeit, die Standorte zu prüfen…"
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y min-h-[160px]"
+                    rows={8}
                     value={reminderEmailText}
                     onChange={(e) => setReminderEmailText(e.target.value)}
                     disabled={!reminderEnabled}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Platzhalter <code>{"{firma}"}</code>, <code>{"{projektnummer}"}</code>, <code>{"{link}"}</code> werden je Empfänger ersetzt. Der Freigabe-Button und der Link werden unter dem Text automatisch angehängt.
+                  </p>
                 </div>
 
                 <div className="flex flex-wrap gap-2 items-center">
@@ -1392,6 +1430,26 @@ const Admin = () => {
                     </Button>
                   )}
                 </div>
+
+                {reminderLog.length > 0 && (
+                  <div className="space-y-1.5 pt-3 border-t">
+                    <Label>Zuletzt gesendet</Label>
+                    <div className="rounded-md border divide-y max-h-56 overflow-auto text-sm">
+                      {reminderLog.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                          <span className="truncate">
+                            <span className={r.status === "error" ? "text-destructive" : "text-green-600"}>
+                              {r.status === "error" ? "⚠ " : "✓ "}
+                            </span>
+                            {r.email}{r.project_number ? ` · ${r.project_number}` : ""}
+                          </span>
+                          <span className="text-xs text-muted-foreground shrink-0">{new Date(r.created_at).toLocaleString("de-DE")}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Zeigt die letzten 20 gesendeten Erinnerungen (Empfänger, Projekt, Zeitpunkt).</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

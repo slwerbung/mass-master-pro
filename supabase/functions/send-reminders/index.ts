@@ -33,23 +33,46 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// Editable subject/body defaults. The admin can override them in the panel;
+// placeholders {firma}, {projektnummer}, {link} are filled in per recipient.
+// These MUST match the defaults the Admin UI pre-fills so what the admin sees
+// is what gets sent.
+export const DEFAULT_REMINDER_SUBJECT = "Erinnerung: Freigabe ausstehend – Projekt {projektnummer}";
+export const DEFAULT_REMINDER_BODY = [
+  "Guten Tag,",
+  "",
+  "wir erinnern freundlich daran, dass von {firma} Standorte für Ihr Projekt {projektnummer} auf Ihre Freigabe warten.",
+  "",
+  "Mit einem Klick auf den Button unten können Sie die Standorte prüfen und freigeben oder Korrekturen hinterlassen.",
+].join("\n");
+
+function applyVars(tpl: string, vars: Record<string, string>): string {
+  return tpl.replace(/\{(firma|projektnummer|link)\}/g, (_, k) => vars[k] ?? "");
+}
+
+function bodyToHtml(body: string): string {
+  return body
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p style="margin:12px 0;white-space:pre-wrap">${escapeHtml(p)}</p>`)
+    .join("\n");
+}
+
 function buildReminderMail(
   companyName: string,
   projectNumber: string,
   projectId: string,
-  customText: string,
+  subjectTpl: string,
+  bodyTpl: string,
 ): { subject: string; html: string } {
   const link = `${APP_BASE}/guest/${projectId}`;
-  const customBlock = customText.trim()
-    ? `<p style="margin:16px 0;white-space:pre-wrap">${escapeHtml(customText.trim())}</p>`
-    : "";
-  const subject = `Erinnerung: Freigabe ausstehend – Projekt ${projectNumber}`;
+  const vars = { firma: companyName, projektnummer: projectNumber, link };
+  const subject = applyVars((subjectTpl || DEFAULT_REMINDER_SUBJECT).trim(), vars) || `Erinnerung – Projekt ${projectNumber}`;
+  const bodyHtml = bodyToHtml(applyVars((bodyTpl || DEFAULT_REMINDER_BODY), vars));
   const html = `
     <div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:560px;line-height:1.5">
-      <p>Guten Tag,</p>
-      <p>wir erinnern freundlich daran, dass von <strong>${escapeHtml(companyName)}</strong> Standorte für Ihr Projekt <strong>${escapeHtml(projectNumber)}</strong> auf Ihre Freigabe warten.</p>
-      ${customBlock}
-      <p>Mit einem Klick auf den Link können Sie die Standorte prüfen und freigeben oder Korrekturen hinterlassen:</p>
+      ${bodyHtml}
       <p style="margin:24px 0">
         <a href="${link}" style="background:#0E73E8;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:600">Standorte ansehen &amp; freigeben</a>
       </p>
@@ -87,6 +110,7 @@ serve(async (req) => {
       .in("key", [
         "reminder_enabled",
         "reminder_days",
+        "reminder_email_subject",
         "reminder_email_text",
         "notification_global_email",
         "legal_info",
@@ -100,7 +124,8 @@ serve(async (req) => {
 
     const recipientEmail = (cfg.get("notification_global_email") || "").trim();
     const reminderDays = Math.max(1, parseInt(cfg.get("reminder_days") || "3", 10));
-    const customText = cfg.get("reminder_email_text") || "";
+    const subjectTpl = cfg.get("reminder_email_subject") || "";
+    const bodyTpl = cfg.get("reminder_email_text") || "";
 
     let companyName = "SL WERBUNG";
     const legalRaw = cfg.get("legal_info");
@@ -166,7 +191,7 @@ serve(async (req) => {
 
       // Send the reminder.
       const projectNumber = invite.project_number || invite.project_id.slice(0, 8);
-      const { subject, html } = buildReminderMail(companyName, projectNumber, invite.project_id, customText);
+      const { subject, html } = buildReminderMail(companyName, projectNumber, invite.project_id, subjectTpl, bodyTpl);
 
       const mailRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -185,10 +210,24 @@ serve(async (req) => {
           .from("project_invites")
           .update({ reminder_sent_at: new Date().toISOString() })
           .eq("id", invite.id);
+        // Lightweight audit trail: when + to whom.
+        await supabase.from("reminder_log").insert({
+          project_id: invite.project_id,
+          project_number: projectNumber,
+          email: invite.email,
+          status: "sent",
+        }).then(() => {}, () => {});
         sent++;
       } else {
         const errText = await mailRes.text();
         errors.push(`${invite.email}: ${errText.slice(0, 100)}`);
+        await supabase.from("reminder_log").insert({
+          project_id: invite.project_id,
+          project_number: projectNumber,
+          email: invite.email,
+          status: "error",
+          detail: errText.slice(0, 300),
+        }).then(() => {}, () => {});
       }
     }
 
