@@ -102,6 +102,7 @@ const Admin = () => {
   const [reminderEmailSubject, setReminderEmailSubject] = useState("");
   const [reminderEmailText, setReminderEmailText] = useState("");
   const [reminderPending, setReminderPending] = useState(0);
+  const [reminderPendingList, setReminderPendingList] = useState<Array<{ id: string; email: string; project_number: string | null; sent_at: string; willSend: boolean }>>([]);
   const [reminderLog, setReminderLog] = useState<Array<{ email: string; project_number: string | null; status: string; created_at: string }>>([]);
   const [savingReminder, setSavingReminder] = useState(false);
   const [sendingReminders, setSendingReminders] = useState(false);
@@ -439,11 +440,21 @@ const Admin = () => {
       setReminderEmailSubject(data?.emailSubject || DEFAULT_REMINDER_SUBJECT);
       setReminderEmailText(data?.emailText || DEFAULT_REMINDER_BODY);
       setReminderPending(data?.pendingInvites ?? 0);
+      setReminderPendingList(data?.pending || []);
     } catch { /* ignore */ }
     try {
       const log = await invokeReminder("get_reminder_log");
       setReminderLog(log?.log || []);
     } catch { /* ignore */ }
+  };
+
+  const dismissReminder = async (id: string) => {
+    try {
+      await invokeReminder("dismiss_reminder", { id });
+      await loadReminderSettings();
+    } catch (e: any) {
+      toast.error(e.message || "Fehler");
+    }
   };
 
   const saveReminderSettings = async () => {
@@ -1430,6 +1441,33 @@ const Admin = () => {
                     </Button>
                   )}
                 </div>
+
+                {reminderEnabled && reminderPendingList.length > 0 && (
+                  <div className="space-y-1.5 pt-3 border-t">
+                    <Label>Empfänger der nächsten Erinnerung</Label>
+                    <div className="rounded-md border divide-y max-h-56 overflow-auto text-sm">
+                      {reminderPendingList.map((p) => (
+                        <div key={p.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                          <div className="min-w-0">
+                            <div className="truncate">
+                              <span className={p.willSend ? "" : "text-muted-foreground line-through"}>{p.email}</span>
+                              {p.project_number ? <span className="text-muted-foreground"> · {p.project_number}</span> : null}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              eingeladen am {new Date(p.sent_at).toLocaleDateString("de-DE")}{!p.willSend && " · bereits Feedback → wird übersprungen"}
+                            </div>
+                          </div>
+                          <Button variant="ghost" size="sm" className="h-7 text-destructive shrink-0" onClick={() => dismissReminder(p.id)}>
+                            nicht senden
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Nur diese Adressen bekommen bei „Jetzt senden" eine Mail. Kunden mit bereits vorhandenem Feedback werden automatisch übersprungen. Mit „nicht senden" entfernst du einen Empfänger, ohne eine Mail zu schicken.
+                    </p>
+                  </div>
+                )}
 
                 {reminderLog.length > 0 && (
                   <div className="space-y-1.5 pt-3 border-t">

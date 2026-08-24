@@ -52,18 +52,67 @@ Deno.serve(async (req) => {
       const map = new Map((data || []).map((r: any) => [r.key, r.value]));
       const reminderDays = Math.max(1, parseInt(map.get("reminder_days") || "3", 10));
       const cutoff = new Date(Date.now() - reminderDays * 24 * 60 * 60 * 1000).toISOString();
-      const { count } = await supabase
+
+      // Invites old enough and not yet reminded — the candidates for the next
+      // "Jetzt senden". We ALSO compute, per invite, whether a mail would
+      // actually be sent: send-reminders skips customers who already left
+      // feedback. So the admin sees the real recipient list before sending.
+      const { data: invites } = await supabase
         .from("project_invites")
-        .select("id", { count: "exact", head: true })
+        .select("id, project_id, project_number, email, sent_at")
         .lte("sent_at", cutoff)
-        .is("reminder_sent_at", null);
+        .is("reminder_sent_at", null)
+        .order("sent_at", { ascending: true })
+        .limit(100);
+      const list = invites || [];
+
+      const projectIds = [...new Set(list.map((i: any) => i.project_id))];
+      const respondedProjects = new Set<string>();
+      if (projectIds.length > 0) {
+        const { data: locs } = await supabase.from("locations").select("id, project_id").in("project_id", projectIds);
+        const allLocs = locs || [];
+        const locIds = allLocs.map((l: any) => l.id);
+        if (locIds.length > 0) {
+          const { data: fb } = await supabase
+            .from("location_feedback")
+            .select("location_id")
+            .eq("author_type", "customer")
+            .in("location_id", locIds);
+          const respondedLoc = new Set((fb || []).map((f: any) => f.location_id));
+          for (const l of allLocs) {
+            if (respondedLoc.has(l.id)) respondedProjects.add(l.project_id);
+          }
+        }
+      }
+      const pending = list.map((i: any) => ({
+        id: i.id,
+        email: i.email,
+        project_number: i.project_number,
+        sent_at: i.sent_at,
+        willSend: !respondedProjects.has(i.project_id),
+      }));
+
       return json({
         enabled: map.get("reminder_enabled") === "true",
         days: parseInt(map.get("reminder_days") || "3", 10),
         emailSubject: map.get("reminder_email_subject") || "",
         emailText: map.get("reminder_email_text") || "",
-        pendingInvites: count || 0,
+        pendingInvites: pending.filter((p) => p.willSend).length,
+        pending,
       });
+    }
+
+    if (action === "dismiss_reminder") {
+      // Mark an invite as handled WITHOUT sending, so a wrong/stale recipient
+      // is removed from the pending list before "Jetzt senden".
+      const id = String(params.id || "").trim();
+      if (!id) return json({ error: "id erforderlich" }, 400);
+      const { error } = await supabase
+        .from("project_invites")
+        .update({ reminder_sent_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) return json({ error: error.message }, 500);
+      return json({ success: true });
     }
 
     if (action === "set_reminder_settings") {
