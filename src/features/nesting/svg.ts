@@ -19,6 +19,15 @@ function escapeXml(s: string): string {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** Group id from a label: CorelDRAW uses it as the object name. Keep it close
+ *  to the label but as a valid XML name (no spaces, no leading digit/dot). */
+function idFor(label: string): string {
+  let s = String(label).replace(/[^A-Za-z0-9_.-]/g, "_");
+  if (!s) s = "Flaeche";
+  if (/^[0-9.\-]/.test(s)) s = "F" + s;
+  return s;
+}
+
 interface Reihe { teile: PlatziertesTeil[]; height: number; }
 interface Placed { t: PlatziertesTeil; drawX: number; drawTop: number; }
 
@@ -75,19 +84,28 @@ export function buildSvg(result: PackResult, opt: NestingOptions): string {
   const { rand, textAbstand, schriftgroesse, projektnummer } = opt;
   const { placed, canvasBreite } = computeLayout(result, opt);
 
+  // One group per area: the cut rectangle + its label belong together, so in
+  // CorelDRAW each Fläche can be selected/moved as a unit and is named by its
+  // Bezeichnung. Oversized (split-off) parts stay red.
   let maxLabelBottom = 0;
-  const rects: string[] = [];
-  const labels: string[] = [];
+  const pieceGroups: string[] = [];
+  const usedIds = new Set<string>();
   for (const p of placed) {
     const sx = p.drawX;
     const sy = p.drawTop;
     const labelY = sy + p.t.pHoehe + textAbstand;
     maxLabelBottom = Math.max(maxLabelBottom, labelY + schriftgroesse * 0.3);
-    const strokeAttr = p.t.zuGross ? ' stroke="#e00000"' : "";
-    rects.push(
-      `    <rect x="${fmt(sx)}" y="${fmt(sy)}" width="${fmt(p.t.pBreite)}" height="${fmt(p.t.pHoehe)}"${strokeAttr}/>`,
+    const stroke = p.t.zuGross ? "#e00000" : "#000000";
+    let id = idFor(p.t.label);
+    while (usedIds.has(id)) id += "_";
+    usedIds.add(id);
+    pieceGroups.push(
+      `  <g id="${id}">\n` +
+      `    <title>${escapeXml(p.t.label)}</title>\n` +
+      `    <rect x="${fmt(sx)}" y="${fmt(sy)}" width="${fmt(p.t.pBreite)}" height="${fmt(p.t.pHoehe)}" fill="none" stroke="${stroke}" stroke-width="0.25"/>\n` +
+      `    <text x="${fmt(sx)}" y="${fmt(labelY)}" font-family="Arial" font-size="${fmt(schriftgroesse)}" fill="#000000">${escapeXml(p.t.label)}</text>\n` +
+      `  </g>`,
     );
-    labels.push(`    <text x="${fmt(sx)}" y="${fmt(labelY)}">${escapeXml(p.t.label)}</text>`);
   }
 
   const hasProjekt = !!(projektnummer && projektnummer.trim());
@@ -95,18 +113,13 @@ export function buildSvg(result: PackResult, opt: NestingOptions): string {
   const projektY = gesamtHoeheMm - 6;
 
   const projektGroup = hasProjekt
-    ? `  <g id="projekt" font-family="Arial" font-size="14" fill="#000000">\n` +
-      `    <text x="${fmt(canvasBreite - rand)}" y="${fmt(projektY)}" text-anchor="end">${escapeXml(projektnummer!.trim())}</text>\n` +
+    ? `  <g id="projekt">\n` +
+      `    <text x="${fmt(canvasBreite - rand)}" y="${fmt(projektY)}" text-anchor="end" font-family="Arial" font-size="14" fill="#000000">${escapeXml(projektnummer!.trim())}</text>\n` +
       `  </g>\n`
     : "";
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(canvasBreite)}mm" height="${fmt(gesamtHoeheMm)}mm" viewBox="0 0 ${fmt(canvasBreite)} ${fmt(gesamtHoeheMm)}">
-  <g id="schnitt" fill="none" stroke="#000000" stroke-width="0.25">
-${rects.join("\n")}
-  </g>
-  <g id="beschriftung" font-family="Arial" font-size="${fmt(schriftgroesse)}" fill="#000000">
-${labels.join("\n")}
-  </g>
+${pieceGroups.join("\n")}
 ${projektGroup}</svg>
 `;
 }
