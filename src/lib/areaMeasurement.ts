@@ -1,4 +1,4 @@
-import { Group, Rect, IText, Line, Circle, Shadow } from "fabric";
+import { Group, IText, Line, Circle, Shadow } from "fabric";
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -79,12 +79,10 @@ function overlaps(a: Box, b: Box, margin = 3): boolean {
   );
 }
 
-const LABEL_FONT = 15;
-
-function measureLabelWidth(text: string): number {
-  const t = new IText(text, { fontSize: LABEL_FONT, fontFamily: "Arial", fontWeight: "bold" });
+function measureLabelWidth(text: string, fontSize: number): number {
+  const t = new IText(text, { fontSize, fontFamily: "Arial", fontWeight: "bold" });
   const w = (t as any).width;
-  return Number.isFinite(w) && w > 0 ? w : text.length * LABEL_FONT * 0.56;
+  return Number.isFinite(w) && w > 0 ? w : text.length * fontSize * 0.56;
 }
 
 /**
@@ -110,44 +108,62 @@ export function renderAreaLabels(canvas: any, color: string = "#3b82f6"): void {
   const areas = canvas.getObjects().filter((o: any) => o.data?.type === "area");
   if (!areas.length) return;
 
-  interface Entry { cx: number; cy: number; index: number; text: string; labelW: number; labelH: number; }
-  const padX = 7, padY = 4;
-  const labelH = LABEL_FONT + padY * 2;
+  interface Entry {
+    cx: number; cyMid: number; anchorY: number; index: number; text: string;
+    labelW: number; labelH: number; fontSize: number; forceLeader: boolean;
+  }
 
   const entries: Entry[] = areas.map((a: any) => {
     const c = a.getCenterPoint();
+    const aw = a.getScaledWidth ? a.getScaledWidth() : (a.width * (a.scaleX ?? 1));
+    const ah = a.getScaledHeight ? a.getScaledHeight() : (a.height * (a.scaleY ?? 1));
     const d = a.data;
     const text = `F${d.index} · ${d.widthMm}×${d.heightMm}`;
-    return { cx: c.x, cy: c.y, index: d.index, text, labelW: measureLabelWidth(text) + padX * 2, labelH };
+
+    // Label size scales with the area's on-screen size so it never overwhelms a
+    // small surface, but stays within a readable band.
+    const fontSize = clamp(Math.round(Math.min(aw, ah) * 0.24), 11, 18);
+    const labelW = measureLabelWidth(text, fontSize) + 4;
+    const labelH = fontSize * 1.25;
+
+    // Centre the label on the diagonal midpoint only when it comfortably fits
+    // inside the area; otherwise park it just below the area so it never covers
+    // the measured surface, with a leader back to the midpoint.
+    const fits = labelW <= aw - 4 && labelH <= ah - 2;
+    const areaBottom = c.y + ah / 2;
+    const anchorY = fits ? c.y : areaBottom + labelH / 2 + 4;
+
+    return { cx: c.x, cyMid: c.y, anchorY, index: d.index, text, labelW, labelH, fontSize, forceLeader: !fits };
   });
 
   // Place from top to bottom, left to right, for a stable result.
-  entries.sort((p, q) => (p.cy - q.cy) || (p.cx - q.cx));
+  entries.sort((p, q) => (p.anchorY - q.anchorY) || (p.cx - q.cx));
 
   const placed: Box[] = [];
-  const step = labelH + 6;
 
   for (const e of entries) {
+    const step = e.labelH + 5;
     let bestOffset = 0;
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 80; i++) {
       // 0, +step, -step, +2step, -2step, ...
       const k = Math.ceil(i / 2);
       const offset = i === 0 ? 0 : (i % 2 === 1 ? k * step : -k * step);
-      const box: Box = { left: e.cx - e.labelW / 2, top: e.cy - e.labelH / 2 + offset, w: e.labelW, h: e.labelH };
+      const box: Box = { left: e.cx - e.labelW / 2, top: e.anchorY - e.labelH / 2 + offset, w: e.labelW, h: e.labelH };
       if (!placed.some((b) => overlaps(box, b))) { bestOffset = offset; break; }
       bestOffset = offset; // fallback to last tried
     }
 
-    const finalCy = e.cy + bestOffset;
+    const finalCy = e.anchorY + bestOffset;
     placed.push({ left: e.cx - e.labelW / 2, top: finalCy - e.labelH / 2, w: e.labelW, h: e.labelH });
 
-    // Leader line back to the midpoint when the label was pushed away.
-    if (Math.abs(bestOffset) > e.labelH * 0.5) {
-      const anchorY = finalCy > e.cy ? finalCy - e.labelH / 2 : finalCy + e.labelH / 2;
-      const leader = new Line([e.cx, e.cy, e.cx, anchorY], {
+    // Leader from the label back to the diagonal midpoint whenever the label
+    // was parked outside the area or pushed noticeably away by de-cluttering.
+    if (e.forceLeader || Math.abs(finalCy - e.cyMid) > e.labelH * 0.75) {
+      const anchorEdge = finalCy > e.cyMid ? finalCy - e.labelH / 2 : finalCy + e.labelH / 2;
+      const leader = new Line([e.cx, e.cyMid, e.cx, anchorEdge], {
         stroke: color,
         strokeWidth: 1,
-        opacity: 0.7,
+        opacity: 0.6,
         selectable: false,
         evented: false,
         excludeFromExport: true,
@@ -157,34 +173,24 @@ export function renderAreaLabels(canvas: any, color: string = "#3b82f6"): void {
       canvas.add(leader);
     }
 
-    const pill = new Rect({
-      width: e.labelW,
-      height: e.labelH,
-      rx: 5,
-      ry: 5,
-      originX: "center",
-      originY: "center",
-      fill: "rgba(255,255,255,0.94)",
-      stroke: color,
-      strokeWidth: 1,
-    });
-    const txt = new IText(e.text, {
-      originX: "center",
-      originY: "center",
-      fill: color,
-      fontSize: LABEL_FONT,
-      fontFamily: "Arial",
-      fontWeight: "bold",
-    });
-    const label = new Group([pill, txt], {
+    // Lightweight label: outlined text (no bulky pill). A white halo + soft
+    // shadow keeps it legible on any background while staying unobtrusive.
+    const label = new IText(e.text, {
       left: e.cx,
       top: finalCy,
       originX: "center",
       originY: "center",
+      fill: color,
+      fontSize: e.fontSize,
+      fontFamily: "Arial",
+      fontWeight: "bold",
+      stroke: "#ffffff",
+      strokeWidth: Math.max(1.5, e.fontSize * 0.16),
+      paintFirst: "stroke",
       selectable: false,
       evented: false,
       excludeFromExport: true,
-      shadow: new Shadow({ color: "rgba(0,0,0,0.35)", blur: 3, offsetX: 0, offsetY: 1 }),
+      shadow: new Shadow({ color: "rgba(0,0,0,0.55)", blur: 2, offsetX: 0, offsetY: 1 }),
     });
     // @ts-ignore
     label.data = { type: "area-label", index: e.index };
