@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage, Point } from "fabric";
+import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage, Point, Shadow } from "fabric";
 import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2, RectangleHorizontal, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { createMeasurementGroup } from "@/lib/measurement";
-import { createAreaMeasurementGroup } from "@/lib/areaMeasurement";
+import { createAreaMeasurementGroup, renderAreaLabels } from "@/lib/areaMeasurement";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { supabase } from "@/integrations/supabase/client";
 import { signedFileUrl } from "@/lib/storageUrl";
@@ -36,6 +36,9 @@ const PhotoEditor = () => {
   const historyRef = useRef<string[]>([]);
   const historyStepRef = useRef(-1);
   const isRestoringHistoryRef = useRef(false);
+  // Guard so the derived area-label objects (added/removed by renderAreaLabels)
+  // never push their own history states or re-trigger a relayout.
+  const isRenderingLabelsRef = useRef(false);
   // Incoming capture arrives via the in-memory hand-off (see editorHandoff.ts);
   // fall back to router state for any legacy/edge navigations. Always consume
   // (clear) the hand-off on mount, but only USE it for a fresh capture — a
@@ -59,8 +62,10 @@ const PhotoEditor = () => {
   const isVehicleMeasuredReEdit = !!measuredId;
 
   const pushHistoryState = useCallback((canvas: FabricCanvas) => {
-    if (isRestoringHistoryRef.current) return;
-    const json = JSON.stringify(canvas.toJSON());
+    if (isRestoringHistoryRef.current || isRenderingLabelsRef.current) return;
+    // Include custom `data` so area metadata (and thus the measurements) survive
+    // undo/redo; without it a restored canvas loses every area's dimensions.
+    const json = JSON.stringify(canvas.toJSON(["data"]));
     const nextHistory = historyRef.current.slice(0, historyStepRef.current + 1);
     if (nextHistory[nextHistory.length - 1] === json) return;
     nextHistory.push(json);
@@ -76,6 +81,9 @@ const PhotoEditor = () => {
     historyStepRef.current = step;
     setHistoryStep(step);
     fabricCanvas.loadFromJSON(historyRef.current[step]).then(() => {
+      // Derived labels are not stored in history — re-derive them for the
+      // restored set of areas (also guarantees they stay non-overlapping).
+      relayoutLabels(fabricCanvas);
       fabricCanvas.renderAll();
       isRestoringHistoryRef.current = false;
     }).catch((error) => {
@@ -83,6 +91,19 @@ const PhotoEditor = () => {
       isRestoringHistoryRef.current = false;
     });
   }, [fabricCanvas]);
+
+  // Rebuild all area labels so none overlap. Guarded so the label objects it
+  // adds/removes don't recurse back into history or another relayout.
+  const relayoutLabels = useCallback((canvas: FabricCanvas | null) => {
+    if (!canvas) return;
+    isRenderingLabelsRef.current = true;
+    try {
+      renderAreaLabels(canvas, "#3b82f6");
+    } finally {
+      isRenderingLabelsRef.current = false;
+    }
+    canvas.requestRenderAll();
+  }, []);
 
   useEffect(() => {
     if (!isReEdit || imageDataState) return;
@@ -161,6 +182,19 @@ const PhotoEditor = () => {
     canvas.on("object:added", saveHist);
     canvas.on("object:modified", saveHist);
     canvas.on("object:removed", saveHist);
+
+    // Keep area labels non-overlapping after any change to real objects
+    // (adding/moving/deleting an area). Ignore the derived label/leader objects
+    // themselves and skip while a relayout is in progress, to avoid recursion.
+    const onMutate = (e: any) => {
+      if (isRenderingLabelsRef.current) return;
+      const t = e?.target;
+      if (t?.data?.type === "area-label" || t?.data?.type === "area-leader") return;
+      relayoutLabels(canvas);
+    };
+    canvas.on("object:added", onMutate);
+    canvas.on("object:modified", onMutate);
+    canvas.on("object:removed", onMutate);
     setFabricCanvas(canvas);
 
     img.onload = () => {
@@ -179,6 +213,9 @@ const PhotoEditor = () => {
       canvas.off("object:added", saveHist);
       canvas.off("object:modified", saveHist);
       canvas.off("object:removed", saveHist);
+      canvas.off("object:added", onMutate);
+      canvas.off("object:modified", onMutate);
+      canvas.off("object:removed", onMutate);
       canvas.dispose();
       historyRef.current = []; historyStepRef.current = -1;
       setCanvasHistory([]); setHistoryStep(-1);
@@ -202,16 +239,48 @@ const PhotoEditor = () => {
     if (!fabricCanvas) return;
     fabricCanvas.isDrawingMode = activeTool === "draw";
     fabricCanvas.selection = activeTool === "select";
-    if (activeTool === "text") {
-      const text = new IText("Text eingeben", {
-        left: 100, top: 100, fill: "#ef4444", fontSize: 24, fontFamily: "Arial",
-      });
-      fabricCanvas.add(text);
-      fabricCanvas.setActiveObject(text);
-      text.enterEditing();
-      setActiveTool("select");
-    }
   }, [activeTool, fabricCanvas]);
+
+  // Insert a text box in the CENTER of the current view and immediately start
+  // editing so the mobile keyboard opens (must run inside the button tap
+  // gesture). The placeholder is pre-selected, so the first keystroke replaces
+  // it; if the user types nothing, the empty placeholder is removed again. A
+  // dark outline + shadow keep the text legible on any background.
+  const PLACEHOLDER = "Text eingeben";
+  const addText = () => {
+    if (!fabricCanvas) return;
+    setActiveTool("select");
+    const c: any = (fabricCanvas as any).getVpCenter
+      ? (fabricCanvas as any).getVpCenter()
+      : new Point(fabricCanvas.getWidth() / 2, fabricCanvas.getHeight() / 2);
+    const fontSize = 30;
+    const text = new IText(PLACEHOLDER, {
+      left: c.x, top: c.y, originX: "center", originY: "center",
+      fill: "#ef4444", fontSize, fontFamily: "Arial", fontWeight: "bold",
+      stroke: "#000000", strokeWidth: Math.max(1, fontSize * 0.06), paintFirst: "stroke",
+      shadow: new Shadow({ color: "rgba(0,0,0,0.85)", blur: 4, offsetX: 0, offsetY: 1 }),
+    });
+    // @ts-ignore
+    text.data = { placeholder: true };
+    text.on("changed", () => {
+      // @ts-ignore
+      if (text.data?.placeholder) text.data.placeholder = false;
+    });
+    text.on("editing:exited", () => {
+      const val = (text.text || "").trim();
+      // @ts-ignore
+      if (val === "" || (text.data?.placeholder && val === PLACEHOLDER)) {
+        fabricCanvas.remove(text);
+        fabricCanvas.requestRenderAll();
+      }
+    });
+    fabricCanvas.add(text);
+    fabricCanvas.setActiveObject(text);
+    text.enterEditing();
+    text.selectAll();
+    (text as any).hiddenTextarea?.focus();
+    fabricCanvas.requestRenderAll();
+  };
 
   const handleCanvasClick = (e: any) => {
     if (!fabricCanvas) return;
@@ -651,7 +720,7 @@ const PhotoEditor = () => {
             <Button variant={activeTool === "draw" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("draw")} className="px-2">
               <Pencil className="h-4 w-4" />
             </Button>
-            <Button variant={activeTool === "text" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("text")} className="px-2">
+            <Button variant="outline" size="sm" onClick={addText} className="px-2">
               <Type className="h-4 w-4" />
             </Button>
             <Button variant={activeTool === "measure" ? "default" : "outline"} size="sm" onClick={() => setActiveTool("measure")} className="px-2" title="Linie bemaßen">
