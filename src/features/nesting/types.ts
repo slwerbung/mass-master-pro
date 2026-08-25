@@ -9,10 +9,17 @@ export interface Teil {
   /** Raw dimensions in mm, before Zugabe. */
   breite: number;
   hoehe: number;
+  /** True when this part is a strip produced by splitting an oversized area. */
+  gestueckelt?: boolean;
 }
 
 /** What the auto-width chooser optimizes for. */
 export type Optimierung = "flaeche" | "laenge";
+
+/** How an oversized area is split so it fits the foil width.
+ *  "gleich"  = equal-width strips (n = ceil(dim / usable)).
+ *  "rest"    = full foil-width strips + one remainder strip. */
+export type StueckelModus = "gleich" | "rest";
 
 /** Nesting parameters. */
 export interface NestingOptions {
@@ -41,6 +48,11 @@ export interface NestingOptions {
 
   /** Auto-width optimization criterion. Default "laenge". */
   optimierung: Optimierung;
+
+  /** Split areas that are too wide for the foil into fitting strips. Default true. */
+  stueckeln: boolean;
+  /** How to split (equal strips vs foil-width + remainder). Default "gleich". */
+  stueckelModus: StueckelModus;
 
   /** Project number, written once into the page corner; empty = no output. */
   projektnummer?: string;

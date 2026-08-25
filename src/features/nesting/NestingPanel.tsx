@@ -31,6 +31,8 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
   const [kandidaten, setKandidaten] = useState(DEFAULT_OPTIONS.breitenKandidaten.join(", "));
   const [zugabe, setZugabe] = useState("0");
   const [optimierung, setOptimierung] = useState<NestingOptions["optimierung"]>(DEFAULT_OPTIONS.optimierung);
+  const [stueckeln, setStueckeln] = useState(DEFAULT_OPTIONS.stueckeln);
+  const [stueckelModus, setStueckelModus] = useState<NestingOptions["stueckelModus"]>(DEFAULT_OPTIONS.stueckelModus);
   const [zuschlag, setZuschlag] = useState("0"); // % safety margin on length
   const [advOpen, setAdvOpen] = useState(false);
   const [rand, setRand] = useState(String(DEFAULT_OPTIONS.rand));
@@ -61,6 +63,8 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
       breitenKandidaten: cand.length > 0 ? cand : DEFAULT_OPTIONS.breitenKandidaten,
       zugabe: Math.max(0, num(zugabe, 0)),
       optimierung,
+      stueckeln,
+      stueckelModus,
       rand: Math.max(0, num(rand, DEFAULT_OPTIONS.rand)),
       abstand: Math.max(0, num(abstand, DEFAULT_OPTIONS.abstand)),
       reihenAbstand: Math.max(0, num(reihenAbstand, DEFAULT_OPTIONS.reihenAbstand)),
@@ -98,6 +102,7 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
   };
 
   const zuGross = result?.teile.filter((t) => t.zuGross) ?? [];
+  const gestueckeltCount = result?.teile.filter((t) => t.gestueckelt).length ?? 0;
 
   return (
     <Card>
@@ -163,6 +168,26 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
           </p>
         </div>
 
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <Switch id="nest-stueckeln" checked={stueckeln} onCheckedChange={setStueckeln} />
+            <Label htmlFor="nest-stueckeln">Zu große Flächen stückeln</Label>
+          </div>
+          {stueckeln && (
+            <div className="flex gap-2 pl-1">
+              <Button type="button" size="sm" variant={stueckelModus === "gleich" ? "default" : "outline"} onClick={() => setStueckelModus("gleich")}>
+                Gleiche Teile
+              </Button>
+              <Button type="button" size="sm" variant={stueckelModus === "rest" ? "default" : "outline"} onClick={() => setStueckelModus("rest")}>
+                Folienbreite + Rest
+              </Button>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Flächen, die (auch gedreht) breiter als die Folie sind, werden in passende Streifen zerlegt (Label z. B. „3.2a", „3.2b"). „Gleiche Teile" = gleich breite Streifen; „Folienbreite + Rest" = volle Streifen plus ein Reststück.
+          </p>
+        </div>
+
         <Collapsible open={advOpen} onOpenChange={setAdvOpen}>
           <CollapsibleTrigger asChild>
             <button className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
@@ -198,6 +223,12 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
                   <strong>Zu breit für die Folie</strong> (auch gedreht): {zuGross.map((t) => t.label).join(", ")}.
                   Diese sind im SVG rot umrandet — bitte Folienbreite prüfen.
                 </div>
+              </div>
+            )}
+            {gestueckeltCount > 0 && (
+              <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                <Scissors className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{gestueckeltCount} Streifen aus zu breiten Flächen gestückelt (Label mit Buchstaben-Suffix, z. B. „a", „b").</span>
               </div>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">

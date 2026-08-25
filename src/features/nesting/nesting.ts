@@ -18,8 +18,49 @@ export const DEFAULT_OPTIONS: NestingOptions = {
   schriftgroesse: 20,
   sortieren: true,
   optimierung: "laenge",
+  stueckeln: true,
+  stueckelModus: "gleich",
   projektnummer: "",
 };
+
+/** Letter suffix for split strips: a, b, … z, then 27, 28, … */
+function strapSuffix(i: number): string {
+  return i < 26 ? String.fromCharCode(97 + i) : String(i + 1);
+}
+
+/**
+ * Splits an oversized area into strips that fit the foil width. Only the parts
+ * whose SMALLER edge exceeds the (zugabe-adjusted) usable width are split — that
+ * edge is divided into strips and the larger edge runs along the foil length
+ * (unlimited), which yields the fewest strips. Each strip keeps a seam allowance
+ * via the normal Zugabe applied later in pack().
+ *
+ * @param eff usable width already reduced by 2×Zugabe, so a strip + Zugabe fits.
+ */
+export function splitTeil(t: Teil, eff: number, opt: NestingOptions): Teil[] {
+  const minDim = Math.min(t.breite, t.hoehe);
+  const maxDim = Math.max(t.breite, t.hoehe);
+  // Fits already (in at least one orientation) or splitting disabled / impossible.
+  if (!opt.stueckeln || eff <= 0 || minDim <= eff) return [t];
+
+  const along = maxDim;
+  let widths: number[];
+  if (opt.stueckelModus === "rest") {
+    const full = Math.floor(minDim / eff);
+    const rest = minDim - full * eff;
+    widths = Array(full).fill(eff);
+    if (rest > 1e-6) widths.push(rest);
+  } else {
+    const n = Math.max(1, Math.ceil(minDim / eff));
+    widths = Array(n).fill(minDim / n);
+  }
+  return widths.map((w, i) => ({
+    label: `${t.label}${strapSuffix(i)}`,
+    breite: w,
+    hoehe: along,
+    gestueckelt: true,
+  }));
+}
 
 export function pack(teile: Teil[], folienbreite: number, opt: NestingOptions): PackResult {
   const { rand, abstand, reihenAbstand, zugabe, sortieren } = opt;
@@ -27,8 +68,15 @@ export function pack(teile: Teil[], folienbreite: number, opt: NestingOptions): 
   const usable = folienbreite - 2 * rand;   // usable width
   const right = folienbreite - rand;        // right boundary (symmetric margins)
 
+  // Split oversized areas into fitting strips FIRST (per foil width, so the
+  // auto-width comparison sees each width's real splitting). eff leaves room
+  // for the per-strip Zugabe added right after.
+  const eff = usable - 2 * zugabe;
+  const expanded: Teil[] = [];
+  for (const t of teile) expanded.push(...splitTeil(t, eff, opt));
+
   // Apply Zugabe
-  const mitZugabe = teile.map((t) => ({
+  const mitZugabe = expanded.map((t) => ({
     ...t,
     breite: t.breite + zugabe * 2,
     hoehe: t.hoehe + zugabe * 2,
