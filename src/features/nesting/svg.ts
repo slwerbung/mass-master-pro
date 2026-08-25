@@ -80,30 +80,49 @@ export function computeLayout(result: PackResult, opt: NestingOptions): NestLayo
   return { placed, numCols, canvasBreite, spaltenLaengenMm };
 }
 
-export function buildSvg(result: PackResult, opt: NestingOptions): string {
-  const { rand, textAbstand, schriftgroesse, projektnummer } = opt;
-  const { placed, canvasBreite } = computeLayout(result, opt);
+/** A placed rectangle to render (final SVG coordinates, y-down). */
+export interface RenderPiece {
+  label: string;
+  x: number;
+  y: number;
+  pBreite: number;
+  pHoehe: number;
+  zuGross?: boolean;
+}
 
-  // One group per area: the cut rectangle + its label belong together, so in
-  // CorelDRAW each Fläche can be selected/moved as a unit and is named by its
-  // Bezeichnung. Oversized (split-off) parts stay red.
+/** Shared drawing options (subset of NestingOptions / LayoutOptions). */
+export interface RenderOpts {
+  zugabe: number;
+  schriftgroesse: number;
+  textAbstand: number;
+  rand: number;
+  projektnummer?: string;
+}
+
+/**
+ * Renders placed rectangles to an mm SVG: one <g> per area holding the cut
+ * rectangle + its label BELOW it (so CorelDRAW selects each Fläche as a unit).
+ * When a Zugabe is set it is shown as "+X" behind the label. Oversized parts
+ * stay red. The project number goes once into the bottom-right corner.
+ */
+export function renderSvg(pieces: RenderPiece[], canvasBreite: number, opt: RenderOpts): string {
+  const { schriftgroesse, textAbstand, rand, projektnummer, zugabe } = opt;
   let maxLabelBottom = 0;
   const pieceGroups: string[] = [];
   const usedIds = new Set<string>();
-  for (const p of placed) {
-    const sx = p.drawX;
-    const sy = p.drawTop;
-    const labelY = sy + p.t.pHoehe + textAbstand;
+  for (const p of pieces) {
+    const labelY = p.y + p.pHoehe + textAbstand;
     maxLabelBottom = Math.max(maxLabelBottom, labelY + schriftgroesse * 0.3);
-    const stroke = p.t.zuGross ? "#e00000" : "#000000";
-    let id = idFor(p.t.label);
+    const stroke = p.zuGross ? "#e00000" : "#000000";
+    const disp = zugabe > 0 ? `${p.label} +${fmt(zugabe)}` : p.label;
+    let id = idFor(p.label);
     while (usedIds.has(id)) id += "_";
     usedIds.add(id);
     pieceGroups.push(
       `  <g id="${id}">\n` +
-      `    <title>${escapeXml(p.t.label)}</title>\n` +
-      `    <rect x="${fmt(sx)}" y="${fmt(sy)}" width="${fmt(p.t.pBreite)}" height="${fmt(p.t.pHoehe)}" fill="none" stroke="${stroke}" stroke-width="0.25"/>\n` +
-      `    <text x="${fmt(sx)}" y="${fmt(labelY)}" font-family="Arial" font-size="${fmt(schriftgroesse)}" fill="#000000">${escapeXml(p.t.label)}</text>\n` +
+      `    <title>${escapeXml(disp)}</title>\n` +
+      `    <rect x="${fmt(p.x)}" y="${fmt(p.y)}" width="${fmt(p.pBreite)}" height="${fmt(p.pHoehe)}" fill="none" stroke="${stroke}" stroke-width="0.25"/>\n` +
+      `    <text x="${fmt(p.x)}" y="${fmt(labelY)}" font-family="Arial" font-size="${fmt(schriftgroesse)}" fill="#000000">${escapeXml(disp)}</text>\n` +
       `  </g>`,
     );
   }
@@ -111,7 +130,6 @@ export function buildSvg(result: PackResult, opt: NestingOptions): string {
   const hasProjekt = !!(projektnummer && projektnummer.trim());
   const gesamtHoeheMm = maxLabelBottom + (hasProjekt ? 22 : 6);
   const projektY = gesamtHoeheMm - 6;
-
   const projektGroup = hasProjekt
     ? `  <g id="projekt">\n` +
       `    <text x="${fmt(canvasBreite - rand)}" y="${fmt(projektY)}" text-anchor="end" font-family="Arial" font-size="14" fill="#000000">${escapeXml(projektnummer!.trim())}</text>\n` +
@@ -122,4 +140,12 @@ export function buildSvg(result: PackResult, opt: NestingOptions): string {
 ${pieceGroups.join("\n")}
 ${projektGroup}</svg>
 `;
+}
+
+export function buildSvg(result: PackResult, opt: NestingOptions): string {
+  const { placed, canvasBreite } = computeLayout(result, opt);
+  const pieces: RenderPiece[] = placed.map((p) => ({
+    label: p.t.label, x: p.drawX, y: p.drawTop, pBreite: p.t.pBreite, pHoehe: p.t.pHoehe, zuGross: p.t.zuGross,
+  }));
+  return renderSvg(pieces, canvasBreite, opt);
 }

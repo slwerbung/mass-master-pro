@@ -19,6 +19,7 @@ import {
 } from "@/lib/exportUtils";
 import PDFExportOptionsUI, { PDFExportOptions, defaultPDFOptions } from "@/components/PDFExportOptions";
 import NestingPanel from "@/features/nesting/NestingPanel";
+import LayoutPanel from "@/features/nesting/LayoutPanel";
 import {
   drawCoverPage,
   drawLocationPage,
@@ -608,6 +609,10 @@ const Export = () => {
 
         {nestingTeile.length > 0 && (
           <NestingPanel initialTeile={nestingTeile} projektnummer={project.projectNumber} />
+        )}
+
+        {nestingTeile.length > 0 && (
+          <LayoutPanel initialTeile={nestingTeile} projektnummer={project.projectNumber} />
         )}
 
         <Card>
