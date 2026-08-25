@@ -129,14 +129,32 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     }
   };
 
-  const loadFeedbacks = async () => {
-    const { data, error } = await (supabase as any)
-      .from("location_feedback")
-      .select("id, location_id, message, author_name, author_type, status, created_at")
-      .eq("location_id", location.id)
-      .order("created_at", { ascending: true });
+  // Staff read/write of the Standort-Chat goes through the location-feedback
+  // edge function. After the Phase-2 RLS lockdown the anon/expired-session
+  // client can no longer read or write location_feedback directly, so an
+  // employee's message "kam nicht an". The function validates the HMAC session
+  // token and performs the operation with the service role.
+  const invokeFeedback = async (action: string, extra: Record<string, unknown> = {}) => {
+    const token = getSession()?.authToken;
+    const { data, error } = await supabase.functions.invoke("location-feedback", {
+      body: { token, action, locationId: location.id, ...extra },
+    });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    return data;
+  };
 
-    const items = !error ? ((data || []) as FeedbackItem[]) : [];
+  const loadFeedbacks = async () => {
+    let items: FeedbackItem[] = [];
+    try {
+      const data = await invokeFeedback("list");
+      items = (data?.messages || []) as FeedbackItem[];
+    } catch (e: any) {
+      if (!isFeedbackTableUnavailable(e)) {
+        console.warn("loadFeedbacks error:", e?.message || e);
+      }
+    }
+
     const legacyItems = !items.length && location.guestInfo ? [{
       id: `${LEGACY_FEEDBACK_PREFIX}${location.id}`,
       location_id: location.id,
@@ -146,10 +164,6 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
       created_at: new Date(0).toISOString(),
       legacy: true,
     }] : [];
-
-    if (error && !isFeedbackTableUnavailable(error)) {
-      console.warn("loadFeedbacks error:", error.message || error);
-    }
 
     setFeedbacks([...items, ...legacyItems]);
   };
@@ -162,11 +176,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     setUpdatingFeedbackId(feedback.id);
     try {
       const nextStatus = feedback.status === "done" ? "open" : "done";
-      const { error } = await (supabase as any)
-        .from("location_feedback")
-        .update({ status: nextStatus, resolved_at: nextStatus === "done" ? new Date().toISOString() : null })
-        .eq("id", feedback.id);
-      if (error) throw error;
+      await invokeFeedback("toggle", { id: feedback.id, status: nextStatus });
       await loadFeedbacks();
       toast.success(nextStatus === "done" ? "Kommentar als umgesetzt markiert" : "Kommentar wieder geöffnet");
     } catch {
@@ -182,16 +192,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     if (!message) return;
     setSendingMsg(true);
     try {
-      const name = getSession()?.name || "Mitarbeiter";
-      const { error } = await (supabase as any).from("location_feedback").insert({
-        location_id: location.id,
-        author_name: name,
-        author_type: "employee",
-        author_customer_id: null,
-        message,
-        status: "open",
-      });
-      if (error) throw error;
+      await invokeFeedback("send", { message, name: getSession()?.name || "Mitarbeiter" });
       await loadFeedbacks();
     } catch (e: any) {
       toast.error("Nachricht konnte nicht gesendet werden: " + (e?.message || "Fehler"));
@@ -204,8 +205,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     if (m.legacy) return;
     setUpdatingFeedbackId(m.id);
     try {
-      const { error } = await (supabase as any).from("location_feedback").delete().eq("id", m.id);
-      if (error) throw error;
+      await invokeFeedback("delete", { id: m.id });
       await loadFeedbacks();
     } catch (e: any) {
       toast.error("Löschen fehlgeschlagen");
