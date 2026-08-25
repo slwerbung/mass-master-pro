@@ -1447,7 +1447,10 @@ const CustomerView = () => {
 
             <div className="space-y-4">
               {sortedLocations.map((loc) => {
-                const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
+                // Kundenansicht zeigt das Originalbild (unbemaßt); nur wenn kein
+                // Original vorhanden ist, wird auf das bemaßte Bild zurückgegriffen.
+                const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "original")
+                  || images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
                 const pdfEntries = images.filter((i: any) => i.location_id === loc.id && i.image_type === "pdf");
                 const locationFeedback = feedbacks[loc.id] || [];
                 const isApproved = !!approvals[loc.id];
@@ -1541,7 +1544,9 @@ const CustomerView = () => {
 
       {fsOpen && (() => {
         const fsLocations: FsLocation[] = sortedLocations.map((loc: any) => {
-          const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
+          // Originalbild bevorzugen (siehe oben), sonst das bemaßte Bild.
+          const annotated = images.find((i: any) => i.location_id === loc.id && i.image_type === "original")
+            || images.find((i: any) => i.location_id === loc.id && i.image_type === "annotated");
           const pdfEntries = images.filter((i: any) => i.location_id === loc.id && i.image_type === "pdf");
           return {
             id: loc.id,
