@@ -7,9 +7,9 @@
 import type { NestingOptions, PackResult, PlatziertesTeil, Teil } from "./types";
 
 export const DEFAULT_OPTIONS: NestingOptions = {
-  folienbreite: 1370,
+  folienbreite: 1200,
   autoBreite: true,
-  breitenKandidaten: [1000, 1370, 1520],
+  breitenKandidaten: [1000, 1200, 1520],
   zugabe: 0,
   rand: 20,
   abstand: 5,
@@ -147,4 +147,68 @@ function besteBreite(teile: Teil[], opt: NestingOptions): PackResult {
 
 export function nesting(teile: Teil[], opt: NestingOptions): PackResult {
   return opt.autoBreite ? besteBreite(teile, opt) : pack(teile, opt.folienbreite, opt);
+}
+
+// ── Multi-width: assign each area to its best-fitting foil width ───────────
+
+export interface NestGruppe {
+  folienbreite: number;
+  teile: Teil[];      // original parts assigned to this width (pre-split)
+  result: PackResult; // packed layout (incl. any splitting)
+}
+
+/**
+ * Width utilisation for a part placed across a foil: how much of the usable
+ * width is filled once as many copies as fit share a row. Higher = less
+ * width-waste. Accounts for multiple parts per row (e.g. two 500 mm parts fit
+ * a 1200 mm foil but not a 1000 mm one).
+ */
+function auslastung(across: number, usable: number, abstand: number): number {
+  if (across > usable || usable <= 0) return 0;
+  const perRow = Math.floor((usable + abstand) / (across + abstand));
+  return perRow > 0 ? (perRow * across) / usable : 0;
+}
+
+/**
+ * "Mitdenken": splits the job across several foil widths, assigning each area
+ * to the candidate width where it wastes the least width (narrower width wins
+ * ties). Each used width is then nested separately. Returns one group per used
+ * width. Reduces naturally to a single group when one width suits everything.
+ */
+export function nestingMulti(teile: Teil[], opt: NestingOptions): NestGruppe[] {
+  if (teile.length === 0) return [];
+  const widths = [...new Set(opt.breitenKandidaten)].filter((w) => w > 0).sort((a, b) => a - b);
+  if (widths.length === 0) return [{ folienbreite: opt.folienbreite, teile, result: pack(teile, opt.folienbreite, opt) }];
+
+  // Candidate A — assign each area to the width where it wastes the least width.
+  const buckets = new Map<number, Teil[]>();
+  for (const t of teile) {
+    const across = Math.min(t.breite, t.hoehe) + 2 * opt.zugabe; // narrowest orientation
+    let bestW = widths[widths.length - 1];
+    let bestU = -1;
+    for (const w of widths) {
+      const u = auslastung(across, w - 2 * opt.rand, opt.abstand);
+      if (u > bestU + 1e-9) { bestU = u; bestW = w; }
+    }
+    const arr = buckets.get(bestW);
+    if (arr) arr.push(t); else buckets.set(bestW, [t]);
+  }
+  const partition: NestGruppe[] = [];
+  for (const w of widths) {
+    const g = buckets.get(w);
+    if (g && g.length) partition.push({ folienbreite: w, teile: g, result: pack(g, w, opt) });
+  }
+
+  // "Mitdenken": compare the split against putting everything on each single
+  // width, and keep the layout with the least total foil AREA (the fair
+  // material metric across different widths). Splitting only wins when it
+  // genuinely saves material; on a tie the single (narrower) width is kept, so
+  // we never split for nothing.
+  const area = (gs: NestGruppe[]) => gs.reduce((s, g) => s + g.result.flaecheM2, 0);
+  const candidates: NestGruppe[][] = widths.map((w) => [{ folienbreite: w, teile, result: pack(teile, w, opt) }]);
+  if (partition.length > 1) candidates.push(partition);
+
+  let best = candidates[0];
+  for (const c of candidates) if (area(c) < area(best) - 1e-9) best = c;
+  return best;
 }
