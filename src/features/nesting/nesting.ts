@@ -20,6 +20,8 @@ export const DEFAULT_OPTIONS: NestingOptions = {
   optimierung: "laenge",
   stueckeln: true,
   stueckelModus: "gleich",
+  maxLaengeMm: 15000,
+  spaltenAbstand: 30,
   projektnummer: "",
 };
 

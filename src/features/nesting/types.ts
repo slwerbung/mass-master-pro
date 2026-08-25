@@ -54,6 +54,13 @@ export interface NestingOptions {
   /** How to split (equal strips vs foil-width + remainder). Default "gleich". */
   stueckelModus: StueckelModus;
 
+  /** Max length per column in mm before wrapping into a new column placed
+   *  side by side (so CorelDRAW does not squeeze an endlessly long strip).
+   *  Rows are never split. 0 = no wrapping (one endless column). Default 15000. */
+  maxLaengeMm: number;
+  /** Horizontal gap between columns in mm. Default 30. */
+  spaltenAbstand: number;
+
   /** Project number, written once into the page corner; empty = no output. */
   projektnummer?: string;
 }

@@ -13,7 +13,7 @@ import type { FolienMenge, NestingOptions, PackResult, Teil } from "./types";
 import { DEFAULT_OPTIONS, nesting } from "./nesting";
 import { berechneFolienMenge } from "./folienmenge";
 import { parseText, teileZuText } from "./parse";
-import { buildSvg } from "./svg";
+import { buildSvg, computeLayout } from "./svg";
 
 interface NestingPanelProps {
   /** Parts prefilled from the project's Flächenaufmaß. */
@@ -33,6 +33,8 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
   const [optimierung, setOptimierung] = useState<NestingOptions["optimierung"]>(DEFAULT_OPTIONS.optimierung);
   const [stueckeln, setStueckeln] = useState(DEFAULT_OPTIONS.stueckeln);
   const [stueckelModus, setStueckelModus] = useState<NestingOptions["stueckelModus"]>(DEFAULT_OPTIONS.stueckelModus);
+  const [maxLaengeM, setMaxLaengeM] = useState(String(DEFAULT_OPTIONS.maxLaengeMm / 1000)); // in metres
+  const [spaltenAbstand, setSpaltenAbstand] = useState(String(DEFAULT_OPTIONS.spaltenAbstand));
   const [zuschlag, setZuschlag] = useState("0"); // % safety margin on length
   const [advOpen, setAdvOpen] = useState(false);
   const [rand, setRand] = useState(String(DEFAULT_OPTIONS.rand));
@@ -65,6 +67,8 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
       optimierung,
       stueckeln,
       stueckelModus,
+      maxLaengeMm: Math.max(0, num(maxLaengeM, 15)) * 1000,
+      spaltenAbstand: Math.max(0, num(spaltenAbstand, DEFAULT_OPTIONS.spaltenAbstand)),
       rand: Math.max(0, num(rand, DEFAULT_OPTIONS.rand)),
       abstand: Math.max(0, num(abstand, DEFAULT_OPTIONS.abstand)),
       reihenAbstand: Math.max(0, num(reihenAbstand, DEFAULT_OPTIONS.reihenAbstand)),
@@ -103,6 +107,7 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
 
   const zuGross = result?.teile.filter((t) => t.zuGross) ?? [];
   const gestueckeltCount = result?.teile.filter((t) => t.gestueckelt).length ?? 0;
+  const layout = result && usedOpt ? computeLayout(result, usedOpt) : null;
 
   return (
     <Card>
@@ -152,6 +157,14 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
             <Input id="nest-kand" value={kandidaten} onChange={(e) => setKandidaten(e.target.value)} placeholder="1000, 1370, 1520" />
           </div>
         )}
+
+        <div className="space-y-1.5">
+          <Label htmlFor="nest-maxlen">Max. Länge pro Spalte (m)</Label>
+          <Input id="nest-maxlen" type="number" inputMode="decimal" value={maxLaengeM} onChange={(e) => setMaxLaengeM(e.target.value)} className="w-32" />
+          <p className="text-xs text-muted-foreground">
+            Wird eine Spalte länger, bricht das Layout in eine neue Spalte daneben um (damit CorelDRAW die Bahn nicht quetscht). 0 = kein Umbruch.
+          </p>
+        </div>
 
         <div className="space-y-1.5">
           <Label>Optimieren nach</Label>
@@ -206,6 +219,8 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
                 <Input id="nest-schrift" type="number" value={schriftgroesse} onChange={(e) => setSchriftgroesse(e.target.value)} /></div>
               <div className="space-y-1.5"><Label htmlFor="nest-zuschlag">Sicherheitszuschlag (%)</Label>
                 <Input id="nest-zuschlag" type="number" value={zuschlag} onChange={(e) => setZuschlag(e.target.value)} /></div>
+              <div className="space-y-1.5"><Label htmlFor="nest-spalt">Spaltenabstand (mm)</Label>
+                <Input id="nest-spalt" type="number" value={spaltenAbstand} onChange={(e) => setSpaltenAbstand(e.target.value)} /></div>
             </div>
           </CollapsibleContent>
         </Collapsible>
@@ -229,6 +244,11 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
               <div className="flex items-start gap-2 text-sm text-muted-foreground">
                 <Scissors className="h-4 w-4 mt-0.5 shrink-0" />
                 <span>{gestueckeltCount} Streifen aus zu breiten Flächen gestückelt (Label mit Buchstaben-Suffix, z. B. „a", „b").</span>
+              </div>
+            )}
+            {layout && layout.numCols > 1 && (
+              <div className="text-sm text-muted-foreground">
+                Layout: {layout.numCols} Spalten nebeneinander (längste {f2(Math.max(...layout.spaltenLaengenMm) / 1000)} m) — passt so besser in CorelDRAW.
               </div>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
