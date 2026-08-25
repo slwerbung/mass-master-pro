@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { FileUp, Loader2, Scissors, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import * as pdfjsLib from "pdfjs-dist";
+import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/integrations/supabase/client";
 import { naturalLocationSortAsc } from "@/lib/locationSorting";
 
@@ -154,7 +155,6 @@ export function SplitPdfDialog({ open, onOpenChange, projectId, projectNumber, l
       try { pdfDocRef.current?.destroy?.(); } catch { /* noop */ }
       pdfDocRef.current = null;
 
-      const { PDFDocument } = await import("pdf-lib");
       const srcBytes = await fileRef.current.arrayBuffer();
       const srcDoc = await PDFDocument.load(srcBytes, { ignoreEncryption: true });
 
