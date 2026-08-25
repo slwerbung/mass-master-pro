@@ -18,6 +18,7 @@ import {
   isIOSDevice,
 } from "@/lib/exportUtils";
 import PDFExportOptionsUI, { PDFExportOptions, defaultPDFOptions } from "@/components/PDFExportOptions";
+import NestingPanel from "@/features/nesting/NestingPanel";
 import {
   drawCoverPage,
   drawLocationPage,
@@ -217,6 +218,18 @@ const Export = () => {
     if (!project) return [];
     return [...project.locations].sort((a, b) => naturalLocationSort(a.locationNumber, b.locationNumber));
   }, [project]);
+
+  // All measured areas across the project, as nesting parts. Label ties each
+  // piece back to its location + area index (e.g. "3.2" = Standort 3, Fläche 2).
+  const nestingTeile = useMemo(() => {
+    const out: { label: string; breite: number; hoehe: number }[] = [];
+    for (const loc of sortedLocations) {
+      for (const a of (loc.areaMeasurements || [])) {
+        out.push({ label: `${loc.locationNumber}.${a.index}`, breite: a.widthMm, hoehe: a.heightMm });
+      }
+    }
+    return out;
+  }, [sortedLocations]);
 
   const sortedFloorPlans = useMemo(() => {
     if (!project?.floorPlans) return [];
@@ -592,6 +605,10 @@ const Export = () => {
             )}
           </CardContent>
         </Card>
+
+        {nestingTeile.length > 0 && (
+          <NestingPanel initialTeile={nestingTeile} projektnummer={project.projectNumber} />
+        )}
 
         <Card>
           <CardHeader className="pb-3">
