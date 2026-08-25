@@ -65,7 +65,8 @@ const PhotoEditor = () => {
     if (isRestoringHistoryRef.current || isRenderingLabelsRef.current) return;
     // Include custom `data` so area metadata (and thus the measurements) survive
     // undo/redo; without it a restored canvas loses every area's dimensions.
-    const json = JSON.stringify(canvas.toJSON(["data"]));
+    // toObject(propertiesToInclude) is the Fabric-v7 way to add custom props.
+    const json = JSON.stringify(canvas.toObject(["data"]));
     const nextHistory = historyRef.current.slice(0, historyStepRef.current + 1);
     if (nextHistory[nextHistory.length - 1] === json) return;
     nextHistory.push(json);
@@ -190,7 +191,7 @@ const PhotoEditor = () => {
       if (isRenderingLabelsRef.current) return;
       const t = e?.target;
       if (t?.data?.type === "area-label" || t?.data?.type === "area-leader") return;
-      relayoutLabels(canvas);
+      try { relayoutLabels(canvas); } catch (err) { console.warn("relayout failed:", err); }
     };
     canvas.on("object:added", onMutate);
     canvas.on("object:modified", onMutate);
@@ -684,9 +685,9 @@ const PhotoEditor = () => {
           setEditorHandoff({ imageData: dataUrl, originalImageData: imageDataState, areaMeasurements });
           navigate(`/projects/${projectId}/location-details${query}`);
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error("Error exporting edited image:", e);
-        toast.error("Fehler beim Verarbeiten des Bildes");
+        toast.error("Fehler beim Verarbeiten des Bildes: " + (e?.message || String(e)));
       }
     }, 50);
   };

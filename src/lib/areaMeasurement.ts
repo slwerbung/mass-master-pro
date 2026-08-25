@@ -79,10 +79,21 @@ function overlaps(a: Box, b: Box, margin = 3): boolean {
   );
 }
 
+// Measure with a plain 2D context instead of constructing Fabric text objects
+// (cheaper, and avoids running Fabric internals inside a canvas event handler).
+let _measureCtx: CanvasRenderingContext2D | null = null;
 function measureLabelWidth(text: string, fontSize: number): number {
-  const t = new IText(text, { fontSize, fontFamily: "Arial", fontWeight: "bold" });
-  const w = (t as any).width;
-  return Number.isFinite(w) && w > 0 ? w : text.length * fontSize * 0.56;
+  try {
+    if (!_measureCtx && typeof document !== "undefined") {
+      _measureCtx = document.createElement("canvas").getContext("2d");
+    }
+    if (_measureCtx) {
+      _measureCtx.font = `bold ${fontSize}px Arial`;
+      const w = _measureCtx.measureText(text).width;
+      if (Number.isFinite(w) && w > 0) return w;
+    }
+  } catch { /* fall through to estimate */ }
+  return text.length * fontSize * 0.56;
 }
 
 /**
@@ -99,7 +110,15 @@ function measureLabelWidth(text: string, fontSize: number): number {
  */
 export function renderAreaLabels(canvas: any, color: string = "#3b82f6"): void {
   if (!canvas) return;
+  try {
+    renderAreaLabelsInner(canvas, color);
+  } catch (e) {
+    // Labels are cosmetic — never let a layout error break editing or export.
+    console.warn("renderAreaLabels failed:", e);
+  }
+}
 
+function renderAreaLabelsInner(canvas: any, color: string): void {
   // Drop previously derived labels/leaders.
   canvas.getObjects()
     .filter((o: any) => o.data?.type === "area-label" || o.data?.type === "area-leader")
