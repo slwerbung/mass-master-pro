@@ -26,6 +26,7 @@ import {
   pickImageUrl,
   runInBatches,
   toPdfCompatibleImage,
+  unitLabel,
 } from "@/lib/proboCatalog";
 import type { CatalogProduct } from "@/components/probo/CatalogDocument";
 
@@ -153,11 +154,19 @@ const ProboCatalog = () => {
         try {
           const detail = await fetchProboProductDetail(code);
 
+          // Die Edge Function liefert das Bild in der Regel schon mit; der
+          // Proxy-Aufruf bleibt als Rückfallebene bestehen.
           let imageDataUrl: string | null = null;
           const imageUrl = pickImageUrl(detail.images, "de");
-          if (imageUrl) {
+          const rawImage = detail.imageDataUrl
+            ? Promise.resolve(detail.imageDataUrl)
+            : imageUrl
+              ? fetchProboImage(imageUrl)
+              : null;
+
+          if (rawImage) {
             try {
-              imageDataUrl = await toPdfCompatibleImage(await fetchProboImage(imageUrl));
+              imageDataUrl = await toPdfCompatibleImage(await rawImage);
             } catch {
               // Ein fehlendes Bild ist kein Grund, den ganzen Katalog zu
               // verlieren – die Seite entsteht dann ohne Bild.
@@ -167,11 +176,18 @@ const ProboCatalog = () => {
             withoutImage.push(code);
           }
 
+          // Die Abrechnungseinheit steht nur am Listeneintrag, nicht am
+          // Detail – hier zusammenführen.
+          const properties = [...detail.properties];
+          if (listEntry?.unit) {
+            properties.unshift({ label: "Einheit", value: unitLabel(listEntry.unit) });
+          }
+
           collected[index] = {
             code,
             name: override.name.trim() || detail.name || listEntry?.name || code,
             description: override.note.trim() || detail.description || listEntry?.description || "",
-            properties: detail.properties,
+            properties: properties.slice(0, 4),
             imageDataUrl,
             price: override.price.trim() || undefined,
           };
