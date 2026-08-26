@@ -70,6 +70,30 @@ export function createAreaMeasurementGroup(
 
 interface Box { left: number; top: number; w: number; h: number; }
 
+// Candidate label offsets on a grid, nearest ring first, preferring positions
+// level with or below the anchor over ones above it (labels reading downward
+// look more natural and stay off the ceiling/sky). Built once and reused.
+const PLACEMENT_GRID: { gx: number; gy: number }[] = (() => {
+  const g: { gx: number; gy: number }[] = [];
+  for (let ring = 0; ring <= 12; ring++) {
+    for (let gy = -ring; gy <= ring; gy++) {
+      for (let gx = -ring; gx <= ring; gx++) {
+        if (Math.max(Math.abs(gx), Math.abs(gy)) === ring) g.push({ gx, gy });
+      }
+    }
+  }
+  return g.sort((a, b) => {
+    const ra = Math.max(Math.abs(a.gx), Math.abs(a.gy));
+    const rb = Math.max(Math.abs(b.gx), Math.abs(b.gy));
+    if (ra !== rb) return ra - rb;
+    const ua = a.gy < 0 ? 1 : 0, ub = b.gy < 0 ? 1 : 0;
+    if (ua !== ub) return ua - ub;
+    const ma = Math.abs(a.gx) + Math.abs(a.gy), mb = Math.abs(b.gx) + Math.abs(b.gy);
+    if (ma !== mb) return ma - mb;
+    return a.gx - b.gx;
+  });
+})();
+
 function overlaps(a: Box, b: Box, margin = 3): boolean {
   return !(
     a.left + a.w + margin <= b.left ||
@@ -128,8 +152,8 @@ function renderAreaLabelsInner(canvas: any, color: string): void {
   if (!areas.length) return;
 
   interface Entry {
-    cx: number; cyMid: number; anchorY: number; index: number; text: string;
-    labelW: number; labelH: number; fontSize: number; forceLeader: boolean;
+    cx: number; cyMid: number; anchorX: number; anchorY: number; index: number; text: string;
+    labelW: number; labelH: number; effW: number; effH: number; fontSize: number; forceLeader: boolean;
   }
 
   const entries: Entry[] = areas.map((a: any) => {
@@ -142,61 +166,59 @@ function renderAreaLabelsInner(canvas: any, color: string): void {
     // Label size scales with the area's on-screen size so it never overwhelms a
     // small surface, but stays within a readable band.
     const fontSize = clamp(Math.round(Math.min(aw, ah) * 0.24), 11, 18);
-    const labelW = measureLabelWidth(text, fontSize) + 4;
+    const labelW = measureLabelWidth(text, fontSize);
     const labelH = fontSize * 1.25;
+    // Collision footprint includes the white halo + shadow + a breathing gap,
+    // so labels never visually touch even though their text boxes don't overlap.
+    const pad = fontSize * 0.4 + 5;
+    const effW = labelW + pad * 2;
+    const effH = labelH + pad;
 
     // Centre the label on the diagonal midpoint only when it comfortably fits
     // inside the area; otherwise park it just below the area so it never covers
     // the measured surface, with a leader back to the midpoint.
-    const fits = labelW <= aw - 4 && labelH <= ah - 2;
+    const fits = labelW <= aw - 6 && labelH <= ah - 4;
     const areaBottom = c.y + ah / 2;
     const anchorY = fits ? c.y : areaBottom + labelH / 2 + 4;
 
-    return { cx: c.x, cyMid: c.y, anchorY, index: d.index, text, labelW, labelH, fontSize, forceLeader: !fits };
+    return { cx: c.x, cyMid: c.y, anchorX: c.x, anchorY, index: d.index, text, labelW, labelH, effW, effH, fontSize, forceLeader: !fits };
   });
+
+  const grid = PLACEMENT_GRID;
 
   // Place from top to bottom, left to right, for a stable result.
   entries.sort((p, q) => (p.anchorY - q.anchorY) || (p.cx - q.cx));
 
   const placed: Box[] = [];
+  const leaderSpecs: { x1: number; y1: number; x2: number; y2: number }[] = [];
+  const labelObjs: any[] = [];
 
   for (const e of entries) {
-    const step = e.labelH + 5;
-    let bestOffset = 0;
-    for (let i = 0; i < 80; i++) {
-      // 0, +step, -step, +2step, -2step, ...
-      const k = Math.ceil(i / 2);
-      const offset = i === 0 ? 0 : (i % 2 === 1 ? k * step : -k * step);
-      const box: Box = { left: e.cx - e.labelW / 2, top: e.anchorY - e.labelH / 2 + offset, w: e.labelW, h: e.labelH };
-      if (!placed.some((b) => overlaps(box, b))) { bestOffset = offset; break; }
-      bestOffset = offset; // fallback to last tried
+    const stepX = e.effW * 0.62;
+    const stepY = e.effH;
+    let fx = e.anchorX, fy = e.anchorY;
+    for (let i = 0; i < grid.length; i++) {
+      const g = grid[i];
+      const x = e.anchorX + g.gx * stepX;
+      const y = e.anchorY + g.gy * stepY;
+      const box: Box = { left: x - e.effW / 2, top: y - e.effH / 2, w: e.effW, h: e.effH };
+      const free = !placed.some((b) => overlaps(box, b, 0));
+      if (free || i === grid.length - 1) { fx = x; fy = y; placed.push(box); break; }
     }
 
-    const finalCy = e.anchorY + bestOffset;
-    placed.push({ left: e.cx - e.labelW / 2, top: finalCy - e.labelH / 2, w: e.labelW, h: e.labelH });
-
-    // Leader from the label back to the diagonal midpoint whenever the label
-    // was parked outside the area or pushed noticeably away by de-cluttering.
-    if (e.forceLeader || Math.abs(finalCy - e.cyMid) > e.labelH * 0.75) {
-      const anchorEdge = finalCy > e.cyMid ? finalCy - e.labelH / 2 : finalCy + e.labelH / 2;
-      const leader = new Line([e.cx, e.cyMid, e.cx, anchorEdge], {
-        stroke: color,
-        strokeWidth: 1,
-        opacity: 0.6,
-        selectable: false,
-        evented: false,
-        excludeFromExport: true,
-      });
-      // @ts-ignore
-      leader.data = { type: "area-leader" };
-      canvas.add(leader);
+    // Leader from the diagonal midpoint to the label, drawn whenever the label
+    // was parked outside its area or nudged noticeably away.
+    const displaced = Math.hypot(fx - e.cx, fy - e.cyMid);
+    if (e.forceLeader || displaced > e.labelH * 0.9) {
+      const edgeY = fy > e.cyMid ? fy - e.labelH / 2 : fy + e.labelH / 2;
+      leaderSpecs.push({ x1: e.cx, y1: e.cyMid, x2: fx, y2: edgeY });
     }
 
     // Lightweight label: outlined text (no bulky pill). A white halo + soft
     // shadow keeps it legible on any background while staying unobtrusive.
     const label = new IText(e.text, {
-      left: e.cx,
-      top: finalCy,
+      left: fx,
+      top: fy,
       originX: "center",
       originY: "center",
       fill: color,
@@ -213,8 +235,21 @@ function renderAreaLabelsInner(canvas: any, color: string): void {
     });
     // @ts-ignore
     label.data = { type: "area-label", index: e.index };
-    canvas.add(label);
+    labelObjs.push(label);
   }
+
+  // Add ALL leaders first, then all labels, so a leader can never render on top
+  // of another label's text — labels always paint over the thin guide lines.
+  for (const s of leaderSpecs) {
+    const leader = new Line([s.x1, s.y1, s.x2, s.y2], {
+      stroke: color, strokeWidth: 1, opacity: 0.55,
+      selectable: false, evented: false, excludeFromExport: true,
+    });
+    // @ts-ignore
+    leader.data = { type: "area-leader" };
+    canvas.add(leader);
+  }
+  for (const label of labelObjs) canvas.add(label);
 
   canvas.requestRenderAll();
 }
