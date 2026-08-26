@@ -66,10 +66,21 @@ const PhotoEditor = () => {
     // Include custom `data` so area metadata (and thus the measurements) survive
     // undo/redo; without it a restored canvas loses every area's dimensions.
     // toObject(propertiesToInclude) is the Fabric-v7 way to add custom props.
-    const json = JSON.stringify(canvas.toObject(["data"]));
+    const obj: any = canvas.toObject(["data"]);
+    // MEMORY: never store the full-resolution background photo in the undo
+    // history. The user only ever draws ON TOP of a fixed background, so each
+    // snapshot only needs the vector overlay. Keeping the multi-hundred-KB image
+    // data-URL in every history entry piled up until mobile browsers ran out of
+    // memory ("zu wenig Speicher"). The live background is re-applied on restore.
+    delete obj.backgroundImage;
+    delete obj.background;
+    const json = JSON.stringify(obj);
     const nextHistory = historyRef.current.slice(0, historyStepRef.current + 1);
     if (nextHistory[nextHistory.length - 1] === json) return;
     nextHistory.push(json);
+    // Bound the history so a long editing session can't grow without limit.
+    const MAX_HISTORY = 40;
+    if (nextHistory.length > MAX_HISTORY) nextHistory.splice(0, nextHistory.length - MAX_HISTORY);
     historyRef.current = nextHistory;
     historyStepRef.current = nextHistory.length - 1;
     setCanvasHistory(nextHistory);
@@ -81,7 +92,11 @@ const PhotoEditor = () => {
     isRestoringHistoryRef.current = true;
     historyStepRef.current = step;
     setHistoryStep(step);
+    // History no longer carries the background photo, so hold on to the live one
+    // and re-apply it after loadFromJSON (which would otherwise clear it).
+    const bg = fabricCanvas.backgroundImage;
     fabricCanvas.loadFromJSON(historyRef.current[step]).then(() => {
+      if (bg) fabricCanvas.backgroundImage = bg;
       // Derived labels are not stored in history — re-derive them for the
       // restored set of areas (also guarantees they stay non-overlapping).
       relayoutLabels(fabricCanvas);
@@ -559,6 +574,16 @@ const PhotoEditor = () => {
           };
         }
 
+        // MEMORY: cap the exported bitmap so the temporary export canvas can't
+        // balloon (multiplier × crop) and OOM a phone. 2600px longest side keeps
+        // dimension labels crisp while staying well within mobile limits.
+        {
+          const outW = (exportOptions.width ?? fabricCanvas.getWidth()) * (exportOptions.multiplier ?? 1);
+          const outH = (exportOptions.height ?? fabricCanvas.getHeight()) * (exportOptions.multiplier ?? 1);
+          const outLongest = Math.max(outW, outH);
+          const MAX_OUT = 2600;
+          if (outLongest > MAX_OUT) exportOptions.multiplier = (exportOptions.multiplier ?? 1) * (MAX_OUT / outLongest);
+        }
         let dataUrl = fabricCanvas.toDataURL(exportOptions);
         // No compressImage() here on purpose - annotated images stay at
         // full resolution so dimension labels remain sharp. (Originals
