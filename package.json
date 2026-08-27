@@ -12,10 +12,12 @@
     "preview": "vite preview",
     "test": "playwright test",
     "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "test:unit": "vitest run"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
+    "luxon": "^3.5.0",
     "@radix-ui/react-accordion": "^1.2.11",
     "@radix-ui/react-alert-dialog": "^1.1.14",
     "@radix-ui/react-aspect-ratio": "^1.1.7",
@@ -89,7 +91,9 @@
     "globals": "^15.15.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
+    "@types/luxon": "^3.4.2",
     "typescript": "^5.8.3",
+    "vitest": "^2.1.8",
     "typescript-eslint": "^8.38.0",
     "vite": "^5.4.19",
     "vite-plugin-pwa": "^1.0.3"
