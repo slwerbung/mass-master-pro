@@ -41,6 +41,7 @@ import { MeetingRecorderProvider } from "@/components/MeetingRecorder";
 // Interner Probo-Katalog-Generator: bewusst lazy, damit @react-pdf/renderer
 // nicht im Haupt-Bundle landet, das alle Mitarbeiter laden.
 const ProboCatalog = lazy(() => import("./pages/ProboCatalog"));
+const SnapTest = lazy(() => import("./pages/SnapTest"));
 
 const queryClient = new QueryClient();
 
@@ -215,6 +216,23 @@ const App = () => {
                   }
                 >
                   <ProboCatalog />
+                </Suspense>
+              </RoleGuard>
+            }
+          />
+          {/* Hidden prototype: semi-automatic surface snap. Unlinked, lazy. */}
+          <Route
+            path="/snap-test"
+            element={
+              <RoleGuard allowedRoles={["admin", "employee"]}>
+                <Suspense
+                  fallback={
+                    <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
+                      Wird geladen...
+                    </div>
+                  }
+                >
+                  <SnapTest />
                 </Suspense>
               </RoleGuard>
             }
