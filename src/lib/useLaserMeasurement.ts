@@ -78,7 +78,11 @@ export function useLaserMeasurement(
       } else if (err?.message === "no-service") {
         toast.error("Kein kompatibles Lasergerät (Leica/Würth) gefunden");
       } else {
-        toast.error("Bluetooth-Verbindung fehlgeschlagen");
+        // Surface the real reason (device/permission state) — e.g.
+        // "NotAllowedError" (Bluetooth für den Browser nicht erlaubt),
+        // "NetworkError" (Gerät außer Reichweite/belegt) — hilft bei der
+        // Ferndiagnose ungemein.
+        toast.error("Bluetooth-Verbindung fehlgeschlagen: " + (err?.message || err?.name || "Unbekannt"));
       }
     }
   }, []);
