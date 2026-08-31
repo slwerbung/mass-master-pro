@@ -50,12 +50,5 @@ window.addEventListener("orientationchange", setAppVh);
 window.visualViewport?.addEventListener("resize", setAppVh);
 
 createRoot(document.getElementById("root")!).render(<App />);
-
-// Register the cache-free service worker so Captfix is installable as a real
-// app (standalone + manifest icon) on Android. It never caches assets, so it
-// can't serve stale files after a deploy.
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => { /* non-fatal */ });
-  });
-}
+// PWA/service worker is provided by vite-plugin-pwa (registerType: autoUpdate) —
+// no manual registration here (a second one collided with the generated sw.js).
