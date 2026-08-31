@@ -25,12 +25,17 @@ function normalizeSection(text: string): string[] {
 export interface ProtocolParts {
   title?: string | null;
   summary: string;
-  actionPlan: string;
+  /** Voller Maßnahmenplan (Standalone-Protokoll). */
+  actionPlan?: string;
+  /** Nur die To-dos DES KUNDEN. Wenn gesetzt, ersetzt es den Maßnahmenplan –
+   *  interne To-dos gehen NIE an den Kunden. */
+  customerTodos?: string;
   customerName?: string | null;
 }
 
-/** A ready-to-edit e-mail body containing the full protocol. */
-export function buildProtocolEmailBody({ title, summary, actionPlan, customerName }: ProtocolParts): string {
+/** A ready-to-edit e-mail body containing the protocol. Bei `customerTodos`
+ *  enthält die Mail nur die Punkte für den Kunden (keine internen To-dos). */
+export function buildProtocolEmailBody({ title, summary, actionPlan, customerTodos, customerName }: ProtocolParts): string {
   // Neutral wording — no direct address (neither "Sie" nor "du").
   const greeting = customerName?.trim() ? `Guten Tag ${customerName.trim()},` : "Guten Tag,";
   const intro = title?.trim()
@@ -40,8 +45,13 @@ export function buildProtocolEmailBody({ title, summary, actionPlan, customerNam
   const lines: string[] = [greeting, "", intro, ""];
   lines.push("Ergebnisprotokoll", "");
   lines.push(...normalizeSection(summary));
-  lines.push("", "Maßnahmenplan", "");
-  lines.push(...normalizeSection(actionPlan));
+  if (customerTodos !== undefined) {
+    lines.push("", "Offene Punkte für Sie", "");
+    lines.push(...normalizeSection(customerTodos || "- Keine offenen Punkte"));
+  } else {
+    lines.push("", "Maßnahmenplan", "");
+    lines.push(...normalizeSection(actionPlan || ""));
+  }
   return lines.join("\n").trim();
 }
 

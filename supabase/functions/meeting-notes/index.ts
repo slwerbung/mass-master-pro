@@ -120,13 +120,14 @@ async function transcribe(p: AIProvider, audio: Blob, filename: string): Promise
 }
 
 const SUMMARY_SYSTEM = `Du bist Assistent für Gesprächsnotizen einer Schilder-/Werbetechnikfirma.
-Aus dem folgenden Transkript eines Gesprächs (Kunde/Mitarbeiter) erstellst du KEIN Wortprotokoll, sondern ein knappes Ergebnisprotokoll auf Deutsch.
+Aus dem folgenden Transkript eines Gesprächs (Kunde/Mitarbeiter) erstellst du KEIN Wortprotokoll, sondern ein knappes Ergebnisprotokoll auf Deutsch UND teilst die offenen Aufgaben klar in zwei Listen: To-dos für UNS (die Firma/Mitarbeiter) und To-dos für den KUNDEN.
 
 Gib ein JSON-Objekt zurück mit genau diesen Feldern:
 - "summary": Markdown mit den wichtigsten besprochenen Punkten und getroffenen Entscheidungen als kurze Stichpunkte (Aufzählung mit "- "). Keine Floskeln, nur Ergebnisse.
-- "actionPlan": Markdown-Aufzählung mit konkreten nächsten Schritten / Maßnahmen. Jede Maßnahme als eigener Stichpunkt mit "- " (KEINE Kästchen wie "[ ]", KEIN Fließtext). Wenn erkennbar, Verantwortliche und Fristen ergänzen. Wenn keine Maßnahmen erkennbar sind: "- Keine offenen Punkte".
+- "todosInternal": Markdown-Aufzählung ("- ") der Aufgaben, die WIR (Firma/Mitarbeiter) erledigen. Verantwortliche/Fristen ergänzen, wenn erkennbar. KEINE Kästchen "[ ]". Wenn keine: "- Keine offenen Punkte".
+- "todosCustomer": Markdown-Aufzählung ("- ") der Aufgaben, die der KUNDE erledigen, liefern oder entscheiden muss. Wenn keine: "- Keine offenen Punkte".
 
-Antworte ausschließlich mit dem JSON-Objekt, ohne weitere Erklärung.`;
+Ordne jede Aufgabe eindeutig genau einer der beiden Seiten zu. Antworte ausschließlich mit dem JSON-Objekt, ohne weitere Erklärung.`;
 
 // Generic prompt for the standalone protocol app (/protokoll). The user gives
 // a briefing (context + how the protocol should be made) beforehand, which is
@@ -143,10 +144,11 @@ Halte dich strikt an den vom Nutzer vorgegebenen Kontext und die Protokoll-Anwei
 // Builds the system prompt. Without a briefing the original project prompt is
 // used (unchanged). With a briefing the generic prompt + the user's context
 // and instructions are used.
+// Standalone-only (das Projekt-Prompt SUMMARY_SYSTEM wird direkt genutzt).
 function buildSummarySystem(briefing?: { context?: string; instructions?: string }): string {
   const context = (briefing?.context || "").trim();
   const instructions = (briefing?.instructions || "").trim();
-  if (!context && !instructions) return SUMMARY_SYSTEM;
+  if (!context && !instructions) return SUMMARY_SYSTEM_GENERIC;
   let out = SUMMARY_SYSTEM_GENERIC;
   if (context) out += `\n\nKONTEXT DES TERMINS (vom Nutzer vorab):\n${context.slice(0, 4000)}`;
   if (instructions) out += `\n\nSO SOLL DAS PROTOKOLL ERSTELLT WERDEN (Anweisung des Nutzers):\n${instructions.slice(0, 4000)}`;
@@ -174,21 +176,9 @@ function normalizeActionPlan(text: string): string {
   return out.join("\n").trim();
 }
 
-function parseSummary(content: string): { summary: string; actionPlan: string } {
-  try {
-    const parsed = JSON.parse(content);
-    return {
-      summary: String(parsed.summary || "").trim() || "_Keine Zusammenfassung erkannt._",
-      actionPlan: normalizeActionPlan(String(parsed.actionPlan || "").trim()) || "- Keine offenen Punkte",
-    };
-  } catch {
-    return { summary: content.slice(0, 4000), actionPlan: "- Keine offenen Punkte" };
-  }
-}
-
-async function summarise(p: AIProvider, transcript: string, system: string): Promise<{ summary: string; actionPlan: string }> {
-  // Groq: try the model candidates in order and fall through only when the
-  // model itself is the problem (retired/unknown). OpenAI: single model.
+// One chat call → parsed JSON object. Groq: try model candidates in order and
+// fall through only when the model itself is the problem (retired/unknown).
+async function chatJson(p: AIProvider, transcript: string, system: string): Promise<any> {
   const models = p.name === "groq" ? GROQ_CHAT_MODELS : [p.chatModel];
   let lastErr = "unbekannter Fehler";
   for (const model of models) {
@@ -207,16 +197,36 @@ async function summarise(p: AIProvider, transcript: string, system: string): Pro
     });
     if (resp.ok) {
       const data = await resp.json();
-      return parseSummary(data?.choices?.[0]?.message?.content || "{}");
+      try { return JSON.parse(data?.choices?.[0]?.message?.content || "{}"); } catch { return {}; }
     }
     const errText = (await resp.text()).slice(0, 300);
     lastErr = `HTTP ${resp.status}: ${errText}`;
-    // Only try the next model when THIS model is the issue (unknown/retired).
-    // Other failures (rate limit, auth, server) won't be fixed by swapping it.
     const isModelProblem = resp.status === 404 || /model_not_found|does not exist|decommission|deprecat/i.test(errText);
     if (!isModelProblem) break;
   }
   throw new Error(`Zusammenfassung fehlgeschlagen (${lastErr})`);
+}
+
+/** Standalone/generic note: Ergebnisprotokoll + einzelner Maßnahmenplan. */
+function mapGeneric(obj: any): { summary: string; actionPlan: string } {
+  return {
+    summary: String(obj?.summary || "").trim() || "_Keine Zusammenfassung erkannt._",
+    actionPlan: normalizeActionPlan(String(obj?.actionPlan || "").trim()) || "- Keine offenen Punkte",
+  };
+}
+
+/** Projekt-Gesprächsnotiz: Ergebnisprotokoll + To-dos wir / Kunde. */
+function mapProject(obj: any): { summary: string; todosInternal: string; todosCustomer: string } {
+  return {
+    summary: String(obj?.summary || "").trim() || "_Keine Zusammenfassung erkannt._",
+    todosInternal: normalizeActionPlan(String(obj?.todosInternal || "").trim()) || "- Keine offenen Punkte",
+    todosCustomer: normalizeActionPlan(String(obj?.todosCustomer || "").trim()) || "- Keine offenen Punkte",
+  };
+}
+
+/** Kombiniert beide To-do-Listen für die HERO-/Fallback-Anzeige (`action_plan`). */
+function combineTodos(internal: string, customer: string): string {
+  return `**Für uns:**\n\n${internal}\n\n**Für den Kunden:**\n\n${customer}`;
 }
 
 Deno.serve(async (req) => {
@@ -252,7 +262,7 @@ Deno.serve(async (req) => {
       if (!projectId) return json({ notes: [] });
       const { data } = await supabase
         .from("meeting_notes")
-        .select("id, summary, action_plan, created_by, hero_logged, created_at")
+        .select("id, summary, action_plan, todos_internal, todos_customer, created_by, hero_logged, created_at")
         .eq("project_id", projectId)
         .order("created_at", { ascending: false })
         .limit(20);
@@ -274,8 +284,24 @@ Deno.serve(async (req) => {
       if (!existing) return json({ error: "Notiz nicht gefunden" }, 404);
 
       const summary = String(body.summary ?? "").trim();
-      const actionPlan = normalizeActionPlan(String(body.actionPlan ?? "").trim()) || "- Keine offenen Punkte";
-      const update: Record<string, unknown> = { summary, action_plan: actionPlan };
+      // Projekt-Notizen tragen jetzt zwei To-do-Listen; Standalone/Alt weiter
+      // einen einzelnen Maßnahmenplan.
+      const hasTodos = Object.prototype.hasOwnProperty.call(body, "todosInternal")
+        || Object.prototype.hasOwnProperty.call(body, "todosCustomer");
+      let actionPlan = "";
+      let todosInternal = "", todosCustomer = "";
+      const update: Record<string, unknown> = { summary };
+      if (hasTodos) {
+        todosInternal = normalizeActionPlan(String(body.todosInternal ?? "").trim()) || "- Keine offenen Punkte";
+        todosCustomer = normalizeActionPlan(String(body.todosCustomer ?? "").trim()) || "- Keine offenen Punkte";
+        actionPlan = combineTodos(todosInternal, todosCustomer);
+        update.action_plan = actionPlan;
+        update.todos_internal = todosInternal;
+        update.todos_customer = todosCustomer;
+      } else {
+        actionPlan = normalizeActionPlan(String(body.actionPlan ?? "").trim()) || "- Keine offenen Punkte";
+        update.action_plan = actionPlan;
+      }
       if (Object.prototype.hasOwnProperty.call(body, "title")) {
         update.title = String(body.title || "").trim() || null;
       }
@@ -294,9 +320,9 @@ Deno.serve(async (req) => {
           if (!hctx) {
             heroError = "Projekt nicht mit HERO verknüpft oder Integration aus.";
           } else {
-            const text =
-              `ERGEBNISPROTOKOLL\n\n${summary}\n\n` +
-              `MASSNAHMENPLAN\n\n${actionPlan}`;
+            const text = hasTodos
+              ? `ERGEBNISPROTOKOLL\n\n${summary}\n\nTO-DOS (WIR)\n\n${todosInternal}\n\nTO-DOS (KUNDE)\n\n${todosCustomer}`
+              : `ERGEBNISPROTOKOLL\n\n${summary}\n\nMASSNAHMENPLAN\n\n${actionPlan}`;
             const res = await heroAddLogbook(hctx.apiKey, hctx.heroId, `Captfix: Gesprächsnotiz (aktualisiert) · ${projectNumber}`, text);
             heroLogged = res.ok;
             if (!res.ok) heroError = res.error;
@@ -309,7 +335,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      return json({ id, summary, actionPlan, heroLogged, heroError, projectNumber });
+      return json({ id, summary, actionPlan, todosInternal, todosCustomer, heroLogged, heroError, projectNumber });
     }
 
     if (action === "process") {
@@ -350,10 +376,16 @@ Deno.serve(async (req) => {
         return json({ error: "Leeres Transkript – wurde Sprache aufgenommen?" }, 422);
       }
 
-      let summary = "", actionPlan = "";
+      let summary = "", actionPlan = "", todosInternal = "", todosCustomer = "";
       try {
-        const system = buildSummarySystem(standalone ? { context: briefContext, instructions: briefInstructions } : undefined);
-        ({ summary, actionPlan } = await summarise(provider, transcript, system));
+        if (standalone) {
+          const obj = await chatJson(provider, transcript, buildSummarySystem({ context: briefContext, instructions: briefInstructions }));
+          ({ summary, actionPlan } = mapGeneric(obj));
+        } else {
+          const obj = await chatJson(provider, transcript, SUMMARY_SYSTEM);
+          ({ summary, todosInternal, todosCustomer } = mapProject(obj));
+          actionPlan = combineTodos(todosInternal, todosCustomer);
+        }
       } catch (e: any) {
         await supabase.storage.from("project-files").remove([audioPath]).catch(() => {});
         return json({ error: e.message || "Zusammenfassung fehlgeschlagen" }, 502);
@@ -376,7 +408,8 @@ Deno.serve(async (req) => {
           } else {
             const text =
               `ERGEBNISPROTOKOLL\n\n${summary}\n\n` +
-              `MASSNAHMENPLAN\n\n${actionPlan}`;
+              `TO-DOS (WIR)\n\n${todosInternal}\n\n` +
+              `TO-DOS (KUNDE)\n\n${todosCustomer}`;
             const res = await heroAddLogbook(hctx.apiKey, hctx.heroId, `Captfix: Gesprächsnotiz · ${projectNumber}`, text);
             heroLogged = res.ok;
             if (!res.ok) heroError = res.error;
@@ -396,6 +429,8 @@ Deno.serve(async (req) => {
         context: standalone ? briefingCombined : null,
         summary,
         action_plan: actionPlan,
+        todos_internal: standalone ? null : todosInternal,
+        todos_customer: standalone ? null : todosCustomer,
         transcript,
         created_by: createdBy,
         hero_logged: heroLogged,
@@ -403,7 +438,7 @@ Deno.serve(async (req) => {
 
       await supabase.storage.from("project-files").remove([audioPath]).catch(() => {});
 
-      return json({ id: inserted?.id, title: briefTitle, summary, actionPlan, heroLogged, heroError, projectNumber, standalone });
+      return json({ id: inserted?.id, title: briefTitle, summary, actionPlan, todosInternal, todosCustomer, heroLogged, heroError, projectNumber, standalone });
     }
 
     return json({ error: `Unbekannte Aktion: ${action}` }, 400);

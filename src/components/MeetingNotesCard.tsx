@@ -16,6 +16,8 @@ interface Note {
   id: string;
   summary: string;
   action_plan: string;
+  todos_internal?: string | null;
+  todos_customer?: string | null;
   created_by: string | null;
   hero_logged: boolean;
   created_at: string;
@@ -28,7 +30,8 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
   const [open, setOpen] = useState<Note | null>(null);
   const [editing, setEditing] = useState(false);
   const [editSummary, setEditSummary] = useState("");
-  const [editActionPlan, setEditActionPlan] = useState("");
+  const [editTodosInternal, setEditTodosInternal] = useState("");
+  const [editTodosCustomer, setEditTodosCustomer] = useState("");
   const [saving, setSaving] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
 
@@ -37,7 +40,10 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
   const startEdit = () => {
     if (!open) return;
     setEditSummary(open.summary || "");
-    setEditActionPlan(open.action_plan || "");
+    // Alt-Notizen ohne To-do-Aufteilung: den bisherigen Maßnahmenplan als
+    // interne To-dos vorbelegen, Kundenliste leer.
+    setEditTodosInternal(open.todos_internal ?? open.action_plan ?? "");
+    setEditTodosCustomer(open.todos_customer ?? "");
     setEditing(true);
   };
 
@@ -47,12 +53,12 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
     try {
       const session = getSession();
       const { data, error } = await supabase.functions.invoke("meeting-notes", {
-        body: { action: "update", token: session?.authToken, id: open.id, summary: editSummary, actionPlan: editActionPlan },
+        body: { action: "update", token: session?.authToken, id: open.id, summary: editSummary, todosInternal: editTodosInternal, todosCustomer: editTodosCustomer },
       });
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
       const d = data as any;
-      const updated: Note = { ...open, summary: d?.summary ?? editSummary, action_plan: d?.actionPlan ?? editActionPlan, hero_logged: d?.heroLogged ?? open.hero_logged };
+      const updated: Note = { ...open, summary: d?.summary ?? editSummary, action_plan: d?.actionPlan ?? open.action_plan, todos_internal: d?.todosInternal ?? editTodosInternal, todos_customer: d?.todosCustomer ?? editTodosCustomer, hero_logged: d?.heroLogged ?? open.hero_logged };
       setOpen(updated);
       setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
       setEditing(false);
@@ -116,7 +122,7 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Nimmt das Gespräch auf (läuft im Hintergrund weiter), transkribiert es und legt ein Ergebnisprotokoll + Maßnahmenplan an – auch im HERO-Logbuch.
+          Nimmt das Gespräch auf (läuft im Hintergrund weiter), transkribiert es und legt ein Ergebnisprotokoll + To-dos (für uns und für den Kunden) an – auch im HERO-Logbuch.
         </p>
 
         {loading ? (
@@ -165,9 +171,13 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
                     <Textarea value={editSummary} onChange={(e) => setEditSummary(e.target.value)} rows={7} className="text-sm" />
                   </div>
                   <div className="space-y-1.5">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Maßnahmenplan</p>
-                    <Textarea value={editActionPlan} onChange={(e) => setEditActionPlan(e.target.value)} rows={6} className="text-sm" />
-                    <p className="text-xs text-muted-foreground">Jede Maßnahme in eine eigene Zeile mit „- " am Anfang.</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">To-dos – wir</p>
+                    <Textarea value={editTodosInternal} onChange={(e) => setEditTodosInternal(e.target.value)} rows={5} className="text-sm" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">To-dos – Kunde</p>
+                    <Textarea value={editTodosCustomer} onChange={(e) => setEditTodosCustomer(e.target.value)} rows={5} className="text-sm" />
+                    <p className="text-xs text-muted-foreground">Jedes To-do in eine eigene Zeile mit „- ". Nur diese Punkte gehen an den Kunden.</p>
                   </div>
                   <div className="flex justify-end gap-2">
                     <Button variant="outline" onClick={() => setEditing(false)} disabled={saving}>Abbrechen</Button>
@@ -182,10 +192,23 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Ergebnisprotokoll</p>
                     <MeetingMarkdown text={open.summary} />
                   </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Maßnahmenplan</p>
-                    <MeetingMarkdown text={open.action_plan} />
-                  </div>
+                  {(open.todos_internal != null || open.todos_customer != null) ? (
+                    <>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">To-dos – wir</p>
+                        <MeetingMarkdown text={open.todos_internal || "- Keine offenen Punkte"} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">To-dos – Kunde</p>
+                        <MeetingMarkdown text={open.todos_customer || "- Keine offenen Punkte"} />
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Maßnahmenplan</p>
+                      <MeetingMarkdown text={open.action_plan} />
+                    </div>
+                  )}
                   <div className="flex flex-wrap justify-end gap-2 pt-1">
                     <Button variant="outline" size="sm" onClick={startEdit}>
                       <Pencil className="h-3.5 w-3.5 mr-1.5" /> Bearbeiten
@@ -207,7 +230,7 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
           onOpenChange={setSendOpen}
           projectId={projectId}
           defaultSubject={`Protokoll · Projekt ${projectNumber}`}
-          defaultBody={buildProtocolEmailBody({ summary: open.summary, actionPlan: open.action_plan })}
+          defaultBody={buildProtocolEmailBody({ summary: open.summary, customerTodos: open.todos_customer ?? "" })}
         />
       )}
     </Card>
