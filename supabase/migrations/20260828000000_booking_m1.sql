@@ -128,6 +128,8 @@ create table public.busy_block (
   source text not null check (source in ('google','hero','booking')),
   source_ref text,                        -- externe Event-ID (Idempotenz)
   category_key text,
+  geo_lat double precision,               -- Ort des Termins (für Fahrzeit)
+  geo_lng double precision,
   created_at timestamptz not null default now(),
   check (ends_at > starts_at)
 );
