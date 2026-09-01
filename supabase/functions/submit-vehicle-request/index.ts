@@ -157,6 +157,68 @@ async function heroSearchContactByEmail(apiKey: string, email: string): Promise<
   }
 }
 
+// Öffentliche/kostenlose Maildienste — hier NIEMALS nach Domain zuordnen,
+// sonst landen alle z. B. @gmail.com-Anfragen beim selben Kunden.
+const FREE_EMAIL_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "gmx.de", "gmx.net", "gmx.at", "gmx.ch",
+  "web.de", "t-online.de", "yahoo.com", "yahoo.de", "ymail.com",
+  "hotmail.com", "hotmail.de", "outlook.com", "outlook.de", "live.com", "live.de",
+  "icloud.com", "me.com", "mac.com", "aol.com", "aol.de", "freenet.de",
+  "arcor.de", "mail.de", "posteo.de", "protonmail.com", "proton.me", "msn.com",
+]);
+
+// Fallback: kein exakter E-Mail-Treffer, aber die DOMAIN (@firma.de) gehört
+// eindeutig zu genau EINEM HERO-Kunden → diesem zuordnen statt neu anzulegen.
+// Nur für Firmen-Domains (keine Freemailer) und nur bei eindeutiger Zuordnung
+// (mehrere verschiedene Kunden mit derselben Domain ⇒ lieber nicht raten).
+async function heroMatchByDomain(apiKey: string, email: string): Promise<{ id: number; isContactPerson: boolean; parentCustomerId: number; displayName: string; address?: { street?: string; city?: string; zipcode?: string } } | null> {
+  const domain = (email.split("@")[1] || "").toLowerCase().trim();
+  if (!domain || FREE_EMAIL_DOMAINS.has(domain)) return null;
+  const query = `
+    query Search($search: String) {
+      contacts(search: $search) {
+        id
+        email
+        is_contact_person
+        parent_customer_id
+        full_name
+        company_name
+        first_name
+        last_name
+        address { street city zipcode }
+      }
+    }
+  `;
+  try {
+    const resp = await fetch(HERO_GRAPHQL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ query, variables: { search: "@" + domain } }),
+    });
+    const data = await resp.json();
+    const contacts: any[] = (data?.data?.contacts || [])
+      .filter((c: any) => (c.email || "").toLowerCase().endsWith("@" + domain));
+    if (contacts.length === 0) return null;
+    // Auf den zugehörigen Kunden auflösen (Ansprechpartner → Mutterkunde).
+    const customerIdOf = (c: any) => (c.is_contact_person && c.parent_customer_id) ? c.parent_customer_id : c.id;
+    const distinct = new Set(contacts.map(customerIdOf));
+    if (distinct.size !== 1) return null; // uneindeutig → nicht raten
+    // Repräsentanten wählen: bevorzugt den Firmen-Datensatz.
+    const rep = contacts.find((c: any) => !c.is_contact_person) || contacts[0];
+    const displayName =
+      rep.full_name || rep.company_name || [rep.first_name, rep.last_name].filter(Boolean).join(" ") || "";
+    const address = rep.address ? {
+      street: rep.address.street || undefined,
+      city: rep.address.city || undefined,
+      zipcode: rep.address.zipcode || undefined,
+    } : undefined;
+    return { id: rep.id, isContactPerson: !!rep.is_contact_person, parentCustomerId: rep.parent_customer_id || 0, displayName, address };
+  } catch (e) {
+    console.warn("heroMatchByDomain failed", e);
+    return null;
+  }
+}
+
 async function heroCreateContact(apiKey: string, signup: NonNullable<FormData["signupData"]>, email: string): Promise<{ id: number } | { error: string }> {
   const hasCompany = !!signup.companyName?.trim();
   const contact: any = {
@@ -776,8 +838,18 @@ serve(async (req) => {
     const debug: any = {};
 
     if (heroEnabled) {
-      const match = await heroSearchContactByEmail(heroApiKey, body.email.trim());
-      debug.heroSearch = match ? { id: match.id, isContactPerson: match.isContactPerson, parentCustomerId: match.parentCustomerId, displayName: match.displayName, hasAddress: !!match.address?.zipcode } : null;
+      let match = await heroSearchContactByEmail(heroApiKey, body.email.trim());
+      // Kein exakter Treffer? Dann über die Firmen-Domain (@firma.de) versuchen,
+      // damit z. B. max@firma.de auch ohne exakt hinterlegte Adresse dem
+      // bestehenden Kunden „firma.de" zugeordnet wird statt neu angelegt.
+      if (!match) {
+        const domainMatch = await heroMatchByDomain(heroApiKey, body.email.trim());
+        if (domainMatch) {
+          match = domainMatch;
+          debug.heroDomainMatch = { id: domainMatch.id, customerId: domainMatch.parentCustomerId || domainMatch.id, displayName: domainMatch.displayName };
+        }
+      }
+      debug.heroSearch = match ? { id: match.id, isContactPerson: match.isContactPerson, parentCustomerId: match.parentCustomerId, displayName: match.displayName, hasAddress: !!match.address?.zipcode, viaDomain: !!debug.heroDomainMatch } : null;
       if (match) {
         foundExistingContact = true;
         // Display name + address + project linkage: parent company > the
