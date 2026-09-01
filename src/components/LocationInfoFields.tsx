@@ -1,5 +1,5 @@
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
-import { getProjectFieldValue, mergeWithDefaultProjectFields } from "@/lib/projectFields";
+import { getProjectFieldValue, mergeWithDefaultProjectFields, isProtectedProjectField } from "@/lib/projectFields";
 
 export interface LocationInfoFieldConfig {
   id?: string;
@@ -29,7 +29,10 @@ export default function LocationInfoFields({ location, fields, customerOnly = fa
     if (hideLocationName && field.field_key === "locationName") return false;
     return true;
   });
-  const visibleProjectFields = mergeWithDefaultProjectFields(projectFields || []).filter((field) => field.is_active);
+  // Kunde und Projektnummer sind Projekt-Kopfdaten — sie stehen bereits oben am
+  // Projekt und müssen nicht bei JEDEM Standort wiederholt werden.
+  const visibleProjectFields = mergeWithDefaultProjectFields(projectFields || [])
+    .filter((field) => field.is_active && !isProtectedProjectField(field.field_key));
   if (visibleFields.length === 0 && visibleProjectFields.length === 0) return null;
 
   const customFields = location?.custom_fields && typeof location.custom_fields === "object"
