@@ -91,8 +91,9 @@ const MeasurementInputDialog = ({ open, onConfirm, onCancel }: MeasurementInputD
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">
-              Bluetooth wird auf diesem Gerät/Browser nicht unterstützt
-              (z.&nbsp;B. iPhone/iPad). Bitte den Wert manuell eingeben.
+              Laser-Verbindung ist in diesem Browser nicht möglich. Sie geht in{" "}
+              <b>Chrome/Edge (Android)</b> oder <b>Bluefy (iPhone/iPad)</b> – Firefox
+              und Safari unterstützen kein Web-Bluetooth. Ansonsten den Wert manuell eingeben.
             </p>
           )}
         </div>

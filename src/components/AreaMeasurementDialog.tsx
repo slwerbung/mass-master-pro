@@ -91,7 +91,7 @@ const AreaMeasurementDialog = ({ open, onConfirm, onCancel }: AreaMeasurementDia
             </p>
           )}
 
-          {supported && (
+          {supported ? (
             <div className="space-y-2">
               <Button
                 variant="outline" className="w-full"
@@ -117,6 +117,12 @@ const AreaMeasurementDialog = ({ open, onConfirm, onCancel }: AreaMeasurementDia
                 </div>
               )}
             </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Laser-Verbindung ist in diesem Browser nicht möglich. Sie geht in
+              {" "}<b>Chrome/Edge (Android)</b> oder <b>Bluefy (iPhone/iPad)</b> –
+              {" "}Firefox und Safari unterstützen kein Web-Bluetooth. Ansonsten den Wert manuell eingeben.
+            </p>
           )}
         </div>
         <DialogFooter className="gap-2 sm:gap-0">
