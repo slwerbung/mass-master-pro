@@ -4,9 +4,16 @@ import { useNavigate } from "react-router-dom";
 import { setEditorHandoff } from "@/lib/editorHandoff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, Maximize2, X } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, Maximize2, X, Plus, Ruler } from "lucide-react";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
-import { Location } from "@/types/project";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import { Location, AreaMeasurement } from "@/types/project";
+import { indexedDBStorage } from "@/lib/indexedDBStorage";
+import { scheduleSyncProject } from "@/lib/supabaseSync";
+import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
@@ -81,6 +88,73 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
   const [updatingFeedbackId, setUpdatingFeedbackId] = useState<string | null>(null);
   const [approvalCount, setApprovalCount] = useState<{ total: number; approved: number } | null>(null);
+
+  // Editable area-measurement list. Areas are identified by their `index`
+  // (F1, F2, …) which is baked into the annotated image, so we never renumber
+  // on edit/delete — the number is an identity, not a position. A local copy
+  // is shown so edits appear instantly; it re-syncs when the location prop
+  // changes (e.g. after a background sync refreshes the parent).
+  const [areas, setAreas] = useState<AreaMeasurement[]>(location.areaMeasurements ?? []);
+  const [areaEditOpen, setAreaEditOpen] = useState(false);
+  const [draftAreas, setDraftAreas] = useState<{ index: number; widthMm: string; heightMm: string }[]>([]);
+  const [savingAreas, setSavingAreas] = useState(false);
+
+  useEffect(() => {
+    setAreas(location.areaMeasurements ?? []);
+  }, [location.areaMeasurements]);
+
+  const openAreaEditor = () => {
+    setDraftAreas(areas.map((a) => ({ index: a.index, widthMm: String(a.widthMm), heightMm: String(a.heightMm) })));
+    setAreaEditOpen(true);
+  };
+
+  const updateDraftArea = (index: number, field: "widthMm" | "heightMm", value: string) => {
+    setDraftAreas((prev) => prev.map((d) => (d.index === index ? { ...d, [field]: value } : d)));
+  };
+
+  const removeDraftArea = (index: number) => {
+    setDraftAreas((prev) => prev.filter((d) => d.index !== index));
+  };
+
+  const addDraftArea = () => {
+    // New areas continue the F-numbering from the current maximum.
+    const maxIndex = draftAreas.reduce((m, d) => Math.max(m, d.index), 0);
+    setDraftAreas((prev) => [...prev, { index: maxIndex + 1, widthMm: "", heightMm: "" }]);
+  };
+
+  const saveAreaEdits = async () => {
+    const cleaned: AreaMeasurement[] = [];
+    for (const d of draftAreas) {
+      const w = Math.round(parseFloat(d.widthMm));
+      const h = Math.round(parseFloat(d.heightMm));
+      if (!(w > 0) || !(h > 0)) {
+        toast.error(`F ${d.index}: bitte gültige Breite und Höhe eingeben`);
+        return;
+      }
+      cleaned.push({ index: d.index, widthMm: w, heightMm: h });
+    }
+    cleaned.sort((a, b) => a.index - b.index);
+    setSavingAreas(true);
+    try {
+      await indexedDBStorage.updateLocationMetadata(projectId, location.id, { areaMeasurements: cleaned });
+      setAreas(cleaned);
+      setAreaEditOpen(false);
+      scheduleSyncProject(projectId);
+      // Keep HERO's project notes in step with the corrected measurements.
+      updateHeroNotesIfLinked(projectId).catch((e) => console.warn("HERO notes sync failed:", e));
+      toast.success("Flächen aktualisiert");
+    } catch (e) {
+      console.error("Area save failed:", e);
+      toast.error("Flächen konnten nicht gespeichert werden");
+    } finally {
+      setSavingAreas(false);
+    }
+  };
+
+  const draftTotalM2 = draftAreas.reduce((sum, d) => {
+    const w = parseFloat(d.widthMm), h = parseFloat(d.heightMm);
+    return sum + (w > 0 && h > 0 ? (w * h) / 1_000_000 : 0);
+  }, 0);
 
   const loadApprovals = async () => {
     const { data } = await supabase
@@ -375,16 +449,26 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
             </div>
             {location.locationName && <p className="text-sm text-foreground truncate">{location.locationName}</p>}
             <p className="text-xs text-muted-foreground">Erstellt am {formatDateTimeSafe(location.createdAt)}</p>
-            {location.areaMeasurements && location.areaMeasurements.length > 0 && (
+            {areas.length > 0 && (
               <div className="mt-1 p-2 rounded bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 space-y-1">
-                <p className="text-xs font-medium text-blue-700 dark:text-blue-300">Flächen</p>
-                {location.areaMeasurements.map((am) => (
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-blue-700 dark:text-blue-300">Flächen</p>
+                  <button
+                    type="button"
+                    onClick={openAreaEditor}
+                    className="inline-flex items-center gap-1 text-xs text-blue-700 dark:text-blue-300 hover:underline"
+                    title="Flächenmaße bearbeiten"
+                  >
+                    <Pencil className="h-3 w-3" /> Bearbeiten
+                  </button>
+                </div>
+                {areas.map((am) => (
                   <p key={am.index} className="text-xs text-blue-600 dark:text-blue-400">
                     F {am.index}: {am.widthMm} × {am.heightMm} mm ({((am.widthMm * am.heightMm) / 1_000_000).toFixed(2)} m²)
                   </p>
                 ))}
                 <p className="text-xs font-semibold text-blue-700 dark:text-blue-300">
-                  Gesamt: {location.areaMeasurements.reduce((sum, am) => sum + (am.widthMm * am.heightMm) / 1_000_000, 0).toFixed(2)} m²
+                  Gesamt: {areas.reduce((sum, am) => sum + (am.widthMm * am.heightMm) / 1_000_000, 0).toFixed(2)} m²
                 </p>
               </div>
             )}
@@ -550,6 +634,58 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           </Button>
         </div>
       )}
+
+      {/* Edit the measured areas after the fact (correct a wrong laser value,
+          remove a mis-measured area). Numbers (F1, F2, …) are preserved. */}
+      <Dialog open={areaEditOpen} onOpenChange={(o) => { if (!o) setAreaEditOpen(false); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Ruler className="h-4 w-4" /> Flächen bearbeiten
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+            {draftAreas.length === 0 && (
+              <p className="text-sm text-muted-foreground">Keine Flächen. Mit „Fläche hinzufügen“ eine neue anlegen.</p>
+            )}
+            {draftAreas.map((d) => {
+              const w = parseFloat(d.widthMm), h = parseFloat(d.heightMm);
+              const m2 = w > 0 && h > 0 ? (w * h) / 1_000_000 : 0;
+              return (
+                <div key={d.index} className="flex items-end gap-2">
+                  <div className="w-8 shrink-0 pb-2 text-sm font-semibold text-blue-700 dark:text-blue-300">F{d.index}</div>
+                  <div className="flex-1 space-y-1">
+                    <label className="text-[10px] uppercase tracking-wide text-muted-foreground">Breite mm</label>
+                    <Input type="number" inputMode="decimal" value={d.widthMm}
+                      onChange={(e) => updateDraftArea(d.index, "widthMm", e.target.value)} />
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <label className="text-[10px] uppercase tracking-wide text-muted-foreground">Höhe mm</label>
+                    <Input type="number" inputMode="decimal" value={d.heightMm}
+                      onChange={(e) => updateDraftArea(d.index, "heightMm", e.target.value)} />
+                  </div>
+                  <div className="w-12 shrink-0 pb-2 text-right text-xs text-muted-foreground">{m2 > 0 ? m2.toFixed(2) : "–"}</div>
+                  <Button variant="ghost" size="icon" className="shrink-0 text-destructive" onClick={() => removeDraftArea(d.index)} title="Fläche entfernen">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              );
+            })}
+            <Button variant="outline" size="sm" className="w-full" onClick={addDraftArea}>
+              <Plus className="h-4 w-4 mr-1" /> Fläche hinzufügen
+            </Button>
+            {draftAreas.length > 0 && (
+              <p className="text-sm font-semibold text-right">Gesamt: {draftTotalM2.toFixed(2)} m²</p>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setAreaEditOpen(false)} disabled={savingAreas}>Abbrechen</Button>
+            <Button onClick={saveAreaEdits} disabled={savingAreas}>
+              {savingAreas ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Speichert…</> : "Speichern"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 };

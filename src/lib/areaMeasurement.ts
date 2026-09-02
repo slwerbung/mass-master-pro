@@ -161,7 +161,10 @@ function renderAreaLabelsInner(canvas: any, color: string): void {
     const aw = a.getScaledWidth ? a.getScaledWidth() : (a.width * (a.scaleX ?? 1));
     const ah = a.getScaledHeight ? a.getScaledHeight() : (a.height * (a.scaleY ?? 1));
     const d = a.data;
-    const text = `F${d.index} · ${d.widthMm}×${d.heightMm}`;
+    // On the image we show ONLY the area name (F1, F2, …). The actual
+    // dimensions live in the location's measurement list, so the photo stays
+    // clean and labels of neighbouring areas can never crowd each other out.
+    const text = `F${d.index}`;
 
     // Label size scales with the area's on-screen size so it never overwhelms a
     // small surface, but stays within a readable band.

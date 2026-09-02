@@ -250,6 +250,21 @@ const LocationDetails = () => {
           }
         }
 
+        // Areas measured on a detail image belong to the PARENT location's
+        // measurement list, so the numbering (F1, F2, F3, …) simply continues
+        // across the main image and every detail image. The indices were
+        // already assigned project-wide in the editor, so we just append.
+        const detailAreas = (stateAreaMeasurements as AreaMeasurement[] | undefined) || [];
+        if (detailAreas.length > 0) {
+          const parentProject = projectForHero || await indexedDBStorage.getProject(projectId);
+          const parentLoc = parentProject?.locations.find(l => l.id === targetLocationId);
+          const existing = parentLoc?.areaMeasurements || [];
+          await indexedDBStorage.updateLocationMetadata(projectId, targetLocationId, {
+            areaMeasurements: [...existing, ...detailAreas],
+          });
+          await updateHeroNotesIfLinked(projectId);
+        }
+
         toast.dismiss();
         toast.success("Detailbild gespeichert");
         navigate(`/projects/${projectId}`);
