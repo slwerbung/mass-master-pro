@@ -41,10 +41,15 @@ export async function loadDropboxSettings(supabase: SupabaseClient): Promise<Dro
 
 // ── Kundenordner-Erkennung ("Intelligenz") ────────────────────────────
 // Diäkritika entfernen (Ä→A, ü→u …), damit Buckets & Vergleiche stabil sind.
+// Kombinierende Akzente (U+0300-U+036F) werden aus Codepoints zusammengebaut,
+// nicht als Literal geschrieben. So haengt die Klasse weder von unsichtbaren
+// Zeichen im Quelltext noch von korrektem Escaping beim Deploy ab.
+const COMBINING_MARKS = new RegExp(
+  "[" + String.fromCharCode(0x300) + "-" + String.fromCharCode(0x36f) + "]",
+  "g",
+);
 export function stripDiacritics(s: string): string {
-  // Kombinierende Akzente (U+0300-U+036F) explizit als Escape, damit die
-  // Klasse nicht von unsichtbaren Zeichen im Quelltext abhaengt.
-  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return String(s || "").normalize("NFD").replace(COMBINING_MARKS, "");
 }
 
 // Alphabetischer Unterordner (A, B, C … / "0-9" / "#") aus dem Kundennamen.
