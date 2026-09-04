@@ -1,7 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { indexedDBStorage } from "./indexedDBStorage";
 import { getSession } from "./session";
-import { Project, DetailImage, FloorPlan } from "@/types/project";
+import { Project, Location, DetailImage, FloorPlan } from "@/types/project";
 import { finishSyncError, finishSyncSuccess, startSync } from "./syncStatus";
 import { compressImage } from "./imageCompression";
 import { signedFileUrl } from "./storageUrl";
@@ -477,8 +477,18 @@ function buildLocationRows(project: Project) {
       location_type: l.locationType || null,
       custom_fields: customFields,
       created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
+      updated_at: locationStamp(l).toISOString(),
     };
   });
+}
+
+/**
+ * Zeitpunkt der letzten Aenderung an einem Standort. Altdaten ohne eigenen
+ * Stempel fallen auf createdAt zurueck, damit der Vergleich nie auf NaN laeuft.
+ */
+function locationStamp(l: { updatedAt?: Date; createdAt: Date }): Date {
+  const t = l.updatedAt instanceof Date && !Number.isNaN(l.updatedAt.getTime()) ? l.updatedAt : l.createdAt;
+  return t instanceof Date && !Number.isNaN(t.getTime()) ? t : new Date(0);
 }
 
 async function removeDeletedLocationsFromSupabase(project: Project) {
@@ -507,17 +517,97 @@ async function removeDeletedLocationsFromSupabase(project: Project) {
   });
 }
 
+// ─── Konflikt-Merge auf Standort-Ebene ───────────────────────────────────────
+
+/**
+ * Ermittelt die Standorte, deren LOKALE Fassung neuer ist als die in Supabase
+ * (oder die es remote gar nicht gibt). Nur diese duerfen einen Hydrate
+ * ueberleben – alles andere ist remote aktueller und wird bewusst ersetzt.
+ *
+ * Die Sekunden-Toleranz entspricht der auf Projekt-Ebene: Uhren von Client und
+ * Server laufen nie exakt gleich, und ein gerade selbst hochgeladener Standort
+ * soll nicht als Konflikt gelten.
+ */
+async function findLocallyNewerLocations(project: Project): Promise<Location[]> {
+  if (!project.locations?.length) return [];
+  const { data: remoteRows, error } = await supabase
+    .from('locations')
+    .select('id, updated_at')
+    .eq('project_id', project.id);
+  // Ohne verlaessliche Remote-Stempel lieber nichts "retten" als munter zu
+  // raten – dann greift das bisherige Verhalten (Remote gewinnt).
+  if (error) return [];
+
+  const remoteStamp = new Map<string, number>();
+  for (const row of remoteRows || []) {
+    const t = row.updated_at ? new Date(row.updated_at).getTime() : NaN;
+    if (!Number.isNaN(t)) remoteStamp.set(row.id, t);
+  }
+
+  return project.locations.filter((l) => {
+    const remote = remoteStamp.get(l.id);
+    if (remote === undefined) return true; // existiert nur lokal
+    return locationStamp(l).getTime() > remote + 1000;
+  });
+}
+
+/**
+ * Schreibt die geretteten Standorte nach dem Hydrate zurueck – lokal UND nach
+ * Supabase, damit beide Seiten danach denselben Stand haben.
+ *
+ * Bildblobs bleiben dabei unangetastet: saveProject ueberschreibt Blobs
+ * bestehender Standorte nicht, und fuer die geretteten Standorte laden wir die
+ * lokalen Bilder anschliessend gezielt hoch.
+ */
+async function reapplyLocalLocations(projectId: string, preserved: Location[]): Promise<void> {
+  const session = getSession();
+  const hydrated = await indexedDBStorage.getProject(projectId, session);
+  if (!hydrated) return;
+
+  const byId = new Map(hydrated.locations.map((l) => [l.id, l]));
+  for (const loc of preserved) byId.set(loc.id, loc);
+  const merged: Project = {
+    ...hydrated,
+    locations: Array.from(byId.values()).sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+    ),
+  };
+  await indexedDBStorage.saveProject(merged);
+
+  // Geretteten Stand hochladen, damit die Remote-Seite nachzieht.
+  await supabase.from('locations').upsert(
+    buildLocationRows({ ...merged, locations: preserved }),
+    { onConflict: 'id' },
+  );
+  for (const loc of preserved) {
+    await syncLocationImages(loc.id, loc.imageData, loc.originalImageData);
+    await syncDetailImages(loc.id, loc.detailImages);
+  }
+  const stamp = new Date().toISOString();
+  await supabase.from('projects').update({ updated_at: stamp }).eq('id', projectId);
+  await indexedDBStorage.updateProjectTimestamp(projectId, stamp);
+}
+
 // ─── Core sync ────────────────────────────────────────────────────────────────
 
-async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'remote-won' | 'skipped'> {
+async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'remote-won' | 'merged' | 'skipped'> {
   const session = getSession();
   const project = await indexedDBStorage.getProject(projectId, session);
   if (!project) return 'skipped';
 
   const remoteUpdatedAt = await getProjectRemoteTimestamp(projectId);
   if (remoteUpdatedAt && remoteUpdatedAt.getTime() > project.updatedAt.getTime() + 1000) {
+    // Remote ist insgesamt neuer. Frueher wurde hier der komplette lokale
+    // Stand verworfen (last-write-wins auf Projekt-Ebene) – wer parallel an
+    // einem ANDEREN Standort gearbeitet hatte, verlor seine Arbeit.
+    // Jetzt wird pro Standort verglichen: alles, was lokal nachweislich
+    // neuer ist (oder remote gar nicht existiert), ueberlebt den Hydrate und
+    // wird anschliessend hochgeladen.
+    const preserved = await findLocallyNewerLocations(project);
     await hydrateProjectFromSupabase(projectId);
-    return 'remote-won';
+    if (preserved.length === 0) return 'remote-won';
+    await reapplyLocalLocations(projectId, preserved);
+    return 'merged';
   }
 
   const syncTimestamp = new Date().toISOString();
@@ -573,7 +663,7 @@ export async function syncAllToSupabase(): Promise<void> {
   }
 }
 
-export async function syncProjectToSupabase(projectId: string): Promise<'uploaded' | 'remote-won' | 'skipped'> {
+export async function syncProjectToSupabase(projectId: string): Promise<'uploaded' | 'remote-won' | 'merged' | 'skipped'> {
   startSync();
   try {
     const result = await syncProjectInternal(projectId);

@@ -47,6 +47,11 @@ export interface Location {
   feedbacks?: LocationFeedback[];
   areaMeasurements?: AreaMeasurement[];
   createdAt: Date;
+  // Zeitpunkt der letzten Aenderung AN DIESEM Standort. Der Sync vergleicht
+  // ihn mit locations.updated_at in Supabase, um bei gleichzeitigem Arbeiten
+  // pro Standort zu entscheiden, welche Fassung neuer ist – statt das ganze
+  // Projekt zu verwerfen. Fehlt er (Altdaten), gilt createdAt.
+  updatedAt?: Date;
 }
 
 export interface FloorPlanMarker {

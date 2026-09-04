@@ -98,11 +98,15 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 ## Offene Baustellen
 1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)
 2. ~~Bucket privat + Signed URLs~~ – erledigt (Phase 3, `docs/phase3-storage.md`).
-   Offen dort: `run-automations`, `hero-dropbox-poll` und
-   `submit-vehicle-request` tragen noch die alte `aufmassPdf.ts` im Bundle –
-   beim nächsten Anfassen neu deployen.
-3. Konflikt-Sync: Location-Level-Timestamps oder Operations-Queue statt
-   last-write-wins auf Projekt-Ebene
+   ~~`run-automations`, `hero-dropbox-poll` und `submit-vehicle-request`
+   tragen noch die alte `aufmassPdf.ts` im Bundle~~ – erledigt (Sept. 2026,
+   alle drei neu deployt und byte-genau gegen das Repo verifiziert).
+3. ~~Konflikt-Sync: last-write-wins auf Projekt-Ebene~~ – erledigt (Sept. 2026).
+   `locations.updated_at` + lokaler Stempel pro Standort; bei Konflikt wird
+   pro Standort entschieden statt das ganze Projekt zu verwerfen
+   (`findLocallyNewerLocations` / `reapplyLocalLocations` in `supabaseSync.ts`).
+   Offen bleibt der Fall, dass ZWEI Leute DENSELBEN Standort gleichzeitig
+   ändern – dort gilt weiter last-write-wins (auf Standort-Ebene).
 
 ## Workflow
 1. Änderungen direkt im Repo vornehmen

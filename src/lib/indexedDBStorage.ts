@@ -43,6 +43,11 @@ interface AufmassDBSchema extends DBSchema {
       guestInfo?: string;
       areaMeasurements?: string;
       createdAt: string;
+      // Letzte lokale Aenderung an diesem Standort (ISO). Wird beim Sync gegen
+      // locations.updated_at in Supabase verglichen, damit gleichzeitiges
+      // Arbeiten an verschiedenen Standorten nicht gegenseitig ueberschrieben
+      // wird. Fehlt der Wert (Altbestand), gilt createdAt.
+      updatedAt?: string;
     };
     indexes: { 'by-project': string };
   };
@@ -244,6 +249,20 @@ async function getAccessibleProjectRecords(db: IDBPDatabase<AufmassDBSchema>, se
   }
 }
 
+/**
+ * Markiert einen Standort als "lokal gerade geaendert".
+ *
+ * Der Sync vergleicht diesen Stempel pro Standort mit locations.updated_at in
+ * Supabase. Jede lokale Mutation an einem Standort (Metadaten, Bild,
+ * Detailbild) muss ihn setzen – sonst haelt der Merge die lokale Fassung
+ * faelschlich fuer aelter und verwirft sie zugunsten der Remote-Version.
+ */
+async function touchLocation(db: IDBPDatabase<AufmassDBSchema>, locationId: string): Promise<void> {
+  const record = await db.get('locations', locationId);
+  if (!record) return;
+  await db.put('locations', { ...record, updatedAt: new Date().toISOString() });
+}
+
 function normaliseAccessEmployeeIds(employeeId?: string | null, assignedEmployeeIds?: string[]) {
   const ids = new Set<string>();
   if (employeeId) ids.add(employeeId);
@@ -374,6 +393,9 @@ export const indexedDBStorage = {
         originalImageData,
         detailImages,
         createdAt: parseStoredDateSafe(record.createdAt),
+        // Altbestand ohne Stempel faellt auf createdAt zurueck, damit der
+        // Merge nie mit einem undefinierten Datum rechnet.
+        updatedAt: parseStoredDateSafe((record as any).updatedAt ?? record.createdAt),
       });
     }
     
@@ -442,6 +464,9 @@ export const indexedDBStorage = {
       type: 'annotated',
       blob: base64ToBlob(imageData),
     });
+    // Standort-Stempel mitziehen: sonst sieht der Sync ein neues Bild nicht
+    // als Aenderung AN DIESEM Standort und koennte es beim Merge verwerfen.
+    await touchLocation(db, locationId);
     const project = await db.get('projects', projectId);
     if (project) {
       await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
@@ -456,6 +481,8 @@ export const indexedDBStorage = {
       type: 'annotated',
       blob: base64ToBlob(imageData),
     });
+    const record = await db.get('detail-images', detailImageId);
+    if (record) await touchLocation(db, record.locationId);
   },
 
   async updateDetailImageMetadata(detailImageId: string, data: { caption?: string }): Promise<void> {
@@ -466,13 +493,16 @@ export const indexedDBStorage = {
       ...record,
       caption: data.caption,
     });
+    await touchLocation(db, record.locationId);
   },
 
   async deleteDetailImage(detailImageId: string): Promise<void> {
     const db = await getDB();
+    const record = await db.get('detail-images', detailImageId);
     await db.delete('detail-images', detailImageId);
     await db.delete('detail-image-blobs', createDetailBlobId(detailImageId, 'annotated'));
     await db.delete('detail-image-blobs', createDetailBlobId(detailImageId, 'original'));
+    if (record) await touchLocation(db, record.locationId);
   },
 
   async updateLocationMetadata(projectId: string, locationId: string, data: { locationName?: string; comment?: string; system?: string; label?: string; locationType?: string; customFields?: Record<string, string>; guestInfo?: string; areaMeasurements?: { index: number; widthMm: number; heightMm: number }[] }): Promise<void> {
@@ -496,6 +526,9 @@ export const indexedDBStorage = {
     if (Object.prototype.hasOwnProperty.call(data, 'areaMeasurements')) {
       updates.areaMeasurements = data.areaMeasurements ? JSON.stringify(data.areaMeasurements) : undefined;
     }
+    // Standort-Stempel setzen, damit der Sync diese Aenderung pro Standort
+    // gegen die Remote-Fassung abwaegen kann.
+    updates.updatedAt = new Date().toISOString();
     await db.put('locations', updates);
 
     const project = await db.get('projects', projectId);
@@ -523,6 +556,16 @@ export const indexedDBStorage = {
     const existingLocationIds = new Set(existingLocations.map(l => l.id));
     
     for (const location of project.locations) {
+      // Standort-Stempel NICHT blind neu setzen: saveProject laeuft auch beim
+      // Hydrate aus Supabase. Wuerde hier "jetzt" gestempelt, saehe jeder
+      // heruntergeladene Standort wie eine frische lokale Aenderung aus und
+      // der naechste Merge wuerde die Remote-Fassung ueberschreiben.
+      // Reihenfolge: explizit mitgegebener Wert > bereits gespeicherter >
+      // createdAt (Altbestand ohne Stempel).
+      const previous = existingLocations.find((l) => l.id === location.id);
+      const stamp = location.updatedAt instanceof Date
+        ? location.updatedAt.toISOString()
+        : (previous?.updatedAt ?? location.createdAt.toISOString());
       await db.put('locations', {
         id: location.id,
         projectId: project.id,
@@ -536,6 +579,7 @@ export const indexedDBStorage = {
         guestInfo: location.guestInfo,
         areaMeasurements: location.areaMeasurements ? JSON.stringify(location.areaMeasurements) : undefined,
         createdAt: location.createdAt.toISOString(),
+        updatedAt: stamp,
       });
       
       // Save image blob if: new location OR existing location but blob is missing
