@@ -37,10 +37,15 @@ import LabelPrint from "./pages/LabelPrint";
 import Protokoll from "./pages/Protokoll";
 import NotFound from "./pages/NotFound";
 import { MeetingRecorderProvider } from "@/components/MeetingRecorder";
+import { applyFeatureFlagsFromUrl } from "@/lib/featureFlags";
 
 // Interner Probo-Katalog-Generator: bewusst lazy, damit @react-pdf/renderer
 // nicht im Haupt-Bundle landet, das alle Mitarbeiter laden.
 const ProboCatalog = lazy(() => import("./pages/ProboCatalog"));
+
+// Leitsystem-Prototyp: lazy, damit er das Haupt-Bundle nicht belastet,
+// solange das Feature-Flag bei den meisten nicht gesetzt ist.
+const SignPlan = lazy(() => import("./pages/SignPlan"));
 
 const queryClient = new QueryClient();
 
@@ -160,6 +165,12 @@ const App = () => {
     startHeroUploadWorker();
   }, []);
 
+  // Feature-Flags aus der Adresszeile uebernehmen (?leitsystem=1|0). So laesst
+  // sich der Prototyp per Link ein- und ausschalten, ohne Admin-Oberflaeche.
+  useEffect(() => {
+    applyFeatureFlagsFromUrl(window.location.search);
+  }, []);
+
   return (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -188,6 +199,24 @@ const App = () => {
           <Route path="/projects/:projectId/floor-plans" element={<RoleGuard allowedRoles={["admin", "employee"]}><FloorPlanView /></RoleGuard>} />
           <Route path="/projects/:projectId/vehicle" element={<RoleGuard allowedRoles={["admin", "employee"]}><VehicleDetail /></RoleGuard>} />
           <Route path="/projects/:projectId/floor-plans/upload" element={<RoleGuard allowedRoles={["admin", "employee"]}><FloorPlanUpload /></RoleGuard>} />
+          {/* Leitsystem-Prototyp. Die Seite prueft selbst das Feature-Flag und
+              leitet zurueck, wenn es nicht gesetzt ist. */}
+          <Route
+            path="/projects/:projectId/leitsystem"
+            element={
+              <RoleGuard allowedRoles={["admin", "employee"]}>
+                <Suspense
+                  fallback={
+                    <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
+                      Leitsystem wird geladen...
+                    </div>
+                  }
+                >
+                  <SignPlan />
+                </Suspense>
+              </RoleGuard>
+            }
+          />
           {/* Customer routes - /kunde is public login, /customer is protected */}
           <Route path="/kunde" element={<CustomerLogin />} />
           <Route path="/customer" element={<RoleGuard allowedRoles={["customer"]}><CustomerView /></RoleGuard>} />

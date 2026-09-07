@@ -5,6 +5,7 @@ import { Project, Location, DetailImage, FloorPlan } from "@/types/project";
 import { finishSyncError, finishSyncSuccess, startSync } from "./syncStatus";
 import { compressImage } from "./imageCompression";
 import { signedFileUrl } from "./storageUrl";
+import { syncSignPlanProjectSafely } from "./signPlanSync";
 
 // ─── Image hash cache ────────────────────────────────────────────────────────
 // Persists to localStorage. Skips re-upload of unchanged images across sessions.
@@ -590,7 +591,19 @@ async function reapplyLocalLocations(projectId: string, preserved: Location[]): 
 
 // ─── Core sync ────────────────────────────────────────────────────────────────
 
+/**
+ * Der Leitsystem-Bestand (Prototyp) liegt in einer eigenen IndexedDB und in
+ * eigenen Tabellen. Er wird im selben Rutsch abgeglichen, aber strikt
+ * abgeschottet: `syncSignPlanProjectSafely` wirft nie, damit ein Problem im
+ * Prototyp den produktiven Projekt-Sync nicht zum Stehen bringt.
+ */
 async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'remote-won' | 'merged' | 'skipped'> {
+  const result = await syncProjectCore(projectId);
+  await syncSignPlanProjectSafely(projectId);
+  return result;
+}
+
+async function syncProjectCore(projectId: string): Promise<'uploaded' | 'remote-won' | 'merged' | 'skipped'> {
   const session = getSession();
   const project = await indexedDBStorage.getProject(projectId, session);
   if (!project) return 'skipped';

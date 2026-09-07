@@ -21,6 +21,8 @@ import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
 import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
+import { isLeitsystemEnabled } from "@/lib/featureFlags";
+import { createMusterklinikProject } from "@/lib/signPlanSeed";
 
 interface ProjectListItem {
   id: string;
@@ -67,6 +69,8 @@ const Projects = () => {
   const [showUnassigned, setShowUnassigned] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const navigate = useNavigate();
+  const [isSeeding, setIsSeeding] = useState(false);
+  const leitsystemEnabled = isLeitsystemEnabled();
   const session = getSession();
   const syncDoneRef = useRef(false);
 
@@ -310,6 +314,22 @@ const Projects = () => {
     return p.projectType === typeFilter;
   });
 
+  // Prototyp: legt das Testprojekt "Musterklinik" mit realistischer Menge an.
+  // Nur sichtbar, solange das Leitsystem-Flag gesetzt ist.
+  const seedMusterklinik = async () => {
+    setIsSeeding(true);
+    try {
+      const result = await createMusterklinikProject();
+      toast.success(`Testprojekt mit ${result.positionCount} Positionen angelegt`);
+      navigate(`/projects/${result.projectId}/leitsystem`);
+    } catch (error) {
+      console.error("Seed fehlgeschlagen", error);
+      toast.error("Testprojekt konnte nicht angelegt werden");
+    } finally {
+      setIsSeeding(false);
+    }
+  };
+
   const deleteCount = pendingDeleteIds.length;
 
   const filterTabs = [
@@ -358,6 +378,21 @@ const Projects = () => {
         </div>
 
         <HeroSyncIndicator />
+
+        {leitsystemEnabled && (
+          <div className="rounded-lg border border-dashed bg-muted/40 p-3 flex flex-wrap items-center gap-2">
+            <div className="flex-1 min-w-[12rem]">
+              <p className="text-sm font-medium">Leitsystem-Prototyp aktiv</p>
+              <p className="text-xs text-muted-foreground">
+                Bei Projekten vom Typ „Aufmaß mit Plan“ erscheint in der Projektansicht der
+                Bereich „Leitsystem“. Ausschalten mit <code>?leitsystem=0</code> in der Adresszeile.
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={seedMusterklinik} disabled={isSeeding}>
+              {isSeeding ? "Wird angelegt…" : "Testprojekt „Musterklinik“"}
+            </Button>
+          </div>
+        )}
 
         {/* Full-text search over the project overview */}
         <div className="relative">

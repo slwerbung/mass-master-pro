@@ -62,6 +62,9 @@ Kunden können Projekte online einsehen und freigeben.
 - `src/pages/CustomerView.tsx` – Kundenansicht (alle Writes über customer-data mit Token)
 - `src/pages/ProboCatalog.tsx` – interner Probo-Katalog-Generator, Route
   `/probo-katalog` (unverlinkt, lazy, `docs/probo-katalog.md`)
+- `src/pages/SignPlan.tsx` – Leitsystem-Prototyp („Aufmaß mit Plan"), Route
+  `/projects/:id/leitsystem` hinter dem Feature-Flag `mmp_ff_leitsystem`
+  (lazy, `docs/leitsystem-prototyp.md`)
 
 ## Bekannte Architektur-Entscheidungen
 - Storage Bucket `project-files` ist **privat** (Phase 3, `docs/phase3-storage.md`).
@@ -94,6 +97,21 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 - `probo-catalog` – Probo-Reseller-API (`list`/`detail`/`image`-Proxy) für den
   internen Katalog-Generator, verlangt Admin- oder Employee-Token
   (`docs/probo-katalog.md`)
+
+## Leitsystem-Prototyp (Sept. 2026, noch nicht abgenommen)
+- Eigener Bereich fuer Leitsystem-Projekte: Schildtypen, Positionen mit Menge,
+  Plan-Marker, Zielverzeichnis, Beschriftungszeilen, Status, Stueckliste mit
+  Excel-Export. Details und offene Punkte: `docs/leitsystem-prototyp.md`.
+- Haengt hinter dem Feature-Flag `mmp_ff_leitsystem` (`src/lib/featureFlags.ts`),
+  einschalten per `?leitsystem=1`. Ohne Flag aendert sich nichts.
+- Eigene IndexedDB `mmp-signplan-db` (`signPlanStorage.ts`), eigener Sync
+  (`signPlanSync.ts`) mit Konfliktaufloesung **pro Datensatz** statt pro Projekt
+  (`signPlanMerge.ts`). Der Aufruf haengt am Ende von `syncProjectInternal` und
+  wirft nie – der produktive Sync bleibt davon unberuehrt.
+- Migration `20260907120000_leitsystem_plan_block1.sql` ist **bewusst nirgends
+  angewendet**. Erst auf einen Supabase-Branch/Testprojekt einspielen.
+- `floor_plans.markers` bleibt stehen, wird vom neuen Modul aber nicht mehr
+  beschrieben. Marker leben in `sign_plan_markers`.
 
 ## Offene Baustellen
 1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)

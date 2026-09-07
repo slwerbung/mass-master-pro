@@ -34,6 +34,7 @@ import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import { SplitPdfDialog } from "@/components/SplitPdfDialog";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
 import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
+import { isLeitsystemEnabled } from "@/lib/featureFlags";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
@@ -214,6 +215,9 @@ const ProjectDetail = () => {
   };
 
   const isPlanProject = project?.projectType === "aufmass_mit_plan";
+  // Prototyp: nur sichtbar, wenn das Leitsystem-Flag gesetzt ist. Laufende
+  // Projekte bekommen davon nichts mit.
+  const showLeitsystem = isPlanProject && isLeitsystemEnabled();
   const sortedLocations = useMemo(
     () => (project ? [...project.locations].sort((a, b) => naturalLocationSortDesc(a.locationNumber, b.locationNumber)) : []),
     [project?.locations],
@@ -348,6 +352,25 @@ const ProjectDetail = () => {
 
         {/* Gesprächsnotizen (Diktiergerät → Transkript → Protokoll → HERO) */}
         <MeetingNotesCard projectId={projectId!} projectNumber={project.projectNumber} />
+
+        {/* Leitsystem-Prototyp (hinter Feature-Flag) */}
+        {showLeitsystem && (
+          <Card
+            className="shadow-sm border-dashed cursor-pointer hover:bg-muted/50 transition-colors"
+            onClick={() => navigate(`/projects/${projectId}/leitsystem`)}
+          >
+            <CardContent className="flex items-center gap-3 py-4">
+              <FileText className="h-8 w-8 text-muted-foreground shrink-0" />
+              <div className="flex-1">
+                <h3 className="font-semibold">Leitsystem <span className="text-xs font-normal text-muted-foreground">(Prototyp)</span></h3>
+                <p className="text-sm text-muted-foreground">
+                  Schildtypen, Positionen mit Menge, Plan-Marker, Zielverzeichnis und Stückliste
+                </p>
+              </div>
+              <ArrowLeft className="h-4 w-4 text-muted-foreground rotate-180" />
+            </CardContent>
+          </Card>
+        )}
 
         {/* Floor plans (plan projects only) */}
         {isPlanProject && (
