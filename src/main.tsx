@@ -1,6 +1,13 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
+import { applyFeatureFlagsFromUrl } from "./lib/featureFlags";
+
+// Feature-Flags aus der Adresszeile (?leitsystem=1|0) VOR dem ersten Rendern
+// uebernehmen. In einem Effekt waere es zu spaet: die Ansichten lesen das Flag
+// waehrend des Renderns, und ob sie danach zufaellig noch einmal rendern,
+// haengt an ihren eigenen Ladevorgaengen.
+applyFeatureFlagsFromUrl(window.location.search);
 
 // Stale-deploy recovery: after a new Vercel build, hashed JS chunks referenced
 // by an already-open tab may 404, so a lazy import() (e.g. the PDF-Splitter)

@@ -4,7 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 // @ts-ignore - QueryClient export may not resolve during partial installs
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Suspense, lazy, useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { getSession, clearSession } from "@/lib/session";
 import { toast } from "sonner";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
@@ -74,6 +74,27 @@ function setCachedValidation(role: string, token: string, userId: string, valid:
     }));
   } catch {}
 }
+
+/**
+ * Nimmt `?leitsystem=1|0` auch dann an, wenn die Adresse erst nach dem Start
+ * gesetzt wird. Das ist der Regelfall beim Testen: wer den Link aufruft, ohne
+ * angemeldet zu sein, landet erst auf dem Login und wird danach per
+ * Client-Navigation zurueckgeschickt – ohne Seitenaufbau. Aendert sich der
+ * Schalter dabei, laedt die Seite einmal neu (und ohne den Parameter), damit
+ * alle Ansichten den neuen Wert lesen.
+ */
+const FeatureFlagUrlSync = () => {
+  const location = useLocation();
+  useEffect(() => {
+    if (applyFeatureFlagsFromUrl(location.search)) {
+      const params = new URLSearchParams(location.search);
+      params.delete("leitsystem");
+      const rest = params.toString();
+      window.location.replace(location.pathname + (rest ? `?${rest}` : ""));
+    }
+  }, [location.search, location.pathname]);
+  return null;
+};
 
 const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; children: React.ReactNode }) => {
   const session = getSession();
@@ -165,18 +186,13 @@ const App = () => {
     startHeroUploadWorker();
   }, []);
 
-  // Feature-Flags aus der Adresszeile uebernehmen (?leitsystem=1|0). So laesst
-  // sich der Prototyp per Link ein- und ausschalten, ohne Admin-Oberflaeche.
-  useEffect(() => {
-    applyFeatureFlagsFromUrl(window.location.search);
-  }, []);
-
   return (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <FeatureFlagUrlSync />
         <MeetingRecorderProvider>
         <Routes>
           <Route path="/" element={<Auth />} />

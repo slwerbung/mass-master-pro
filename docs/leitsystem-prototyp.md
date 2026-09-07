@@ -20,7 +20,22 @@ Projekte nichts – weder in der Projektliste noch in der Projektansicht.
 | Testprojekt anlegen | Knopf „Testprojekt Musterklinik" im Hinweisbalken der Projektliste |
 | Bereich öffnen | Projekt vom Typ *Aufmaß mit Plan* → Karte „Leitsystem (Prototyp)" |
 
-Das Flag liegt in `localStorage` unter `mmp_ff_leitsystem` (`src/lib/featureFlags.ts`).
+Das Flag liegt in `localStorage` unter `mmp_ff_leitsystem` (`src/lib/featureFlags.ts`)
+und wird in `main.tsx` **vor dem ersten Rendern** gesetzt; `FeatureFlagUrlSync`
+in `App.tsx` faengt zusaetzlich den Fall ab, dass der Parameter erst nach dem
+Start ankommt (Ruecksprung nach dem Login). Aendert sich der Schalter, laedt die
+Seite einmal ohne den Parameter neu, damit alle Ansichten den neuen Wert lesen.
+
+**Wenn nichts anders aussieht**, ist es fast immer einer dieser drei Punkte:
+
+1. Der Parameter fehlt. Ohne `?leitsystem=1` aendert sich nichts – so ist es
+   gewollt.
+2. Getestet wurde auf `mass-master-pro.vercel.app`. Das ist `main`. Der Branch
+   ist bewusst nicht deployt; es braucht die Vercel-Preview-URL des Branches
+   oder einen lokalen `npm run dev`.
+3. Das geoeffnete Projekt ist nicht vom Typ *Aufmass mit Plan*. Die Karte
+   „Leitsystem (Prototyp)" haengt an diesem Projekttyp. Der Knopf
+   „Testprojekt Musterklinik" in der Projektliste legt ein passendes an.
 
 ### Seed-Daten „Musterklinik"
 

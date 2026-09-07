@@ -28,15 +28,23 @@ function writeFlag(key: string, value: boolean) {
 }
 
 /**
- * Liest `?leitsystem=1|0` aus der URL und merkt sich den Wert. Wird einmal
- * beim App-Start aufgerufen, damit der Schalter ueber einen Link gesetzt
- * werden kann, ohne dass es dafuer eine Admin-Oberflaeche braucht.
+ * Liest `?leitsystem=1|0` aus der URL und merkt sich den Wert, damit der
+ * Schalter per Link gesetzt werden kann, ohne dass es dafuer eine
+ * Admin-Oberflaeche braucht.
+ *
+ * Liefert `true` zurueck, wenn sich der Schalter dadurch tatsaechlich
+ * geaendert hat. Der Aufrufer laedt die Seite dann einmal neu: die
+ * bestehenden Ansichten lesen das Flag beim Rendern, ein reines Umsetzen
+ * im localStorage wuerde bei ihnen nicht ankommen.
  */
-export function applyFeatureFlagsFromUrl(search: string): void {
+export function applyFeatureFlagsFromUrl(search: string): boolean {
   const params = new URLSearchParams(search);
   const value = params.get('leitsystem');
-  if (value === '1') writeFlag(LEITSYSTEM_KEY, true);
-  else if (value === '0') writeFlag(LEITSYSTEM_KEY, false);
+  if (value !== '1' && value !== '0') return false;
+  const next = value === '1';
+  if (readFlag(LEITSYSTEM_KEY) === next) return false;
+  writeFlag(LEITSYSTEM_KEY, next);
+  return true;
 }
 
 export function isLeitsystemEnabled(): boolean {
