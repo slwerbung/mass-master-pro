@@ -44,7 +44,7 @@ const SignPlan = () => {
     if (!projectId) return;
     try {
       const session = getSession();
-      const local = await indexedDBStorage.getProject(projectId, session);
+      const local = await indexedDBStorage.getProject(projectId, session, { includeImages: false, includeFloorPlanImages: true });
 
       // Der Abgleich mit der Cloud darf das Oeffnen nicht blockieren: vor Ort
       // ist regelmaessig kein Netz, und dann zaehlt der lokale Stand.

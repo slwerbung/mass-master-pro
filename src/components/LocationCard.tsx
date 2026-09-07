@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from "react";
+import { useBlobUrl, useNearViewport } from "@/hooks/useBlobUrl";
 import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate } from "react-router-dom";
 import { setEditorHandoff } from "@/lib/editorHandoff";
@@ -73,7 +74,58 @@ interface LocationCardProps {
   projectFieldConfigs?: any[];
 }
 
+/**
+ * Vorschau eines Detailbildes. Eigene Komponente, weil jedes Bild seinen
+ * eigenen Nachlader und seine eigene Object-URL braucht – Hooks lassen sich
+ * nicht in einer Schleife aufrufen.
+ */
+const DetailThumb = ({
+  detailId, src, caption, className, onOpen,
+}: {
+  detailId: string;
+  src?: string;
+  caption?: string;
+  className: string;
+  onOpen: (resolved: string) => void;
+}) => {
+  // Der Beobachter braucht ein Element MIT Box. Ein Wrapper mit
+  // `display: contents` hat keine – darauf meldet der IntersectionObserver
+  // nie etwas, und das Bild wuerde ewig als Platzhalter stehen bleiben.
+  // Deshalb haengt die Referenz direkt am Platzhalter bzw. am Bild.
+  const ref = useRef<HTMLImageElement & HTMLDivElement>(null);
+  const isNear = useNearViewport(ref);
+  const lazyUrl = useBlobUrl(
+    () => indexedDBStorage.getDetailImageBlob(detailId, "annotated"),
+    [detailId],
+    !src && isNear,
+  );
+  const resolved = src || lazyUrl || "";
+  if (!resolved) {
+    return <div ref={ref} className="w-full min-h-[140px] bg-muted animate-pulse" aria-label="Detailbild wird geladen" />;
+  }
+  return (
+    <img
+      ref={ref}
+      src={resolved}
+      alt={caption || "Detailbild"}
+      className={className}
+      onClick={() => onOpen(resolved)}
+    />
+  );
+};
+
 const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fieldConfigs = [], showPrintFiles = true, showDetailImages = true, project, projectFieldConfigs = [] }: LocationCardProps) => {
+  // Bilder werden nur noch nachgeladen, wenn die Karte in Sichtweite kommt.
+  // Die Liste selbst kommt ohne Bilddaten aus (getProject includeImages:false),
+  // sonst laegen bei 300 Standorten ueber ein Gigabyte im Arbeitsspeicher.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const isNear = useNearViewport(cardRef);
+  const lazyMainUrl = useBlobUrl(
+    () => indexedDBStorage.getLocationImageBlob(location.id, "annotated"),
+    [location.id],
+    !location.imageData && isNear,
+  );
+  const mainImageUrl = location.imageData || lazyMainUrl || "";
   const navigate = useNavigate();
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
@@ -406,24 +458,26 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     : null;
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden" ref={cardRef}>
       {pdfUrl ? (
         <div className="p-3 pb-0">
           <LocationApprovalMedia
-            annotatedUrl={location.imageData}
+            annotatedUrl={mainImageUrl}
             pdfs={[{ url: pdfUrl, name: pdfName || "Produktionsdatei" }]}
           />
         </div>
       ) : (
         <div className="min-h-[180px] bg-muted relative cursor-pointer group rounded-lg overflow-hidden flex items-center justify-center" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}>
-          <img src={location.imageData} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
+          {mainImageUrl
+              ? <img src={mainImageUrl} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
+              : <div className="w-full min-h-[180px] bg-muted animate-pulse" aria-label="Bild wird geladen" />}
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
             <Pencil className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
           {/* Always-visible "view large" (no editing). */}
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setLightbox(location.imageData); }}
+            onClick={(e) => { e.stopPropagation(); if (mainImageUrl) setLightbox(mainImageUrl); }}
             className="absolute top-2 right-2 z-10 rounded-md bg-black/55 hover:bg-black/75 text-white p-1.5"
             title="Groß ansehen (ohne bearbeiten)"
           >
@@ -578,13 +632,22 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {location.detailImages.map((detail) => (
                 <div key={detail.id} className="relative group bg-muted rounded overflow-hidden flex items-center justify-center min-h-[140px]">
-                  <img src={detail.imageData} alt={detail.caption || "Detailbild"}
+                  <DetailThumb
+                    detailId={detail.id}
+                    src={detail.imageData}
+                    caption={detail.caption}
                     className="w-full h-auto max-h-[240px] object-contain cursor-pointer"
-                    onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`)} />
+                    onOpen={() => navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`)}
+                  />
                   {/* Always-visible "view large" (no editing). */}
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); setLightbox(detail.imageData); }}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (detail.imageData) { setLightbox(detail.imageData); return; }
+                      const blob = await indexedDBStorage.getDetailImageBlob(detail.id, "annotated");
+                      if (blob) setLightbox(URL.createObjectURL(blob));
+                    }}
                     className="absolute bottom-1 right-1 z-10 rounded-md bg-black/55 hover:bg-black/75 text-white p-1"
                     title="Groß ansehen (ohne bearbeiten)"
                   >

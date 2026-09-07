@@ -335,14 +335,28 @@ export const indexedDBStorage = {
     return projects;
   },
 
-  async getProject(id: string, session?: Session | null): Promise<Project | null> {
+  /**
+   * Ein Projekt mit allem, was daran haengt.
+   *
+   * `includeImages: false` fuer Ansichten, die nur die Standortliste zeigen –
+   * die Bilder werden dann pro Karte einzeln nachgeladen. Der Standardwert
+   * bleibt `true`, damit Export, Sync und Editor unveraendert weiterlaufen.
+   */
+  async getProject(
+    id: string,
+    session?: Session | null,
+    options?: { includeImages?: boolean; includeFloorPlanImages?: boolean },
+  ): Promise<Project | null> {
     const db = await getDB();
     const record = await db.get('projects', id);
     
     if (!record || !canAccessProjectRecord(record, session)) return null;
     
-    const locations = await this.getLocationsByProject(id);
-    const floorPlans = await this.getFloorPlansByProject(id);
+    // Grundrissbilder lassen sich getrennt steuern: die Planansicht braucht
+    // die Plaene, aber keines der Standortfotos.
+    const floorPlanImages = options?.includeFloorPlanImages ?? options?.includeImages ?? true;
+    const locations = await this.getLocationsByProject(id, options);
+    const floorPlans = await this.getFloorPlansByProject(id, { includeImages: floorPlanImages });
     
     return {
       id: record.id,
@@ -359,24 +373,36 @@ export const indexedDBStorage = {
     };
   },
 
-  async getLocationsByProject(projectId: string): Promise<Location[]> {
+  /**
+   * Standorte eines Projekts.
+   *
+   * `includeImages: false` laesst die Bilddaten weg. Das ist der Unterschied
+   * zwischen bedienbar und unbedienbar: jedes Foto wird sonst per FileReader
+   * in einen Base64-String verwandelt, und ein Base64-String liegt vollstaendig
+   * im Arbeitsspeicher. Gemessen mit 1,9-MB-Fotos: 300 Standorte = 17 Sekunden
+   * und 1,1 GB. Ansichten, die nur die Liste zeigen, laden die Vorschau
+   * stattdessen einzeln und bei Bedarf nach (getLocationImageUrl).
+   */
+  async getLocationsByProject(projectId: string, options?: { includeImages?: boolean }): Promise<Location[]> {
+    const includeImages = options?.includeImages ?? true;
     const db = await getDB();
     const locationRecords = await db.getAllFromIndex('locations', 'by-project', projectId);
     
     const locations: Location[] = [];
     
     for (const record of locationRecords) {
-      const annotatedImageId = createImageId(record.id, 'annotated');
-      const originalImageId = createImageId(record.id, 'original');
-      
-      const annotatedImage = await db.get('images', annotatedImageId);
-      const originalImage = await db.get('images', originalImageId);
-      
-      const imageData = annotatedImage ? await blobToBase64(annotatedImage.blob) : '';
-      const originalImageData = originalImage ? await blobToBase64(originalImage.blob) : imageData;
+      let imageData = '';
+      let originalImageData = '';
+
+      if (includeImages) {
+        const annotatedImage = await db.get('images', createImageId(record.id, 'annotated'));
+        const originalImage = await db.get('images', createImageId(record.id, 'original'));
+        imageData = annotatedImage ? await blobToBase64(annotatedImage.blob) : '';
+        originalImageData = originalImage ? await blobToBase64(originalImage.blob) : imageData;
+      }
 
       // Load detail images
-      const detailImages = await this.getDetailImagesByLocation(record.id);
+      const detailImages = await this.getDetailImagesByLocation(record.id, { includeImages });
       
       locations.push({
         id: record.id,
@@ -402,18 +428,23 @@ export const indexedDBStorage = {
     return locations;
   },
 
-  async getDetailImagesByLocation(locationId: string): Promise<DetailImage[]> {
+  async getDetailImagesByLocation(locationId: string, options?: { includeImages?: boolean }): Promise<DetailImage[]> {
+    const includeImages = options?.includeImages ?? true;
     const db = await getDB();
     const records = await db.getAllFromIndex('detail-images', 'by-location', locationId);
     
     const detailImages: DetailImage[] = [];
     
     for (const record of records) {
-      const annotatedBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'annotated'));
-      const originalBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'original'));
-      
-      const imageData = annotatedBlob ? await blobToBase64(annotatedBlob.blob) : '';
-      const originalImageData = originalBlob ? await blobToBase64(originalBlob.blob) : imageData;
+      let imageData = '';
+      let originalImageData = '';
+
+      if (includeImages) {
+        const annotatedBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'annotated'));
+        const originalBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'original'));
+        imageData = annotatedBlob ? await blobToBase64(annotatedBlob.blob) : '';
+        originalImageData = originalBlob ? await blobToBase64(originalBlob.blob) : imageData;
+      }
       
       detailImages.push({
         id: record.id,
@@ -654,15 +685,50 @@ export const indexedDBStorage = {
     }
   },
 
+  /**
+   * Ein einzelnes Standortbild als Blob – fuer Ansichten, die die Liste ohne
+   * Bilder geladen haben und nur die gerade sichtbare Karte brauchen.
+   * Blobs bleiben Blobs: kein Base64, also kein Abbild im Arbeitsspeicher.
+   */
+  async getLocationImageBlob(locationId: string, type: 'annotated' | 'original'): Promise<Blob | null> {
+    const db = await getDB();
+    const record = await db.get('images', createImageId(locationId, type));
+    if (record) return record.blob;
+    // Kein Originalbild hinterlegt? Dann ist das annotierte auch das Original.
+    if (type === 'original') {
+      const fallback = await db.get('images', createImageId(locationId, 'annotated'));
+      return fallback?.blob ?? null;
+    }
+    return null;
+  },
+
+  async getDetailImageBlob(detailImageId: string, type: 'annotated' | 'original'): Promise<Blob | null> {
+    const db = await getDB();
+    const record = await db.get('detail-image-blobs', createDetailBlobId(detailImageId, type));
+    if (record) return record.blob;
+    if (type === 'original') {
+      const fallback = await db.get('detail-image-blobs', createDetailBlobId(detailImageId, 'annotated'));
+      return fallback?.blob ?? null;
+    }
+    return null;
+  },
+
+  async getFloorPlanImageBlob(floorPlanId: string): Promise<Blob | null> {
+    const db = await getDB();
+    const record = await db.get('floor-plan-images', floorPlanId);
+    return record?.blob ?? null;
+  },
+
   // Floor Plan methods
-  async getFloorPlansByProject(projectId: string): Promise<FloorPlan[]> {
+  async getFloorPlansByProject(projectId: string, options?: { includeImages?: boolean }): Promise<FloorPlan[]> {
+    const includeImages = options?.includeImages ?? true;
     const db = await getDB();
     const records = await db.getAllFromIndex('floor-plans', 'by-project', projectId);
     
     const floorPlans: FloorPlan[] = [];
     
     for (const record of records) {
-      const imageRecord = await db.get('floor-plan-images', record.id);
+      const imageRecord = includeImages ? await db.get('floor-plan-images', record.id) : undefined;
       const imageData = imageRecord ? await blobToBase64(imageRecord.blob) : '';
       
       floorPlans.push({

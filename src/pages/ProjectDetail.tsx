@@ -84,7 +84,10 @@ const ProjectDetail = () => {
       if (!projectId) return;
       try {
         const currentSession = getSession();
-        const localProject = await indexedDBStorage.getProject(projectId, currentSession);
+        // Ohne Bilddaten: die Standortkarten laden ihre Vorschau selbst nach,
+        // sobald sie in Sichtweite kommen. Sonst haengt die Ladezeit an der
+        // Zahl der Standorte (gemessen: 300 Standorte = 17 s und 1,1 GB).
+        const localProject = await indexedDBStorage.getProject(projectId, currentSession, { includeImages: false, includeFloorPlanImages: false });
 
         if (localProject) {
           if (currentSession?.role === "employee") {
@@ -106,7 +109,7 @@ const ProjectDetail = () => {
             const remoteIsNewer = remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000;
             if (!remoteIsNewer) return;
             await hydrateProjectFromSupabase(projectId);
-            const refreshed = await indexedDBStorage.getProject(projectId, currentSession);
+            const refreshed = await indexedDBStorage.getProject(projectId, currentSession, { includeImages: false, includeFloorPlanImages: false });
             if (refreshed) {
               setProject(refreshed);
               setConflictNotice("Es wurde eine neuere Online-Version geladen.");
@@ -166,7 +169,7 @@ const ProjectDetail = () => {
     try {
       const updatedProject = { ...project, locations: project.locations.filter((l) => l.id !== locationId) };
       await indexedDBStorage.saveProject(updatedProject);
-      const reloadedProject = await indexedDBStorage.getProject(projectId);
+      const reloadedProject = await indexedDBStorage.getProject(projectId, undefined, { includeImages: false, includeFloorPlanImages: false });
       scheduleSyncProject(projectId);
       setProject(reloadedProject || updatedProject);
       toast.success("Standort gelöscht");
@@ -181,7 +184,7 @@ const ProjectDetail = () => {
       await indexedDBStorage.deleteDetailImage(detailImageId);
       await deleteDetailImageFromSupabase(detailImageId);
       if (projectId) {
-        const reloaded = await indexedDBStorage.getProject(projectId, getSession());
+        const reloaded = await indexedDBStorage.getProject(projectId, getSession(), { includeImages: false, includeFloorPlanImages: false });
         scheduleSyncProject(projectId);
         if (reloaded) setProject(reloaded);
       }

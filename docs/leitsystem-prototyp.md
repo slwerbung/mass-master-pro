@@ -183,6 +183,60 @@ Registrierung) ist nicht angefasst worden.
 
 ---
 
+## 5b. Große Datenmengen: Bilder werden nicht mehr pauschal geladen
+
+**Befund.** `indexedDBStorage.getProject()` hat bisher für JEDEN Standort beide
+Fotos per FileReader in einen Base64-String verwandelt – auch wenn die Ansicht
+nur die Liste zeigt. Ein Base64-String liegt vollständig im Arbeitsspeicher und
+ist ein Drittel größer als die Datei. Gemessen in Chromium mit 1,9-MB-Fotos
+(genau die Größe, mit der die App Originale ablegt: 2400 px, Qualität 0,9):
+
+| Standorte | Öffnen | Bilddaten im Speicher |
+| ---: | ---: | ---: |
+| 25 | 1,7 s | 96 MB |
+| 100 | 6,9 s | 385 MB |
+| 200 | 12,2 s | 770 MB |
+| 300 | 17,0 s | 1154 MB |
+
+Auf einem Desktop mit viel RAM geht das gerade noch; ein Handy-Browser bricht
+vorher ab. Für ein Leitsystem mit 300 Positionen war die App damit unbenutzbar –
+und das normale Aufmaß wurde ab etwa 50 Standorten spürbar zäh.
+
+**Änderung.** `getProject`, `getLocationsByProject`, `getDetailImagesByLocation`
+und `getFloorPlansByProject` nehmen jetzt `includeImages` (und `getProject`
+zusätzlich `includeFloorPlanImages`). **Der Standardwert bleibt `true`** – Export,
+Sync, Kamera und Editor rufen unverändert auf und bekommen unverändert Base64.
+
+Umgestellt sind nur die Ansichten, die Bilder gar nicht oder nur einzeln
+brauchen:
+
+| Ansicht | Lädt |
+| --- | --- |
+| Projektansicht (Standortliste) | keine Bilder |
+| Grundriss-Ansicht | Grundrisse ja, Standortfotos nein |
+| Leitsystem-Bereich | Grundrisse ja, Standortfotos nein |
+
+Die Standortkarte holt ihr Bild selbst nach, sobald sie in Sichtweite kommt
+(`useNearViewport` + `useBlobUrl`, 400 px Vorlauf) – als **Object-URL** auf den
+Blob, nicht als Base64. Die URL wird beim Aufräumen wieder freigegeben.
+
+**Ergebnis, gemessen bei 200 Standorten:**
+
+| | vorher | nachher |
+| --- | ---: | ---: |
+| Projekt öffnen | 13 913 ms | 161 ms |
+| Bilddaten im Speicher | 687 MB | 0 MB |
+
+Ein einzelnes Bild nachzuladen kostet 1,7 ms, zwanzig sichtbare Karten 25 ms.
+
+**Falle, über die ich gestolpert bin:** Der erste Entwurf hängte den
+IntersectionObserver an einen Wrapper mit `display: contents`. So ein Element
+hat keine Box – der Observer meldet nie etwas, und die Detailbilder wären
+dauerhaft Platzhalter geblieben. Die Referenz hängt jetzt direkt am Bild bzw.
+am Platzhalter.
+
+---
+
 ## 6. Was geprüft wurde
 
 Alles gegen die Seed-Daten (40 Positionen, 68 Schilder) in Chromium:
@@ -201,6 +255,14 @@ Alles gegen die Seed-Daten (40 Positionen, 68 Schilder) in Chromium:
 * **Excel**: Datei entpackt, alle XML-Teile wohlgeformt, Blatt „Positionen"
   (Summe 68 Schilder) stimmt mit Blatt „Stückliste" (Summe gesamt 68) überein.
 * **Mobil**: 390 px, kein seitliches Scrollen, Liste und Statuswechsel bedienbar.
+* **Bilder-Umbau** (Browser, gegen 200 bzw. 12 Standorte): Standardaufruf
+  liefert weiterhin alle Bilder (Standort, Original, Detail, Grundriss);
+  Listenaufruf liefert keine Bilder, aber alle Metadaten; Planansicht liefert
+  Grundrisse ohne Standortfotos; Einzelnachladen als Blob; unbekannte ID liefert
+  `null`. Besonders geprüft: **Löschen eines Standorts aus der bildlos geladenen
+  Liste zerstört keine Bilder** der übrigen Standorte, Detailbilder oder
+  Grundrisse. Im echten UI: alle 24 Bilder laden beim Durchscrollen als
+  Object-URL nach, kein Platzhalter bleibt offen, Lightbox funktioniert.
 * `npm run build` läuft durch, der Bereich landet in einem eigenen Chunk
   (56 kB). `tsc` und `eslint` melden für die neuen Dateien nichts – die
   bestehenden 97 `tsc`-Fehler des Repos (veraltete generierte Supabase-Typen)

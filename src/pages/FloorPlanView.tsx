@@ -42,7 +42,10 @@ const FloorPlanView = () => {
   const loadProject = useCallback(async () => {
     if (!projectId) return;
     try {
-      const loaded = await indexedDBStorage.getProject(projectId);
+      // Die Planansicht zeigt nur Marker mit Standortnummern – die Fotos der
+      // Standorte braucht sie nie. Bei 300 Standorten spart das Sekunden
+      // und hunderte Megabyte.
+      const loaded = await indexedDBStorage.getProject(projectId, undefined, { includeImages: false, includeFloorPlanImages: true });
       const remoteUpdatedAt = loaded ? await getProjectRemoteTimestamp(projectId) : null;
       const shouldHydrate = !loaded || (remoteUpdatedAt && remoteUpdatedAt.getTime() > loaded.updatedAt.getTime() + 1000);
       const resolvedProject = shouldHydrate ? await hydrateProjectFromSupabase(projectId) : loaded;
