@@ -286,6 +286,41 @@ legt kein Feld erneut an, das jemand gelöscht hat.
 Der Präfix `custom_` ist Pflicht: nur so landen die Werte in
 `locations.custom_fields`.
 
+### Standortnummer mit Geschoss-Präfix
+
+Ist am Standort ein Geschoss erfasst, bekommt die Nummer dessen Kürzel
+vorangestellt: **„EG-109"**, „1OG-110", „UG-111". Ohne Geschoss bleibt es bei der
+reinen Zahl wie bisher.
+
+Die laufende Zahl bleibt bewusst **projektweit** und zählt weiter wie bisher –
+aus zwei Gründen:
+
+1. Alle Stellen, die die Nummer wieder zerlegen, funktionieren unverändert:
+   `nextLocationNumber` liest die Ziffern am Ende, Plan-Marker und PDF-Export
+   nehmen den Teil hinter dem letzten Bindestrich. Für sie sieht „EG-109" aus
+   wie das schon bestehende Altformat „WER-1234-100".
+2. Die Nummer bleibt eindeutig, auch wenn jemand das Geschoss nachträglich
+   ändert. Sie ist die ID, auf die sich Plan, Liste, Produktion, Monteur und
+   Kunde beziehen – sie darf sich nicht unter der Hand verschieben. Eine
+   vergebene Nummer wird deshalb nicht umgeschrieben.
+
+Erkannt werden „Erdgeschoss"/„Parterre" → EG, „1. OG"/„1.OG"/„OG 1" → 1OG,
+„2. Obergeschoss" → 2OG, „3. Etage" → 3OG, Untergeschoss → UG, Keller → KG,
+Dachgeschoss → DG, Zwischengeschoss → ZG. Was sich keinem Muster zuordnen
+lässt, wird auf vier Zeichen gekürzt – wer das Geschoss selbst eintippt, soll
+auch ein eigenes Kürzel bekommen.
+
+**Vorbelegung aus dem Grundriss.** Wer 30 Schilder im EG erfasst, soll
+„Erdgeschoss" nicht 30-mal tippen. Beim Anlegen aus dem Plan wird das
+Geschossfeld deshalb aus dem Grundrissnamen vorbelegt – aber **nur, wenn darin
+wirklich ein Geschoss steckt**. Im Test fiel auf, dass ein Grundriss namens
+„Grundriss" sonst zum Kürzel „GRUN" geführt hätte; „Seite 1" zu „SEIT".
+`recognizeFloor()` unterscheidet deshalb erkanntes Muster von Notbehelf.
+
+Die Etagenzahl wird nur unmittelbar neben dem Geschosswort gesucht und darf
+höchstens zweistellig sein – sonst wäre aus „Plan_EG_2024" das Kürzel „2024EG"
+geworden.
+
 ### Filter über der Standortliste
 
 Suchfeld plus ein Auswahlfilter je Feld. Die Filter sind **nicht fest
@@ -325,6 +360,13 @@ Alles gegen die Seed-Daten (40 Positionen, 68 Schilder) in Chromium:
   Liste zerstört keine Bilder** der übrigen Standorte, Detailbilder oder
   Grundrisse. Im echten UI: alle 24 Bilder laden beim Durchscrollen als
   Object-URL nach, kein Platzhalter bleibt offen, Lightbox funktioniert.
+* **Standortnummern** (Node, 30 Fälle + Browser): alle Geschossmuster inkl.
+  Schreibvarianten; Rückwärtskompatibilität aller Zerleger (`nextLocationNumber`
+  liest „EG-109" als 109, gemischt mit Altformat „WER-1234-105"); Marker und
+  PDF-Export kürzen weiterhin korrekt. End-to-End: „Erdgeschoss" → EG-100,
+  „1. OG" → 1OG-101, ohne Geschoss → 102, Nummern eindeutig und projektweit
+  aufsteigend, Marker zeigen weiter die kurze Nummer. Vorbelegung greift bei
+  „Haus A - 1. OG" und bleibt bei „Grundriss" leer.
 * **Standortbasierte Erfassung** (Browser, End-to-End): Filterleiste erscheint
   mit den aus der Feldkonfiguration erzeugten Auswahlfeldern; Filter nach System
   reduziert 9 auf 3 Standorte; Suche findet einen; der Plan-Dialog bietet alle

@@ -16,6 +16,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { scheduleSyncProject } from "@/lib/supabaseSync";
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
+import { FLOOR_FIELD_KEY, buildLocationNumber, findFloorValue, floorAbbreviation, recognizeFloor } from "@/lib/locationNumber";
 import { getSession } from "@/lib/session";
 import { takeEditorHandoff } from "@/lib/editorHandoff";
 
@@ -90,14 +91,30 @@ const LocationDetails = () => {
   const [projectType, setProjectType] = useState<string | undefined>(undefined);
   const [existingAreaMeasurements, setExistingAreaMeasurements] = useState<AreaMeasurement[]>([]);
 
-  // Load project type
+  // Projekttyp laden – und beim Anlegen aus dem Plan das Geschoss vorbelegen.
+  //
+  // Ohne Bilder: hier wird keines gebraucht, und beim 300. Standort waere das
+  // pauschale Laden sonst wieder ein Sekundenthema (siehe indexedDBStorage).
   useEffect(() => {
-    if (projectId) {
-      indexedDBStorage.getProject(projectId).then(proj => {
-        if (proj) setProjectType(proj.projectType);
-      });
-    }
-  }, [projectId]);
+    if (!projectId) return;
+    indexedDBStorage.getProject(projectId, undefined, { includeImages: false, includeFloorPlanImages: false })
+      .then((proj) => {
+        if (!proj) return;
+        setProjectType(proj.projectType);
+        // Grundrisse heissen in der Praxis nach ihrem Geschoss ("Erdgeschoss",
+        // "Haus A – 1. OG"). Wer 30 Schilder im EG erfasst, soll das nicht
+        // 30-mal tippen muessen – der Vorschlag laesst sich ueberschreiben.
+        if (!floorPlanId || isEditMode || isDetailEditMode) return;
+        const plan = (proj.floorPlans || []).find((fp) => fp.id === floorPlanId);
+        if (!plan?.name) return;
+        // Nur uebernehmen, wenn im Plannamen wirklich ein Geschoss steckt.
+        // Ein Grundriss namens "Grundriss" oder "Seite 1" wuerde sonst zum
+        // Kuerzel "GRUN" bzw. "SEIT" fuehren.
+        if (!recognizeFloor(plan.name).recognized) return;
+        setFieldValues((prev) => (prev[FLOOR_FIELD_KEY] ? prev : { ...prev, [FLOOR_FIELD_KEY]: plan.name }));
+      })
+      .catch((error) => console.warn("Projekt konnte nicht geladen werden", error));
+  }, [projectId, floorPlanId, isEditMode, isDetailEditMode]);
 
   // Load field configs from Supabase
   useEffect(() => {
@@ -215,7 +232,7 @@ const LocationDetails = () => {
         const targetLocationId = searchParams.get("locationId");
         if (!targetLocationId) { toast.error("Standort nicht gefunden"); return; }
 
-        toast.loading(imageDataToSave ? "Bild wird gespeichert..." : "Standort wird gespeichert...");
+        toast.loading("Bild wird gespeichert...");
         const originalImageDataToSave = rawOriginal
           ? await compressImage(rawOriginal, 2400, 0.9)
           : imageDataToSave;
@@ -283,16 +300,23 @@ const LocationDetails = () => {
         imageDataRef.current = null;
         originalImageDataRef.current = null;
 
-        const project = await indexedDBStorage.getProject(projectId);
+        // Ohne Bilder laden: die bestehenden Standorte brauchen wir nur fuer
+        // die naechste freie Nummer. saveProject laesst vorhandene Bildblobs
+        // unangetastet, solange imageData leer ist.
+        const project = await indexedDBStorage.getProject(projectId, undefined, { includeImages: false, includeFloorPlanImages: false });
         if (!project) { toast.error("Projekt nicht gefunden"); setIsSaving(false); return; }
 
-        toast.loading("Bild wird gespeichert...");
+        toast.loading(imageDataToSave ? "Bild wird gespeichert..." : "Standort wird gespeichert...");
         const originalImageDataToSave = rawOriginal
           ? await compressImage(rawOriginal, 2400, 0.9)
           : imageDataToSave;
 
+        // Ist am Standort ein Geschoss erfasst, bekommt die Nummer dessen
+        // Kuerzel vorangestellt ("EG-109"). Die laufende Zahl bleibt
+        // projektweit – siehe lib/locationNumber.ts.
         const locationNumber = nextLocationNumber(project.locations);
-        const fullLocationNumber = String(locationNumber);
+        const floorPrefix = floorAbbreviation(findFloorValue(fieldValues, filteredFields));
+        const fullLocationNumber = buildLocationNumber(floorPrefix, locationNumber);
         const newLocation: Location = {
           id: presetLocationId || crypto.randomUUID(),
           locationNumber: fullLocationNumber,
