@@ -98,6 +98,25 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
   internen Katalog-Generator, verlangt Admin- oder Employee-Token
   (`docs/probo-katalog.md`)
 
+## Standorterfassung fuer grosse Mengen (Sept. 2026)
+- **Bilder werden nicht mehr pauschal geladen.** `getProject`/
+  `getLocationsByProject`/`getDetailImagesByLocation`/`getFloorPlansByProject`
+  nehmen `includeImages` (getProject zusaetzlich `includeFloorPlanImages`),
+  Standardwert bleibt `true`. Projektansicht, Grundriss-Ansicht und
+  Leitsystem-Bereich laden ohne Standortfotos; die Standortkarte holt ihr Bild
+  per Object-URL nach, sobald sie in Sichtweite kommt (`useBlobUrl`,
+  `useNearViewport`). Gemessen bei 200 Standorten: 13,9 s -> 0,16 s, 687 MB -> 0 MB.
+  **Nie wieder Base64 fuer Listen verwenden.**
+- **Standort ohne Foto:** Der Plan-Dialog bietet Kamera / Hochladen / Ohne Foto.
+  `LocationDetails` kennt `?ohneFoto=1`; ohne Bild wird der HERO-Upload
+  uebersprungen und die Standortkarte zeigt „Kein Foto".
+- **Filter ueber der Standortliste** (`src/lib/locationFilter.ts`) erzeugt sich
+  aus der Feldkonfiguration und den vorkommenden Werten - neue Standortfelder
+  sind ohne Codeaenderung filterbar.
+- Standardfelder fuer Plan-Projekte: Migration
+  `20260908090000_leitsystem_standard_location_fields.sql` (`applies_to =
+  'aufmass_mit_plan'`, Praefix `custom_` ist Pflicht).
+
 ## Leitsystem-Prototyp (Sept. 2026, noch nicht abgenommen)
 - Eigener Bereich fuer Leitsystem-Projekte: Schildtypen, Positionen mit Menge,
   Plan-Marker, Zielverzeichnis, Beschriftungszeilen, Status, Stueckliste mit

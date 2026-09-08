@@ -94,14 +94,22 @@ const DetailThumb = ({
   // Deshalb haengt die Referenz direkt am Platzhalter bzw. am Bild.
   const ref = useRef<HTMLImageElement & HTMLDivElement>(null);
   const isNear = useNearViewport(ref);
-  const lazyUrl = useBlobUrl(
+  const lazy = useBlobUrl(
     () => indexedDBStorage.getDetailImageBlob(detailId, "annotated"),
     [detailId],
     !src && isNear,
   );
-  const resolved = src || lazyUrl || "";
+  const resolved = src || lazy.url || "";
   if (!resolved) {
-    return <div ref={ref} className="w-full min-h-[140px] bg-muted animate-pulse" aria-label="Detailbild wird geladen" />;
+    return (
+      <div
+        ref={ref}
+        className={`w-full min-h-[140px] bg-muted flex items-center justify-center text-xs text-muted-foreground ${lazy.state === "empty" ? "" : "animate-pulse"}`}
+        aria-label={lazy.state === "empty" ? "Kein Detailbild" : "Detailbild wird geladen"}
+      >
+        {lazy.state === "empty" ? "Kein Bild" : ""}
+      </div>
+    );
   }
   return (
     <img
@@ -120,12 +128,15 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   // sonst laegen bei 300 Standorten ueber ein Gigabyte im Arbeitsspeicher.
   const cardRef = useRef<HTMLDivElement>(null);
   const isNear = useNearViewport(cardRef);
-  const lazyMainUrl = useBlobUrl(
+  const lazyMain = useBlobUrl(
     () => indexedDBStorage.getLocationImageBlob(location.id, "annotated"),
     [location.id],
     !location.imageData && isNear,
   );
-  const mainImageUrl = location.imageData || lazyMainUrl || "";
+  const mainImageUrl = location.imageData || lazyMain.url || "";
+  // Ein Standort darf seit dem Plan-Umbau ganz ohne Foto entstehen. Dann ist
+  // hier nichts nachzuladen, und die Karte soll das sagen statt endlos zu laden.
+  const hasNoPhoto = !location.imageData && lazyMain.state === "empty";
   const navigate = useNavigate();
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
@@ -468,9 +479,16 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         </div>
       ) : (
         <div className="min-h-[180px] bg-muted relative cursor-pointer group rounded-lg overflow-hidden flex items-center justify-center" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}>
-          {mainImageUrl
-              ? <img src={mainImageUrl} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
-              : <div className="w-full min-h-[180px] bg-muted animate-pulse" aria-label="Bild wird geladen" />}
+          {mainImageUrl ? (
+            <img src={mainImageUrl} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
+          ) : hasNoPhoto ? (
+            <div className="w-full min-h-[180px] flex flex-col items-center justify-center gap-2 text-muted-foreground">
+              <ImagePlus className="h-8 w-8" />
+              <span className="text-sm">Kein Foto – tippen zum Nachreichen</span>
+            </div>
+          ) : (
+            <div className="w-full min-h-[180px] bg-muted animate-pulse" aria-label="Bild wird geladen" />
+          )}
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
             <Pencil className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>

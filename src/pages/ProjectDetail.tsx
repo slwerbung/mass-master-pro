@@ -35,6 +35,8 @@ import { SplitPdfDialog } from "@/components/SplitPdfDialog";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
 import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 import { isLeitsystemEnabled } from "@/lib/featureFlags";
+import LocationFilterBar from "@/components/LocationFilterBar";
+import { LocationFilter, applyLocationFilter, emptyLocationFilter } from "@/lib/locationFilter";
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
@@ -49,6 +51,7 @@ const ProjectDetail = () => {
   const [customerUploads, setCustomerUploads] = useState<any[]>([]);
   const [viewSettings, setViewSettings] = useState(defaultViewSettings);
   const [approvalSummary, setApprovalSummary] = useState<{ approved: number; total: number } | null>(null);
+  const [locationFilter, setLocationFilter] = useState<LocationFilter>(emptyLocationFilter());
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
@@ -224,6 +227,12 @@ const ProjectDetail = () => {
   const sortedLocations = useMemo(
     () => (project ? [...project.locations].sort((a, b) => naturalLocationSortDesc(a.locationNumber, b.locationNumber)) : []),
     [project?.locations],
+  );
+  // Gefilterte Liste. Bei 300 Standorten ist die Suche nach Geschoss oder
+  // Status der einzige Weg, ueberhaupt etwas wiederzufinden.
+  const visibleLocations = useMemo(
+    () => applyLocationFilter(sortedLocations, locationFilter),
+    [sortedLocations, locationFilter],
   );
 
   // Projektweiter Freigabestatus – spiegelt exakt die Kundenansicht wider.
@@ -443,8 +452,23 @@ const ProjectDetail = () => {
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-0.5">
               Standorte ({sortedLocations.length})
             </p>
+            <LocationFilterBar
+              locations={sortedLocations}
+              fieldConfigs={fieldConfigs}
+              filter={locationFilter}
+              onChange={setLocationFilter}
+              visibleCount={visibleLocations.length}
+              totalCount={sortedLocations.length}
+            />
+            {visibleLocations.length === 0 && sortedLocations.length > 0 && (
+              <Card className="shadow-sm">
+                <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                  Kein Standort passt zum Filter.
+                </CardContent>
+              </Card>
+            )}
             <div className="grid gap-4">
-              {sortedLocations.map((location) => (
+              {visibleLocations.map((location) => (
                 <LocationCard
                   key={location.id}
                   location={location}

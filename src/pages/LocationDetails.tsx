@@ -57,6 +57,11 @@ const LocationDetails = () => {
   const isDetailImage = searchParams.get("detail") === "true";
   const floorPlanId = searchParams.get("floorPlan");
   const presetLocationId = searchParams.get("locationId");
+  // Standort ohne Foto anlegen: im Plan kann ein Marker gesetzt werden, ohne
+  // dass sofort fotografiert wird. Bei 300 Schildern ist die Kamera-Strecke
+  // je Position der groesste Zeitfresser vor Ort; das Foto laesst sich
+  // spaeter ueber "Bild bearbeiten" nachreichen.
+  const withoutPhoto = searchParams.get("ohneFoto") === "1";
 
   // The edited image arrives via the in-memory hand-off (see editorHandoff.ts);
   // fall back to router state for legacy/edge navigations. Captured once so it
@@ -210,7 +215,7 @@ const LocationDetails = () => {
         const targetLocationId = searchParams.get("locationId");
         if (!targetLocationId) { toast.error("Standort nicht gefunden"); return; }
 
-        toast.loading("Bild wird gespeichert...");
+        toast.loading(imageDataToSave ? "Bild wird gespeichert..." : "Standort wird gespeichert...");
         const originalImageDataToSave = rawOriginal
           ? await compressImage(rawOriginal, 2400, 0.9)
           : imageDataToSave;
@@ -269,7 +274,7 @@ const LocationDetails = () => {
         toast.success("Detailbild gespeichert");
         navigate(`/projects/${projectId}`);
         scheduleSyncProject(projectId);
-      } else if (imageDataRef.current) {
+      } else if (imageDataRef.current || withoutPhoto) {
         // Same principle as the detail-image branch above: skip the
         // redundant re-compression of imageData (PhotoEditor already did
         // it) and only compress the raw original, sequentially.
@@ -296,8 +301,10 @@ const LocationDetails = () => {
           system: fieldValues["system"]?.trim() || undefined,
           label: fieldValues["label"]?.trim() || undefined,
           locationType: fieldValues["locationType"]?.trim() || undefined,
-          imageData: imageDataToSave,
-          originalImageData: originalImageDataToSave,
+          // Ohne Foto bleiben beide Felder leer. Die Standortkarte zeigt dann
+          // einen Platzhalter mit "Foto nachreichen".
+          imageData: imageDataToSave || "",
+          originalImageData: originalImageDataToSave || "",
           createdAt: new Date(),
         };
         const customFields: Record<string, string> = {};
@@ -329,13 +336,17 @@ const LocationDetails = () => {
         // number (e.g. "100") in the filename so uploads are easy to
         // identify in HERO's file list.
         const baseName = `standort-${fullLocationNumber}`;
-        await enqueueHeroUploadIfLinked({
-          project,
-          uploadType: "location_image",
-          blob: dataUrlToBlob(imageDataToSave),
-          filename: `${baseName}.jpg`,
-          locationId: newLocation.id,
-        });
+        // Ohne Foto gibt es nichts hochzuladen – dataUrlToBlob wuerde auf
+        // einem leeren String stolpern.
+        if (imageDataToSave) {
+          await enqueueHeroUploadIfLinked({
+            project,
+            uploadType: "location_image",
+            blob: dataUrlToBlob(imageDataToSave),
+            filename: `${baseName}.jpg`,
+            locationId: newLocation.id,
+          });
+        }
         if (rawOriginal) {
           await enqueueHeroUploadIfLinked({
             project,
@@ -347,7 +358,7 @@ const LocationDetails = () => {
         }
 
         toast.dismiss();
-        toast.success("Standort gespeichert");
+        toast.success(imageDataToSave ? "Standort gespeichert" : "Standort ohne Foto angelegt");
         scheduleSyncProject(projectId);
         // Sync area measurements to HERO notes BEFORE navigating - the
         // navigate() calls below unmount this component and would cancel
@@ -382,7 +393,10 @@ const LocationDetails = () => {
     }
   };
 
-  if (!isLoaded || (!isEditMode && !isDetailEditMode && !stateImageData)) return null;
+  // Ohne Bild wurde die Seite bisher gar nicht gerendert – sie war nur ueber
+  // die Kamera-Strecke erreichbar. Mit `ohneFoto=1` ist das Formular auch
+  // ohne Bild der richtige Ort, um den Standort anzulegen.
+  if (!isLoaded || (!isEditMode && !isDetailEditMode && !stateImageData && !withoutPhoto)) return null;
 
   const title = isDetailEditMode ? "Detailbild bearbeiten" : isEditMode ? "Standort bearbeiten" : isDetailImage ? "Detailbild-Details" : "Standort-Details";
 

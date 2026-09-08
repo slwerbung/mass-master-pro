@@ -1,5 +1,17 @@
 import { useEffect, useState } from "react";
 
+export type BlobUrlState = "idle" | "loading" | "ready" | "empty";
+
+export interface BlobUrlResult {
+  url: string | null;
+  /**
+   * `empty` heisst: nachgesehen, es gibt kein Bild. Das ist etwas anderes als
+   * `loading` – ein Standort ohne Foto soll "Foto nachreichen" anzeigen und
+   * nicht ewig einen Ladebalken.
+   */
+  state: BlobUrlState;
+}
+
 /**
  * Laedt ein Bild bei Bedarf aus IndexedDB und gibt eine Object-URL zurueck.
  *
@@ -16,36 +28,41 @@ export function useBlobUrl(
   load: (() => Promise<Blob | null>) | null,
   deps: unknown[],
   enabled = true,
-): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+): BlobUrlResult {
+  const [result, setResult] = useState<BlobUrlResult>({ url: null, state: "idle" });
 
   useEffect(() => {
     if (!enabled || !load) {
-      setUrl(null);
+      setResult({ url: null, state: "idle" });
       return;
     }
     let cancelled = false;
     let created: string | null = null;
+    setResult({ url: null, state: "loading" });
 
     load()
       .then((blob) => {
-        if (cancelled || !blob) return;
+        if (cancelled) return;
+        if (!blob) {
+          setResult({ url: null, state: "empty" });
+          return;
+        }
         created = URL.createObjectURL(blob);
-        setUrl(created);
+        setResult({ url: created, state: "ready" });
       })
       .catch((error) => {
         console.warn("Bild konnte nicht geladen werden", error);
+        if (!cancelled) setResult({ url: null, state: "empty" });
       });
 
     return () => {
       cancelled = true;
       if (created) URL.revokeObjectURL(created);
-      setUrl(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, enabled]);
 
-  return url;
+  return result;
 }
 
 /**

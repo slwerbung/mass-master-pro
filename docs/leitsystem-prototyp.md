@@ -237,6 +237,68 @@ am Platzhalter.
 
 ---
 
+## 5c. Standortbasierte Erfassung: ohne Foto, Standardfelder, Filter
+
+Der Leitsystem-Bereich ist ein Prototyp neben der Standorterfassung. Diese drei
+Änderungen liegen dagegen **direkt in den Standort-Ansichten** – sie gelten für
+jedes Projekt und sind der Anfang des Umbaus „alles hängt am Standort".
+
+### Standort im Plan anlegen: Kamera, Hochladen oder ohne Foto
+
+Der Dialog beim Setzen eines Markers heißt jetzt „Standort anlegen" und bietet
+drei Wege. **Ohne Foto** legt den Standort sofort an; das Bild lässt sich später
+über die Standortkarte nachreichen. Bei 300 Positionen ist die Kamera-Strecke je
+Standort der größte Zeitfresser vor Ort.
+
+Zwei Stellen mussten dafür weichen:
+
+* `LocationDetails` betrat den Anlage-Zweig nur mit Bilddaten
+  (`else if (imageDataRef.current)`) und **renderte ohne Bild überhaupt nichts**
+  (`if (… && !stateImageData) return null`). Beides kennt jetzt `?ohneFoto=1`.
+* Der HERO-Upload wird ohne Bild übersprungen – `dataUrlToBlob` wäre auf einem
+  leeren String gestolpert.
+
+Die Standortkarte unterscheidet jetzt „lädt noch" von „gibt es nicht" und zeigt
+bei einem Standort ohne Foto **„Kein Foto – tippen zum Nachreichen"** statt eines
+endlosen Ladebalkens (`useBlobUrl` liefert dafür `state: 'empty'`).
+
+**Nebenbei repariert:** Wird der Dialog abgebrochen, verschwindet der eben
+gesetzte Marker wieder. Vorher blieb er als Marker ohne Standort im Plan stehen
+und zeigte „?" als Nummer – bei 300 Positionen wäre das Datenmüll.
+
+### Standardfelder für Plan-Projekte
+
+Die Standortfelder bleiben frei konfigurierbar (Admin → Standortfelder). Die
+Migration `20260908090000_leitsystem_standard_location_fields.sql` legt lediglich
+sechs Felder an, die bei einem Leitsystem praktisch immer gebraucht werden:
+
+| Feld | Typ |
+| --- | --- |
+| Gebäude, Geschoss, Schildtyp, Menge | Text |
+| Montageart | Auswahl (Wand, Decke, Klebe, Boden, Pfosten, Sonstige) |
+| Status | Auswahl (Geplant … Abgenommen, Entfallen) |
+
+Alle mit `applies_to = 'aufmass_mit_plan'` – bei normalen Aufmaßen und
+Fahrzeugbeschriftungen ändert sich nichts. Die Spalte und die Filterung nach
+Projekttyp gab es bereits; die Migration nutzt sie nur. Sie ist idempotent und
+legt kein Feld erneut an, das jemand gelöscht hat.
+
+Der Präfix `custom_` ist Pflicht: nur so landen die Werte in
+`locations.custom_fields`.
+
+### Filter über der Standortliste
+
+Suchfeld plus ein Auswahlfilter je Feld. Die Filter sind **nicht fest
+verdrahtet**, sondern entstehen aus der Feldkonfiguration und den Werten, die im
+Projekt tatsächlich vorkommen (`src/lib/locationFilter.ts`). Ein im Admin neu
+angelegtes Standortfeld ist damit sofort filterbar, ohne Codeänderung.
+
+Ausgelassen werden Felder, die leer sind oder mehr als 25 verschiedene Werte
+haben – ein Kommentarfeld mit 300 verschiedenen Texten ergibt keine sinnvolle
+Auswahlliste, dafür gibt es die Suche.
+
+---
+
 ## 6. Was geprüft wurde
 
 Alles gegen die Seed-Daten (40 Positionen, 68 Schilder) in Chromium:
@@ -263,6 +325,13 @@ Alles gegen die Seed-Daten (40 Positionen, 68 Schilder) in Chromium:
   Liste zerstört keine Bilder** der übrigen Standorte, Detailbilder oder
   Grundrisse. Im echten UI: alle 24 Bilder laden beim Durchscrollen als
   Object-URL nach, kein Platzhalter bleibt offen, Lightbox funktioniert.
+* **Standortbasierte Erfassung** (Browser, End-to-End): Filterleiste erscheint
+  mit den aus der Feldkonfiguration erzeugten Auswahlfeldern; Filter nach System
+  reduziert 9 auf 3 Standorte; Suche findet einen; der Plan-Dialog bietet alle
+  drei Wege; „Ohne Foto" führt ins Formular, speichert, und der Standort taucht
+  in der Liste auf; seine Karte zeigt „Kein Foto", während ein Standort MIT Foto
+  sein Bild weiterhin als Blob-URL lädt; Abbrechen im Dialog hinterlässt keinen
+  Marker; nach „Ohne Foto" trägt der Marker die richtige Standortnummer.
 * `npm run build` läuft durch, der Bereich landet in einem eigenen Chunk
   (56 kB). `tsc` und `eslint` melden für die neuen Dateien nichts – die
   bestehenden 97 `tsc`-Fehler des Repos (veraltete generierte Supabase-Typen)
@@ -287,12 +356,12 @@ Im Sinne von „wenn ein Schritt hakt, ist das das Ergebnis":
    eindeutig, aber die Nummer verrät dann nicht mehr das Gebäude. Im Seed
    deshalb `EG` und `B-EG`. Falls das stört, gehört das Gebäudekürzel in die
    Nummer.
-3. **Position und Standort sind noch nicht verbunden.** `location_id` steht im
-   Datenmodell, aber es gibt keinen Weg in der Oberfläche, an einer Position ein
-   Foto aufzunehmen oder einen bestehenden Standort zu verknüpfen. Für die
-   mobile Erfassung vor Ort ist das der nächste Schritt und braucht eine
-   Entscheidung: entsteht beim Fotografieren einer Position automatisch ein
-   Standort, oder bleiben beide Welten getrennt?
+3. **~~Position und Standort sind noch nicht verbunden.~~** Entschieden: es
+   bleibt standortbasiert. Der Standort IST die Position. Der Umbau hat mit den
+   drei Punkten in Abschnitt 5c begonnen (Erfassung ohne Foto, Standardfelder,
+   Filter). **Noch offen:** `sign_positions` auflösen und Schildtyp+Menge,
+   Beschriftungszeilen, Plan-Marker und Status an `locations` hängen. Bis dahin
+   liegt im Leitsystem-Bereich noch das alte Positionsmodell.
 4. **Neunummerieren ist gefährlich, sobald produziert wurde.** Die Funktion
    warnt, verhindert es aber nicht. Vorschlag: ab Status „bestellt" die Nummer
    festnageln.
