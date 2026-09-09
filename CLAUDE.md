@@ -125,9 +125,17 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 - **Filter ueber der Standortliste** (`src/lib/locationFilter.ts`) erzeugt sich
   aus der Feldkonfiguration und den vorkommenden Werten - neue Standortfelder
   sind ohne Codeaenderung filterbar.
-- Standardfelder fuer Plan-Projekte: Migration
-  `20260908090000_leitsystem_standard_location_fields.sql` (`applies_to =
-  'aufmass_mit_plan'`, Praefix `custom_` ist Pflicht).
+- **Standortfelder fuer Plan-Projekte werden im Admin von Hand angelegt**, es
+  gibt bewusst keine Migration dafuer (sie wuerde bei `db push` Duplikate
+  erzeugen). Noetig sind Gebaeude, Geschoss, Schildtyp, Menge, Montageart,
+  Status mit `applies_to = 'aufmass_mit_plan'`. Die Labels muessen die Woerter
+  „Gebaeude" bzw. „Geschoss" enthalten, sonst findet der Label-Rueckfall in
+  `findFieldKey` das Feld nicht. Praefix `custom_` ist Pflicht.
+- **Zoom im Grundriss:** `src/components/ZoomableFloorPlan.tsx` (Mausrad,
+  Pinch, Ziehen, Doppeltipp, Knoepfe; 1x bis 8x). Relative Koordinaten kommen
+  aus `getBoundingClientRect()` des **Bildes**, nicht des Rahmens – damit
+  stimmt der Trefferpunkt bei jedem Zoomstand ohne eigene Umrechnung. Marker
+  werden mit `scale(1 / zoom)` gegenskaliert.
 
 ## Leitsystem-Prototyp (Sept. 2026, noch nicht abgenommen)
 - Eigener Bereich fuer Leitsystem-Projekte: Schildtypen, Positionen mit Menge,

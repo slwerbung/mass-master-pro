@@ -266,25 +266,35 @@ endlosen Ladebalkens (`useBlobUrl` liefert dafür `state: 'empty'`).
 gesetzte Marker wieder. Vorher blieb er als Marker ohne Standort im Plan stehen
 und zeigte „?" als Nummer – bei 300 Positionen wäre das Datenmüll.
 
-### Standardfelder für Plan-Projekte
+### Standortfelder für Plan-Projekte – selbst anlegen
 
-Die Standortfelder bleiben frei konfigurierbar (Admin → Standortfelder). Die
-Migration `20260908090000_leitsystem_standard_location_fields.sql` legt lediglich
-sechs Felder an, die bei einem Leitsystem praktisch immer gebraucht werden:
+Die Standortfelder bleiben frei konfigurierbar (Admin → Standortfelder). Eine
+Migration, die sechs Standardfelder anlegt, gab es kurzzeitig; sie ist wieder
+**entfernt**. Grund: die Felder werden von Hand im Admin gepflegt, und ein
+späteres `supabase db push` hätte sie ein zweites Mal angelegt. Ein doppeltes
+„Geschoss" in der Feldliste ist schlimmer als gar keines.
 
-| Feld | Typ |
-| --- | --- |
-| Gebäude, Geschoss, Schildtyp, Menge | Text |
-| Montageart | Auswahl (Wand, Decke, Klebe, Boden, Pfosten, Sonstige) |
-| Status | Auswahl (Geplant … Abgenommen, Entfallen) |
+Diese sechs Felder sind bei einem Leitsystem praktisch immer nötig und sollten
+im Admin angelegt werden (Projekttyp **Aufmaß mit Plan**):
 
-Alle mit `applies_to = 'aufmass_mit_plan'` – bei normalen Aufmaßen und
-Fahrzeugbeschriftungen ändert sich nichts. Die Spalte und die Filterung nach
-Projekttyp gab es bereits; die Migration nutzt sie nur. Sie ist idempotent und
-legt kein Feld erneut an, das jemand gelöscht hat.
+| Label | Typ | Auswahlwerte |
+| --- | --- | --- |
+| Gebäude | Text | – |
+| Geschoss | Text | – |
+| Schildtyp | Text | – |
+| Menge | Text | – |
+| Montageart | Auswahl | Wand, Decke, Klebe, Boden, Pfosten, Sonstige |
+| Status | Auswahl | Geplant, Freigegeben, Bestellt, Produziert, Montiert, Abgenommen, Entfallen |
+
+**Die Labels „Gebäude" und „Geschoss" müssen genau so heißen** – jedenfalls
+müssen sie das Wort enthalten. Der Admin vergibt beim Anlegen einen Schlüssel
+wie `custom_1757400000000`, nicht `custom_gebaeude`. `findFieldKey`
+(`src/lib/planFields.ts`) sucht deshalb erst den Standardschlüssel und fällt
+dann auf das Label zurück. Ohne das Wort im Label findet weder die Vererbung
+vom Grundriss noch das Geschoss-Kürzel in der Standortnummer sein Feld.
 
 Der Präfix `custom_` ist Pflicht: nur so landen die Werte in
-`locations.custom_fields`.
+`locations.custom_fields`. Den vergibt der Admin automatisch.
 
 ### Was „ohne Foto" sonst noch berührt hat
 
@@ -389,6 +399,45 @@ Ausgelassen werden Felder, die leer sind oder mehr als 25 verschiedene Werte
 haben – ein Kommentarfeld mit 300 verschiedenen Texten ergibt keine sinnvolle
 Auswahlliste, dafür gibt es die Suche.
 
+### Zoom im Grundriss
+
+Ein A1-Architektenplan auf einem Handy ist ohne Zoom nicht bedienbar: Räume sind
+nicht lesbar, und zwei Schilder an derselben Flurkreuzung liegen als Marker
+übereinander (siehe Abschnitt 7, Punkt 1). `src/components/ZoomableFloorPlan.tsx`
+bringt Mausrad, Pinch, Ziehen, Doppeltipp und drei Knöpfe (+, −, „Ganzer Plan"),
+1× bis 8×, mit Prozentanzeige.
+
+Der entscheidende Punkt ist die **Trefferpunkt-Rechnung**. Vorher rechnete
+`FloorPlanView` aus dem Rahmen (`imageContainerRef`), was ohne Zoom dasselbe war.
+Jetzt kommen die relativen Koordinaten aus der **Bildbox**:
+
+```ts
+const rect = imageRef.current.getBoundingClientRect();
+const x = (event.clientX - rect.left) / rect.width;
+```
+
+`getBoundingClientRect()` liefert die bereits transformierte Box – damit stimmt
+die Stelle bei jedem Zoomstand, ganz ohne eigene Umrechnung von Zoom und
+Verschiebung. Ein Tippen neben den Plan (`x < 0 || x > 1`) legt nichts an.
+
+Drei Details, die beim Bauen nötig wurden:
+
+* **Marker werden gegenskaliert** (`scale(1 / zoom)`, `transformOrigin: bottom
+  center`). Sie kleben an ihrem Punkt, bleiben aber gleich groß – bei 400 % wäre
+  ein mitwachsender Marker so groß wie ein halber Raum.
+* **Tippen und Ziehen müssen sich unterscheiden.** Erst ab 5 px Bewegung gilt
+  eine Geste als Verschieben; sonst würde jeder leicht wackelige Finger das
+  Setzen eines Markers verschlucken.
+* **Verschieben wird begrenzt** (`clampOffset`), sonst schiebt man den Plan aus
+  dem Rahmen und findet ihn nicht wieder. Ein Viertel Rahmen darf frei bleiben.
+
+Geprüft in Chromium gegen einen 10×8-Raster-Plan mit beschrifteten Feldern: ein
+Klick auf die Mitte von Feld „73" ergibt bei 100 % den Marker `0,750 / 0,4375`.
+Nach dem Hineinzoomen auf 299 % an derselben Stelle liegt der Punkt weiterhin in
+Feld „73", und der Klick ergibt **exakt dieselbe Koordinate** (Abweichung
+dx = dy = 0,0000). Ein Klick in den freien Rahmen neben dem Plan öffnet keinen
+Dialog.
+
 ---
 
 ## 6. Was geprüft wurde
@@ -460,8 +509,11 @@ Im Sinne von „wenn ein Schritt hakt, ist das das Ergebnis":
 1. **Marker überlagern sich.** Bei den ersten Seed-Daten lagen 14 von 16
    Markern eines Geschosses so dicht beieinander, dass sich der obere nicht
    mehr antippen ließ. Die Seed-Verteilung ist repariert – in echten Projekten
-   mit 150 Markern tritt das aber genauso auf. Vor der Abnahme zu klären:
-   Marker bei Überlagerung auffächern, oder beim Zoomen entzerren.
+   mit 150 Markern tritt das aber genauso auf. **Teilweise erledigt:** der
+   Grundriss lässt sich jetzt bis 8× vergrößern, damit sind eng beieinander
+   liegende Marker einzeln antippbar. Zwei Marker auf demselben Punkt trennt
+   das aber nicht – ob sie zusätzlich aufgefächert werden müssen, zeigt der
+   erste echte Plan.
 2. **Ein Geschoss-Kürzel darf mehrfach vorkommen.** Zwei Gebäude mit einem „EG"
    teilen sich den Nummernkreis (`EG-001` … `EG-032`). Die Nummern bleiben
    eindeutig, aber die Nummer verrät dann nicht mehr das Gebäude. Im Seed

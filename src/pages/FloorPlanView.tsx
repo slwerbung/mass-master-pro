@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { setEditorHandoff } from "@/lib/editorHandoff";
 import { floorPlanLabel } from "@/lib/planFields";
+import ZoomableFloorPlan from "@/components/ZoomableFloorPlan";
 import { recognizeFloor } from "@/lib/locationNumber";
 
 const FloorPlanView = () => {
@@ -44,7 +45,6 @@ const FloorPlanView = () => {
   const [pendingMarkerId, setPendingMarkerId] = useState<string | null>(null);
   // Gebaeude und Geschoss gehoeren an den Plan, nicht an jedes Schild.
   const [editPlan, setEditPlan] = useState<{ name: string; building: string; floor: string } | null>(null);
-  const imageContainerRef = useRef<HTMLDivElement>(null);
 
   const loadProject = useCallback(async () => {
     if (!projectId) return;
@@ -73,12 +73,13 @@ const FloorPlanView = () => {
   useEffect(() => { loadProject(); }, [loadProject]);
   const activeFloorPlan = project?.floorPlans?.find((fp) => fp.id === activeFloorPlanId);
 
-  const handleImageClick = async (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!placingMarker || !activeFloorPlan || !imageContainerRef.current || !projectId) return;
-    const rect = imageContainerRef.current.getBoundingClientRect();
+  // Die relativen Koordinaten kommen aus ZoomableFloorPlan und stimmen bei
+  // jedem Zoomstand – dort wird aus der Bildbox gerechnet, nicht aus dem Rahmen.
+  const handlePlaceMarker = async (relX: number, relY: number) => {
+    if (!placingMarker || !activeFloorPlan || !projectId) return;
     const markerId = crypto.randomUUID();
     const locationId = crypto.randomUUID();
-    const newMarker: FloorPlanMarker = { id: markerId, locationId, x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)) };
+    const newMarker: FloorPlanMarker = { id: markerId, locationId, x: relX, y: relY };
     await indexedDBStorage.updateFloorPlanMarkers(projectId, activeFloorPlan.id, [...activeFloorPlan.markers, newMarker]);
     const syncResult = await syncProjectToSupabase(projectId);
     if (syncResult === 'remote-won') { toast.warning('Neuere Online-Version übernommen'); await loadProject(); return; }
@@ -221,11 +222,40 @@ const FloorPlanView = () => {
               </button>
             )}
           </p>
-          <div ref={imageContainerRef} className={`relative bg-muted rounded-lg overflow-hidden border-2 ${placingMarker ? 'border-primary cursor-crosshair' : 'border-transparent'}`} onClick={handleImageClick}>
-            <img src={activeFloorPlan.imageData} alt={activeFloorPlan.name} className="w-full h-auto" draggable={false} />
-            {activeFloorPlan.markers.map((marker) => <button key={marker.id} className="absolute transform -translate-x-1/2 -translate-y-full group" style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }} onClick={(e) => handleMarkerClick(marker, e)} title={`Standort ${getLocationNumber(marker.locationId)}`}><div className="flex flex-col items-center"><span className="bg-primary text-primary-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-sm mb-0.5 whitespace-nowrap shadow-md">{getLocationNumber(marker.locationId)}</span><MapPin className="h-6 w-6 text-primary drop-shadow-md" fill="currentColor" /></div></button>)}
-          </div>
-          {placingMarker && <div className="bg-primary/10 border border-primary rounded-lg p-3 text-center text-sm"><p className="font-medium">Tippe auf den Grundriss, um einen Standort zu platzieren</p><Button variant="ghost" size="sm" className="mt-2" onClick={() => setPlacingMarker(false)}>Abbrechen</Button></div>}
+          <ZoomableFloorPlan
+            src={activeFloorPlan.imageData}
+            alt={activeFloorPlan.name}
+            placing={placingMarker}
+            onPlace={handlePlaceMarker}
+          >
+            {(zoom) => activeFloorPlan.markers.map((marker) => (
+              <button
+                key={marker.id}
+                className="absolute group"
+                style={{
+                  left: `${marker.x * 100}%`,
+                  top: `${marker.y * 100}%`,
+                  // Gegenskalierung: der Marker soll beim Hineinzoomen an
+                  // seinem Punkt kleben, aber gleich gross bleiben – sonst
+                  // waere er bei 400 % so gross wie ein halber Raum.
+                  transform: `translate(-50%, -100%) scale(${1 / zoom})`,
+                  transformOrigin: "bottom center",
+                }}
+                onClick={(e) => handleMarkerClick(marker, e)}
+                onPointerDown={(e) => e.stopPropagation()}
+                title={`Standort ${getLocationNumber(marker.locationId)}`}
+              >
+                <div className="flex flex-col items-center">
+                  <span className="bg-primary text-primary-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-sm mb-0.5 whitespace-nowrap shadow-md">
+                    {getLocationNumber(marker.locationId)}
+                  </span>
+                  <MapPin className="h-6 w-6 text-primary drop-shadow-md" fill="currentColor" />
+                </div>
+              </button>
+            ))}
+          </ZoomableFloorPlan>
+          {placingMarker && <div className="bg-primary/10 border border-primary rounded-lg p-3 text-center text-sm"><p className="font-medium">Tippe auf den Grundriss, um einen Standort zu platzieren</p>
+            <p className="text-xs text-muted-foreground mt-1">Zum genauen Treffen vorher hineinzoomen: Mausrad, zwei Finger oder die Knöpfe rechts unten.</p><Button variant="ghost" size="sm" className="mt-2" onClick={() => setPlacingMarker(false)}>Abbrechen</Button></div>}
         </div>}
       </div>
 
