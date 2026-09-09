@@ -283,7 +283,12 @@ const ProjectDetail = () => {
   if (!project) return null;
 
   return (
-    <div className="min-h-screen bg-muted/30">
+    // pb-32: Platz fuer die feste Leiste am unteren Rand. Der Abstand gehoert
+    // an diesen Rahmen und nicht an den Inhalt darunter – dort stand er als
+    // "pb-28" neben "md:p-6", und ab 768 px hat das md:p-6 ihn ueberschrieben.
+    // Auf dem Rechner blieben so 24 px statt 112 px, und der letzte Standort
+    // lag 32 px unter der Leiste: "Detailbild hinzufuegen" war nicht klickbar.
+    <div className="min-h-screen bg-muted/30 pb-32">
       {/* Sticky header */}
       <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/60 px-4 py-2.5">
         <div className="container max-w-4xl mx-auto flex items-center gap-2">
@@ -332,7 +337,7 @@ const ProjectDetail = () => {
       </div>
 
       {/* Page content */}
-      <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-4 pb-28">
+      <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-4">
 
         {/* Online / conflict notice */}
         {(isOnlineOnly || conflictNotice) && (
