@@ -22,6 +22,7 @@ import {
 import LocationCard from "@/components/LocationCard";
 import { supabase } from "@/integrations/supabase/client";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+import { withPlanBuiltinFields } from "@/lib/planFields";
 import { mergeWithDefaultProjectFields } from "@/lib/projectFields";
 import { naturalLocationSortDesc } from "@/lib/locationSorting";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
@@ -221,6 +222,15 @@ const ProjectDetail = () => {
   };
 
   const isPlanProject = project?.projectType === "aufmass_mit_plan";
+
+  // Gebaeude und Geschoss stehen im Code, nicht in der Feldkonfiguration –
+  // damit Liste und Filter sie auch dann kennen, wenn im Admin nichts
+  // angelegt wurde. Nur bei Plan-Projekten (siehe planFields.ts).
+  const projectType = project?.projectType;
+  const locationFieldConfigs = useMemo(
+    () => withPlanBuiltinFields(fieldConfigs, projectType),
+    [fieldConfigs, projectType],
+  );
   // Prototyp: nur sichtbar, wenn das Leitsystem-Flag gesetzt ist. Laufende
   // Projekte bekommen davon nichts mit.
   const showLeitsystem = isPlanProject && isLeitsystemEnabled();
@@ -454,7 +464,7 @@ const ProjectDetail = () => {
             </p>
             <LocationFilterBar
               locations={sortedLocations}
-              fieldConfigs={fieldConfigs}
+              fieldConfigs={locationFieldConfigs}
               filter={locationFilter}
               onChange={setLocationFilter}
               visibleCount={visibleLocations.length}
@@ -475,7 +485,7 @@ const ProjectDetail = () => {
                   projectId={projectId!}
                   onDelete={handleDeleteLocation}
                   onDeleteDetailImage={handleDeleteDetailImage}
-                  fieldConfigs={fieldConfigs}
+                  fieldConfigs={locationFieldConfigs}
                   showPrintFiles={viewSettings.internalShowPrintFiles}
                   showDetailImages={viewSettings.internalShowDetailImages}
                   project={project}

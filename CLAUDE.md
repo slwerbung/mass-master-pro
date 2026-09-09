@@ -125,12 +125,19 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 - **Filter ueber der Standortliste** (`src/lib/locationFilter.ts`) erzeugt sich
   aus der Feldkonfiguration und den vorkommenden Werten - neue Standortfelder
   sind ohne Codeaenderung filterbar.
-- **Standortfelder fuer Plan-Projekte werden im Admin von Hand angelegt**, es
-  gibt bewusst keine Migration dafuer (sie wuerde bei `db push` Duplikate
-  erzeugen). Noetig sind Gebaeude, Geschoss, Schildtyp, Menge, Montageart,
-  Status mit `applies_to = 'aufmass_mit_plan'`. Die Labels muessen die Woerter
-  „Gebaeude" bzw. „Geschoss" enthalten, sonst findet der Label-Rueckfall in
-  `findFieldKey` das Feld nicht. Praefix `custom_` ist Pflicht.
+- **Gebaeude und Geschoss sind eingebaute Felder** (`PLAN_BUILTIN_FIELDS` in
+  `src/lib/planFields.ts`), keine Feldkonfiguration noetig. Sie haengen nicht
+  an den frei definierbaren Standortfeldern, weil Vererbung vom Grundriss und
+  Geschoss-Kuerzel in der Nummer an ihnen haengen. `withPlanBuiltinFields()`
+  mischt sie nur bei `aufmass_mit_plan` ein – Standortformular, Liste/Filter,
+  Export, Kundenansicht. Dublettenschutz ueber Schluessel und Label: ein selbst
+  angelegtes „Gebaeude" gewinnt. **Die Vererbung darf erst laufen, wenn die
+  Feldkonfiguration geladen ist**, sonst erbt der Standort zweimal (einmal in
+  den eingebauten, einmal in den eigenen Schluessel).
+- **Die uebrigen Plan-Standortfelder legt der Nutzer im Admin an** (Schildtyp,
+  Menge, Montageart, Status, `applies_to = 'aufmass_mit_plan'`). Bewusst keine
+  Migration dafuer – sie wuerde bei `db push` Duplikate erzeugen. Praefix
+  `custom_` ist Pflicht.
 - **Zoom im Grundriss:** `src/components/ZoomableFloorPlan.tsx` (Mausrad,
   Pinch, Ziehen, Doppeltipp, Knoepfe; 1x bis 8x). Relative Koordinaten kommen
   aus `getBoundingClientRect()` des **Bildes**, nicht des Rahmens – damit

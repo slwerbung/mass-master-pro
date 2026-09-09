@@ -266,35 +266,45 @@ endlosen Ladebalkens (`useBlobUrl` liefert dafür `state: 'empty'`).
 gesetzte Marker wieder. Vorher blieb er als Marker ohne Standort im Plan stehen
 und zeigte „?" als Nummer – bei 300 Positionen wäre das Datenmüll.
 
-### Standortfelder für Plan-Projekte – selbst anlegen
+### Gebäude und Geschoss stehen im Code, alles andere im Admin
 
-Die Standortfelder bleiben frei konfigurierbar (Admin → Standortfelder). Eine
-Migration, die sechs Standardfelder anlegt, gab es kurzzeitig; sie ist wieder
-**entfernt**. Grund: die Felder werden von Hand im Admin gepflegt, und ein
-späteres `supabase db push` hätte sie ein zweites Mal angelegt. Ein doppeltes
-„Geschoss" in der Feldliste ist schlimmer als gar keines.
+Hier gibt es zwei Sorten Felder, und die Unterscheidung ist wichtig:
 
-Diese sechs Felder sind bei einem Leitsystem praktisch immer nötig und sollten
-im Admin angelegt werden (Projekttyp **Aufmaß mit Plan**):
+**Gebäude und Geschoss sind eingebaut** (`PLAN_BUILTIN_FIELDS` in
+`src/lib/planFields.ts`). Sie sind kein frei definierbares Standortfeld,
+sondern Teil der Mechanik: die Vererbung vom Grundriss und das Geschoss-Kürzel
+in der Standortnummer hängen an ihnen. Müsste man sie erst im Admin anlegen,
+wäre beides so lange still kaputt – ohne Fehlermeldung, denn ein fehlendes Feld
+vererbt einfach nichts. Sie erscheinen **nur bei Plan-Projekten**; bei normalen
+Aufmaßen und Fahrzeugbeschriftungen ändert sich nichts.
+
+`withPlanBuiltinFields(configs, projektTyp)` mischt sie in die Feldliste, an
+vier Stellen: Standortformular, Standortliste samt Filter, Export und
+Kundenansicht. Wer sich im Admin selbst ein Feld „Gebäude" anlegt, behält es –
+der Dublettenschutz geht über Schlüssel **und** Label, und das eigene Feld
+gewinnt, weil daran die bereits erfassten Werte hängen.
+
+**Die übrigen vier legst du selbst im Admin an** (Projekttyp *Aufmaß mit Plan*).
+Eine Migration dafür gab es kurzzeitig; sie ist wieder entfernt, weil ein
+späteres `supabase db push` die Felder ein zweites Mal angelegt hätte.
 
 | Label | Typ | Auswahlwerte |
 | --- | --- | --- |
-| Gebäude | Text | – |
-| Geschoss | Text | – |
 | Schildtyp | Text | – |
 | Menge | Text | – |
 | Montageart | Auswahl | Wand, Decke, Klebe, Boden, Pfosten, Sonstige |
 | Status | Auswahl | Geplant, Freigegeben, Bestellt, Produziert, Montiert, Abgenommen, Entfallen |
 
-**Die Labels „Gebäude" und „Geschoss" müssen genau so heißen** – jedenfalls
-müssen sie das Wort enthalten. Der Admin vergibt beim Anlegen einen Schlüssel
-wie `custom_1757400000000`, nicht `custom_gebaeude`. `findFieldKey`
-(`src/lib/planFields.ts`) sucht deshalb erst den Standardschlüssel und fällt
-dann auf das Label zurück. Ohne das Wort im Label findet weder die Vererbung
-vom Grundriss noch das Geschoss-Kürzel in der Standortnummer sein Feld.
+Der Präfix `custom_` ist Pflicht, damit die Werte in `locations.custom_fields`
+landen – den vergibt der Admin automatisch.
 
-Der Präfix `custom_` ist Pflicht: nur so landen die Werte in
-`locations.custom_fields`. Den vergibt der Admin automatisch.
+**Dabei aufgefallen:** Der Standort erbte zweimal. Die Vererbung lief einmal
+los, bevor die Feldkonfiguration geladen war (also in den eingebauten
+Schlüssel), und ein zweites Mal danach (in das selbst angelegte Feld). Der
+erste Wert blieb als Karteileiche in `custom_fields` stehen und wäre
+mitsynchronisiert worden. Die Vererbung wartet jetzt auf ein geladenes
+`fieldConfigsLoaded` – „noch nicht geladen" und „geladen, aber leer" sehen
+sonst gleich aus.
 
 ### Was „ohne Foto" sonst noch berührt hat
 

@@ -31,6 +31,7 @@ import {
 } from "@/lib/pdfHelpers";
 import * as pdfjsLib from "pdfjs-dist";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+import { withPlanBuiltinFields } from "@/lib/planFields";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 
@@ -238,7 +239,10 @@ const Export = () => {
   }, [project]);
 
   const getVisibleFields = (customerOnly: boolean) => {
-    return mergeWithDefaultLocationFields(fieldConfigs).filter((field) => field.is_active && (!customerOnly || field.customer_visible));
+    // Gebaeude und Geschoss stehen im Code (planFields.ts) und muessen deshalb
+    // auch dann im Export stehen, wenn im Admin kein Feld angelegt wurde.
+    const configs = withPlanBuiltinFields(mergeWithDefaultLocationFields(fieldConfigs), project?.projectType);
+    return configs.filter((field) => field.is_active && (!customerOnly || field.customer_visible));
   };
 
   const resolveFieldValue = (location: any, fieldKey: string) => {

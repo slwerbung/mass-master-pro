@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ import { scheduleSyncProject } from "@/lib/supabaseSync";
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 import { buildLocationNumber, findFloorValue, floorAbbreviation } from "@/lib/locationNumber";
-import { inheritedFieldsFromPlan } from "@/lib/planFields";
+import { inheritedFieldsFromPlan, withPlanBuiltinFields } from "@/lib/planFields";
 import { getSession } from "@/lib/session";
 import { takeEditorHandoff } from "@/lib/editorHandoff";
 
@@ -88,6 +88,9 @@ const LocationDetails = () => {
 
   // Dynamic fields
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>([]);
+  // Getrennt vom Inhalt: "noch nicht geladen" und "geladen, aber leer" sehen
+  // sonst gleich aus – und die Vererbung unten muss sie unterscheiden.
+  const [fieldConfigsLoaded, setFieldConfigsLoaded] = useState(false);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [projectType, setProjectType] = useState<string | undefined>(undefined);
   const [planForInheritance, setPlanForInheritance] = useState<FloorPlan | null>(null);
@@ -109,6 +112,30 @@ const LocationDetails = () => {
       .catch((error) => console.warn("Projekt konnte nicht geladen werden", error));
   }, [projectId, floorPlanId, isEditMode, isDetailEditMode]);
 
+
+  // Load field configs from Supabase
+  useEffect(() => {
+    supabase.from("location_field_config").select("*").eq("is_active", true).order("sort_order").then(({ data }) => {
+      if (data) setFieldConfigs(data as FieldConfig[]);
+      setFieldConfigsLoaded(true);
+    }, () => setFieldConfigsLoaded(true));
+  }, []);
+
+  // Filter fields by project type. Gebaeude und Geschoss kommen aus dem Code
+  // dazu – sie sind Teil der Mechanik (Vererbung, Nummernkuerzel) und nicht
+  // davon abhaengig, dass jemand sie im Admin angelegt hat.
+  //
+  // useMemo, weil die Liste unten eine Effekt-Abhaengigkeit ist: ein bei jedem
+  // Rendern neues Array wuerde die Vererbung endlos neu ausloesen.
+  const filteredFields = useMemo(() => withPlanBuiltinFields(
+    fieldConfigs.filter(f => {
+      if (!f.applies_to || f.applies_to === "all") return true;
+      if (!projectType) return true; // show all if unknown
+      return f.applies_to === projectType;
+    }),
+    projectType,
+  ) as FieldConfig[], [fieldConfigs, projectType]);
+
   // Gebaeude und Geschoss vom Grundriss uebernehmen.
   //
   // Ein Plan zeigt immer genau ein Geschoss eines Gebaeudes – beides gehoert
@@ -119,8 +146,12 @@ const LocationDetails = () => {
   // Wartet auf die Feldkonfiguration: erst sie sagt, unter welchem Schluessel
   // Gebaeude und Geschoss liegen (sie sind frei konfigurierbar).
   useEffect(() => {
-    if (!planForInheritance || fieldConfigs.length === 0) return;
-    const inherited = inheritedFieldsFromPlan(planForInheritance, fieldConfigs);
+    // Erst wenn die Feldkonfiguration da ist. Sonst erbt der Standort zweimal:
+    // einmal in den eingebauten Schluessel und, sobald die Konfiguration
+    // nachlaedt, ein zweites Mal in das selbst angelegte Feld. Der erste Wert
+    // bliebe als Karteileiche in custom_fields stehen und wuerde mitsynchronisiert.
+    if (!fieldConfigsLoaded || !planForInheritance || filteredFields.length === 0) return;
+    const inherited = inheritedFieldsFromPlan(planForInheritance, filteredFields);
     if (Object.keys(inherited).length === 0) return;
     setFieldValues((prev) => {
       const next = { ...prev };
@@ -131,21 +162,7 @@ const LocationDetails = () => {
       }
       return changed ? next : prev;
     });
-  }, [planForInheritance, fieldConfigs]);
-
-  // Load field configs from Supabase
-  useEffect(() => {
-    supabase.from("location_field_config").select("*").eq("is_active", true).order("sort_order").then(({ data }) => {
-      if (data) setFieldConfigs(data as FieldConfig[]);
-    });
-  }, []);
-
-  // Filter fields by project type
-  const filteredFields = fieldConfigs.filter(f => {
-    if (!f.applies_to || f.applies_to === "all") return true;
-    if (!projectType) return true; // show all if unknown
-    return f.applies_to === projectType;
-  });
+  }, [fieldConfigsLoaded, planForInheritance, filteredFields]);
 
   // Load existing location data in edit mode
   useEffect(() => {

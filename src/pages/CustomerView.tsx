@@ -14,6 +14,7 @@ import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { toast } from "sonner";
 import { getSession, clearSession, applySupabaseSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
+import { withPlanBuiltinFields } from "@/lib/planFields";
 import { mergeWithDefaultProjectFields } from "@/lib/projectFields";
 import LocationInfoFields from "@/components/LocationInfoFields";
 import ProjectInfoFields from "@/components/ProjectInfoFields";
@@ -132,7 +133,16 @@ const CustomerView = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignments, directProjectId, selectedAssignment, guestToken]);
 
-  const visibleFields = useMemo(() => mergeWithDefaultLocationFields(fields).filter((f) => f.is_active && f.customer_visible), [fields]);
+  // Gebaeude und Geschoss kommen aus dem Code, nicht aus der Feldkonfiguration
+  // – sonst saehe der Kunde bei einem Plan-Projekt genau die zwei Angaben
+  // nicht, nach denen er sein Schild sucht (siehe planFields.ts).
+  const customerProjectType: string | undefined = selectedProjectMeta?.project_type
+    ?? (selectedAssignment?.projects as unknown as { project_type?: string } | undefined)?.project_type;
+  const visibleFields = useMemo(
+    () => withPlanBuiltinFields(mergeWithDefaultLocationFields(fields), customerProjectType)
+      .filter((f) => f.is_active && f.customer_visible),
+    [fields, customerProjectType],
+  );
   const visibleProjectFields = useMemo(() => mergeWithDefaultProjectFields(projectFields).filter((f) => f.is_active), [projectFields]);
   const sortedLocations = useMemo(() => [...locations].sort((a, b) => naturalLocationSortDesc(a.location_number, b.location_number)), [locations]);
 

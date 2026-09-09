@@ -1,5 +1,6 @@
 import { FloorPlan } from "@/types/project";
 import { FLOOR_FIELD_KEY } from "@/lib/locationNumber";
+import { BaseFieldConfig } from "@/lib/customerFields";
 
 /**
  * Vererbung vom Grundriss an den Standort.
@@ -16,12 +17,70 @@ import { FLOOR_FIELD_KEY } from "@/lib/locationNumber";
  * lässt sich einzeln überschreiben, ohne dass der Plan geändert werden muss.
  */
 
+/** Projekttyp, bei dem die beiden eingebauten Felder gelten. */
+export const PLAN_PROJECT_TYPE = "aufmass_mit_plan";
+
 /** Schlüssel des Gebäudefeldes aus der Standard-Feldkonfiguration. */
 export const BUILDING_FIELD_KEY = "custom_gebaeude";
+
+/**
+ * Gebäude und Geschoss gibt es **immer**, sie stehen im Code und nicht in der
+ * Feldkonfiguration.
+ *
+ * Sie sind kein frei definierbares Standortfeld wie „Schildtyp" oder
+ * „Montageart", sondern Teil der Mechanik: die Vererbung vom Grundriss
+ * (`inheritedFieldsFromPlan`) und das Geschoss-Kürzel in der Standortnummer
+ * (`buildLocationNumber`) hängen an ihnen. Müsste man sie erst im Admin
+ * anlegen, wäre beides so lange still kaputt – und zwar ohne Fehlermeldung,
+ * weil ein fehlendes Feld einfach nichts vererbt.
+ *
+ * Sie erscheinen nur bei Plan-Projekten. Bei normalen Aufmaßen und
+ * Fahrzeugbeschriftungen ändert sich dadurch nichts.
+ */
+export const PLAN_BUILTIN_FIELDS: (BaseFieldConfig & { applies_to: string })[] = [
+  {
+    field_key: BUILDING_FIELD_KEY, field_label: "Gebäude", field_type: "text",
+    is_active: true, customer_visible: true, sort_order: 42, applies_to: PLAN_PROJECT_TYPE,
+  },
+  {
+    field_key: FLOOR_FIELD_KEY, field_label: "Geschoss", field_type: "text",
+    is_active: true, customer_visible: true, sort_order: 44, applies_to: PLAN_PROJECT_TYPE,
+  },
+];
+
+/**
+ * Ergänzt die Feldkonfiguration um Gebäude und Geschoss – aber nur bei
+ * Plan-Projekten und nur, wenn es sie nicht schon gibt.
+ *
+ * Der Dublettenschutz geht über Schlüssel **und** Label: wer sich im Admin
+ * selbst ein Feld „Gebäude" angelegt hat, soll es behalten und nicht ein
+ * zweites daneben stehen haben. Sein Feld gewinnt, weil daran seine bereits
+ * erfassten Werte hängen.
+ */
+export function withPlanBuiltinFields<T extends FieldConfigLike>(
+  fieldConfigs: T[],
+  projectType: string | undefined | null,
+): (T | (BaseFieldConfig & { applies_to: string }))[] {
+  if (projectType !== PLAN_PROJECT_TYPE) return fieldConfigs;
+
+  const fehlend = PLAN_BUILTIN_FIELDS.filter((builtin) => {
+    const hinweis = builtin.field_key === BUILDING_FIELD_KEY ? "gebäude" : "geschoss";
+    if (findFieldKey(fieldConfigs, builtin.field_key, hinweis)) return false;
+    // "Gebaeude" ohne Umlaut kommt in von Hand angelegten Feldern vor.
+    return builtin.field_key !== BUILDING_FIELD_KEY
+      || !findFieldKey(fieldConfigs, builtin.field_key, "gebaeude");
+  });
+  if (fehlend.length === 0) return fieldConfigs;
+
+  return [...fieldConfigs, ...fehlend].sort(
+    (a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999),
+  );
+}
 
 export interface FieldConfigLike {
   field_key: string;
   field_label?: string;
+  sort_order?: number;
 }
 
 /**
