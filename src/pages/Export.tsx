@@ -298,17 +298,22 @@ const Export = () => {
       const zip = new JSZip();
 
       for (const location of sortedLocations) {
-        const annotatedBlob = dataURItoBlob(location.imageData);
-        zip.file(
-          `${project.projectNumber}_${location.locationNumber}_bemasst.png`,
-          annotatedBlob
-        );
+        // Ein Standort darf ohne Foto entstehen (Plan-Erfassung). dataURItoBlob
+        // wirft bei leerem String – ohne diese Pruefung wuerde EIN Standort
+        // ohne Bild den kompletten ZIP-Export abbrechen lassen.
+        if (location.imageData) {
+          zip.file(
+            `${project.projectNumber}_${location.locationNumber}_bemasst.png`,
+            dataURItoBlob(location.imageData)
+          );
+        }
 
-        const originalBlob = dataURItoBlob(location.originalImageData);
-        zip.file(
-          `${project.projectNumber}_${location.locationNumber}_original.png`,
-          originalBlob
-        );
+        if (location.originalImageData) {
+          zip.file(
+            `${project.projectNumber}_${location.locationNumber}_original.png`,
+            dataURItoBlob(location.originalImageData)
+          );
+        }
 
         for (const [index, detail] of (location.detailImages || []).entries()) {
           const detailPrefix = `${project.projectNumber}_${location.locationNumber}_detail_${index + 1}`;
@@ -637,10 +642,10 @@ const Export = () => {
               <div key={location.id} className="border rounded-lg p-3 space-y-3">
                 <div className="font-medium text-sm">Standort {location.locationNumber}{location.locationName && <span className="text-muted-foreground font-normal ml-2">{location.locationName}</span>}</div>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" className="flex-1" disabled={downloadingImages[`${location.id}-annotated`]} onClick={() => handleDownloadImage(location.id, location.imageData, `${project.projectNumber}_${location.locationNumber}_bemasst.png`, 'annotated')}>
+                  <Button size="sm" variant="outline" className="flex-1" disabled={!location.imageData || downloadingImages[`${location.id}-annotated`]} onClick={() => handleDownloadImage(location.id, location.imageData, `${project.projectNumber}_${location.locationNumber}_bemasst.png`, 'annotated')}>
                     {downloadingImages[`${location.id}-annotated`] ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FileImage className="h-3 w-3 mr-1" />} Standort bemaßt
                   </Button>
-                  <Button size="sm" variant="outline" className="flex-1" disabled={downloadingImages[`${location.id}-original`]} onClick={() => handleDownloadImage(location.id, location.originalImageData, `${project.projectNumber}_${location.locationNumber}_original.png`, 'original')}>
+                  <Button size="sm" variant="outline" className="flex-1" disabled={!location.originalImageData || downloadingImages[`${location.id}-original`]} onClick={() => handleDownloadImage(location.id, location.originalImageData, `${project.projectNumber}_${location.locationNumber}_original.png`, 'original')}>
                     {downloadingImages[`${location.id}-original`] ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FileImage className="h-3 w-3 mr-1" />} Standort original
                   </Button>
                 </div>

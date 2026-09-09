@@ -43,10 +43,14 @@ const PhotoEditor = () => {
   // fall back to router state for any legacy/edge navigations. Always consume
   // (clear) the hand-off on mount, but only USE it for a fresh capture — a
   // re-edit loads its image from IndexedDB/Storage instead.
+  // `neu=1`: ein nachgereichtes Foto fuer einen Standort, der bisher keines
+  // hat. Der Standort existiert also schon (locationId gesetzt), das Bild
+  // kommt aber frisch aus Kamera/Upload und darf nicht verworfen werden.
+  const isFreshCapture = searchParams.get("neu") === "1";
   const [imageDataState, setImageDataState] = useState<string | null>(() => {
     const handoff = takeEditorHandoff();
     if (location.state?.imageData) return location.state.imageData;
-    const reEdit = !!locationId || !!measuredId;
+    const reEdit = (!!locationId || !!measuredId) && !isFreshCapture;
     return reEdit ? null : (handoff?.imageData ?? null);
   });
   const [loading, setLoading] = useState(false);

@@ -286,6 +286,26 @@ legt kein Feld erneut an, das jemand gelöscht hat.
 Der Präfix `custom_` ist Pflicht: nur so landen die Werte in
 `locations.custom_fields`.
 
+### Was „ohne Foto" sonst noch berührt hat
+
+Ein Standort ohne Bild ist ein Zustand, den es vorher nicht gab. Beim Nachprüfen
+fiel auf, dass zwei Stellen das nicht vertragen:
+
+* **ZIP-Export brach komplett ab.** `dataURItoBlob("")` wirft – ein einziger
+  Standort ohne Foto hätte den Export des ganzen Projekts verhindert. Jetzt
+  werden leere Bilder übersprungen (die Detailbilder waren bereits geprüft).
+  Die Download-Knöpfe der Einzelbilder sind bei fehlendem Bild deaktiviert.
+* **„Tippen zum Nachreichen" führte in einen leeren Editor.** Der PhotoEditor
+  verwirft beim Re-Edit bewusst das Handoff-Bild und lädt aus IndexedDB – bei
+  einem Standort ohne Bild also nichts. Jetzt öffnet die Karte stattdessen eine
+  Auswahl (Kamera / Hochladen); das Bild geht mit `?neu=1` in den Editor, der es
+  beim Speichern als Hauptbild des bestehenden Standorts setzt.
+
+**Nicht betroffen, geprüft:** Das PDF (`drawLocationPage` prüft `if
+(opts.mainImage)`, `placeImageContain` fängt Fehler ab), die Edge-Function-PDFs
+(`photoEmbed` bleibt null) und die Kundenansicht (liest `location_images`-Zeilen,
+die es ohne Foto gar nicht gibt).
+
 ### Standortnummer mit Geschoss-Präfix
 
 Ist am Standort ein Geschoss erfasst, bekommt die Nummer dessen Kürzel
@@ -360,6 +380,12 @@ Alles gegen die Seed-Daten (40 Positionen, 68 Schilder) in Chromium:
   Liste zerstört keine Bilder** der übrigen Standorte, Detailbilder oder
   Grundrisse. Im echten UI: alle 24 Bilder laden beim Durchscrollen als
   Object-URL nach, kein Platzhalter bleibt offen, Lightbox funktioniert.
+* **Standort ohne Foto, Folgewirkung** (Browser): ZIP-Export läuft trotz eines
+  Standorts ohne Bild durch und enthält genau die Dateien des Standorts MIT
+  Foto; die Karte zeigt den Hinweis, der Klick öffnet die Auswahl statt eines
+  leeren Editors, Hochladen führt in den Editor mit Bild, Speichern setzt das
+  Hauptbild des bestehenden Standorts (4974 Bytes in IndexedDB) ohne die
+  Standortzahl zu verändern.
 * **Standortnummern** (Node, 30 Fälle + Browser): alle Geschossmuster inkl.
   Schreibvarianten; Rückwärtskompatibilität aller Zerleger (`nextLocationNumber`
   liest „EG-109" als 109, gemischt mit Altformat „WER-1234-105"); Marker und

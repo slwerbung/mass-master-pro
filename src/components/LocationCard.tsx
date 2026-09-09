@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { setEditorHandoff } from "@/lib/editorHandoff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, Maximize2, X, Plus, Ruler } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, Maximize2, X, Plus, Ruler, Camera } from "lucide-react";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import { Input } from "@/components/ui/input";
 import {
@@ -126,6 +126,23 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   // Bilder werden nur noch nachgeladen, wenn die Karte in Sichtweite kommt.
   // Die Liste selbst kommt ohne Bilddaten aus (getProject includeImages:false),
   // sonst laegen bei 300 Standorten ueber ein Gigabyte im Arbeitsspeicher.
+  // Foto nachreichen: ein Standort kann seit der Plan-Erfassung ohne Bild
+  // entstehen. Kamera und Upload landen im Editor, der beim Speichern das
+  // HAUPTBILD des bestehenden Standorts setzt (Parameter `neu=1`).
+  const [showAddPhoto, setShowAddPhoto] = useState(false);
+  const goToEditorWithPhoto = (imageData: string) => {
+    setShowAddPhoto(false);
+    setEditorHandoff({ imageData });
+    navigate(`/projects/${projectId}/locations/${location.id}/edit-image?neu=1`);
+  };
+  const { cameraInput: mainCameraInput, triggerCamera: triggerMainCamera } = useDirectCamera({
+    onCapture: goToEditorWithPhoto,
+  });
+  const { cameraInput: mainUploadInput, triggerCamera: triggerMainUpload } = useDirectCamera({
+    uploadMode: true,
+    onCapture: goToEditorWithPhoto,
+  });
+
   const cardRef = useRef<HTMLDivElement>(null);
   const isNear = useNearViewport(cardRef);
   const lazyMain = useBlobUrl(
@@ -478,7 +495,14 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           />
         </div>
       ) : (
-        <div className="min-h-[180px] bg-muted relative cursor-pointer group rounded-lg overflow-hidden flex items-center justify-center" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}>
+        <div
+          className="min-h-[180px] bg-muted relative cursor-pointer group rounded-lg overflow-hidden flex items-center justify-center"
+          onClick={() => {
+            // Ohne Bild wuerde der Editor leer aufgehen – erst ein Foto holen.
+            if (hasNoPhoto) setShowAddPhoto(true);
+            else navigate(`/projects/${projectId}/locations/${location.id}/edit-image`);
+          }}
+        >
           {mainImageUrl ? (
             <img src={mainImageUrl} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
           ) : hasNoPhoto ? (
@@ -704,7 +728,26 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
       </CardContent>
 
       {detailCameraInput}
+      {mainCameraInput}
+      {mainUploadInput}
       <input ref={pdfInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,.ai,.eps" onChange={handlePrintFileUpload} className="hidden" />
+
+      {/* Foto nachreichen fuer einen Standort, der ohne Bild angelegt wurde. */}
+      <Dialog open={showAddPhoto} onOpenChange={setShowAddPhoto}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle>Foto nachreichen</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <Button size="lg" className="h-14 text-base" onClick={() => triggerMainCamera()}>
+              <Camera className="h-5 w-5 mr-2" />Kamera
+            </Button>
+            <Button size="lg" variant="outline" className="h-14 text-base" onClick={() => triggerMainUpload()}>
+              <FileUp className="h-5 w-5 mr-2" />Hochladen
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Lightbox: view an image large without opening the editor */}
       {lightbox && (
