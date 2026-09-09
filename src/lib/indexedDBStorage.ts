@@ -89,6 +89,11 @@ interface AufmassDBSchema extends DBSchema {
       name: string;
       pageIndex: number;
       markers: string; // JSON stringified FloorPlanMarker[]
+      // Gebaeude und Geschoss des Plans. Optional und ohne Version-Bump
+      // nachgeruestet: neue Felder in einem bestehenden Store brauchen kein
+      // Upgrade, nur neue Indizes wuerden eines brauchen.
+      building?: string;
+      floor?: string;
       createdAt: string;
     };
     indexes: { 'by-project': string };
@@ -737,6 +742,8 @@ export const indexedDBStorage = {
         imageData,
         markers: JSON.parse(record.markers),
         pageIndex: record.pageIndex,
+        building: record.building,
+        floor: record.floor,
         createdAt: parseStoredDateSafe(record.createdAt),
       });
     }
@@ -753,6 +760,8 @@ export const indexedDBStorage = {
       name: floorPlan.name,
       pageIndex: floorPlan.pageIndex,
       markers: JSON.stringify(floorPlan.markers),
+      building: floorPlan.building,
+      floor: floorPlan.floor,
       createdAt: floorPlan.createdAt.toISOString(),
     });
     
@@ -763,6 +772,35 @@ export const indexedDBStorage = {
         blob: base64ToBlob(floorPlan.imageData),
       });
     }
+
+    const project = await db.get('projects', projectId);
+    if (project) {
+      await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
+    }
+  },
+
+  /**
+   * Kopfdaten eines Grundrisses aendern, ohne das Planbild anzufassen.
+   *
+   * `saveFloorPlan` wuerde das komplette Objekt inklusive Bild erwarten und
+   * das Blob neu schreiben – bei einem 2-MB-Plan fuer eine Textaenderung.
+   */
+  async updateFloorPlanMeta(
+    projectId: string,
+    floorPlanId: string,
+    data: { name?: string; building?: string; floor?: string },
+  ): Promise<void> {
+    const db = await getDB();
+    const record = await db.get('floor-plans', floorPlanId);
+    if (!record) return;
+
+    // Nur uebergebene Felder anfassen – sonst wuerde ein fehlendes Feld den
+    // vorhandenen Wert mit undefined ueberschreiben.
+    const updated = { ...record };
+    if (Object.prototype.hasOwnProperty.call(data, 'name') && data.name) updated.name = data.name;
+    if (Object.prototype.hasOwnProperty.call(data, 'building')) updated.building = data.building;
+    if (Object.prototype.hasOwnProperty.call(data, 'floor')) updated.floor = data.floor;
+    await db.put('floor-plans', updated);
 
     const project = await db.get('projects', projectId);
     if (project) {

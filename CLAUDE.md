@@ -110,6 +110,13 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 - **Standort ohne Foto:** Der Plan-Dialog bietet Kamera / Hochladen / Ohne Foto.
   `LocationDetails` kennt `?ohneFoto=1`; ohne Bild wird der HERO-Upload
   uebersprungen und die Standortkarte zeigt „Kein Foto".
+- **Gebaeude und Geschoss haengen am Grundriss** (`src/lib/planFields.ts`,
+  Migration `20260909100000_floor_plans_building_floor.sql`). Gepflegt wird am
+  Plan (beim Hochladen oder ueber "Bearbeiten"), vererbt an jeden dort
+  gesetzten Standort. Die Werte landen trotzdem in `locations.custom_fields` –
+  Filter, Stueckliste, Export und Positionsnummer arbeiten unveraendert damit.
+  Feldschluessel werden ueber `findFieldKey` gesucht (Standardschluessel, dann
+  Label), weil Standortfelder frei konfigurierbar sind.
 - **Standortnummer mit Geschoss-Praefix** (`src/lib/locationNumber.ts`):
   "EG-109", "1OG-110" - die laufende Zahl bleibt projektweit, damit alle
   Zerleger (`/(\d+)$/`, split("-")) unveraendert funktionieren. Ohne Geschoss

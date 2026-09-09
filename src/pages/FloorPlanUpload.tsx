@@ -10,6 +10,7 @@ import { scheduleSyncProject } from "@/lib/supabaseSync";
 import { FloorPlan } from "@/types/project";
 import { toast } from "sonner";
 import * as pdfjsLib from "pdfjs-dist";
+import { recognizeFloor } from "@/lib/locationNumber";
 
 // Set up PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
@@ -18,6 +19,10 @@ interface RenderedPage {
   pageIndex: number;
   name: string;
   imageData: string;
+  // Gebaeude und Geschoss haengen am Plan, nicht am einzelnen Standort. Wer
+  // sie hier einmal eintraegt, spart sie sich bei jedem Schild.
+  building: string;
+  floor: string;
 }
 
 const FloorPlanUpload = () => {
@@ -66,6 +71,10 @@ const FloorPlanUpload = () => {
             pageIndex: renderedPages.length + allPages.length,
             name: pageName,
             imageData,
+            building: "",
+            // Steckt im Seitennamen ein Geschoss ("Haus A - 1. OG"), wird es
+            // vorgeschlagen. "Plan_final_v3" bleibt leer.
+            floor: recognizeFloor(pageName).recognized ? pageName : "",
           });
         }
       }
@@ -91,6 +100,11 @@ const FloorPlanUpload = () => {
     );
   };
 
+  /** Aendert einzelne Felder einer Seite, ohne die uebrigen anzufassen. */
+  const handleUpdatePage = (index: number, patch: Partial<RenderedPage>) => {
+    setRenderedPages((prev) => prev.map((page, i) => (i === index ? { ...page, ...patch } : page)));
+  };
+
   const handleSave = async () => {
     if (!projectId || renderedPages.length === 0) return;
 
@@ -104,6 +118,8 @@ const FloorPlanUpload = () => {
           imageData: page.imageData,
           markers: [],
           pageIndex: i,
+          building: page.building.trim() || undefined,
+          floor: page.floor.trim() || undefined,
           createdAt: new Date(),
         };
         await indexedDBStorage.saveFloorPlan(projectId, floorPlan);
@@ -213,6 +229,30 @@ const FloorPlanUpload = () => {
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label htmlFor={`building-${index}`} className="text-xs">Gebäude</Label>
+                      <Input
+                        id={`building-${index}`}
+                        value={page.building}
+                        onChange={(e) => handleUpdatePage(index, { building: e.target.value })}
+                        placeholder="z.B. Haus A"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor={`floor-${index}`} className="text-xs">Geschoss</Label>
+                      <Input
+                        id={`floor-${index}`}
+                        value={page.floor}
+                        onChange={(e) => handleUpdatePage(index, { floor: e.target.value })}
+                        placeholder="z.B. Erdgeschoss"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Standorte auf diesem Grundriss übernehmen beides automatisch.
+                  </p>
                 </CardContent>
               </Card>
             ))}

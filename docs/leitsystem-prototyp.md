@@ -306,6 +306,43 @@ fiel auf, dass zwei Stellen das nicht vertragen:
 (`photoEmbed` bleibt null) und die Kundenansicht (liest `location_images`-Zeilen,
 die es ohne Foto gar nicht gibt).
 
+### Gebäude und Geschoss hängen am Grundriss
+
+Ein Grundriss zeigt immer genau ein Geschoss eines Gebäudes. Beides an jedem
+einzelnen Schild zu erfassen hieße bei 300 Positionen 600 überflüssige
+Eingaben.
+
+**Gepflegt wird am Plan** – beim Hochladen (mit Geschoss-Vorschlag aus dem
+Seitennamen) oder nachträglich über „Bearbeiten" in der Grundriss-Ansicht.
+Die Reiter zeigen dann „Haus A · 1. OG" statt „Plan_final_v3"; ein Plan ohne
+Angaben zeigt weiter seinen Dateinamen und bietet „Gebäude / Geschoss
+ergänzen" an.
+
+**Geerbt wird an den Standort.** Wer auf diesem Plan einen Standort setzt,
+bekommt Gebäude und Geschoss automatisch in seine Felder – überschreibbar, für
+das Schild im Treppenhaus zwischen zwei Geschossen.
+
+Die Werte landen dabei **am Standort** (`locations.custom_fields`) und nicht
+nur am Plan. Das ist wichtig: Filter, Stückliste, Export und die
+Positionsnummer arbeiten unverändert mit den Standortfeldern weiter – der Plan
+liefert nur die Vorgabe. Wäre der Wert nur am Plan, müsste jede dieser Stellen
+eine Sonderbehandlung bekommen.
+
+Weil Standortfelder frei konfigurierbar sind, sucht `findFieldKey()` erst den
+Standardschlüssel (`custom_gebaeude`, `custom_geschoss`) und fällt dann auf das
+Label zurück – ein im Admin angelegtes Feld heißt `custom_<Zeitstempel>`.
+
+Speicherseitig: zwei optionale Spalten an `floor_plans`
+(`20260909100000_floor_plans_building_floor.sql`), dieselben Felder im
+IndexedDB-Store (ohne Version-Bump, neue Felder brauchen keinen) und im Sync.
+`updateFloorPlanMeta()` ändert die Kopfdaten, ohne das Planbild neu zu
+schreiben.
+
+> **Die frühere Namens-Heuristik ist damit weg.** Sie hat aus dem Plannamen
+> geraten, was jetzt explizit am Plan steht. Der Vorschlag beim Anlegen eines
+> Grundrisses nutzt sie weiterhin – dort ist Raten in Ordnung, weil man den
+> Vorschlag einmal sieht und korrigieren kann.
+
 ### Standortnummer mit Geschoss-Präfix
 
 Ist am Standort ein Geschoss erfasst, bekommt die Nummer dessen Kürzel
@@ -380,6 +417,12 @@ Alles gegen die Seed-Daten (40 Positionen, 68 Schilder) in Chromium:
   Liste zerstört keine Bilder** der übrigen Standorte, Detailbilder oder
   Grundrisse. Im echten UI: alle 24 Bilder laden beim Durchscrollen als
   Object-URL nach, kein Platzhalter bleibt offen, Lightbox funktioniert.
+* **Vererbung vom Grundriss** (Node, 14 Fälle + Browser): Plan mit „Haus A" /
+  „1. OG" vererbt beides an den neuen Standort, die Werte stehen in
+  `customFields`, die Nummer wird `1OG-100`; ein ungepflegter Plan vererbt
+  nichts und die Nummer bleibt `101`; leere Werte und fehlende Felder werden
+  übersprungen; der Rückfall über das Label findet umbenannte Felder;
+  nachträgliches Bearbeiten wirkt sofort auf Reiter und Vererbung.
 * **Standort ohne Foto, Folgewirkung** (Browser): ZIP-Export läuft trotz eines
   Standorts ohne Bild durch und enthält genau die Dateien des Standorts MIT
   Foto; die Karte zeigt den Hinweis, der Klick öffnet die Auswahl statt eines

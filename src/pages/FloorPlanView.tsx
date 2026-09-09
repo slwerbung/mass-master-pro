@@ -2,14 +2,18 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Plus, MapPin, List, Upload, Trash2, RefreshCw, Camera, FileText } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ArrowLeft, Plus, MapPin, List, Upload, Trash2, RefreshCw, Camera, FileText, Pencil } from "lucide-react";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { deleteFloorPlanFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, scheduleSyncProject, syncProjectToSupabase } from "@/lib/supabaseSync";
 import { Project, FloorPlanMarker } from "@/types/project";
 import { toast } from "sonner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { setEditorHandoff } from "@/lib/editorHandoff";
+import { floorPlanLabel } from "@/lib/planFields";
+import { recognizeFloor } from "@/lib/locationNumber";
 
 const FloorPlanView = () => {
   const { projectId } = useParams();
@@ -38,6 +42,8 @@ const FloorPlanView = () => {
   const [showCaptureDialog, setShowCaptureDialog] = useState(false);
   const [pendingLocationId, setPendingLocationId] = useState<string | null>(null);
   const [pendingMarkerId, setPendingMarkerId] = useState<string | null>(null);
+  // Gebaeude und Geschoss gehoeren an den Plan, nicht an jedes Schild.
+  const [editPlan, setEditPlan] = useState<{ name: string; building: string; floor: string } | null>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
 
   const loadProject = useCallback(async () => {
@@ -115,6 +121,35 @@ const FloorPlanView = () => {
     if (location) navigate(`/projects/${projectId}/locations/${location.id}/edit`);
   };
 
+  const openPlanEditor = () => {
+    if (!activeFloorPlan) return;
+    setEditPlan({
+      name: activeFloorPlan.name,
+      building: activeFloorPlan.building || '',
+      // Steht am Plan noch nichts, aber im Namen steckt ein Geschoss
+      // ("Haus A - 1. OG"), wird es als Vorschlag angeboten.
+      floor: activeFloorPlan.floor || (recognizeFloor(activeFloorPlan.name).recognized ? activeFloorPlan.name : ''),
+    });
+  };
+
+  const savePlanMeta = async () => {
+    if (!projectId || !activeFloorPlan || !editPlan) return;
+    try {
+      await indexedDBStorage.updateFloorPlanMeta(projectId, activeFloorPlan.id, {
+        name: editPlan.name.trim() || activeFloorPlan.name,
+        building: editPlan.building.trim(),
+        floor: editPlan.floor.trim(),
+      });
+      setEditPlan(null);
+      await loadProject();
+      scheduleSyncProject(projectId);
+      toast.success('Grundriss aktualisiert');
+    } catch (error) {
+      console.error('Grundriss konnte nicht gespeichert werden', error);
+      toast.error('Speichern fehlgeschlagen');
+    }
+  };
+
   const handleDeleteFloorPlan = async () => {
     if (!projectId || !activeFloorPlan) return;
     try {
@@ -168,16 +203,24 @@ const FloorPlanView = () => {
           <Button variant="ghost" onClick={() => navigate(`/projects/${projectId}`)} size="sm"><ArrowLeft className="mr-1 h-4 w-4" /><span className="hidden sm:inline">Zurück</span></Button>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={handleRefreshFromCloud} disabled={isRefreshing}><RefreshCw className={`h-4 w-4 mr-1 ${isRefreshing ? 'animate-spin' : ''}`} /><span className="hidden sm:inline">Neu laden</span></Button>
+            <Button variant="outline" size="sm" onClick={openPlanEditor} disabled={!activeFloorPlan}><Pencil className="h-4 w-4 mr-1" /><span className="hidden sm:inline">Bearbeiten</span></Button>
             <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${projectId}/floor-plans/upload`)}><Plus className="h-4 w-4 mr-1" /><span className="hidden sm:inline">Grundriss</span></Button>
             <Button variant="destructive" size="sm" onClick={handleDeleteFloorPlan}><Trash2 className="h-4 w-4" /></Button>
           </div>
         </div>
 
         <h1 className="text-2xl font-bold">Grundrisse – {project.projectNumber}</h1>
-        {floorPlans.length > 1 && <Tabs value={activeFloorPlanId} onValueChange={setActiveFloorPlanId}><TabsList className="w-full flex-wrap h-auto">{floorPlans.map((fp) => <TabsTrigger key={fp.id} value={fp.id} className="text-xs sm:text-sm">{fp.name}</TabsTrigger>)}</TabsList></Tabs>}
+        {floorPlans.length > 1 && <Tabs value={activeFloorPlanId} onValueChange={setActiveFloorPlanId}><TabsList className="w-full flex-wrap h-auto">{floorPlans.map((fp) => <TabsTrigger key={fp.id} value={fp.id} className="text-xs sm:text-sm">{floorPlanLabel(fp)}</TabsTrigger>)}</TabsList></Tabs>}
 
         {activeFloorPlan && <div className="space-y-3">
-          {floorPlans.length === 1 && <p className="text-sm text-muted-foreground">{activeFloorPlan.name}</p>}
+          <p className="text-sm text-muted-foreground">
+            {floorPlanLabel(activeFloorPlan)}
+            {!activeFloorPlan.floor && (
+              <button className="ml-2 underline underline-offset-2" onClick={openPlanEditor}>
+                Gebäude / Geschoss ergänzen
+              </button>
+            )}
+          </p>
           <div ref={imageContainerRef} className={`relative bg-muted rounded-lg overflow-hidden border-2 ${placingMarker ? 'border-primary cursor-crosshair' : 'border-transparent'}`} onClick={handleImageClick}>
             <img src={activeFloorPlan.imageData} alt={activeFloorPlan.name} className="w-full h-auto" draggable={false} />
             {activeFloorPlan.markers.map((marker) => <button key={marker.id} className="absolute transform -translate-x-1/2 -translate-y-full group" style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }} onClick={(e) => handleMarkerClick(marker, e)} title={`Standort ${getLocationNumber(marker.locationId)}`}><div className="flex flex-col items-center"><span className="bg-primary text-primary-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-sm mb-0.5 whitespace-nowrap shadow-md">{getLocationNumber(marker.locationId)}</span><MapPin className="h-6 w-6 text-primary drop-shadow-md" fill="currentColor" /></div></button>)}
@@ -213,6 +256,41 @@ const FloorPlanView = () => {
           </div>
         </DialogContent>
       </Dialog>
+      {/* Gebaeude und Geschoss werden einmal am Plan gepflegt und an jeden
+          dort gesetzten Standort vererbt – statt sie 300-mal einzutippen. */}
+      <Dialog open={!!editPlan} onOpenChange={(open) => { if (!open) setEditPlan(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Grundriss bearbeiten</DialogTitle>
+          </DialogHeader>
+          {editPlan && (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label htmlFor="plan-name" className="text-xs">Bezeichnung</Label>
+                <Input id="plan-name" value={editPlan.name} onChange={(e) => setEditPlan({ ...editPlan, name: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="plan-building" className="text-xs">Gebäude</Label>
+                <Input id="plan-building" value={editPlan.building} onChange={(e) => setEditPlan({ ...editPlan, building: e.target.value })} placeholder="z.B. Haus A" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="plan-floor" className="text-xs">Geschoss</Label>
+                <Input id="plan-floor" value={editPlan.floor} onChange={(e) => setEditPlan({ ...editPlan, floor: e.target.value })} placeholder="z.B. Erdgeschoss" />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Standorte, die auf diesem Grundriss gesetzt werden, übernehmen Gebäude und
+                Geschoss automatisch. Das Geschoss liefert außerdem das Kürzel der
+                Standortnummer (z.B. EG-101).
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditPlan(null)}>Abbrechen</Button>
+            <Button onClick={savePlanMeta}>Speichern</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {floorCameraInput}
       {floorUploadInput}
     </div>

@@ -67,6 +67,12 @@ export interface FloorPlan {
   imageData: string;   // Gerenderte PDF-Seite als Bild
   markers: FloorPlanMarker[];
   pageIndex: number;   // Welche Seite der PDF
+  // Gebaeude und Geschoss haengen am Grundriss, nicht am einzelnen Standort:
+  // ein Plan zeigt immer genau ein Geschoss eines Gebaeudes. Standorte, die
+  // auf diesem Plan gesetzt werden, erben die Werte in ihre Felder – sonst
+  // muesste man sie bei 300 Schildern 300-mal eintippen.
+  building?: string;
+  floor?: string;
   createdAt: Date;
 }
 

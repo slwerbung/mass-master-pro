@@ -286,6 +286,8 @@ async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<v
     storage_path: path,
     markers: floorPlan.markers as any,
     page_index: floorPlan.pageIndex,
+    building: floorPlan.building || null,
+    floor: floorPlan.floor || null,
     created_at: floorPlan.createdAt instanceof Date ? floorPlan.createdAt.toISOString() : new Date().toISOString(),
   }, { onConflict: "id" });
 }
@@ -396,7 +398,7 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
 
   const { data: floorPlanRows } = await (supabase as any)
     .from("floor_plans")
-    .select("id, name, storage_path, markers, page_index, created_at")
+    .select("id, name, storage_path, markers, page_index, building, floor, created_at")
     .eq("project_id", projectId)
     .order("page_index");
 
@@ -409,6 +411,8 @@ export async function hydrateProjectFromSupabase(projectId: string): Promise<Pro
       imageData: imageData || "",
       markers: Array.isArray(row.markers) ? row.markers as any : [],
       pageIndex: row.page_index,
+      building: row.building || undefined,
+      floor: row.floor || undefined,
       createdAt: new Date(row.created_at),
     });
   });

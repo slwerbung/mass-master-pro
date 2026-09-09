@@ -9,14 +9,15 @@ import { ArrowLeft, Check } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { Location, AreaMeasurement } from "@/types/project";
+import { Location, AreaMeasurement, FloorPlan } from "@/types/project";
 import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
 import { supabase } from "@/integrations/supabase/client";
 import { scheduleSyncProject } from "@/lib/supabaseSync";
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
-import { FLOOR_FIELD_KEY, buildLocationNumber, findFloorValue, floorAbbreviation, recognizeFloor } from "@/lib/locationNumber";
+import { buildLocationNumber, findFloorValue, floorAbbreviation } from "@/lib/locationNumber";
+import { inheritedFieldsFromPlan } from "@/lib/planFields";
 import { getSession } from "@/lib/session";
 import { takeEditorHandoff } from "@/lib/editorHandoff";
 
@@ -89,9 +90,10 @@ const LocationDetails = () => {
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>([]);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [projectType, setProjectType] = useState<string | undefined>(undefined);
+  const [planForInheritance, setPlanForInheritance] = useState<FloorPlan | null>(null);
   const [existingAreaMeasurements, setExistingAreaMeasurements] = useState<AreaMeasurement[]>([]);
 
-  // Projekttyp laden – und beim Anlegen aus dem Plan das Geschoss vorbelegen.
+  // Projekttyp laden – und den Grundriss merken, von dem geerbt wird.
   //
   // Ohne Bilder: hier wird keines gebraucht, und beim 300. Standort waere das
   // pauschale Laden sonst wieder ein Sekundenthema (siehe indexedDBStorage).
@@ -101,20 +103,35 @@ const LocationDetails = () => {
       .then((proj) => {
         if (!proj) return;
         setProjectType(proj.projectType);
-        // Grundrisse heissen in der Praxis nach ihrem Geschoss ("Erdgeschoss",
-        // "Haus A – 1. OG"). Wer 30 Schilder im EG erfasst, soll das nicht
-        // 30-mal tippen muessen – der Vorschlag laesst sich ueberschreiben.
         if (!floorPlanId || isEditMode || isDetailEditMode) return;
-        const plan = (proj.floorPlans || []).find((fp) => fp.id === floorPlanId);
-        if (!plan?.name) return;
-        // Nur uebernehmen, wenn im Plannamen wirklich ein Geschoss steckt.
-        // Ein Grundriss namens "Grundriss" oder "Seite 1" wuerde sonst zum
-        // Kuerzel "GRUN" bzw. "SEIT" fuehren.
-        if (!recognizeFloor(plan.name).recognized) return;
-        setFieldValues((prev) => (prev[FLOOR_FIELD_KEY] ? prev : { ...prev, [FLOOR_FIELD_KEY]: plan.name }));
+        setPlanForInheritance((proj.floorPlans || []).find((fp) => fp.id === floorPlanId) ?? null);
       })
       .catch((error) => console.warn("Projekt konnte nicht geladen werden", error));
   }, [projectId, floorPlanId, isEditMode, isDetailEditMode]);
+
+  // Gebaeude und Geschoss vom Grundriss uebernehmen.
+  //
+  // Ein Plan zeigt immer genau ein Geschoss eines Gebaeudes – beides gehoert
+  // deshalb an den Plan und nicht an jedes einzelne Schild. Der Wert landet
+  // trotzdem am Standort, damit Filter, Stueckliste und Positionsnummer
+  // unveraendert damit arbeiten. Ueberschreiben bleibt moeglich.
+  //
+  // Wartet auf die Feldkonfiguration: erst sie sagt, unter welchem Schluessel
+  // Gebaeude und Geschoss liegen (sie sind frei konfigurierbar).
+  useEffect(() => {
+    if (!planForInheritance || fieldConfigs.length === 0) return;
+    const inherited = inheritedFieldsFromPlan(planForInheritance, fieldConfigs);
+    if (Object.keys(inherited).length === 0) return;
+    setFieldValues((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const [key, value] of Object.entries(inherited)) {
+        // Nie ueberschreiben, was schon dasteht.
+        if (!next[key]) { next[key] = value; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [planForInheritance, fieldConfigs]);
 
   // Load field configs from Supabase
   useEffect(() => {
