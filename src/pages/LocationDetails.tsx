@@ -18,6 +18,7 @@ import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 import { buildLocationNumber, findFloorValue, floorAbbreviation } from "@/lib/locationNumber";
 import { inheritedFieldsFromPlan, withPlanBuiltinFields } from "@/lib/planFields";
+import { rememberAspectFromDataUrl } from "@/lib/imageAspect";
 import { getSession } from "@/lib/session";
 import { takeEditorHandoff } from "@/lib/editorHandoff";
 
@@ -273,6 +274,9 @@ const LocationDetails = () => {
 
         const detailImage = { id: crypto.randomUUID(), imageData: imageDataToSave, originalImageData: originalImageDataToSave, caption: caption.trim() || undefined, createdAt: new Date() };
         await indexedDBStorage.saveDetailImage(targetLocationId, detailImage);
+        // Seitenverhaeltnis gleich merken, damit die Standortliste die Kachel
+        // spaeter nicht erst nachwachsen laesst (siehe lib/imageAspect.ts).
+        rememberAspectFromDataUrl(detailImage.id, imageDataToSave);
 
         // Mirror to HERO if project is linked. Fire-and-forget: the
         // queue write is fast (~1ms), actual upload happens in the
@@ -375,6 +379,9 @@ const LocationDetails = () => {
         }
         project.locations.push(newLocation);
         await indexedDBStorage.saveProject(project);
+        // Wie oben: einmal messen beim Speichern erspart der Liste das
+        // Nachwachsen beim ersten Ansehen.
+        rememberAspectFromDataUrl(newLocation.id, imageDataToSave);
 
         // Automation-Trigger: erster Standort im Projekt angelegt.
         // Feuert nur beim Übergang 0 -> 1 Standort. Server-seitig laufen dann

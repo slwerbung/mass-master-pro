@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from "react";
 import { useBlobUrl, useNearViewport } from "@/hooks/useBlobUrl";
+import { DEFAULT_PHOTO_ASPECT, knownAspect, rememberAspect } from "@/lib/imageAspect";
 import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate } from "react-router-dom";
 import { setEditorHandoff } from "@/lib/editorHandoff";
@@ -80,13 +81,14 @@ interface LocationCardProps {
  * nicht in einer Schleife aufrufen.
  */
 const DetailThumb = ({
-  detailId, src, caption, className, onOpen,
+  detailId, src, caption, className, onOpen, onAspect,
 }: {
   detailId: string;
   src?: string;
   caption?: string;
   className: string;
   onOpen: (resolved: string) => void;
+  onAspect: (aspect: number) => void;
 }) => {
   // Der Beobachter braucht ein Element MIT Box. Ein Wrapper mit
   // `display: contents` hat keine – darauf meldet der IntersectionObserver
@@ -104,7 +106,7 @@ const DetailThumb = ({
     return (
       <div
         ref={ref}
-        className={`w-full min-h-[140px] bg-muted flex items-center justify-center text-xs text-muted-foreground ${lazy.state === "empty" ? "" : "animate-pulse"}`}
+        className={`w-full h-full bg-muted flex items-center justify-center text-xs text-muted-foreground ${lazy.state === "empty" ? "" : "animate-pulse"}`}
         aria-label={lazy.state === "empty" ? "Kein Detailbild" : "Detailbild wird geladen"}
       >
         {lazy.state === "empty" ? "Kein Bild" : ""}
@@ -117,8 +119,35 @@ const DetailThumb = ({
       src={resolved}
       alt={caption || "Detailbild"}
       className={className}
+      onLoad={(e) => {
+        const img = e.currentTarget;
+        if (!img.naturalWidth || !img.naturalHeight) return;
+        rememberAspect(detailId, img.naturalWidth, img.naturalHeight);
+        onAspect(img.naturalWidth / img.naturalHeight);
+      }}
       onClick={() => onOpen(resolved)}
     />
+  );
+};
+
+/**
+ * Eine Detailbild-Kachel. Eigene Komponente, weil jede Kachel ihre eigene
+ * reservierte Hoehe braucht – sonst springt beim Nachladen die ganze Zeile.
+ */
+const DetailTile = ({
+  detailId, children,
+}: {
+  detailId: string;
+  children: (onAspect: (aspect: number) => void) => React.ReactNode;
+}) => {
+  const [aspect, setAspect] = useState<number>(() => knownAspect(detailId) ?? DEFAULT_PHOTO_ASPECT);
+  return (
+    <div
+      style={{ width: "100%", aspectRatio: String(aspect), maxHeight: "240px" }}
+      className="relative group bg-muted rounded overflow-hidden flex items-center justify-center"
+    >
+      {children(setAspect)}
+    </div>
   );
 };
 
@@ -142,6 +171,12 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     uploadMode: true,
     onCapture: goToEditorWithPhoto,
   });
+
+  // Reservierte Hoehe des Hauptbildes: aus dem Gedaechtnis, sonst die Annahme
+  // 4:3 – in jedem Fall naeher dran als die frueheren 180 px.
+  const [mainAspect, setMainAspect] = useState<number>(
+    () => knownAspect(location.id) ?? DEFAULT_PHOTO_ASPECT,
+  );
 
   const cardRef = useRef<HTMLDivElement>(null);
   const isNear = useNearViewport(cardRef);
@@ -496,7 +531,16 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         </div>
       ) : (
         <div
-          className="min-h-[180px] bg-muted relative cursor-pointer group rounded-lg overflow-hidden flex items-center justify-center"
+          // Die Hoehe steht fest, bevor das Bild da ist. Sonst waechst die
+          // Karte, sobald ihr Bild nachgeladen ist – auch unterhalb des
+          // Sichtbereichs, und dann wird die Seite beim Scrollen immer
+          // laenger (siehe lib/imageAspect.ts).
+          //
+          // width fest auf 100%: sonst zieht aspect-ratio den Kasten schmal,
+          // sobald max-height greift, und der graue Grund waere bei einem
+          // Hochformat-Foto nicht mehr so breit wie die Karte.
+          style={{ width: "100%", aspectRatio: String(mainAspect), maxHeight: "70vh" }}
+          className="bg-muted relative cursor-pointer group rounded-lg overflow-hidden flex items-center justify-center"
           onClick={() => {
             // Ohne Bild wuerde der Editor leer aufgehen – erst ein Foto holen.
             if (hasNoPhoto) setShowAddPhoto(true);
@@ -504,14 +548,26 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           }}
         >
           {mainImageUrl ? (
-            <img src={mainImageUrl} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
+            <img
+              src={mainImageUrl}
+              alt={`Standort ${location.locationNumber}`}
+              className="w-full h-full object-contain"
+              onLoad={(e) => {
+                // Das echte Verhaeltnis uebernehmen und merken – beim
+                // naechsten Mal stimmt die reservierte Hoehe von Anfang an.
+                const img = e.currentTarget;
+                if (!img.naturalWidth || !img.naturalHeight) return;
+                rememberAspect(location.id, img.naturalWidth, img.naturalHeight);
+                setMainAspect(img.naturalWidth / img.naturalHeight);
+              }}
+            />
           ) : hasNoPhoto ? (
-            <div className="w-full min-h-[180px] flex flex-col items-center justify-center gap-2 text-muted-foreground">
+            <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
               <ImagePlus className="h-8 w-8" />
               <span className="text-sm">Kein Foto – tippen zum Nachreichen</span>
             </div>
           ) : (
-            <div className="w-full min-h-[180px] bg-muted animate-pulse" aria-label="Bild wird geladen" />
+            <div className="w-full h-full bg-muted animate-pulse" aria-label="Bild wird geladen" />
           )}
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
             <Pencil className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -673,13 +729,15 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Detailbilder</p>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {location.detailImages.map((detail) => (
-                <div key={detail.id} className="relative group bg-muted rounded overflow-hidden flex items-center justify-center min-h-[140px]">
+                <DetailTile key={detail.id} detailId={detail.id}>
+                  {(onAspect) => (<>
                   <DetailThumb
                     detailId={detail.id}
                     src={detail.imageData}
                     caption={detail.caption}
-                    className="w-full h-auto max-h-[240px] object-contain cursor-pointer"
+                    className="w-full h-full object-contain cursor-pointer"
                     onOpen={() => navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`)}
+                    onAspect={onAspect}
                   />
                   {/* Always-visible "view large" (no editing). */}
                   <button
@@ -716,7 +774,8 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>
-                </div>
+                  </>)}
+                </DetailTile>
               ))}
             </div>
           </div>

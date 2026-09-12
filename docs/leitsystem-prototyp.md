@@ -409,6 +409,45 @@ Ausgelassen werden Felder, die leer sind oder mehr als 25 verschiedene Werte
 haben – ein Kommentarfeld mit 300 verschiedenen Texten ergibt keine sinnvolle
 Auswahlliste, dafür gibt es die Suche.
 
+### Nachgeladene Bilder reservieren ihre Hoehe vorher
+
+Das Nachladen der Bilder hatte eine Nebenwirkung, die erst beim Scrollen
+auffaellt: Bis das Bild da war, stand in der Karte ein Platzhalter von 180 px,
+waehrend das fertige Foto 300 bis 500 px hoch ist. Jede Karte wuchs also in
+dem Moment, in dem ihr Bild ankam – auch die unterhalb des Sichtbereichs.
+Damit wurde die Seite beim Scrollen laufend laenger, und man kam nicht ans
+Ende, weil das Ende vor einem weglief.
+
+Gemessen mit zwoelf Standorten (gemischt quer und hoch):
+
+| | Zuwachs beim Scrollen | nach einem Wisch noch vom Ende entfernt |
+| --- | --- | --- |
+| vorher, Handy | 382 px | 148 px |
+| vorher, Rechner | 620 px | 155 px |
+| nachher, erstes Oeffnen | 208 px / 0 px | 105 px / 0 px |
+| nachher, danach | **0 px** | **0 px** |
+
+Die Karte reserviert die Hoehe jetzt ueber `aspect-ratio`, bevor das Bild da
+ist. Das Seitenverhaeltnis kommt aus `src/lib/imageAspect.ts`: beim Speichern
+eines Fotos einmal gemessen, sonst beim ersten Anzeigen gelernt, gemerkt in
+`localStorage` (wie der Bild-Hash-Cache – es ist eine Anzeige-Optimierung,
+kein Datenbestand). Unbekannt heisst 4:3; ein Hochformat-Foto wandert dann
+beim allerersten Ansehen noch einmal und steht danach.
+
+Zwei Details, die beim Bauen noetig wurden:
+
+* **`width` muss ausdruecklich auf 100%.** Sonst zieht `aspect-ratio` den
+  Kasten schmal, sobald `max-height` greift – der graue Grund waere bei einem
+  Hochformat-Foto nur noch so breit wie das Bild statt so breit wie die Karte.
+* **Jede Detailbild-Kachel braucht ihre eigene reservierte Hoehe**
+  (`DetailTile`), sonst springt beim Nachladen die ganze Rasterzeile.
+
+Nachgemessen, dass sich am Aussehen nichts aendert: Karte, Bildkasten und
+dargestelltes Bild liegen vorher wie nachher auf denselben Pixeln
+(846x630 an Position 46, quer wie hoch).
+
+---
+
 ### Zoom im Grundriss
 
 Ein A1-Architektenplan auf einem Handy ist ohne Zoom nicht bedienbar: Räume sind

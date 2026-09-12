@@ -138,6 +138,13 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
   Menge, Montageart, Status, `applies_to = 'aufmass_mit_plan'`). Bewusst keine
   Migration dafuer – sie wuerde bei `db push` Duplikate erzeugen. Praefix
   `custom_` ist Pflicht.
+- **Nachgeladene Bilder reservieren ihre Hoehe vorher** (`src/lib/imageAspect.ts`).
+  Ohne das wuchs jede Karte beim Nachladen ihres Bildes – auch unterhalb des
+  Sichtbereichs – und die Seite wurde beim Scrollen immer laenger (gemessen:
+  620 px). Das Seitenverhaeltnis wird beim Speichern gemessen bzw. beim ersten
+  Anzeigen gelernt und in `localStorage` gemerkt. Beim Setzen von
+  `aspect-ratio` **immer `width: 100%` mitgeben**, sonst zieht es den Kasten
+  schmal, sobald `max-height` greift.
 - **Zoom im Grundriss:** `src/components/ZoomableFloorPlan.tsx` (Mausrad,
   Pinch, Ziehen, Doppeltipp, Knoepfe; 1x bis 8x). Relative Koordinaten kommen
   aus `getBoundingClientRect()` des **Bildes**, nicht des Rahmens – damit
