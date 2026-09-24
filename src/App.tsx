@@ -42,6 +42,27 @@ import { MeetingRecorderProvider } from "@/components/MeetingRecorder";
 // nicht im Haupt-Bundle landet, das alle Mitarbeiter laden.
 const ProboCatalog = lazy(() => import("./pages/ProboCatalog"));
 
+// Terminbuchung: oeffentliche Seiten, die nur Kunden ueber einen Link
+// erreichen. Lazy, damit react-day-picker und luxon nicht im Haupt-Bundle
+// liegen, das jeder Mitarbeiter bei jedem Start laedt.
+const BookingPage = lazy(() => import("./pages/BookingPage"));
+const BookingCancel = lazy(() => import("./pages/BookingCancel"));
+const BookingStaffAction = lazy(() => import("./pages/BookingStaffAction"));
+
+function BookingSuspense({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
+          wird geladen...
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
+
 const queryClient = new QueryClient();
 
 const SESSION_CACHE_KEY = "session_validation_cache";
@@ -200,6 +221,11 @@ const App = () => {
           <Route path="/gestaltung" element={<Gestaltung />} />
           <Route path="/hero-aktion" element={<HeroOfferAction />} />
           <Route path="/datenschutz" element={<PrivacyPolicy />} />
+          {/* Terminbuchung. Der Link ist der Zugang: die Edge Function
+              rechnet serverseitig und der Token haengt am einzelnen Termin. */}
+          <Route path="/termin/:projectId" element={<BookingSuspense><BookingPage /></BookingSuspense>} />
+          <Route path="/termin/absagen/:token" element={<BookingSuspense><BookingCancel /></BookingSuspense>} />
+          <Route path="/termin/intern/:token" element={<BookingSuspense><BookingStaffAction /></BookingSuspense>} />
           {/* Internes Werkzeug: absichtlich nirgends verlinkt. Der Pfad steht
               zwar im JS-Bundle, aber Seite und Edge Function verlangen eine
               gueltige Mitarbeiter-/Admin-Sitzung. */}
