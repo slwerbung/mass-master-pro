@@ -17,6 +17,7 @@ import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { HeroSyncIndicator } from "@/components/HeroSyncIndicator";
+import { UpcomingAppointments } from "@/components/UpcomingAppointments";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
@@ -358,6 +359,9 @@ const Projects = () => {
         </div>
 
         <HeroSyncIndicator />
+
+        {/* Terminleiste: zeigt sich nur, wenn es Termine gibt. */}
+        <UpcomingAppointments />
 
         {/* Full-text search over the project overview */}
         <div className="relative">
