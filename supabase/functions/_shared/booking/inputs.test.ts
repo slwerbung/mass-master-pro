@@ -55,3 +55,56 @@ describe("buildComputeInput", () => {
     expect(input.globalBookingsCountPerDay?.["2026-06-01"]).toBe(2);
   });
 });
+
+describe("buildComputeInput – Feiertage", () => {
+  const base = {
+    ruleSet: rs,
+    staff: [
+      { id: "a", skills: ["montage"], home_base_lat: null, home_base_lng: null },
+      { id: "b", skills: ["montage"], home_base_lat: null, home_base_lng: null },
+    ],
+    workingHours: [
+      { staff_id: "a", weekday: 4, start_time: "08:00:00", end_time: "16:00:00" },
+      { staff_id: "b", weekday: 4, start_time: "08:00:00", end_time: "16:00:00" },
+    ],
+    busy: [],
+    bookingCounts: [],
+    categoryBlocks: {},
+    now: "2026-09-20T06:00:00Z",
+    from: "2026-10-01T00:00:00Z",
+    to:   "2026-10-05T00:00:00Z",
+  };
+
+  it("sperrt einen Feiertag fuer ALLE Mitarbeiter", () => {
+    const input = buildComputeInput({ ...base, exceptions: [], holidays: ["2026-10-03"] });
+    const off = input.exceptions.filter((x) => x.date === "2026-10-03" && x.isAvailable === false);
+    expect(off.map((x) => x.staffId).sort()).toEqual(["a", "b"]);
+  });
+
+  it("laesst einen eingetragenen Sondereinsatz gewinnen", () => {
+    // b arbeitet am Feiertag ausdruecklich – das darf der Feiertag nicht kippen.
+    const input = buildComputeInput({
+      ...base,
+      exceptions: [{ staff_id: "b", date: "2026-10-03", is_available: true, start_time: "09:00:00", end_time: "13:00:00" }],
+      holidays: ["2026-10-03"],
+    });
+    const forB = input.exceptions.filter((x) => x.staffId === "b" && x.date === "2026-10-03");
+    expect(forB).toHaveLength(1);
+    expect(forB[0].isAvailable).toBe(true);
+    expect(forB[0].start).toBe("09:00");
+    // a bleibt gesperrt
+    const forA = input.exceptions.filter((x) => x.staffId === "a" && x.date === "2026-10-03");
+    expect(forA).toEqual([{ staffId: "a", date: "2026-10-03", isAvailable: false, start: null, end: null }]);
+  });
+
+  it("ohne Feiertage bleibt die Ausnahmeliste unveraendert", () => {
+    const input = buildComputeInput({ ...base, exceptions: [] });
+    expect(input.exceptions).toEqual([]);
+  });
+
+  it("gibt den Fahrzeit-Anbieter durch", () => {
+    const stub = { minutesBetween: () => 42 };
+    const input = buildComputeInput({ ...base, exceptions: [], travelProvider: stub });
+    expect(input.travelProvider).toBe(stub);
+  });
+});

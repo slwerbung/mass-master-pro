@@ -3,7 +3,7 @@
 // bleibt. Die Edge Function lädt die Zeilen und ruft nur diese Funktion.
 
 import { DateTime } from "luxon";
-import type { BusyBlock, ComputeInput, Geo, RuleSetConfig, Staff, WorkingHours, WorkingHoursException } from "./types.ts";
+import type { BusyBlock, ComputeInput, Geo, RuleSetConfig, Staff, TravelTimeProvider, WorkingHours, WorkingHoursException } from "./types.ts";
 
 export interface RuleSetRow {
   id: string;
@@ -65,6 +65,19 @@ export interface BuildArgs {
   to: string | Date;
   address?: Geo | null;
   timezone?: string;
+  /**
+   * Betriebsweite Feiertage als "yyyy-MM-dd". Ein Feiertag ist kein Urlaub
+   * eines Einzelnen, sondern zu fuer alle — er wird deshalb hier zu einer
+   * Ausnahme (is_available=false) je Mitarbeiter aufgefaltet. Damit braucht
+   * die Engine kein eigenes Feiertags-Wissen.
+   *
+   * Eine bereits vorhandene Ausnahme fuer denselben Tag und Mitarbeiter hat
+   * Vorrang: wer an einem Feiertag ausdruecklich arbeitet (Sondereinsatz),
+   * soll nicht vom Feiertag ueberstimmt werden.
+   */
+  holidays?: string[];
+  /** Fahrzeit-Anbieter. Fehlt er, nimmt die Engine ihre eigene Schaetzung. */
+  travelProvider?: TravelTimeProvider;
 }
 
 export function buildComputeInput(a: BuildArgs): ComputeInput {
@@ -82,6 +95,17 @@ export function buildComputeInput(a: BuildArgs): ComputeInput {
     start: x.start_time ? hhmm(x.start_time) : null,
     end: x.end_time ? hhmm(x.end_time) : null,
   }));
+  // Feiertage auffalten — aber nur, wo der Mitarbeiter fuer den Tag keine
+  // eigene Ausnahme hat. Ein eingetragener Sondereinsatz gewinnt.
+  if (a.holidays?.length) {
+    const claimed = new Set(exceptions.map((x) => `${x.staffId}|${x.date}`));
+    for (const date of a.holidays) {
+      for (const s of staffPool) {
+        if (claimed.has(`${s.id}|${date}`)) continue;
+        exceptions.push({ staffId: s.id, date, isAvailable: false, start: null, end: null });
+      }
+    }
+  }
   // Nur Blocks relevanter Kategorien (§7). category_key null ⇒ blockiert.
   const busyBlocks: BusyBlock[] = a.busy
     .filter((b) => b.category_key == null || a.categoryBlocks[b.category_key] !== false)
@@ -105,5 +129,6 @@ export function buildComputeInput(a: BuildArgs): ComputeInput {
     now: a.now,
     address: a.address ?? null,
     timezone: tz,
+    travelProvider: a.travelProvider,
   };
 }
