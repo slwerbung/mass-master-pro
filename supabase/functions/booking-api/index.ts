@@ -41,6 +41,14 @@ const json = (data: unknown, status = 200) =>
 
 const TZ = "Europe/Berlin";
 const RULE_SET_KEY = "aufmass_vor_ort";
+
+/**
+ * Zeitangaben pruefen, statt sie durchzureichen. Ein unlesbares Datum ergibt in
+ * der Engine NaN und damit eine leere Slotliste — das sieht dann aus wie "kein
+ * Termin frei", obwohl nur das Format falsch war. Im Test genau so passiert.
+ */
+const istZeit = (v: unknown): boolean =>
+  typeof v === "string" && DateTime.fromISO(v, { zone: "utc" }).isValid;
 const sb = () => createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 type DB = ReturnType<typeof sb>;
 
@@ -214,6 +222,20 @@ async function availabilityFor(
   return { rs, slots: await computeSlots(input) };
 }
 
+/**
+ * HERO-Termin entfernen, wenn es einen gibt.
+ *
+ * Rueckgabe: true = entfernt, false = es gab einen, aber HERO wollte nicht,
+ * null = es gab keinen. Das Ergebnis geht mit in die Antwort, damit ein
+ * stehengebliebener HERO-Termin sichtbar wird statt still liegenzubleiben.
+ */
+async function entferneHeroTermin(s: Settings, ref: string | null): Promise<boolean | null> {
+  if (!ref || !s.heroApiKey) return null;
+  const r = await heroDeleteAppointment(s.heroApiKey, Number(ref));
+  if (!r.ok) console.error("[booking] HERO-Termin blieb stehen:", ref, r.error);
+  return r.ok;
+}
+
 // ── Handler ──
 
 Deno.serve(async (req) => {
@@ -264,6 +286,12 @@ Deno.serve(async (req) => {
         const from = url.searchParams.get("from") || "";
         const to = url.searchParams.get("to") || "";
         if (!projectId || !from || !to) return json({ error: "project, from, to erforderlich" }, 400);
+        if (!istZeit(from) || !istZeit(to)) {
+          return json({ error: "from und to muessen ISO-8601-Zeitpunkte sein, z.B. 2026-09-28T06:00:00Z" }, 400);
+        }
+        if (DateTime.fromISO(to, { zone: "utc" }) <= DateTime.fromISO(from, { zone: "utc" })) {
+          return json({ error: "to muss nach from liegen" }, 400);
+        }
 
         // Hat der Kunde die Adresse geaendert, zaehlt seine Eingabe.
         const street = url.searchParams.get("street");
@@ -301,11 +329,9 @@ Deno.serve(async (req) => {
 
         await db.from("booking").update({ status: "cancelled", cancel_reason: "customer" }).eq("id", bk.id);
         await db.from("busy_block").delete().eq("source", "booking").eq("source_ref", bk.id);
-        if (bk.hero_event_ref && s.heroApiKey) {
-          await heroDeleteAppointment(s.heroApiKey, Number(bk.hero_event_ref));
-        }
+        const heroWeg = await entferneHeroTermin(s, bk.hero_event_ref);
         await db.from("notification").insert({ booking_id: bk.id, kind: "cancellation" });
-        return json({ ok: true, status: "cancelled" });
+        return json({ ok: true, status: "cancelled", heroRemoved: heroWeg });
       }
 
       // ── Wir sagen ab oder bitten um Umbuchung (aus der internen Mail) ──
@@ -326,14 +352,12 @@ Deno.serve(async (req) => {
           cancel_reason: mode === "reschedule" ? "staff_reschedule" : "staff_cancel",
         }).eq("id", bk.id);
         await db.from("busy_block").delete().eq("source", "booking").eq("source_ref", bk.id);
-        if (bk.hero_event_ref && s.heroApiKey) {
-          await heroDeleteAppointment(s.heroApiKey, Number(bk.hero_event_ref));
-        }
+        const heroWeg = await entferneHeroTermin(s, bk.hero_event_ref);
         await db.from("notification").insert({
           booking_id: bk.id,
           kind: mode === "reschedule" ? "reschedule" : "cancellation",
         });
-        return json({ ok: true, status: "cancelled", mode, projectId: bk.project_id });
+        return json({ ok: true, status: "cancelled", mode, projectId: bk.project_id, heroRemoved: heroWeg });
       }
 
       // ── Buchen ──
@@ -344,6 +368,9 @@ Deno.serve(async (req) => {
         const contact = body.contact || {};
         if (!projectId || !slot.startsAt || !slot.endsAt || !staffId || !contact.name || !contact.email) {
           return json({ error: "Pflichtfelder fehlen" }, 400);
+        }
+        if (!istZeit(slot.startsAt) || !istZeit(slot.endsAt)) {
+          return json({ error: "Der Zeitpunkt des Slots ist unlesbar" }, 400);
         }
 
         const ctx = await buildContext(db, s, projectId);
@@ -438,9 +465,16 @@ Deno.serve(async (req) => {
           else heroError = r.error ?? "unbekannt";
         }
 
-        const notes: any[] = [
-          { booking_id: created!.id, kind: "confirmation" },
-          { booking_id: created!.id, kind: "internal_new" },
+        // Mails in die Outbox. WICHTIG: PostgREST verlangt bei einem
+        // Batch-Insert in ALLEN Zeilen dieselben Schluessel — sonst scheitert
+        // der ganze Insert ("All object keys must match"). Deshalb steht
+        // send_after ueberall, auch wo "sofort" gemeint ist. Genau das ist im
+        // Test aufgefallen: die Erinnerungszeile hatte ein Feld mehr, und es
+        // wurde gar keine Mail eingereiht.
+        const jetzt = new Date().toISOString();
+        const notes: Record<string, unknown>[] = [
+          { booking_id: created!.id, kind: "confirmation", send_after: jetzt },
+          { booking_id: created!.id, kind: "internal_new", send_after: jetzt },
         ];
         if (status === "confirmed" && s.reminderHours > 0) {
           const sendAfter = DateTime.fromISO(slot.startsAt, { zone: "utc" }).minus({ hours: s.reminderHours });
@@ -448,7 +482,10 @@ Deno.serve(async (req) => {
             notes.push({ booking_id: created!.id, kind: "reminder", send_after: sendAfter.toUTC().toISO() });
           }
         }
-        await db.from("notification").insert(notes);
+        // Der Termin steht schon — ein Fehler hier darf die Buchung nicht
+        // umwerfen. Er darf aber auch nicht untergehen.
+        const { error: noteErr } = await db.from("notification").insert(notes);
+        if (noteErr) console.error("[booking] Mails nicht eingereiht:", noteErr.message);
 
         return json({
           ok: true,
@@ -458,6 +495,7 @@ Deno.serve(async (req) => {
           },
           cancelToken,
           heroError,
+          mailQueued: !noteErr,
         });
       }
 

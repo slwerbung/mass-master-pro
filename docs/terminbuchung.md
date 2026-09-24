@@ -17,8 +17,9 @@ hält Stand + bewusste Abweichungen fest.
 - **Oberflaechen:** ✅ öffentliche Buchungsseite `/termin/:projectId`,
   Absage-/Umbuchungsseiten, Admin-Reiter „Termine“, Terminleiste auf der
   Startseite.
-- **Offen:** ein Durchlauf mit echter Buchung (verschickt echte Mails),
-  Standort-Koordinaten der Mitarbeiter, ORS-Schlüssel fürs Routing.
+- **Durchlauf mit echter Buchung:** ✅ 24.09.2026 zweimal komplett gefahren
+  (siehe unten). Dabei kamen zwei echte Fehler heraus.
+- **Offen:** Standort-Koordinaten der Mitarbeiter, ORS-Schlüssel fürs Routing.
 
 ### Migrationen
 | Datei | Inhalt |
@@ -188,6 +189,41 @@ Rechenfehler.
 Alle drei öffentlichen Seiten sind lazy geladen, damit luxon und
 react-day-picker nicht im Haupt-Bundle liegen.
 
+## Was der Testlauf gefunden hat (24.09.2026)
+
+Gefahren wurde die ganze Kette gegen die Produktionsdatenbank und das echte
+HERO: Kontext laden → freie Zeiten → buchen → HERO-Termin → Mails → absagen →
+HERO-Termin weg → Absagemail. Dazu die Oberflaechen mit Playwright gegen
+abgefangene Antworten (`playwright.booking.config.ts`, 11 Tests).
+
+Drei Fehler, die nur so auffallen konnten:
+
+1. **Es wurde gar keine Mail eingereiht.** PostgREST verlangt bei einem
+   Batch-Insert in allen Zeilen dieselben Schluessel; die Erinnerungszeile
+   hatte `send_after` zusaetzlich. Der Insert scheiterte komplett — und weil
+   sein Ergebnis nicht geprueft wurde, still. Jetzt steht `send_after`
+   ueberall, und ein Fehler wird geloggt und in der Antwort gemeldet
+   (`mailQueued`).
+2. **Der HERO-Termin blieb beim Absagen stehen.** `delete_calendar_event` gibt
+   ein CalendarEvent zurueck und braucht deshalb eine Feldauswahl
+   (`{ id deleted }`). Ohne sie lehnt GraphQL die Mutation ab. Auch das war
+   "best effort" und damit unsichtbar. Jetzt korrigiert; das Ergebnis geht als
+   `heroRemoved` mit zurueck, und die interne Seite warnt, wenn der Termin in
+   HERO stehen blieb.
+3. **Der Kunde haette eine englische Systemmeldung gesehen.** Bei einer Antwort
+   ausserhalb von 2xx setzt `supabase.functions.invoke` `data` auf null und legt
+   die Antwort unter `error.context` ab. Statt "Dieser Termin wurde gerade
+   vergeben." stand dort "Edge Function returned a non-2xx status code".
+
+Dazu eine Luecke in der Einrichtung: die Terminart verlangt die Qualifikation
+`aufmass`, das neu angelegte Personal hatte keine — also null freie Zeiten,
+ohne Hinweis warum. Qualifikationen sind jetzt im Reiter editierbar, und wenn
+niemand die noetige hat, steht dort eine Warnung.
+
+Unschoen, aber absichtlich so gelassen: eine Zeit, die als `from`/`to` unlesbar
+ist, gab frueher eine leere Slotliste zurueck (sah aus wie "nichts frei"). Das
+gibt jetzt einen 400 mit Klartext.
+
 ## Bewusste Abweichungen vom Spec-Entwurf (§8/§14, gegen Repo geprüft)
 - **Einzelmandant:** kein `org_id`. Die App ist single-tenant; Struktur bleibt additiv erweiterbar.
 - **`staff` verweist auf `employees`** (`employee_id`, nullable) statt Identitäten zu duplizieren.
@@ -231,5 +267,10 @@ Mindest-Vorlaufzeit, Buchungsfenster, Tageslimits, Qualifikation, Zuweisung
 
 ### Tests
 ```
-npm run test:unit      # Vitest, nur die Unit-Tests (getrennt von Playwright-e2e)
+npm run test:unit      # Vitest: Engine, Fahrzeit, Feiertage, .ics, Mailtexte
+npm run build && npx playwright test -c playwright.booking.config.ts
+                       # Oberflaechen gegen abgefangene API-Antworten,
+                       # ohne Zugangsdaten und ohne echte Buchungen
 ```
+In Umgebungen mit vorinstalliertem Chromium: `PW_CHROMIUM=/pfad/zu/chromium`
+davorsetzen, dann wird kein zweiter Browser geladen.

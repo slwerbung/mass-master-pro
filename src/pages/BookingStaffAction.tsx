@@ -23,6 +23,7 @@ export default function BookingStaffAction() {
 
   const [state, setState] = useState<"frage" | "laeuft" | "fertig" | "fehler">("frage");
   const [already, setAlready] = useState(false);
+  const [heroOffen, setHeroOffen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const umbuchen = mode === "reschedule";
@@ -32,6 +33,9 @@ export default function BookingStaffAction() {
     try {
       const res = await staffBookingAction(token, mode);
       setAlready(!!res.already);
+      // false heisst: es gab einen HERO-Termin, aber er liess sich nicht
+      // entfernen. Das muss man sehen, sonst steht er dort weiter im Kalender.
+      setHeroOffen(res.heroRemoved === false);
       setState("fertig");
     } catch (e) {
       setError((e as Error).message);
@@ -57,9 +61,15 @@ export default function BookingStaffAction() {
                       ? "Der Kunde bekommt die Bitte, selbst einen neuen Termin zu wählen. Der Platz ist wieder frei."
                       : "Der Kunde bekommt eine Absage. Der Platz ist wieder frei."}
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  In HERO ist der Termin ebenfalls entfernt, falls er dort angelegt war.
-                </p>
+                {heroOffen ? (
+                  <p className="text-xs text-destructive">
+                    Achtung: In HERO liess sich der Termin nicht entfernen — bitte dort von Hand austragen.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    In HERO ist der Termin ebenfalls entfernt, falls er dort angelegt war.
+                  </p>
+                )}
               </>
             ) : state === "fehler" ? (
               <>

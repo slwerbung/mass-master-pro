@@ -30,19 +30,37 @@ export interface Slot {
   staffIds?: string[];
 }
 
+/**
+ * Die Fehlermeldung der Function herausholen.
+ *
+ * Bei einer Antwort ausserhalb von 2xx setzt supabase-js `data` auf null und
+ * legt die Antwort als Response unter `error.context` ab. Ohne diesen Umweg
+ * saehe der Kunde bei einem 409 "Edge Function returned a non-2xx status code"
+ * statt "Dieser Termin wurde gerade vergeben." — im Oberflaechentest genau so
+ * aufgefallen.
+ */
+async function fehlertext(error: unknown): Promise<string | null> {
+  const resp = (error as { context?: unknown })?.context as Response | undefined;
+  if (!resp || typeof resp.json !== "function") return null;
+  try {
+    const body = await resp.json();
+    return typeof body?.error === "string" ? body.error : null;
+  } catch {
+    return null; // kein JSON oder Body schon gelesen
+  }
+}
+
 async function get<T>(params: Record<string, string>): Promise<T> {
   const qs = new URLSearchParams(params).toString();
   const { data, error } = await supabase.functions.invoke(`booking-api?${qs}`, { method: "GET" });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error((await fehlertext(error)) || error.message);
   if ((data as any)?.error) throw new Error((data as any).error);
   return data as T;
 }
 
 async function post<T>(body: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.functions.invoke("booking-api", { body });
-  // Edge Functions geben Fehler teils als Non-2xx zurueck; invoke verschluckt
-  // dann den Body. Deshalb beide Wege pruefen.
-  if (error) throw new Error((data as any)?.error || error.message);
+  if (error) throw new Error((await fehlertext(error)) || error.message);
   if ((data as any)?.error) throw new Error((data as any).error);
   return data as T;
 }
@@ -77,9 +95,12 @@ export const createBooking = (payload: {
   }>({ action: "create", ...payload });
 
 export const cancelBooking = (cancelToken: string) =>
-  post<{ ok: boolean; status: string }>({ action: "cancel", cancelToken });
+  post<{ ok: boolean; status: string; heroRemoved: boolean | null }>({ action: "cancel", cancelToken });
 
 export const staffBookingAction = (staffToken: string, mode: "cancel" | "reschedule") =>
-  post<{ ok: boolean; status: string; mode: string; projectId: string | null; already?: boolean }>(
-    { action: "staff-action", staffToken, mode },
-  );
+  post<{
+    ok: boolean; status: string; mode: string; projectId: string | null;
+    already?: boolean;
+    /** true = HERO-Termin entfernt, false = blieb stehen, null = es gab keinen. */
+    heroRemoved: boolean | null;
+  }>({ action: "staff-action", staffToken, mode });

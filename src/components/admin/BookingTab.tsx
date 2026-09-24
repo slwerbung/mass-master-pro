@@ -47,7 +47,7 @@ interface RuleSetRow {
   buffer_before_min: number; buffer_after_min: number; travel_buffer: boolean;
   min_notice_min: number; booking_window_days: number; slot_granularity_min: number;
   max_per_day_global: number | null; max_per_day_per_staff: number | null;
-  requires_approval: boolean;
+  requires_approval: boolean; required_skills: string[] | null;
 }
 interface CategoryRow { key: string; label: string; source: string; blocks_availability: boolean }
 interface EmployeeRow { id: string; name: string; hero_partner_id: number | null; uebernommen: boolean }
@@ -293,6 +293,24 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
             </div>
           )}
 
+          {(() => {
+            // Verlangt die Terminart eine Qualifikation, die niemand hat, gibt
+            // es keine freien Zeiten — und nichts sagt einem warum. Genau das
+            // ist beim Testlauf passiert.
+            const noetig = ruleSet?.required_skills ?? [];
+            if (noetig.length === 0) return null;
+            const passt = staff.some((s) =>
+              s.active && noetig.every((q) => (s.skills ?? []).includes(q)));
+            if (passt) return null;
+            return (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                Die Terminart verlangt {noetig.map((q) => `\u201e${q}\u201c`).join(", ")} — das hat
+                gerade niemand. Solange das so ist, findet der Kunde keine freien Zeiten.
+                Trage die Qualifikation unten beim passenden Mitarbeiter ein.
+              </div>
+            );
+          })()}
+
           {staff.length === 0 ? (
             <p className="text-sm text-muted-foreground">Noch kein Personal angelegt.</p>
           ) : staff.map((s) => (
@@ -302,7 +320,7 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
                 await invoke("staff_upsert", {
                   id: s.id, displayName: patch.display_name, active: patch.active,
                   employeeId: s.employee_id, homeBaseLat: patch.home_base_lat,
-                  homeBaseLng: patch.home_base_lng, skills: s.skills ?? [],
+                  homeBaseLng: patch.home_base_lng, skills: patch.skills ?? [],
                 });
                 await invoke("set_working_hours", {
                   staffId: s.id,
@@ -640,6 +658,7 @@ function StaffKarte({ staff, busy, onSpeichern, onLoeschen }: {
   const [aktiv, setAktiv] = useState(staff.active);
   const [lat, setLat] = useState(staff.home_base_lat?.toString() ?? "");
   const [lng, setLng] = useState(staff.home_base_lng?.toString() ?? "");
+  const [skills, setSkills] = useState((staff.skills ?? []).join(", "));
   const [hours, setHours] = useState<WorkingHour[]>(staff.workingHours ?? []);
 
   const perTag = (wd: number) => hours.find((h) => h.weekday === wd);
@@ -676,6 +695,14 @@ function StaffKarte({ staff, busy, onSpeichern, onLoeschen }: {
         </div>
       </div>
 
+      <div>
+        <Label className="text-xs">Qualifikationen</Label>
+        <Input value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="aufmass, montage" />
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Mehrere durch Komma trennen. Die Terminart oben bestimmt, welche noetig sind.
+        </p>
+      </div>
+
       <div className="grid gap-1.5">
         {[1, 2, 3, 4, 5, 6, 0].map((wd) => {
           const h = perTag(wd);
@@ -705,6 +732,7 @@ function StaffKarte({ staff, busy, onSpeichern, onLoeschen }: {
             ...staff, display_name: name, active: aktiv,
             home_base_lat: lat === "" ? null : Number(lat),
             home_base_lng: lng === "" ? null : Number(lng),
+            skills: skills.split(",").map((x) => x.trim()).filter(Boolean),
             workingHours: hours,
           })}>
           {laufend && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />} Speichern

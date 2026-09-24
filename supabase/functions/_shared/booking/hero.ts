@@ -9,6 +9,13 @@
 //   * create_calendar_event aus _shared/automations.ts
 // Ein unbekanntes Feld laesst eine GraphQL-Abfrage komplett scheitern, deshalb
 // wird hier nichts "auf Verdacht" mitabgefragt.
+//
+// Zu create_calendar_event: die Mutation ist in HERO als deprecated markiert
+// und taucht deshalb in der Introspection nur mit
+// `fields(includeDeprecated: true)` auf. Sie funktioniert weiterhin (unsere
+// Automationen legen so seit Monaten Termine an); der in der Deprecation
+// genannte Nachfolger Calendar_CreateCalendarEvent existiert in der externen
+// API NICHT. Also nicht "modernisieren".
 
 import type { Geo } from "./types.ts";
 
@@ -175,9 +182,16 @@ export async function heroCreateAppointment(
   }
 }
 
-/** Storniert den HERO-Termin. Best effort, wie beim Anlegen. */
+/**
+ * Storniert den HERO-Termin. Best effort, wie beim Anlegen.
+ *
+ * Die Feldauswahl `{ id deleted }` ist Pflicht: `delete_calendar_event` gibt
+ * ein CalendarEvent zurueck, und GraphQL lehnt eine Objektrueckgabe ohne
+ * Unterauswahl ab ("must have a sub selection"). Ohne sie schlug das Loeschen
+ * still fehl — der Termin blieb in HERO stehen, obwohl er bei uns abgesagt war.
+ */
 export async function heroDeleteAppointment(apiKey: string, eventId: number): Promise<{ ok: boolean; error?: string }> {
-  const mutation = `mutation Del($id: Int!) { delete_calendar_event(id: $id) }`;
+  const mutation = `mutation Del($id: Int!) { delete_calendar_event(id: $id) { id deleted } }`;
   try {
     await heroPost(apiKey, HERO_V9, mutation, { id: eventId });
     return { ok: true };
