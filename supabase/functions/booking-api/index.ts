@@ -44,8 +44,7 @@ const RULE_SET_KEY = "aufmass_vor_ort";
 const sb = () => createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 type DB = ReturnType<typeof sb>;
 
-// ── Einstellungen ───────────────────────────────────────────────────────────
-
+// ── Einstellungen ──
 interface Settings {
   travelMode: "heuristic" | "routing";
   avgKmh: number;
@@ -123,8 +122,7 @@ function geoCache(db: DB): GeocodeCache {
   };
 }
 
-// ── Projekt -> HERO ─────────────────────────────────────────────────────────
-
+// ── Projekt -> HERO ──
 async function resolveProject(db: DB, projectId: string) {
   const { data } = await db.from("projects")
     .select("id, project_number, customer_name, custom_fields").eq("id", projectId).maybeSingle();
@@ -165,8 +163,7 @@ async function buildContext(db: DB, s: Settings, projectId: string) {
   return { proj, address, addressSource, contact, customerName };
 }
 
-// ── Verfuegbarkeit ──────────────────────────────────────────────────────────
-
+// ── Verfuegbarkeit ──
 async function availabilityFor(
   db: DB, s: Settings, from: string, to: string, address: Geo | null,
 ) {
@@ -216,8 +213,7 @@ async function availabilityFor(
   return { rs, slots: await computeSlots(input) };
 }
 
-// ── Handler ─────────────────────────────────────────────────────────────────
-
+// ── Handler ──
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   const db = sb();
@@ -292,7 +288,7 @@ Deno.serve(async (req) => {
     if (req.method === "POST") {
       const body = await req.json();
 
-      // ── Kunde storniert ──────────────────────────────────────────────────
+      // ── Kunde storniert ──
       if (body.action === "cancel") {
         const token = String(body.cancelToken || "");
         if (!token) return json({ error: "cancelToken erforderlich" }, 400);
@@ -310,7 +306,7 @@ Deno.serve(async (req) => {
         return json({ ok: true, status: "cancelled" });
       }
 
-      // ── Wir sagen ab oder bitten um Umbuchung (aus der internen Mail) ─────
+      // ── Wir sagen ab oder bitten um Umbuchung (aus der internen Mail) ──
       if (body.action === "staff-action") {
         const token = String(body.staffToken || "");
         const mode = body.mode === "reschedule" ? "reschedule" : "cancel";
@@ -338,7 +334,7 @@ Deno.serve(async (req) => {
         return json({ ok: true, status: "cancelled", mode, projectId: bk.project_id });
       }
 
-      // ── Buchen ───────────────────────────────────────────────────────────
+      // ── Buchen ──
       if (body.action === "create") {
         const projectId = String(body.project || "");
         const slot = body.slot || {};
