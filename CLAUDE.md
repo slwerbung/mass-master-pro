@@ -99,6 +99,8 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
   serverseitig, schreibt den Termin am HERO-Projekt (`docs/terminbuchung.md`)
 - `booking-admin` – Admin-Aktionen zur Terminbuchung, Schwerpunkt Feiertage
   (Import pro Bundesland aus öffentlicher Quelle, danach bearbeitbar)
+- `booking-hero-sync` – liest HERO-Termine in `busy_block(source='hero')`,
+  damit sie Slots blockieren. pg_cron alle 10 Min (`x-poll-secret`)
 
 ## Offene Baustellen
 1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)

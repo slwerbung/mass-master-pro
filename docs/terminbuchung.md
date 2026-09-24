@@ -11,7 +11,9 @@ hält Stand + bewusste Abweichungen fest.
 - **Feiertage + Admin-Aktionen:** ✅ `booking-admin` **deployt** (v2).
 - **Echtes Routing:** ✅ im Code (OpenRouteService). Wartet nur noch auf den
   Schlüssel im Supabase-Secret `ORS_API_KEY` und `booking_travel_mode=routing`.
-- **Offen:** HERO-Leserichtung (`calendar_events` → `busy_block`), Mail-Outbox-Worker,
+- **HERO-Leserichtung:** ✅ `booking-hero-sync` deployt, pg_cron alle 10 Minuten,
+  live gegen Produktion geprüft (12 Termine im Fenster → 10 Blocks).
+- **Offen:** Mail-Outbox-Worker,
   öffentliche Buchungsseite `/termin/:projectId`, Admin-Reiter „Termine“,
   Einstieg auf der Startseite.
 
@@ -21,6 +23,7 @@ hält Stand + bewusste Abweichungen fest.
 | `20260828000000_booking_m1.sql` | Grundmodell: `staff`, `working_hours`, `busy_block`, `rule_set`, `booking`, `notification`, GiST-Exclusion gegen Doppelbuchung |
 | `20260924000000_booking_m2_project_travel_holidays.sql` | `booking.project_id/hero_project_id/address_source/contact_overrides`, `travel_time_cache`, `public_holiday`, `booking_*`-Einstellungen, Regelset `aufmass_vor_ort` |
 | `20260924094606_booking_m3_geocode_staff_actions.sql` | `geocode_cache`, `booking.staff_token`, `booking.cancel_reason` |
+| `20260924110000_booking_m4_hero_sync.sql` | Eindeutigkeit `busy_block(source, source_ref, staff_id)`, Poll-Secret, pg_cron-Job |
 
 ## Abgestimmte Produktentscheidungen
 - **Ein Link = ein Projekt.** Ohne Projekt keine Buchung. Objektadresse aus HERO,
@@ -98,6 +101,41 @@ als X Minuten vom Standort des Mitarbeiters, wird er für diesen Termin gar nich
 angeboten. Ohne hinterlegten Standort bleibt er drin — eine fehlende Koordinate
 darf nicht die ganze Terminliste leeren.
 
+## M4 — HERO-Leserichtung (`supabase/functions/booking-hero-sync`)
+HERO hat fuer uns **keine Webhooks** freigeschaltet, also pollt pg_cron alle
+10 Minuten (`booking-hero-sync`, Header `x-poll-secret`; ein Admin-Token geht
+auch, fuer den Knopf „Jetzt abgleichen“).
+
+Der Lauf liest `calendar_events(start, end)` fuer die naechsten
+`booking_hero_sync_days` (60) Tage und schreibt daraus
+`busy_block(source='hero', source_ref=<HERO-Event-ID>)`.
+
+- **Zuordnung:** HERO-„Partner“ → `employees.hero_partner_id` → `staff`.
+  Ohne Zuordnung passiert nichts (und der Lauf sagt das auch).
+- **Eigene Termine werden ausgeklammert:** was wir selbst nach HERO
+  geschrieben haben (`booking.hero_event_ref`), blockiert schon als
+  `source='booking'` — sonst stuende derselbe Termin doppelt im Weg.
+- **Abgleich statt nur ergaenzen:** was im Fenster nicht mehr aus HERO kommt,
+  wird geloescht. Sonst bliebe eine in HERO abgesagte Zeit bei uns fuer immer
+  gesperrt.
+- **Kategorien:** jede HERO-Kategorie bekommt automatisch eine Zeile
+  `appointment_category` mit Schluessel `hero:<id>` und
+  `blocks_availability = true`. Im Adminmenue laesst sich dann einzeln sagen,
+  was wirklich blockiert („Büro“ ja, „Schule“ vielleicht nicht). Neue
+  Kategorien blockieren erst einmal — das ist die sichere Richtung.
+
+### Zwei Stolperfallen, die hier Zeit gekostet haben
+- **`create_calendar_event` ist deprecated — und funktioniert trotzdem.**
+  GraphQL blendet deprecated Felder in der Introspection standardmaessig aus;
+  ohne `fields(includeDeprecated: true)` sieht es so aus, als koenne die API
+  gar keine Termine anlegen. Der in der Deprecation genannte Nachfolger
+  `Calendar_CreateCalendarEvent` ist in der externen API **nicht** vorhanden.
+  Also weiter `create_calendar_event` benutzen.
+- **HERO liefert echte UTC-Zeiten** (`2026-09-24T07:00:00+00:00`), auch wenn
+  das Format wie eine naive Zeit aussieht. Gegenprobe: die Automation
+  „Weiter nach Aufmaß“ legt ihren Termin um 09:00 Berlin an, HERO gibt ihn
+  als `07:00+00:00` zurueck. Der Offset gilt also wortwoertlich.
+
 ## Bewusste Abweichungen vom Spec-Entwurf (§8/§14, gegen Repo geprüft)
 - **Einzelmandant:** kein `org_id`. Die App ist single-tenant; Struktur bleibt additiv erweiterbar.
 - **`staff` verweist auf `employees`** (`employee_id`, nullable) statt Identitäten zu duplizieren.
@@ -124,18 +162,18 @@ Mindest-Vorlaufzeit, Buchungsfenster, Tageslimits, Qualifikation, Zuweisung
 (`fixed`/`round_robin`/`by_skill`/`collective`), Notfall-Reserve.
 
 ## Nächste Schritte
-1. HERO-Leserichtung: `calendar_events` pollen → `busy_block(source='hero')`,
-   damit bestehende Termine Slots blockieren.
-2. Outbox-Worker: `notification` abarbeiten via Resend — Kundenbestätigung mit
+1. Outbox-Worker: `notification` abarbeiten via Resend — Kundenbestätigung mit
    `.ics`, interne Mail mit Umbuchen-/Absagen-Link, Erinnerung.
-3. Öffentliche Buchungsseite `/termin/:projectId` (Calendly-Aufmachung).
-4. Admin-Reiter „Termine“ + Einstieg auf der Startseite.
+2. Öffentliche Buchungsseite `/termin/:projectId` (Calendly-Aufmachung).
+3. Admin-Reiter „Termine“ + Einstieg auf der Startseite.
 
 ### Was der Betrieb noch beisteuern muss
 - OpenRouteService-Schlüssel als Supabase-Secret `ORS_API_KEY`, danach
   `booking_travel_mode` auf `routing` stellen.
-- Mitarbeiter in `staff` anlegen (mit `employee_id` und Standort-Koordinaten)
-  und Arbeitszeiten eintragen — ohne die gibt es keine Slots.
+- Standort-Koordinaten je Mitarbeiter (`staff.home_base_lat/lng`) nachtragen —
+  ohne sie greift der Einsatzradius nicht. Angelegt sind die beiden
+  Mitarbeiter mit HERO-Partner-ID bereits, mit Arbeitszeiten Mo–Fr 08–17 Uhr
+  als Startwert.
 - Feiertage einmal importieren (`booking-admin`, Bundesland `BW`).
 
 ### Tests
