@@ -62,6 +62,10 @@ Kunden können Projekte online einsehen und freigeben.
 - `src/pages/CustomerView.tsx` – Kundenansicht (alle Writes über customer-data mit Token)
 - `src/pages/ProboCatalog.tsx` – interner Probo-Katalog-Generator, Route
   `/probo-katalog` (unverlinkt, lazy, `docs/probo-katalog.md`)
+- `src/pages/BookingPage.tsx` – oeffentliche Terminbuchung `/termin/:projectId`
+  (lazy), dazu `BookingCancel.tsx` und `BookingStaffAction.tsx`
+- `src/components/admin/BookingTab.tsx` – Adminmenue-Reiter „Termine"
+  (`docs/terminbuchung.md`)
 
 ## Bekannte Architektur-Entscheidungen
 - Storage Bucket `project-files` ist **privat** (Phase 3, `docs/phase3-storage.md`).
@@ -101,6 +105,8 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
   (Import pro Bundesland aus öffentlicher Quelle, danach bearbeitbar)
 - `booking-hero-sync` – liest HERO-Termine in `busy_block(source='hero')`,
   damit sie Slots blockieren. pg_cron alle 10 Min (`x-poll-secret`)
+- `booking-mail` – Outbox-Worker fuer die Terminmails via Resend (Bestaetigung
+  mit .ics, interne Benachrichtigung, Erinnerung, Absage). pg_cron alle 5 Min
 
 ## Offene Baustellen
 1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)

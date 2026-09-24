@@ -13,9 +13,12 @@ hält Stand + bewusste Abweichungen fest.
   Schlüssel im Supabase-Secret `ORS_API_KEY` und `booking_travel_mode=routing`.
 - **HERO-Leserichtung:** ✅ `booking-hero-sync` deployt, pg_cron alle 10 Minuten,
   live gegen Produktion geprüft (12 Termine im Fenster → 10 Blocks).
-- **Offen:** Mail-Outbox-Worker,
-  öffentliche Buchungsseite `/termin/:projectId`, Admin-Reiter „Termine“,
-  Einstieg auf der Startseite.
+- **Mail-Outbox:** ✅ `booking-mail` deployt, pg_cron alle 5 Minuten.
+- **Oberflaechen:** ✅ öffentliche Buchungsseite `/termin/:projectId`,
+  Absage-/Umbuchungsseiten, Admin-Reiter „Termine“, Terminleiste auf der
+  Startseite.
+- **Offen:** ein Durchlauf mit echter Buchung (verschickt echte Mails),
+  Standort-Koordinaten der Mitarbeiter, ORS-Schlüssel fürs Routing.
 
 ### Migrationen
 | Datei | Inhalt |
@@ -24,6 +27,7 @@ hält Stand + bewusste Abweichungen fest.
 | `20260924000000_booking_m2_project_travel_holidays.sql` | `booking.project_id/hero_project_id/address_source/contact_overrides`, `travel_time_cache`, `public_holiday`, `booking_*`-Einstellungen, Regelset `aufmass_vor_ort` |
 | `20260924094606_booking_m3_geocode_staff_actions.sql` | `geocode_cache`, `booking.staff_token`, `booking.cancel_reason` |
 | `20260924110000_booking_m4_hero_sync.sql` | Eindeutigkeit `busy_block(source, source_ref, staff_id)`, Poll-Secret, pg_cron-Job |
+| `booking_m5_mail_cron` | pg_cron für `booking-mail` (alle 5 Min.), Index auf fällige `notification`-Zeilen |
 
 ## Abgestimmte Produktentscheidungen
 - **Ein Link = ein Projekt.** Ohne Projekt keine Buchung. Objektadresse aus HERO,
@@ -136,6 +140,54 @@ Der Lauf liest `calendar_events(start, end)` fuer die naechsten
   „Weiter nach Aufmaß“ legt ihren Termin um 09:00 Berlin an, HERO gibt ihn
   als `07:00+00:00` zurueck. Der Offset gilt also wortwoertlich.
 
+## M5 — Mails (`supabase/functions/booking-mail`)
+Die Buchung verschickt nichts, sie legt `notification`-Zeilen ab. Der Worker
+arbeitet sie ab (pg_cron alle 5 Minuten, `x-poll-secret`; Admin-Token für den
+Knopf „Offene Mails jetzt senden“). Grund: eine Buchung darf nicht scheitern,
+weil Resend gerade zickt, und die Erinnerung muss Tage später rausgehen.
+
+| Art | Empfänger | Inhalt |
+| --- | --- | --- |
+| `confirmation` | Kunde | Termin, Adresse, `.ics`-Anhang, Absage-Link |
+| `internal_new` | `booking_notify_internal` | Termin + zwei Knöpfe: umbuchen / absagen; Hinweis, falls HERO nicht geklappt hat |
+| `reminder` | Kunde | Erinnerung (Vorlauf aus `booking_reminder_hours`) |
+| `cancellation` | Kunde | Absage — Text unterscheidet, ob der Kunde selbst abgesagt hat |
+| `reschedule` | Kunde | Bitte, selbst einen neuen Termin zu wählen |
+
+Zwei Details, die sonst peinlich werden:
+- Eine **Erinnerung an einen abgesagten Termin** steht zum Buchungszeitpunkt
+  schon in der Outbox. Der Worker schaut deshalb beim Versenden noch einmal auf
+  den Status.
+- Die **Absage benutzt dieselbe `.ics`-UID** wie die Einladung (mit
+  `METHOD:CANCEL`, `SEQUENCE:1`), damit der Kalender den bestehenden Termin
+  trifft statt einen zweiten anzulegen.
+
+`.ics` und Mailtexte liegen als reine Module (`_shared/booking/ics.ts`,
+`mails.ts`) mit 30 Tests daneben: das Format ist streng (Faltung auf 75
+Oktette, Escaping, CRLF) und ein falscher Link in der Mail ist teurer als ein
+Rechenfehler.
+
+## M6 — Oberflächen
+- **`/termin/:projectId`** — öffentliche Buchungsseite, Calendly-Aufmachung.
+  Links der Anlass, rechts Tag und Uhrzeit, dann die Bestätigung. Adresse und
+  Kontakt aus HERO, editierbar; eine geänderte Adresse lässt die freien Zeiten
+  neu rechnen. Bei 409 wird sofort neu geladen.
+- **`/termin/absagen/:token`** — Absage durch den Kunden.
+- **`/termin/intern/:token?mode=cancel|reschedule`** — unsere zwei Knöpfe aus
+  der internen Mail. Beide Seiten fragen nach, bevor sie handeln: ein
+  Mailprogramm, das Links vorab anklickt (Outlook Safe Links, Virenscanner),
+  würde sonst von allein Termine absagen.
+- **Adminmenue → Reiter „Termine“** — Terminart, Personal mit Arbeitszeiten,
+  Feiertage, Anfahrt, HERO/Mails, kommende Termine, offene Mailschlange.
+  Alle Writes über `booking-admin`; die Function nimmt nur eine feste Liste
+  von Einstellungsschlüsseln und bekannte Regelset-Spalten an.
+- **Startseite** — schmale Leiste mit den Terminen von heute und morgen
+  (auf Klick sieben Tage). Liest direkt aus Supabase (RLS `is_staff()`) und
+  zeigt nichts, wenn es nichts gibt.
+
+Alle drei öffentlichen Seiten sind lazy geladen, damit luxon und
+react-day-picker nicht im Haupt-Bundle liegen.
+
 ## Bewusste Abweichungen vom Spec-Entwurf (§8/§14, gegen Repo geprüft)
 - **Einzelmandant:** kein `org_id`. Die App ist single-tenant; Struktur bleibt additiv erweiterbar.
 - **`staff` verweist auf `employees`** (`employee_id`, nullable) statt Identitäten zu duplizieren.
@@ -162,10 +214,11 @@ Mindest-Vorlaufzeit, Buchungsfenster, Tageslimits, Qualifikation, Zuweisung
 (`fixed`/`round_robin`/`by_skill`/`collective`), Notfall-Reserve.
 
 ## Nächste Schritte
-1. Outbox-Worker: `notification` abarbeiten via Resend — Kundenbestätigung mit
-   `.ics`, interne Mail mit Umbuchen-/Absagen-Link, Erinnerung.
-2. Öffentliche Buchungsseite `/termin/:projectId` (Calendly-Aufmachung).
-3. Admin-Reiter „Termine“ + Einstieg auf der Startseite.
+1. **Ein Durchlauf mit echter Buchung.** Alles einzeln geprüft, aber die Kette
+   Buchung → HERO-Eintrag → Mails ist noch nicht am Stück gelaufen. Dabei gehen
+   echte Mails raus (Bestätigung an den Kunden, Benachrichtigung an uns).
+2. Kleinigkeit für später: der Buchungslink könnte direkt aus der
+   Projektansicht kopierbar sein, statt die Projekt-ID von Hand zu setzen.
 
 ### Was der Betrieb noch beisteuern muss
 - OpenRouteService-Schlüssel als Supabase-Secret `ORS_API_KEY`, danach
