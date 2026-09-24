@@ -78,6 +78,8 @@ export interface BuildArgs {
   holidays?: string[];
   /** Fahrzeit-Anbieter. Fehlt er, nimmt die Engine ihre eigene Schaetzung. */
   travelProvider?: TravelTimeProvider;
+  /** Einsatzradius in Minuten (betriebsweite Einstellung, nicht pro Regelset). */
+  maxTravelMin?: number | null;
 }
 
 export function buildComputeInput(a: BuildArgs): ComputeInput {
@@ -130,5 +132,6 @@ export function buildComputeInput(a: BuildArgs): ComputeInput {
     address: a.address ?? null,
     timezone: tz,
     travelProvider: a.travelProvider,
+    maxTravelMin: a.maxTravelMin ?? null,
   };
 }

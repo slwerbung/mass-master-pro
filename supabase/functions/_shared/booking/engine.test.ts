@@ -26,6 +26,7 @@ function base(over: Partial<ComputeInput> = {}): ComputeInput {
     address: over.address,
     timezone: TZ,
     travelProvider: over.travelProvider,
+    maxTravelMin: over.maxTravelMin,
   };
 }
 
@@ -177,5 +178,48 @@ describe("computeSlots — Ausnahmen & Reserve", () => {
     }));
     expect(slots.map((s) => s.startsAt)).not.toContain(reserved);
     expect(slots.length).toBe(all.length - 1);
+  });
+});
+
+describe("computeSlots — Einsatzradius", () => {
+  // Fahrzeit-Attrappe: alles, was nicht der Standort selbst ist, liegt fix
+  // weit weg. So haengt der Test nicht an der Haversine-Rechnung.
+  const fixed = (minutes: number): TravelTimeProvider => ({ minutesBetween: () => minutes });
+  const address = { lat: 48.8303, lng: 9.3170 };
+  const home = { lat: 48.8757, lng: 9.3963 };
+
+  it("bietet einen Mitarbeiter nicht an, dessen Standort zu weit weg liegt", async () => {
+    const slots = await computeSlots(base({
+      staffPool: [{ id: "a", skills: [], homeBase: home }],
+      address, travelProvider: fixed(90), maxTravelMin: 45,
+    }));
+    expect(slots.length).toBe(0);
+  });
+
+  it("laesst ihn drin, wenn er innerhalb des Radius liegt", async () => {
+    const slots = await computeSlots(base({
+      staffPool: [{ id: "a", skills: [], homeBase: home }],
+      address, travelProvider: fixed(20), maxTravelMin: 45,
+    }));
+    expect(slots.length).toBe(4);
+  });
+
+  it("greift ohne Radius nicht", async () => {
+    for (const maxTravelMin of [0, null, undefined]) {
+      const slots = await computeSlots(base({
+        staffPool: [{ id: "a", skills: [], homeBase: home }],
+        address, travelProvider: fixed(600), maxTravelMin,
+      }));
+      expect(slots.length).toBe(4);
+    }
+  });
+
+  it("sortiert niemanden wegen eines fehlenden Standorts aus", async () => {
+    // Sonst waere die Terminliste leer, nur weil eine Koordinate fehlt.
+    const slots = await computeSlots(base({
+      staffPool: [{ id: "a", skills: [] }],
+      address, travelProvider: fixed(600), maxTravelMin: 45,
+    }));
+    expect(slots.length).toBe(4);
   });
 });

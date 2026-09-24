@@ -94,6 +94,11 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 - `probo-catalog` – Probo-Reseller-API (`list`/`detail`/`image`-Proxy) für den
   internen Katalog-Generator, verlangt Admin- oder Employee-Token
   (`docs/probo-katalog.md`)
+- `booking-api` – öffentliche Terminbuchung, projektbezogen (`context`/
+  `availability`/`create`/`cancel`/`staff-action`). Rechnet Slots immer
+  serverseitig, schreibt den Termin am HERO-Projekt (`docs/terminbuchung.md`)
+- `booking-admin` – Admin-Aktionen zur Terminbuchung, Schwerpunkt Feiertage
+  (Import pro Bundesland aus öffentlicher Quelle, danach bearbeitbar)
 
 ## Offene Baustellen
 1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)

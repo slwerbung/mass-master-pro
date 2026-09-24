@@ -189,6 +189,7 @@ export async function heroDeleteAppointment(apiKey: string, eventId: number): Pr
 }
 
 // ── Geocoding ──
+
 export interface GeocodeCache {
   get(q: string): Promise<{ lat: number | null; lng: number | null } | null> | { lat: number | null; lng: number | null } | null;
   set(q: string, geo: { lat: number | null; lng: number | null }): Promise<void> | void;

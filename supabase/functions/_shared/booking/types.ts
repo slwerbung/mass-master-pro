@@ -94,4 +94,10 @@ export interface ComputeInput {
   /** IANA-Zone, default "Europe/Berlin" */
   timezone?: string;
   travelProvider?: TravelTimeProvider;
+  /**
+   * Einsatzradius in Minuten Fahrzeit ab dem Standort des Mitarbeiters. Liegt
+   * die Adresse weiter weg, wird er fuer diesen Termin nicht angeboten. 0 oder
+   * nicht gesetzt ⇒ keine Begrenzung.
+   */
+  maxTravelMin?: number | null;
 }

@@ -131,7 +131,21 @@ export async function computeSlots(input: ComputeInput): Promise<Slot[]> {
     busyByStaff.set(b.staffId, arr);
   }
 
-  const eligibleStaff = input.staffPool.filter((st) => subset(rs.requiredSkills, st.skills));
+  let eligibleStaff = input.staffPool.filter((st) => subset(rs.requiredSkills, st.skills));
+
+  // Einsatzradius: was zu weit weg ist, wird gar nicht erst angeboten — sonst
+  // frisst eine Anfahrt quer durchs Land den halben Tag. Ohne Standort im
+  // Datensatz laesst sich nichts messen, dann bleibt der MA drin; eine fehlende
+  // Koordinate darf nicht die ganze Terminliste leeren.
+  if (input.address && (input.maxTravelMin ?? 0) > 0) {
+    const maxMin = input.maxTravelMin!;
+    const withinReach: Staff[] = [];
+    for (const st of eligibleStaff) {
+      if (!st.homeBase) { withinReach.push(st); continue; }
+      if (await provider.minutesBetween(st.homeBase, input.address) <= maxMin) withinReach.push(st);
+    }
+    eligibleStaff = withinReach;
+  }
 
   const firstDay = DateTime.fromMillis(rangeFromMs).setZone(tz).startOf("day");
   const lastDay = DateTime.fromMillis(rangeToMs).setZone(tz).startOf("day");

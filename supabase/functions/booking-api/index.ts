@@ -23,7 +23,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { DateTime } from "luxon";
 import { computeSlots } from "../_shared/booking/engine.ts";
-import { buildComputeInput, ruleSetConfigFromRow } from "../_shared/booking/inputs.ts";
+import { buildComputeInput } from "../_shared/booking/inputs.ts";
 import { createTravelProvider, type TravelCache } from "../_shared/booking/travel.ts";
 import {
   formatAddress, geocode, heroCreateAppointment, heroDeleteAppointment,
@@ -45,6 +45,7 @@ const sb = () => createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPAB
 type DB = ReturnType<typeof sb>;
 
 // ── Einstellungen ──
+
 interface Settings {
   travelMode: "heuristic" | "routing";
   avgKmh: number;
@@ -53,7 +54,6 @@ interface Settings {
   maxTravelMin: number;
   holidayState: string;
   heroWrite: boolean;
-  heroRead: boolean;
   heroCategoryId: number | null;
   heroApiKey: string | null;
   reminderHours: number;
@@ -63,7 +63,7 @@ async function loadSettings(db: DB): Promise<Settings> {
   const { data } = await db.from("app_config").select("key, value").in("key", [
     "booking_travel_mode", "booking_travel_avg_kmh", "booking_travel_detour",
     "booking_travel_overhead", "booking_travel_max_min", "booking_holiday_state",
-    "booking_hero_write", "booking_hero_read", "booking_hero_category_id",
+    "booking_hero_write", "booking_hero_category_id",
     "booking_reminder_hours", "hero_api_key", "hero_enabled",
   ]);
   const m = new Map((data ?? []).map((r: any) => [r.key, r.value]));
@@ -81,7 +81,6 @@ async function loadSettings(db: DB): Promise<Settings> {
     maxTravelMin: num("booking_travel_max_min", 45),
     holidayState: String(m.get("booking_holiday_state") ?? "BW"),
     heroWrite: heroOn && m.get("booking_hero_write") !== "false",
-    heroRead: heroOn && m.get("booking_hero_read") !== "false",
     heroCategoryId: Number.isFinite(cat) && cat > 0 ? cat : null,
     heroApiKey: heroOn ? (m.get("hero_api_key") as string) || null : null,
     reminderHours: num("booking_reminder_hours", 24),
@@ -123,6 +122,7 @@ function geoCache(db: DB): GeocodeCache {
 }
 
 // ── Projekt -> HERO ──
+
 async function resolveProject(db: DB, projectId: string) {
   const { data } = await db.from("projects")
     .select("id, project_number, customer_name, custom_fields").eq("id", projectId).maybeSingle();
@@ -164,6 +164,7 @@ async function buildContext(db: DB, s: Settings, projectId: string) {
 }
 
 // ── Verfuegbarkeit ──
+
 async function availabilityFor(
   db: DB, s: Settings, from: string, to: string, address: Geo | null,
 ) {
@@ -208,12 +209,13 @@ async function availabilityFor(
     busy: busy ?? [], bookingCounts: bookings ?? [], categoryBlocks,
     holidays: (hol ?? []).map((h: any) => String(h.date)),
     now: new Date().toISOString(), from, to, address, timezone: TZ,
-    travelProvider,
+    travelProvider, maxTravelMin: s.maxTravelMin,
   });
   return { rs, slots: await computeSlots(input) };
 }
 
 // ── Handler ──
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   const db = sb();
