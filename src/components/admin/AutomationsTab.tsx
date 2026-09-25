@@ -94,7 +94,7 @@ const AutomationsTab = ({ invoke }: { invoke: InvokeFn }) => {
     try {
       const [a, r] = await Promise.all([
         invoke("list_automations"),
-        invoke("list_automation_runs", { limit: 30 }),
+        invoke("list_automation_runs", { limit: 15 }),
       ]);
       setAutomations((a?.automations || []) as Automation[]);
       setRuns((r?.runs || []) as AutomationRun[]);
