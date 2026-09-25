@@ -1,12 +1,18 @@
 // Adminmenue, Reiter "Termine".
 //
-// Alle Writes laufen ueber die Edge Function booking-admin (direkte
-// Supabase-Writes gibt es im Adminbereich nicht). Die Function laesst nur
-// bekannte Einstellungsschluessel und Regelset-Spalten durch.
+// Alle Writes laufen ueber booking-admin (direkte Supabase-Writes gibt es im
+// Adminbereich nicht). Die HERO-Zuordnung der Mitarbeiter und die Listen der
+// HERO-Kategorien/Partner kommen aus admin-manage — also genau dieselben
+// Aktionen, die der Reiter "Mitarbeiter" schon benutzt. Zwei Wege fuer
+// dieselbe Sache waere die schlechtere Loesung.
 //
-// Aufbau wie abgestimmt, von oben nach unten in der Reihenfolge, in der man es
-// einrichtet: Terminart, Personal mit Arbeitszeiten, Feiertage, Fahrzeit,
-// HERO/Mails. Darunter die kommenden Termine.
+// Aufbau in der Reihenfolge, in der man es einrichtet:
+//   1. Terminarten (mehrere! Auswahl links, Einstellungen rechts)
+//   2. Personal: Arbeitszeiten, Qualifikation, Standort, HERO-Zuordnung
+//   3. Feiertage
+//   4. Anfahrt
+//   5. HERO und Mails
+//   6. Kommende Termine und offene Mails
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DateTime } from "luxon";
@@ -18,13 +24,14 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  CalendarClock, CalendarDays, Car, Clock, Loader2, Mail, Plus, RefreshCw,
-  Trash2, Users, Link2, AlertTriangle,
+  AlertTriangle, CalendarClock, CalendarDays, Car, Clock, Link2, Loader2, Mail,
+  MapPin, Plus, RefreshCw, Trash2, Users,
 } from "lucide-react";
 
 const WOCHENTAGE = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
@@ -39,26 +46,32 @@ const BUNDESLAENDER: [string, string][] = [
 interface WorkingHour { id?: string; staff_id?: string; weekday: number; start_time: string; end_time: string }
 interface StaffRow {
   id: string; employee_id: string | null; display_name: string; active: boolean;
-  skills: string[] | null; home_base_lat: number | null; home_base_lng: number | null;
+  skills: string[] | null; home_base_address: string | null;
+  home_base_lat: number | null; home_base_lng: number | null;
+  heroPartnerId: number | null;
   workingHours: WorkingHour[];
 }
 interface RuleSetRow {
-  id: string; label: string; active: boolean; duration_minutes: number;
+  id: string; key: string; label: string; active: boolean; duration_minutes: number;
   buffer_before_min: number; buffer_after_min: number; travel_buffer: boolean;
   min_notice_min: number; booking_window_days: number; slot_granularity_min: number;
   max_per_day_global: number | null; max_per_day_per_staff: number | null;
   requires_approval: boolean; required_skills: string[] | null;
+  assignment_mode: string;
+  categoryKey: string | null; categoryLabel: string | null; isBookable: boolean;
+  staffIds: string[]; heroCategoryId: number | null;
 }
-interface CategoryRow { key: string; label: string; source: string; blocks_availability: boolean }
+interface CategoryRow { id: string; key: string; label: string; source: string; blocks_availability: boolean; is_bookable: boolean }
 interface EmployeeRow { id: string; name: string; hero_partner_id: number | null; uebernommen: boolean }
 interface HolidayRow { id: string; date: string; name: string; origin: string; active: boolean }
 interface BookingRow {
   id: string; status: string; starts_at: string; ends_at: string;
-  customer_name: string | null; customer_email: string | null; address: string | null;
-  cancel_reason: string | null; hero_event_ref: string | null; project_id: string | null;
+  customer_name: string | null; address: string | null; cancel_reason: string | null;
+  hero_event_ref: string | null; project_id: string | null;
   staff: { display_name: string } | null; rule_set: { label: string } | null;
 }
 interface QueueRow { id: string; kind: string; send_after: string; attempts: number; last_error: string | null }
+interface Option { value: string; label: string }
 
 const hhmm = (t: string) => (t || "").slice(0, 5);
 const fmt = (iso: string) => DateTime.fromISO(iso, { zone: "utc" }).setZone("Europe/Berlin").setLocale("de")
@@ -70,19 +83,34 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
   const [busy, setBusy] = useState<string | null>(null);
 
   const [settings, setSettings] = useState<Record<string, string>>({});
-  const [ruleSet, setRuleSet] = useState<RuleSetRow | null>(null);
+  const [ruleSets, setRuleSets] = useState<RuleSetRow[]>([]);
+  const [gewaehlt, setGewaehlt] = useState<string | null>(null);
   const [staff, setStaff] = useState<StaffRow[]>([]);
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [holidays, setHolidays] = useState<HolidayRow[]>([]);
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [queue, setQueue] = useState<QueueRow[]>([]);
+  const [heroAktiv, setHeroAktiv] = useState(false);
+  const [routingKey, setRoutingKey] = useState(false);
+  const [heroPartner, setHeroPartner] = useState<Option[]>([]);
+  const [heroKategorien, setHeroKategorien] = useState<Option[]>([]);
 
   const [neuesDatum, setNeuesDatum] = useState("");
   const [neuerName, setNeuerName] = useState("");
 
   const invoke = useCallback(async (action: string, params: Record<string, unknown> = {}) => {
     const { data, error } = await supabase.functions.invoke("booking-admin", {
+      body: { adminToken, action, ...params },
+    });
+    if (error) throw new Error((data as any)?.error || error.message || "Netzwerkfehler");
+    if ((data as any)?.error) throw new Error((data as any).error);
+    return data as any;
+  }, [adminToken]);
+
+  /** Dieselben Aktionen wie im Reiter "Mitarbeiter" — nicht nachgebaut. */
+  const invokeAdmin = useCallback(async (action: string, params: Record<string, unknown> = {}) => {
+    const { data, error } = await supabase.functions.invoke("admin-manage", {
       body: { adminToken, action, ...params },
     });
     if (error) throw new Error((data as any)?.error || error.message || "Netzwerkfehler");
@@ -98,10 +126,14 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
     try {
       const cfg = await invoke("get_config");
       setSettings(cfg.settings ?? {});
-      setRuleSet(cfg.ruleSet ?? null);
+      setRuleSets(cfg.ruleSets ?? []);
+      setGewaehlt((g) => g ?? (cfg.ruleSets?.[0]?.key ?? null));
       setStaff(cfg.staff ?? []);
       setCategories(cfg.categories ?? []);
       setEmployees(cfg.employees ?? []);
+      setHeroAktiv(!!cfg.heroAktiv);
+      setRoutingKey(!!cfg.routingKeyVorhanden);
+
       const jahr = new Date().getFullYear();
       const [h, b, q] = await Promise.all([
         invoke("list_holidays", {
@@ -114,12 +146,25 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
       setHolidays(h.holidays ?? []);
       setBookings(b.bookings ?? []);
       setQueue(q.queue ?? []);
+
+      if (cfg.heroAktiv) {
+        // Listen aus HERO. Fehlschlag ist nicht schlimm: die Zuordnung laesst
+        // sich dann nur nicht aus einer Liste waehlen.
+        try {
+          const [p, k] = await Promise.all([
+            invokeAdmin("hero_list_options", { source: "hero_partners" }),
+            invokeAdmin("hero_list_options", { source: "hero_calendar_categories" }),
+          ]);
+          setHeroPartner(p?.options ?? []);
+          setHeroKategorien(k?.options ?? []);
+        } catch { /* Handeingabe bleibt moeglich */ }
+      }
     } catch (e) {
       setFehler((e as Error).message);
     } finally {
       setLaden(false);
     }
-  }, [invoke]);
+  }, [invoke, invokeAdmin]);
 
   useEffect(() => { if (adminToken) ladeAlles(); }, [adminToken, ladeAlles]);
 
@@ -135,10 +180,27 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
     toast.success("Einstellungen gespeichert");
   });
 
-  const speichereRuleSet = () => mitBusy("ruleset", async () => {
-    if (!ruleSet) return;
-    await invoke("set_rule_set", { patch: ruleSet });
-    toast.success("Terminart gespeichert");
+  const art = ruleSets.find((r) => r.key === gewaehlt) ?? null;
+  const setArt = (patch: Partial<RuleSetRow>) =>
+    setRuleSets((list) => list.map((r) => r.key === gewaehlt ? { ...r, ...patch } : r));
+
+  const speichereArt = () => mitBusy("art", async () => {
+    if (!art) return;
+    await invoke("set_rule_set", {
+      key: art.key,
+      patch: {
+        label: art.label, active: art.active, duration_minutes: art.duration_minutes,
+        buffer_before_min: art.buffer_before_min, buffer_after_min: art.buffer_after_min,
+        travel_buffer: art.travel_buffer, min_notice_min: art.min_notice_min,
+        booking_window_days: art.booking_window_days, slot_granularity_min: art.slot_granularity_min,
+        max_per_day_global: art.max_per_day_global, max_per_day_per_staff: art.max_per_day_per_staff,
+        requires_approval: art.requires_approval, required_skills: art.required_skills ?? [],
+      },
+      heroCategoryId: art.heroCategoryId ?? null,
+    });
+    await invoke("set_rule_set_staff", { key: art.key, staffIds: art.staffIds });
+    toast.success(`„${art.label}“ gespeichert`);
+    await ladeAlles();
   });
 
   const importiereFeiertage = () => mitBusy("holidays", async () => {
@@ -156,7 +218,8 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
     if (error) throw new Error((data as any)?.error || error.message);
     if ((data as any)?.skipped) { toast.info(String((data as any).skipped)); return; }
     if ((data as any)?.error) throw new Error((data as any).error);
-    toast.success(`${(data as any).events} Termine gelesen, ${(data as any).blocks} Sperren, ${(data as any).removed} entfernt`);
+    const d = data as any;
+    toast.success(`${d.events} Termine gelesen, ${d.blocks} Sperren, ${d.removed} entfernt`);
     await ladeAlles();
   });
 
@@ -169,10 +232,18 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
     setQueue((await invoke("mail_queue")).queue ?? []);
   });
 
-  const buchungsLink = useMemo(() => {
-    const p = bookings.find((b) => b.project_id)?.project_id;
-    return p ? `${window.location.origin}/termin/${p}` : null;
-  }, [bookings]);
+  /** Alle Qualifikationen, die irgendwo vorkommen — damit man sie ankreuzen
+   *  statt tippen kann. Tippfehler wie "aufmaß" vs. "aufmass" sind sonst
+   *  unsichtbar und kosten einen halben Tag Suche. */
+  const skillListe = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of ruleSets) for (const q of r.required_skills ?? []) set.add(q);
+    for (const s of staff) for (const q of s.skills ?? []) set.add(q);
+    return [...set].sort();
+  }, [ruleSets, staff]);
+
+  const offeneMitarbeiter = employees.filter((e) => !e.uebernommen);
+  const ohneHero = heroAktiv ? staff.filter((s) => s.active && !s.heroPartnerId) : [];
 
   if (laden) {
     return (
@@ -194,71 +265,188 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
 
   return (
     <div className="space-y-4">
-      {/* 1. Terminart */}
+      {/* 1. Terminarten */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
-            <Clock className="h-4 w-4" /> Terminart
+            <Clock className="h-4 w-4" /> Terminarten
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {!ruleSet ? (
-            <p className="text-sm text-muted-foreground">Keine Terminart eingerichtet.</p>
-          ) : (
-            <>
+          <p className="text-sm text-muted-foreground">
+            Jede Terminart hat eigene Dauer, Puffer und Zuständige. Was hier „buchbar“ ist,
+            kann der Kunde über den Terminlink auswählen.
+          </p>
+
+          <div className="border rounded-lg divide-y">
+            {ruleSets.map((r) => (
+              <button
+                key={r.key}
+                onClick={() => setGewaehlt(r.key)}
+                className={`w-full text-left px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm
+                  ${r.key === gewaehlt ? "bg-accent" : "hover:bg-muted/60"}`}
+              >
+                <span className="font-medium flex-1 min-w-[140px]">{r.label}</span>
+                <span className="text-muted-foreground">{r.duration_minutes} Min.</span>
+                {(r.required_skills ?? []).length > 0 && (
+                  <span className="text-muted-foreground">
+                    {(r.required_skills ?? []).join(", ")}
+                  </span>
+                )}
+                <span className="text-muted-foreground">
+                  {r.staffIds.length > 0 ? `${r.staffIds.length} zugeordnet` : "alle passenden"}
+                </span>
+                {!r.active
+                  ? <Badge variant="outline">aus</Badge>
+                  : r.isBookable
+                    ? <Badge variant="secondary">buchbar</Badge>
+                    : <Badge variant="outline">nur intern</Badge>}
+              </button>
+            ))}
+          </div>
+
+          {art && (
+            <div className="border rounded-lg p-3 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium">{art.label}</p>
+                <Badge variant="outline" className="font-mono text-[11px]">{art.key}</Badge>
+              </div>
+
               <div className="grid gap-3 sm:grid-cols-2">
                 <Feld label="Bezeichnung" hilfe="So steht es auf der Buchungsseite und in der Mail.">
-                  <Input value={ruleSet.label}
-                    onChange={(e) => setRuleSet({ ...ruleSet, label: e.target.value })} />
+                  <Input value={art.label} onChange={(e) => setArt({ label: e.target.value })} />
                 </Feld>
                 <Feld label="Dauer (Minuten)">
-                  <Input type="number" min={15} step={15} value={ruleSet.duration_minutes}
-                    onChange={(e) => setRuleSet({ ...ruleSet, duration_minutes: Number(e.target.value) })} />
+                  <Input type="number" min={15} step={15} value={art.duration_minutes}
+                    onChange={(e) => setArt({ duration_minutes: Number(e.target.value) })} />
                 </Feld>
                 <Feld label="Puffer davor (Min.)" hilfe="Zeit, die vor dem Termin frei bleiben muss.">
-                  <Input type="number" min={0} step={5} value={ruleSet.buffer_before_min}
-                    onChange={(e) => setRuleSet({ ...ruleSet, buffer_before_min: Number(e.target.value) })} />
+                  <Input type="number" min={0} step={5} value={art.buffer_before_min}
+                    onChange={(e) => setArt({ buffer_before_min: Number(e.target.value) })} />
                 </Feld>
                 <Feld label="Puffer danach (Min.)">
-                  <Input type="number" min={0} step={5} value={ruleSet.buffer_after_min}
-                    onChange={(e) => setRuleSet({ ...ruleSet, buffer_after_min: Number(e.target.value) })} />
+                  <Input type="number" min={0} step={5} value={art.buffer_after_min}
+                    onChange={(e) => setArt({ buffer_after_min: Number(e.target.value) })} />
                 </Feld>
-                <Feld label="Vorlaufzeit (Min.)" hilfe="1440 = der Kunde kann frühestens morgen buchen.">
-                  <Input type="number" min={0} step={60} value={ruleSet.min_notice_min}
-                    onChange={(e) => setRuleSet({ ...ruleSet, min_notice_min: Number(e.target.value) })} />
+                <Feld label="Vorlaufzeit (Min.)" hilfe="1440 = frühestens morgen buchbar.">
+                  <Input type="number" min={0} step={60} value={art.min_notice_min}
+                    onChange={(e) => setArt({ min_notice_min: Number(e.target.value) })} />
                 </Feld>
                 <Feld label="Buchbar bis (Tage)">
-                  <Input type="number" min={1} value={ruleSet.booking_window_days}
-                    onChange={(e) => setRuleSet({ ...ruleSet, booking_window_days: Number(e.target.value) })} />
+                  <Input type="number" min={1} value={art.booking_window_days}
+                    onChange={(e) => setArt({ booking_window_days: Number(e.target.value) })} />
                 </Feld>
-                <Feld label="Raster (Min.)" hilfe="Im Abstand von 15 Min. werden Startzeiten angeboten.">
-                  <Input type="number" min={5} step={5} value={ruleSet.slot_granularity_min}
-                    onChange={(e) => setRuleSet({ ...ruleSet, slot_granularity_min: Number(e.target.value) })} />
+                <Feld label="Raster (Min.)" hilfe="Abstand der angebotenen Startzeiten.">
+                  <Input type="number" min={5} step={5} value={art.slot_granularity_min}
+                    onChange={(e) => setArt({ slot_granularity_min: Number(e.target.value) })} />
                 </Feld>
                 <Feld label="Max. Termine pro Tag" hilfe="Leer = unbegrenzt.">
-                  <Input type="number" min={0} value={ruleSet.max_per_day_global ?? ""}
-                    onChange={(e) => setRuleSet({
-                      ...ruleSet,
+                  <Input type="number" min={0} value={art.max_per_day_global ?? ""}
+                    onChange={(e) => setArt({
                       max_per_day_global: e.target.value === "" ? null : Number(e.target.value),
                     })} />
                 </Feld>
               </div>
+
+              <div>
+                <Label className="text-xs">Nötige Qualifikation</Label>
+                <div className="flex flex-wrap gap-3 mt-1.5">
+                  {skillListe.length === 0 && (
+                    <span className="text-xs text-muted-foreground">Noch keine Qualifikationen angelegt.</span>
+                  )}
+                  {skillListe.map((q) => {
+                    const an = (art.required_skills ?? []).includes(q);
+                    return (
+                      <label key={q} className="flex items-center gap-1.5 text-sm">
+                        <Checkbox checked={an} onCheckedChange={(v) => setArt({
+                          required_skills: v
+                            ? [...(art.required_skills ?? []), q]
+                            : (art.required_skills ?? []).filter((x) => x !== q),
+                        })} />
+                        {q}
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Nur wer alle angekreuzten Qualifikationen hat, wird für diese Terminart angeboten.
+                </p>
+              </div>
+
+              <div>
+                <Label className="text-xs">Wer macht das?</Label>
+                <div className="flex flex-wrap gap-3 mt-1.5">
+                  {staff.map((s) => (
+                    <label key={s.id} className="flex items-center gap-1.5 text-sm">
+                      <Checkbox
+                        checked={art.staffIds.includes(s.id)}
+                        onCheckedChange={(v) => setArt({
+                          staffIds: v
+                            ? [...art.staffIds, s.id]
+                            : art.staffIds.filter((x) => x !== s.id),
+                        })}
+                      />
+                      {s.display_name}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Niemand angekreuzt = jeder mit der nötigen Qualifikation. Eine Auswahl schränkt
+                  zusätzlich ein.
+                </p>
+              </div>
+
+              {heroAktiv && (
+                <Feld label="HERO-Kategorie für diesen Termin"
+                  hilfe="Unter dieser Kategorie landet der Termin in HERO. Ohne Angabe gilt die allgemeine Einstellung weiter unten.">
+                  <Select
+                    value={art.heroCategoryId ? String(art.heroCategoryId) : "none"}
+                    onValueChange={(v) => setArt({ heroCategoryId: v === "none" ? null : Number(v) })}
+                  >
+                    <SelectTrigger><SelectValue placeholder="— allgemeine Einstellung —" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— allgemeine Einstellung —</SelectItem>
+                      {art.heroCategoryId && !heroKategorien.some((o) => o.value === String(art.heroCategoryId)) && (
+                        <SelectItem value={String(art.heroCategoryId)}>HERO-ID {art.heroCategoryId}</SelectItem>
+                      )}
+                      {heroKategorien.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Feld>
+              )}
+
               <Schalter
                 label="Anfahrt einrechnen"
                 hilfe="Prüft, ob zwischen zwei Terminen genug Zeit für die Fahrt bleibt."
-                checked={ruleSet.travel_buffer}
-                onChange={(v) => setRuleSet({ ...ruleSet, travel_buffer: v })}
+                checked={art.travel_buffer}
+                onChange={(v) => setArt({ travel_buffer: v })}
               />
               <Schalter
                 label="Termin muss bestätigt werden"
                 hilfe="Aus: der Termin gilt sofort (so abgestimmt). An: er ist erst vorgemerkt."
-                checked={ruleSet.requires_approval}
-                onChange={(v) => setRuleSet({ ...ruleSet, requires_approval: v })}
+                checked={art.requires_approval}
+                onChange={(v) => setArt({ requires_approval: v })}
               />
-              <Button size="sm" disabled={busy === "ruleset"} onClick={speichereRuleSet}>
-                {busy === "ruleset" && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />} Terminart speichern
+              <Schalter
+                label="Terminart aktiv"
+                hilfe="Aus: wird nirgends angeboten, bestehende Termine bleiben."
+                checked={art.active}
+                onChange={(v) => setArt({ active: v })}
+              />
+
+              {art.active && !art.isBookable && (
+                <p className="text-xs text-amber-700">
+                  Die Kategorie „{art.categoryLabel ?? art.categoryKey}“ ist nicht als buchbar
+                  markiert — diese Terminart taucht auf der Buchungsseite deshalb nicht auf.
+                </p>
+              )}
+
+              <Button size="sm" disabled={busy === "art"} onClick={speichereArt}>
+                {busy === "art" && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />} Terminart speichern
               </Button>
-            </>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -276,51 +464,73 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
             sich aus den Arbeitszeiten — eine zweite Liste gibt es bewusst nicht.
           </p>
 
-          {employees.some((e) => !e.uebernommen && e.hero_partner_id) && (
-            <div className="rounded-lg border p-3 text-sm flex items-center justify-between gap-3">
-              <span>
-                {employees.filter((e) => !e.uebernommen && e.hero_partner_id).length} Mitarbeiter mit
-                HERO-Zuordnung sind noch nicht als Personal angelegt.
-              </span>
-              <Button size="sm" variant="outline" disabled={busy === "syncstaff"}
-                onClick={() => mitBusy("syncstaff", async () => {
-                  const r = await invoke("sync_staff_from_employees");
-                  toast.success(`${r.angelegt} übernommen (Mo–Fr 08–17 Uhr als Start)`);
-                  await ladeAlles();
-                })}>
-                <Plus className="h-3.5 w-3.5 mr-1" /> Übernehmen
-              </Button>
-            </div>
-          )}
-
           {(() => {
-            // Verlangt die Terminart eine Qualifikation, die niemand hat, gibt
-            // es keine freien Zeiten — und nichts sagt einem warum. Genau das
-            // ist beim Testlauf passiert.
-            const noetig = ruleSet?.required_skills ?? [];
-            if (noetig.length === 0) return null;
-            const passt = staff.some((s) =>
-              s.active && noetig.every((q) => (s.skills ?? []).includes(q)));
-            if (passt) return null;
+            // Verlangt eine buchbare Terminart eine Qualifikation, die niemand
+            // hat, findet der Kunde keine Zeiten und nichts sagt einem warum.
+            const luecken = ruleSets.filter((r) =>
+              r.active && r.isBookable && (r.required_skills ?? []).length > 0 &&
+              !staff.some((s) => s.active && (r.required_skills ?? []).every((q) => (s.skills ?? []).includes(q))));
+            if (luecken.length === 0) return null;
             return (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                Die Terminart verlangt {noetig.map((q) => `\u201e${q}\u201c`).join(", ")} — das hat
-                gerade niemand. Solange das so ist, findet der Kunde keine freien Zeiten.
-                Trage die Qualifikation unten beim passenden Mitarbeiter ein.
+                Für {luecken.map((r) => `„${r.label}“`).join(", ")} hat niemand die nötige
+                Qualifikation. Solange das so ist, findet der Kunde dafür keine freien Zeiten.
               </div>
             );
           })()}
+
+          {ohneHero.length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              {ohneHero.map((s) => s.display_name).join(", ")}{" "}
+              {ohneHero.length === 1 ? "ist" : "sind"} nicht mit HERO verknüpft. Dann blockieren
+              HERO-Termine dieser Person keine Zeiten, und unsere Termine landen in HERO ohne
+              Zuständigen. Unten zuordnen.
+            </div>
+          )}
+
+          {offeneMitarbeiter.length > 0 && (
+            <div className="rounded-lg border p-3 space-y-2">
+              <p className="text-sm">Noch nicht als Personal angelegt:</p>
+              <div className="flex flex-wrap gap-2">
+                {offeneMitarbeiter.map((e) => (
+                  <Button
+                    key={e.id} size="sm" variant="outline" disabled={busy === `emp-${e.id}`}
+                    onClick={() => mitBusy(`emp-${e.id}`, async () => {
+                      await invoke("sync_staff_from_employees", { employeeIds: [e.id] });
+                      toast.success(`${e.name} übernommen (Mo–Fr 08–17 Uhr als Start)`);
+                      await ladeAlles();
+                    })}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" /> {e.name}
+                    {heroAktiv && !e.hero_partner_id && (
+                      <span className="ml-1 text-[11px] text-muted-foreground">(ohne HERO)</span>
+                    )}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {staff.length === 0 ? (
             <p className="text-sm text-muted-foreground">Noch kein Personal angelegt.</p>
           ) : staff.map((s) => (
             <StaffKarte
-              key={s.id} staff={s} busy={busy}
+              key={s.id} staff={s} busy={busy} skillListe={skillListe}
+              heroAktiv={heroAktiv} heroPartner={heroPartner} routingKey={routingKey}
+              onHeroPartner={async (wert) => mitBusy(`hero-${s.id}`, async () => {
+                if (!s.employee_id) throw new Error("Dieses Personal hängt an keinem Mitarbeiter-Datensatz");
+                await invokeAdmin("set_employee_hero_partner", {
+                  employeeId: s.employee_id, heroPartnerId: wert,
+                });
+                setStaff((list) => list.map((x) =>
+                  x.id === s.id ? { ...x, heroPartnerId: wert ? Number(wert) : null } : x));
+                toast.success("HERO-Zuordnung gespeichert");
+              })}
               onSpeichern={async (patch) => mitBusy(`staff-${s.id}`, async () => {
-                await invoke("staff_upsert", {
+                const res = await invoke("staff_upsert", {
                   id: s.id, displayName: patch.display_name, active: patch.active,
-                  employeeId: s.employee_id, homeBaseLat: patch.home_base_lat,
-                  homeBaseLng: patch.home_base_lng, skills: patch.skills ?? [],
+                  employeeId: s.employee_id, homeBaseAddress: patch.home_base_address,
+                  skills: patch.skills ?? [],
                 });
                 await invoke("set_working_hours", {
                   staffId: s.id,
@@ -328,7 +538,9 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
                     weekday: h.weekday, start: hhmm(h.start_time), end: hhmm(h.end_time),
                   })),
                 });
-                toast.success("Gespeichert");
+                toast.success(patch.home_base_address && !res?.standortErkannt
+                  ? "Gespeichert — die Adresse konnte aber keinem Standort zugeordnet werden"
+                  : "Gespeichert");
                 await ladeAlles();
               })}
               onLoeschen={async () => mitBusy(`staff-${s.id}`, async () => {
@@ -425,7 +637,7 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
         </CardContent>
       </Card>
 
-      {/* 4. Fahrzeit */}
+      {/* 4. Anfahrt */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
@@ -433,9 +645,16 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!routingKey && (
+            <p className="text-xs text-amber-700">
+              Es ist kein Routing-Schlüssel hinterlegt (Supabase-Secret <code>ORS_API_KEY</code>).
+              Bis dahin wird geschätzt, und Adressen können nicht in Koordinaten übersetzt werden —
+              der Einsatzradius greift also noch nicht.
+            </p>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <Feld label="Berechnung"
-              hilfe="Schätzung rechnet Luftlinie x Umwegfaktor. Routing fragt echte Fahrzeiten ab (braucht den Schlüssel ORS_API_KEY in den Supabase-Secrets).">
+              hilfe="Schätzung rechnet Luftlinie x Umwegfaktor. Routing fragt echte Fahrzeiten ab.">
               <Select value={settings.booking_travel_mode || "heuristic"}
                 onValueChange={(v) => setzeSetting("booking_travel_mode", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -446,7 +665,7 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
               </Select>
             </Feld>
             <Feld label="Einsatzradius (Min.)"
-              hilfe="Liegt die Adresse weiter weg, wird der Mitarbeiter für diesen Termin nicht angeboten. 0 = keine Grenze. Braucht Standort-Koordinaten.">
+              hilfe="Liegt die Adresse weiter weg, wird der Mitarbeiter nicht angeboten. 0 = keine Grenze.">
               <Input type="number" min={0} step={5} value={settings.booking_travel_max_min ?? "45"}
                 onChange={(e) => setzeSetting("booking_travel_max_min", e.target.value)} />
             </Feld>
@@ -463,15 +682,21 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
                 onChange={(e) => setzeSetting("booking_travel_overhead", e.target.value)} />
             </Feld>
           </div>
-          {(settings.booking_travel_mode === "routing") && (
-            <p className="text-xs text-muted-foreground">
-              Ohne hinterlegten Schlüssel fällt die Berechnung still auf die Schätzung zurück —
-              die Terminsuche bleibt also in jedem Fall benutzbar.
-            </p>
-          )}
-          <Button size="sm" disabled={busy === "settings"} onClick={speichereSettings}>
-            {busy === "settings" && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />} Speichern
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" disabled={busy === "settings"} onClick={speichereSettings}>
+              {busy === "settings" && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />} Speichern
+            </Button>
+            <Button size="sm" variant="outline" disabled={!routingKey || busy === "geo"}
+              onClick={() => mitBusy("geo", async () => {
+                const r = await invoke("geocode_staff");
+                const offen = (r.bericht ?? []).filter((b: any) => !b.erkannt).map((b: any) => b.name);
+                toast[offen.length ? "warning" : "success"](
+                  offen.length ? `Nicht erkannt: ${offen.join(", ")}` : "Alle Standorte ermittelt");
+                await ladeAlles();
+              })}>
+              <MapPin className="h-3.5 w-3.5 mr-1" /> Standorte aus den Adressen ermitteln
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -483,6 +708,12 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!heroAktiv && (
+            <p className="text-xs text-muted-foreground">
+              Die HERO-Integration ist im Reiter „Integrationen“ abgeschaltet — die folgenden
+              Einstellungen wirken erst, wenn sie an ist.
+            </p>
+          )}
           <Schalter
             label="Termine nach HERO schreiben"
             hilfe="Der gebuchte Termin wird am HERO-Projekt angelegt."
@@ -496,9 +727,24 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
             onChange={(v) => setzeSetting("booking_hero_read", v ? "true" : "false")}
           />
           <div className="grid gap-3 sm:grid-cols-2">
-            <Feld label="HERO-Kategorie (ID)" hilfe="Kategorie, unter der unsere Termine in HERO landen.">
-              <Input value={settings.booking_hero_category_id ?? ""}
-                onChange={(e) => setzeSetting("booking_hero_category_id", e.target.value)} />
+            <Feld label="HERO-Kategorie (allgemein)"
+              hilfe="Gilt für Terminarten ohne eigene Kategorie.">
+              <Select
+                value={settings.booking_hero_category_id || "none"}
+                onValueChange={(v) => setzeSetting("booking_hero_category_id", v === "none" ? "" : v)}
+              >
+                <SelectTrigger><SelectValue placeholder="— keine —" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— keine —</SelectItem>
+                  {settings.booking_hero_category_id
+                    && !heroKategorien.some((o) => o.value === settings.booking_hero_category_id) && (
+                    <SelectItem value={settings.booking_hero_category_id}>
+                      HERO-ID {settings.booking_hero_category_id}
+                    </SelectItem>
+                  )}
+                  {heroKategorien.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </Feld>
             <Feld label="Interne Benachrichtigung an">
               <Input value={settings.booking_notify_internal ?? ""}
@@ -578,7 +824,7 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
         </CardContent>
       </Card>
 
-      {/* Kommende Termine */}
+      {/* 6. Kommende Termine */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
@@ -586,12 +832,12 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {buchungsLink && (
-            <p className="text-xs text-muted-foreground flex items-center gap-1">
-              <Link2 className="h-3.5 w-3.5" />
-              Buchungslink pro Projekt: <code className="px-1">/termin/&lt;Projekt-ID&gt;</code>
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground flex items-center gap-1">
+            <Link2 className="h-3.5 w-3.5" />
+            Terminlink pro Projekt: <code className="px-1">/termin/&lt;Projekt-ID&gt;</code>
+            {ruleSets.filter((r) => r.active && r.isBookable).length > 1
+              && " — der Kunde wählt dort zuerst die Terminart"}
+          </p>
           {bookings.length === 0 ? (
             <p className="text-sm text-muted-foreground">Noch keine Buchungen.</p>
           ) : (
@@ -599,15 +845,16 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
               {bookings.map((b) => (
                 <div key={b.id} className="px-3 py-2 text-sm flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span className="tabular-nums font-medium">{fmt(b.starts_at)}</span>
+                  <span className="text-muted-foreground">{b.rule_set?.label ?? ""}</span>
                   <span className="text-muted-foreground">{b.staff?.display_name ?? "—"}</span>
                   <span className="flex-1 min-w-[120px] truncate">{b.customer_name}</span>
-                  {b.address && <span className="text-muted-foreground truncate max-w-[220px]">{b.address}</span>}
+                  {b.address && <span className="text-muted-foreground truncate max-w-[200px]">{b.address}</span>}
                   <Badge variant={b.status === "cancelled" ? "outline" : "secondary"}>
                     {b.status === "cancelled"
                       ? (b.cancel_reason === "customer" ? "vom Kunden abgesagt" : "abgesagt")
                       : b.status === "pending" ? "wartet" : "fest"}
                   </Badge>
-                  {!b.hero_event_ref && b.status !== "cancelled" && (
+                  {!b.hero_event_ref && b.status !== "cancelled" && heroAktiv && (
                     <Badge variant="outline" className="text-amber-700 border-amber-300">nicht in HERO</Badge>
                   )}
                 </div>
@@ -646,22 +893,32 @@ function Schalter({ label, hilfe, checked, onChange }: {
   );
 }
 
-/** Ein Mitarbeiter mit seinen Arbeitszeiten. Lokaler Zustand, damit beim
- *  Tippen nicht die ganze Seite neu rendert. */
-function StaffKarte({ staff, busy, onSpeichern, onLoeschen }: {
+/** Ein Mitarbeiter mit Arbeitszeiten, Qualifikation, Standort und HERO-Bezug.
+ *  Lokaler Zustand, damit beim Tippen nicht die ganze Seite neu rendert. */
+function StaffKarte({
+  staff, busy, skillListe, heroAktiv, heroPartner, routingKey,
+  onSpeichern, onLoeschen, onHeroPartner,
+}: {
   staff: StaffRow;
   busy: string | null;
+  skillListe: string[];
+  heroAktiv: boolean;
+  heroPartner: Option[];
+  routingKey: boolean;
   onSpeichern: (patch: StaffRow) => Promise<void>;
   onLoeschen: () => Promise<void>;
+  onHeroPartner: (wert: string | null) => Promise<void>;
 }) {
   const [name, setName] = useState(staff.display_name);
   const [aktiv, setAktiv] = useState(staff.active);
-  const [lat, setLat] = useState(staff.home_base_lat?.toString() ?? "");
-  const [lng, setLng] = useState(staff.home_base_lng?.toString() ?? "");
-  const [skills, setSkills] = useState((staff.skills ?? []).join(", "));
+  const [adresse, setAdresse] = useState(staff.home_base_address ?? "");
+  const [skills, setSkills] = useState<string[]>(staff.skills ?? []);
+  const [neuerSkill, setNeuerSkill] = useState("");
   const [hours, setHours] = useState<WorkingHour[]>(staff.workingHours ?? []);
 
   const perTag = (wd: number) => hours.find((h) => h.weekday === wd);
+  const laufend = busy === `staff-${staff.id}`;
+  const alleSkills = [...new Set([...skillListe, ...skills])].sort();
 
   function setzeTag(wd: number, an: boolean) {
     setHours((list) => an
@@ -672,8 +929,6 @@ function StaffKarte({ staff, busy, onSpeichern, onLoeschen }: {
     setHours((list) => list.map((h) => h.weekday === wd ? { ...h, [feld]: `${wert}:00` } : h));
   }
 
-  const laufend = busy === `staff-${staff.id}`;
-
   return (
     <div className="border rounded-lg p-3 space-y-3">
       <div className="flex flex-wrap items-end gap-3">
@@ -681,26 +936,88 @@ function StaffKarte({ staff, busy, onSpeichern, onLoeschen }: {
           <Label className="text-xs">Name</Label>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </div>
-        <div className="w-28">
-          <Label className="text-xs">Breite</Label>
-          <Input value={lat} onChange={(e) => setLat(e.target.value)} placeholder="48.83" />
-        </div>
-        <div className="w-28">
-          <Label className="text-xs">Länge</Label>
-          <Input value={lng} onChange={(e) => setLng(e.target.value)} placeholder="9.32" />
-        </div>
         <div className="flex items-center gap-2 pb-2">
           <Switch checked={aktiv} onCheckedChange={setAktiv} />
           <span className="text-xs text-muted-foreground">buchbar</span>
         </div>
       </div>
 
+      {heroAktiv && (
+        <div>
+          <Label className="text-xs">HERO-Mitarbeiter</Label>
+          <div className="flex items-center gap-2">
+            <Select
+              value={staff.heroPartnerId ? String(staff.heroPartnerId) : "none"}
+              onValueChange={(v) => onHeroPartner(v === "none" ? null : v)}
+            >
+              <SelectTrigger className="h-9 max-w-[260px]">
+                <SelectValue placeholder="Zuordnen…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">— Keine Zuordnung —</SelectItem>
+                {staff.heroPartnerId && !heroPartner.some((o) => o.value === String(staff.heroPartnerId)) && (
+                  <SelectItem value={String(staff.heroPartnerId)}>HERO-ID {staff.heroPartnerId}</SelectItem>
+                )}
+                {heroPartner.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {!staff.heroPartnerId && (
+              <span className="text-[11px] text-amber-700">
+                ohne Zuordnung blockieren HERO-Termine nicht
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Dieselbe Zuordnung wie im Reiter „Mitarbeiter“ — hier nur an der Stelle, wo sie zählt.
+          </p>
+        </div>
+      )}
+
+      <div>
+        <Label className="text-xs">Startadresse für die Anfahrt</Label>
+        <Input value={adresse} onChange={(e) => setAdresse(e.target.value)}
+          placeholder="Straße Nr., PLZ Ort" />
+        <p className="text-[11px] text-muted-foreground mt-1">
+          {staff.home_base_lat != null
+            ? "Standort erkannt — der Einsatzradius greift."
+            : adresse
+              ? routingKey
+                ? "Noch kein Standort ermittelt. „Standorte aus den Adressen ermitteln“ unter Anfahrt."
+                : "Ohne Routing-Schlüssel lässt sich daraus kein Standort ermitteln."
+              : "Ohne Adresse wird dieser Mitarbeiter vom Einsatzradius nicht eingeschränkt."}
+        </p>
+      </div>
+
       <div>
         <Label className="text-xs">Qualifikationen</Label>
-        <Input value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="aufmass, montage" />
-        <p className="text-[11px] text-muted-foreground mt-1">
-          Mehrere durch Komma trennen. Die Terminart oben bestimmt, welche noetig sind.
-        </p>
+        <div className="flex flex-wrap items-center gap-3 mt-1.5">
+          {alleSkills.map((q) => (
+            <label key={q} className="flex items-center gap-1.5 text-sm">
+              <Checkbox
+                checked={skills.includes(q)}
+                onCheckedChange={(v) => setSkills((list) =>
+                  v ? [...list, q] : list.filter((x) => x !== q))}
+              />
+              {q}
+            </label>
+          ))}
+          <div className="flex items-center gap-1">
+            <Input
+              value={neuerSkill} onChange={(e) => setNeuerSkill(e.target.value)}
+              placeholder="neue Qualifikation" className="h-8 w-[160px]"
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || !neuerSkill.trim()) return;
+                e.preventDefault();
+                setSkills((l) => [...new Set([...l, neuerSkill.trim()])]);
+                setNeuerSkill("");
+              }}
+            />
+            <Button size="sm" variant="ghost" className="h-8" disabled={!neuerSkill.trim()}
+              onClick={() => { setSkills((l) => [...new Set([...l, neuerSkill.trim()])]); setNeuerSkill(""); }}>
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-1.5">
@@ -730,10 +1047,8 @@ function StaffKarte({ staff, busy, onSpeichern, onLoeschen }: {
         <Button size="sm" disabled={laufend}
           onClick={() => onSpeichern({
             ...staff, display_name: name, active: aktiv,
-            home_base_lat: lat === "" ? null : Number(lat),
-            home_base_lng: lng === "" ? null : Number(lng),
-            skills: skills.split(",").map((x) => x.trim()).filter(Boolean),
-            workingHours: hours,
+            home_base_address: adresse.trim() || null,
+            skills, workingHours: hours,
           })}>
           {laufend && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />} Speichern
         </Button>
@@ -741,10 +1056,6 @@ function StaffKarte({ staff, busy, onSpeichern, onLoeschen }: {
           <Trash2 className="h-3.5 w-3.5 mr-1" /> Entfernen
         </Button>
       </div>
-      <p className="text-[11px] text-muted-foreground">
-        Ohne Koordinaten greift der Einsatzradius für diesen Mitarbeiter nicht — er wird dann immer
-        angeboten, statt dass eine fehlende Angabe ihn aussortiert.
-      </p>
     </div>
   );
 }

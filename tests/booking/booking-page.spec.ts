@@ -21,9 +21,13 @@ function slots() {
   }));
 }
 
+const AUFMASS = { key: "aufmass_vor_ort", label: "Aufmass vor Ort", durationMinutes: 90, formFields: [], bookingWindowDays: 60 };
+const MONTAGE = { key: "montage_vor_ort", label: "Montage vor Ort", durationMinutes: 480, formFields: [], bookingWindowDays: 60 };
+
 const kontext = {
   project: { id: PROJEKT, number: "WER-1234", customerName: "Musterfirma GmbH", heroLinked: true },
-  appointment: { label: "Aufmass vor Ort", durationMinutes: 90, formFields: [], bookingWindowDays: 60 },
+  // Eine Terminart: die Seite geht direkt in den Kalender.
+  appointments: [AUFMASS],
   address: {
     street: "Hauptstr. 1", zipcode: "71332", city: "Waiblingen",
     text: "Hauptstr. 1, 71332 Waiblingen", source: "project", located: true,
@@ -32,7 +36,7 @@ const kontext = {
 };
 
 /** Faengt alle Aufrufe der Buchungs-API ab und merkt sich, was gesendet wurde. */
-async function stub(page: Page, opts: { onCreate?: (body: any) => any } = {}) {
+async function stub(page: Page, opts: { onCreate?: (body: any) => any; arten?: any[] } = {}) {
   const gesendet: any[] = [];
   await page.route("**/functions/v1/booking-api**", async (route) => {
     const req = route.request();
@@ -42,8 +46,15 @@ async function stub(page: Page, opts: { onCreate?: (body: any) => any } = {}) {
 
     if (req.method() === "GET" || url.searchParams.get("action")) {
       const action = url.searchParams.get("action");
-      if (action === "context") return json(kontext);
-      if (action === "availability") return json({ slots: slots(), addressLocated: true });
+      if (action === "context") {
+        return json(opts.arten ? { ...kontext, appointments: opts.arten } : kontext);
+      }
+      if (action === "availability") {
+        // Die Terminart MUSS mitkommen, sonst wuesste der Server nicht, was
+        // gerechnet werden soll.
+        gesendet.push({ action: "availability", ruleSet: url.searchParams.get("ruleSet") });
+        return json({ slots: slots(), addressLocated: true });
+      }
     }
     const body = req.postDataJSON?.() ?? {};
     gesendet.push(body);
@@ -212,5 +223,50 @@ test.describe("Interne Aktion aus der Mail", () => {
     await page.getByRole("button", { name: "Ja, absagen" }).click();
 
     await expect(page.getByText(/In HERO liess sich der Termin nicht entfernen/)).toBeVisible();
+  });
+});
+
+test.describe("Mehrere Terminarten", () => {
+  test("laesst erst waehlen und rechnet dann mit der gewaehlten Art", async ({ page }) => {
+    const gesendet = await stub(page, { arten: [AUFMASS, MONTAGE] });
+    await page.goto(`/termin/${PROJEKT}`);
+
+    // Auswahl zuerst, kein Kalender.
+    await expect(page.getByRole("heading", { name: "Termin vereinbaren" })).toBeVisible();
+    await expect(page.getByText("Aufmass vor Ort")).toBeVisible();
+    await expect(page.getByText("Montage vor Ort")).toBeVisible();
+    await expect(page.getByText("480 Minuten")).toBeVisible();
+    expect(gesendet.some((g) => g.action === "availability")).toBe(false);
+
+    await page.getByText("Montage vor Ort").click();
+
+    // Erst jetzt werden Zeiten geholt — fuer die gewaehlte Art.
+    await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
+    const abfrage = gesendet.find((g) => g.action === "availability");
+    expect(abfrage.ruleSet).toBe("montage_vor_ort");
+
+    await page.getByRole("button", { name: "09:00" }).click();
+    await page.getByRole("button", { name: "Termin bestätigen" }).click();
+    await expect(page.getByText("Termin steht")).toBeVisible();
+    expect(gesendet.find((b) => b.action === "create").ruleSet).toBe("montage_vor_ort");
+  });
+
+  test("laesst zurueck zur Auswahl", async ({ page }) => {
+    await stub(page, { arten: [AUFMASS, MONTAGE] });
+    await page.goto(`/termin/${PROJEKT}`);
+    await page.getByText("Aufmass vor Ort").click();
+    await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
+
+    await page.getByRole("button", { name: "andere Terminart" }).click();
+    await expect(page.getByRole("heading", { name: "Termin vereinbaren" })).toBeVisible();
+  });
+
+  test("bei einer einzigen Art entfaellt die Auswahl", async ({ page }) => {
+    const gesendet = await stub(page);
+    await page.goto(`/termin/${PROJEKT}`);
+
+    await expect(page.getByRole("heading", { name: "Aufmass vor Ort" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
+    expect(gesendet.find((g) => g.action === "availability").ruleSet).toBe("aufmass_vor_ort");
   });
 });

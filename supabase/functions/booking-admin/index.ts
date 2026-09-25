@@ -23,6 +23,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import { fetchHolidays, isGermanState, isIsoDate } from "../_shared/booking/holidays.ts";
+import { geocode } from "../_shared/booking/hero.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -50,9 +51,31 @@ const ERLAUBTE_RULESET_SPALTEN = new Set([
   "label", "active", "duration_minutes", "buffer_before_min", "buffer_after_min",
   "travel_buffer", "min_notice_min", "booking_window_days", "slot_granularity_min",
   "max_per_day_global", "max_per_day_per_staff", "requires_approval",
+  "required_skills",
 ]);
 
-const RULE_SET_KEY = "aufmass_vor_ort";
+// Es gibt MEHRERE Terminarten (M1 hat drei angelegt). Frueher stand hier eine
+// feste Kennung — damit waren zwei davon unsichtbar und unbuchbar. Die Kennung
+// bleibt nur als Vorgabe, wenn der Aufrufer keine nennt.
+const RULE_SET_DEFAULT = "aufmass_vor_ort";
+
+/** Koordinaten aus der Adresse holen, wenn ein Routing-Schluessel hinterlegt ist. */
+async function koordinaten(db: any, adresse: string | null): Promise<{ lat: number | null; lng: number | null }> {
+  const text = String(adresse ?? "").trim();
+  if (!text) return { lat: null, lng: null };
+  const key = Deno.env.get("ORS_API_KEY") || null;
+  const cache = {
+    async get(q: string) {
+      const { data } = await db.from("geocode_cache").select("lat, lng").eq("query", q).maybeSingle();
+      return data ? { lat: data.lat, lng: data.lng } : null;
+    },
+    async set(q: string, geo: { lat: number | null; lng: number | null }) {
+      await db.from("geocode_cache").upsert({ query: q, lat: geo.lat, lng: geo.lng }, { onConflict: "query" });
+    },
+  };
+  const geo = await geocode(text, key, cache);
+  return { lat: geo?.lat ?? null, lng: geo?.lng ?? null };
+}
 
 const zahl = (v: unknown): number | null => {
   const n = parseInt(String(v ?? ""), 10);
@@ -167,31 +190,52 @@ Deno.serve(async (req) => {
 
     // ── Alles laden, was der Reiter braucht ──
     if (body.action === "get_config") {
-      const [cfg, rs, staff, hours, cats] = await Promise.all([
+      const [cfg, rs, staff, hours, cats, rss, heroCfg] = await Promise.all([
         db.from("app_config").select("key, value").like("key", "booking_%"),
-        db.from("rule_set").select("*").eq("key", RULE_SET_KEY).maybeSingle(),
-        db.from("staff").select("id, employee_id, display_name, active, skills, home_base_lat, home_base_lng")
+        // ALLE Terminarten, nicht nur eine.
+        db.from("rule_set").select("*").order("label"),
+        db.from("staff")
+          .select("id, employee_id, display_name, active, skills, home_base_address, home_base_lat, home_base_lng")
           .order("display_name"),
         db.from("working_hours").select("id, staff_id, weekday, start_time, end_time").order("weekday"),
-        db.from("appointment_category").select("key, label, source, blocks_availability, is_bookable").order("label"),
+        db.from("appointment_category").select("id, key, label, source, blocks_availability, is_bookable").order("label"),
+        db.from("rule_set_staff").select("rule_set_id, staff_id"),
+        db.from("app_config").select("value").eq("key", "hero_enabled").maybeSingle(),
       ]);
       const settings: Record<string, string> = {};
       for (const r of cfg.data ?? []) settings[(r as any).key] = (r as any).value ?? "";
 
-      // Mitarbeiter, die noch kein Personal-Profil haben — damit der Reiter
-      // anbieten kann, sie zu uebernehmen.
+      // Mitarbeiter mitsamt HERO-Zuordnung: ohne sie blockieren HERO-Termine
+      // nicht, und unsere Termine landen in HERO ohne Zustaendigen. Der Reiter
+      // zeigt das deshalb an der Stelle, wo es auffaellt.
       const { data: emps } = await db.from("employees").select("id, name, hero_partner_id").order("name");
       const belegt = new Set((staff.data ?? []).map((s: any) => s.employee_id).filter(Boolean));
+      const heroPartnerOf = new Map((emps ?? []).map((e: any) => [e.id, e.hero_partner_id]));
+
+      const katById = new Map((cats.data ?? []).map((c: any) => [c.id, c]));
 
       return json({
         settings,
-        ruleSet: rs.data ?? null,
+        ruleSets: (rs.data ?? []).map((r: any) => ({
+          ...r,
+          categoryKey: katById.get(r.category_id)?.key ?? null,
+          categoryLabel: katById.get(r.category_id)?.label ?? null,
+          isBookable: katById.get(r.category_id)?.is_bookable ?? false,
+          // Leere Liste heisst: jeder mit passender Qualifikation.
+          staffIds: (rss.data ?? []).filter((x: any) => x.rule_set_id === r.id).map((x: any) => x.staff_id),
+          heroCategoryId: (r.config ?? {}).hero_category_id ?? null,
+        })),
         staff: (staff.data ?? []).map((s: any) => ({
           ...s,
+          heroPartnerId: s.employee_id ? heroPartnerOf.get(s.employee_id) ?? null : null,
           workingHours: (hours.data ?? []).filter((h: any) => h.staff_id === s.id),
         })),
         categories: cats.data ?? [],
         employees: (emps ?? []).map((e: any) => ({ ...e, uebernommen: belegt.has(e.id) })),
+        // Ob Routing/Geocoding ueberhaupt moeglich ist, weiss nur der Server:
+        // der Schluessel liegt in den Secrets, nicht in app_config.
+        routingKeyVorhanden: !!Deno.env.get("ORS_API_KEY"),
+        heroAktiv: (heroCfg.data as any)?.value === "true",
       });
     }
 
@@ -209,25 +253,60 @@ Deno.serve(async (req) => {
       return json({ ok: true, gespeichert: rows.length, abgelehnt });
     }
 
-    // ── Terminart ──
+    // ── Terminart speichern ──
+    // `key` sagt, WELCHE Terminart gemeint ist. Ohne Angabe die Vorgabe, damit
+    // aeltere Aufrufe weiter funktionieren.
     if (body.action === "set_rule_set") {
+      const key = String(body.key || RULE_SET_DEFAULT);
       const patch = (body.patch ?? {}) as Record<string, unknown>;
       const update: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(patch)) {
         if (!ERLAUBTE_RULESET_SPALTEN.has(k)) continue;
-        if (k === "label") update[k] = String(v ?? "").trim() || "Aufmass vor Ort";
+        if (k === "label") update[k] = String(v ?? "").trim() || key;
         else if (k === "travel_buffer" || k === "active" || k === "requires_approval") update[k] = v === true || v === "true";
         else if (k === "max_per_day_global" || k === "max_per_day_per_staff") update[k] = zahl(v);
-        else {
+        else if (k === "required_skills") {
+          update[k] = Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : [];
+        } else {
           const n = zahl(v);
           if (n != null && n >= 0) update[k] = n;
         }
       }
+
+      // HERO-Kategorie gehoert an die Terminart, nicht in eine globale
+      // Einstellung: eine Montage soll in HERO nicht unter "Aufmass" landen.
+      if (Object.prototype.hasOwnProperty.call(body, "heroCategoryId")) {
+        const { data: vorhanden } = await db.from("rule_set").select("config").eq("key", key).maybeSingle();
+        const cfg = { ...((vorhanden as any)?.config ?? {}) };
+        const id = zahl(body.heroCategoryId);
+        if (id && id > 0) cfg.hero_category_id = id; else delete cfg.hero_category_id;
+        update.config = cfg;
+      }
+
       if (Object.keys(update).length === 0) return json({ error: "Nichts zu speichern" }, 400);
       update.updated_at = new Date().toISOString();
-      const { error } = await db.from("rule_set").update(update).eq("key", RULE_SET_KEY);
+      const { error } = await db.from("rule_set").update(update).eq("key", key);
       if (error) return json({ error: error.message }, 500);
-      return json({ ok: true, felder: Object.keys(update) });
+      return json({ ok: true, key, felder: Object.keys(update) });
+    }
+
+    // ── Wer macht diese Terminart? ──
+    // Leere Liste = jeder mit passender Qualifikation (so rechnet die Engine).
+    // Eine ausdrueckliche Auswahl schlaegt das.
+    if (body.action === "set_rule_set_staff") {
+      const key = String(body.key || "");
+      if (!key) return json({ error: "key erforderlich" }, 400);
+      const { data: rs } = await db.from("rule_set").select("id").eq("key", key).maybeSingle();
+      if (!rs) return json({ error: "Terminart nicht gefunden" }, 404);
+      const ids = Array.isArray(body.staffIds) ? body.staffIds.map((x: unknown) => String(x)) : [];
+      const { error: delErr } = await db.from("rule_set_staff").delete().eq("rule_set_id", (rs as any).id);
+      if (delErr) return json({ error: delErr.message }, 500);
+      if (ids.length > 0) {
+        const { error } = await db.from("rule_set_staff")
+          .insert(ids.map((staff_id: string) => ({ rule_set_id: (rs as any).id, staff_id })));
+        if (error) return json({ error: error.message }, 500);
+      }
+      return json({ ok: true, zugeordnet: ids.length });
     }
 
     // ── Blockiert eine Kategorie die Zeit? ──
@@ -242,24 +321,61 @@ Deno.serve(async (req) => {
 
     // ── Personal ──
     if (body.action === "staff_upsert") {
+      // Standort kommt als ADRESSE. Die Koordinaten rechnet der Server daraus,
+      // damit im Adminmenue niemand Breite und Laenge tippen muss.
+      const adresse = body.homeBaseAddress == null ? null : String(body.homeBaseAddress).trim() || null;
       const row: Record<string, unknown> = {
         display_name: String(body.displayName || "").trim(),
         active: body.active !== false,
         employee_id: body.employeeId || null,
-        home_base_lat: body.homeBaseLat == null || body.homeBaseLat === "" ? null : Number(body.homeBaseLat),
-        home_base_lng: body.homeBaseLng == null || body.homeBaseLng === "" ? null : Number(body.homeBaseLng),
+        home_base_address: adresse,
         skills: Array.isArray(body.skills) ? body.skills.map((x: unknown) => String(x)) : [],
         updated_at: new Date().toISOString(),
       };
       if (!row.display_name) return json({ error: "Name erforderlich" }, 400);
+
+      // Nur neu geocodieren, wenn die Adresse sich geaendert hat — sonst bei
+      // jedem Speichern ein Aufruf beim Anbieter.
+      let alteAdresse: string | null = null;
+      if (body.id) {
+        const { data: vorher } = await db.from("staff")
+          .select("home_base_address").eq("id", String(body.id)).maybeSingle();
+        alteAdresse = (vorher as any)?.home_base_address ?? null;
+      }
+      if (adresse !== alteAdresse) {
+        const geo = await koordinaten(db, adresse);
+        row.home_base_lat = geo.lat;
+        row.home_base_lng = geo.lng;
+      }
+
       if (body.id) {
         const { error } = await db.from("staff").update(row).eq("id", String(body.id));
         if (error) return json({ error: error.message }, 500);
-        return json({ ok: true, id: body.id });
+        return json({ ok: true, id: body.id, standortErkannt: row.home_base_lat != null });
       }
-      const { data, error } = await db.from("staff").insert(row).select("id").single();
+      const { data, error } = await db.from("staff").insert(row).select("id, home_base_lat").single();
       if (error) return json({ error: error.message }, 500);
-      return json({ ok: true, id: data?.id });
+      return json({ ok: true, id: data?.id, standortErkannt: (data as any)?.home_base_lat != null });
+    }
+
+    // ── Standorte nachtraeglich ermitteln ──
+    // Sinnvoll, sobald der Routing-Schluessel hinterlegt wurde: vorher konnte
+    // aus den Adressen nichts werden.
+    if (body.action === "geocode_staff") {
+      if (!Deno.env.get("ORS_API_KEY")) {
+        return json({ error: "Kein Routing-Schluessel hinterlegt (Supabase-Secret ORS_API_KEY)" }, 400);
+      }
+      const { data: liste } = await db.from("staff")
+        .select("id, display_name, home_base_address").not("home_base_address", "is", null);
+      const bericht: Record<string, unknown>[] = [];
+      for (const st of liste ?? []) {
+        const geo = await koordinaten(db, (st as any).home_base_address);
+        await db.from("staff")
+          .update({ home_base_lat: geo.lat, home_base_lng: geo.lng, updated_at: new Date().toISOString() })
+          .eq("id", (st as any).id);
+        bericht.push({ name: (st as any).display_name, erkannt: geo.lat != null });
+      }
+      return json({ ok: true, bericht });
     }
 
     if (body.action === "staff_delete") {
@@ -303,8 +419,17 @@ Deno.serve(async (req) => {
     // Wer in HERO einen Partner-Datensatz hat, ist ohnehin der Kandidat: nur
     // dafuer kann der Abgleich spaeter Termine zuordnen.
     if (body.action === "sync_staff_from_employees") {
-      const { data: emps } = await db.from("employees")
-        .select("id, name, hero_partner_id").not("hero_partner_id", "is", null);
+      // Ohne Auswahl: alle mit HERO-Zuordnung — nur fuer die kann der Abgleich
+      // spaeter Termine zuordnen. Mit Auswahl: genau diese.
+      const gewuenscht = Array.isArray(body.employeeIds)
+        ? body.employeeIds.map((x: unknown) => String(x))
+        : null;
+
+      let frage = db.from("employees").select("id, name, hero_partner_id");
+      if (gewuenscht) frage = frage.in("id", gewuenscht);
+      else frage = frage.not("hero_partner_id", "is", null);
+      const { data: emps } = await frage;
+
       const { data: vorhanden } = await db.from("staff").select("employee_id");
       const belegt = new Set((vorhanden ?? []).map((s: any) => s.employee_id).filter(Boolean));
       const neu = (emps ?? []).filter((e: any) => !belegt.has(e.id));

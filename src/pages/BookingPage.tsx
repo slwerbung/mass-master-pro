@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import {
   createBooking, loadAvailability, loadBookingContext,
-  type BookingContext, type Slot,
+  type AppointmentType, type BookingContext, type Slot,
 } from "@/lib/bookingApi";
 
 const TZ = "Europe/Berlin";
@@ -35,6 +35,10 @@ export default function BookingPage() {
 
   const [ctx, setCtx] = useState<BookingContext | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Terminart: bei genau einer wird sie sofort gesetzt, bei mehreren waehlt
+  // der Kunde zuerst (wie bei Calendly die Event-Typen).
+  const [art, setArt] = useState<AppointmentType | null>(null);
 
   const [month, setMonth] = useState<Date>(new Date());
   const [slots, setSlots] = useState<Slot[]>([]);
@@ -66,6 +70,7 @@ export default function BookingPage() {
       .then((c) => {
         if (!alive) return;
         setCtx(c);
+        if (c.appointments.length === 1) setArt(c.appointments[0]);
         setStreet(c.address?.street || "");
         setZip(c.address?.zipcode || "");
         setCity(c.address?.city || "");
@@ -87,10 +92,10 @@ export default function BookingPage() {
   }, [month]);
 
   const fetchSlots = useCallback(async () => {
-    if (!ctx) return;
+    if (!ctx || !art) return;
     setLoadingSlots(true);
     try {
-      const res = await loadAvailability(projectId, range.from, range.to,
+      const res = await loadAvailability(projectId, art.key, range.from, range.to,
         editAddress || addressApplied ? { street, zip, city } : undefined);
       setSlots(res.slots || []);
     } catch (e) {
@@ -102,7 +107,7 @@ export default function BookingPage() {
     // street/zip/city bewusst NICHT in den Abhaengigkeiten: es soll erst beim
     // Uebernehmen neu gerechnet werden, nicht bei jedem Tastendruck.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx, projectId, range.from, range.to, addressApplied]);
+  }, [ctx, art, projectId, range.from, range.to, addressApplied]);
 
   useEffect(() => { fetchSlots(); }, [fetchSlots]);
 
@@ -135,7 +140,7 @@ export default function BookingPage() {
   const addressText = [street, [zip, city].filter(Boolean).join(" ")].filter(Boolean).join(", ");
 
   async function submit() {
-    if (!selectedSlot || !ctx) return;
+    if (!selectedSlot || !ctx || !art) return;
     setSubmitError(null);
     if (!name.trim() || !email.trim()) {
       setSubmitError("Bitte Name und E-Mail angeben.");
@@ -150,6 +155,7 @@ export default function BookingPage() {
     try {
       await createBooking({
         project: projectId,
+        ruleSet: art.key,
         slot: { startsAt: selectedSlot.startsAt, endsAt: selectedSlot.endsAt },
         staffId,
         contact: { name: name.trim(), email: email.trim(), phone: phone.trim() || undefined },
@@ -214,6 +220,46 @@ export default function BookingPage() {
     );
   }
 
+  // Mehrere Terminarten: erst waehlen, dann der Kalender. Bei genau einer
+  // Terminart ist sie oben schon gesetzt, dieser Schritt entfaellt also.
+  if (!art) {
+    return (
+      <Shell>
+        <Card>
+          <CardContent className="p-5 space-y-4">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">SL WERBUNG</p>
+              <h1 className="text-xl font-semibold leading-tight mt-1">Termin vereinbaren</h1>
+              {ctx.project.number && (
+                <p className="text-sm text-muted-foreground mt-1">Projekt {ctx.project.number}</p>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">Worum geht es?</p>
+            <div className="grid gap-2">
+              {ctx.appointments.map((a) => (
+                <button
+                  key={a.key}
+                  onClick={() => { setArt(a); setSelectedSlot(null); setSelectedDay(null); }}
+                  className="text-left rounded-lg border p-3 hover:bg-accent transition-colors"
+                >
+                  <span className="font-medium">{a.label}</span>
+                  <span className="block text-sm text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                    <Clock className="h-3.5 w-3.5" /> {a.durationMinutes} Minuten
+                  </span>
+                </button>
+              ))}
+            </div>
+            {addressText && (
+              <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" /> {addressText}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </Shell>
+    );
+  }
+
   return (
     <Shell>
       <div className="grid gap-5 md:grid-cols-[290px_1fr]">
@@ -222,7 +268,7 @@ export default function BookingPage() {
           <CardContent className="p-5 space-y-4">
             <div>
               <p className="text-xs uppercase tracking-wide text-muted-foreground">SL WERBUNG</p>
-              <h1 className="text-xl font-semibold leading-tight mt-1">{ctx.appointment.label}</h1>
+              <h1 className="text-xl font-semibold leading-tight mt-1">{art.label}</h1>
               {ctx.project.number && (
                 <p className="text-sm text-muted-foreground mt-1">Projekt {ctx.project.number}</p>
               )}
@@ -230,7 +276,7 @@ export default function BookingPage() {
             <div className="space-y-2 text-sm">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Clock className="h-4 w-4 shrink-0" />
-                <span>{ctx.appointment.durationMinutes} Minuten</span>
+                <span>{art.durationMinutes} Minuten</span>
               </div>
               <div className="flex items-start gap-2 text-muted-foreground">
                 <MapPin className="h-4 w-4 shrink-0 mt-0.5" />
@@ -246,6 +292,15 @@ export default function BookingPage() {
                 <span>Vor Ort mit einem Kollegen von uns</span>
               </div>
             </div>
+
+            {ctx.appointments.length > 1 && (
+              <Button
+                variant="ghost" size="sm" className="w-full -ml-1 justify-start"
+                onClick={() => { setArt(null); setSelectedSlot(null); setSlots([]); }}
+              >
+                <ArrowLeft className="h-3.5 w-3.5 mr-1" /> andere Terminart
+              </Button>
+            )}
 
             {!editAddress ? (
               <Button variant="outline" size="sm" className="w-full" onClick={() => setEditAddress(true)}>

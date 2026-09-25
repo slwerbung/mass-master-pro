@@ -14,8 +14,8 @@
 //
 // Aktionen:
 //   GET  ?action=context&project=<uuid>
-//   GET  ?action=availability&project=<uuid>&from=&to=[&street=&zip=&city=]
-//   POST { action:'create', project, slot:{startsAt,endsAt}, staffId,
+//   GET  ?action=availability&project=<uuid>&from=&to=[&ruleSet=&street=&zip=&city=]
+//   POST { action:'create', project, ruleSet?, slot:{startsAt,endsAt}, staffId,
 //          contact:{name,email,phone}, addressOverride?, hinweis? }
 //   POST { action:'cancel', cancelToken }
 //   POST { action:'staff-action', staffToken, mode:'cancel'|'reschedule' }
@@ -40,7 +40,11 @@ const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 const TZ = "Europe/Berlin";
-const RULE_SET_KEY = "aufmass_vor_ort";
+// Es gibt mehrere Terminarten. `context` liefert alle buchbaren, die anderen
+// Aktionen bekommen die gewaehlte per `ruleSet`. Diese Kennung ist nur die
+// Vorgabe, wenn nichts genannt wird — frueher war sie die einzige Terminart,
+// wodurch zwei angelegte Arten unsichtbar und unbuchbar waren.
+const RULE_SET_DEFAULT = "aufmass_vor_ort";
 
 /**
  * Zeitangaben pruefen, statt sie durchzureichen. Ein unlesbares Datum ergibt in
@@ -174,10 +178,10 @@ async function buildContext(db: DB, s: Settings, projectId: string) {
 // ── Verfuegbarkeit ──
 
 async function availabilityFor(
-  db: DB, s: Settings, from: string, to: string, address: Geo | null,
+  db: DB, s: Settings, from: string, to: string, address: Geo | null, ruleSetKey: string,
 ) {
   const { data: rs } = await db.from("rule_set").select("*")
-    .eq("key", RULE_SET_KEY).eq("active", true).maybeSingle();
+    .eq("key", ruleSetKey).eq("active", true).maybeSingle();
   if (!rs) return { error: "Terminart nicht eingerichtet" as const };
 
   const { data: rss } = await db.from("rule_set_staff").select("staff_id").eq("rule_set_id", rs.id);
@@ -223,6 +227,47 @@ async function availabilityFor(
 }
 
 /**
+ * Gewuenschte Terminart pruefen. Rueckgabe: der Schluessel, oder ein Fehler zum
+ * Weitergeben. Ohne Angabe: die einzige buchbare Art, sonst die Vorgabe — so
+ * funktionieren auch Links, die noch keine Art nennen.
+ */
+async function pruefeTerminart(
+  db: DB, gewuenscht: unknown,
+): Promise<string | { error: Record<string, string>; status: number }> {
+  const arten = await buchbareTerminarten(db);
+  if (arten.length === 0) return { error: { error: "Terminart nicht eingerichtet" }, status: 503 };
+  const key = typeof gewuenscht === "string" && gewuenscht.trim() ? gewuenscht.trim() : null;
+  if (!key) return arten.length === 1 ? arten[0].key : (arten.find((a) => a.key === RULE_SET_DEFAULT)?.key ?? arten[0].key);
+  const treffer = arten.find((a) => a.key === key);
+  if (!treffer) return { error: { error: "Diese Terminart ist nicht buchbar" }, status: 400 };
+  return treffer.key;
+}
+
+/**
+ * Die buchbaren Terminarten: aktiv UND ihre Kategorie als buchbar markiert.
+ * Sortiert nach Dauer, damit der kurze Termin oben steht.
+ */
+async function buchbareTerminarten(db: DB) {
+  const { data } = await db.from("rule_set")
+    .select("key, label, duration_minutes, form_fields, booking_window_days, category_id, active")
+    .eq("active", true);
+  const arten = data ?? [];
+  if (arten.length === 0) return [];
+  const { data: cats } = await db.from("appointment_category").select("id, is_bookable");
+  const buchbar = new Map((cats ?? []).map((c: any) => [c.id, c.is_bookable]));
+  return arten
+    .filter((r: any) => buchbar.get(r.category_id) === true)
+    .sort((a: any, b: any) => a.duration_minutes - b.duration_minutes)
+    .map((r: any) => ({
+      key: r.key,
+      label: r.label,
+      durationMinutes: r.duration_minutes,
+      formFields: r.form_fields ?? [],
+      bookingWindowDays: r.booking_window_days,
+    }));
+}
+
+/**
  * HERO-Termin entfernen, wenn es einen gibt.
  *
  * Rueckgabe: true = entfernt, false = es gab einen, aber HERO wollte nicht,
@@ -255,10 +300,8 @@ Deno.serve(async (req) => {
         const ctx = await buildContext(db, s, projectId);
         if ("error" in ctx) return json(ctx, 404);
 
-        const { data: rs } = await db.from("rule_set")
-          .select("label, duration_minutes, form_fields, booking_window_days")
-          .eq("key", RULE_SET_KEY).eq("active", true).maybeSingle();
-        if (!rs) return json({ error: "Terminart nicht eingerichtet" }, 503);
+        const arten = await buchbareTerminarten(db);
+        if (arten.length === 0) return json({ error: "Terminart nicht eingerichtet" }, 503);
 
         const addressText = formatAddress(ctx.address);
         const geo = addressText ? await geocode(addressText, routingKey(), geoCache(db)) : null;
@@ -270,12 +313,9 @@ Deno.serve(async (req) => {
             customerName: ctx.customerName,
             heroLinked: !!ctx.proj.heroProjectId,
           },
-          appointment: {
-            label: rs.label,
-            durationMinutes: rs.duration_minutes,
-            formFields: rs.form_fields ?? [],
-            bookingWindowDays: rs.booking_window_days,
-          },
+          // Alle buchbaren Terminarten. Bei genau einer geht die Seite direkt
+          // in den Kalender, bei mehreren laesst sie erst waehlen.
+          appointments: arten,
           address: ctx.address ? { ...ctx.address, text: addressText, source: ctx.addressSource, located: !!geo } : null,
           contact: ctx.contact,
         });
@@ -293,6 +333,12 @@ Deno.serve(async (req) => {
           return json({ error: "to muss nach from liegen" }, 400);
         }
 
+        // Welche Terminart? Nur eine, die wirklich buchbar ist — sonst koennte
+        // ueber die URL eine intern gedachte Art gebucht werden.
+        const artFehler = await pruefeTerminart(db, url.searchParams.get("ruleSet"));
+        if (typeof artFehler !== "string") return json(artFehler.error, artFehler.status);
+        const ruleSetKey = artFehler;
+
         // Hat der Kunde die Adresse geaendert, zaehlt seine Eingabe.
         const street = url.searchParams.get("street");
         const zip = url.searchParams.get("zip");
@@ -307,7 +353,7 @@ Deno.serve(async (req) => {
         }
         const geo = addressText ? await geocode(addressText, routingKey(), geoCache(db)) : null;
 
-        const res = await availabilityFor(db, s, from, to, geo);
+        const res = await availabilityFor(db, s, from, to, geo, ruleSetKey);
         if ("error" in res) return json(res, 503);
         return json({ slots: res.slots, addressLocated: !!geo });
       }
@@ -372,6 +418,9 @@ Deno.serve(async (req) => {
         if (!istZeit(slot.startsAt) || !istZeit(slot.endsAt)) {
           return json({ error: "Der Zeitpunkt des Slots ist unlesbar" }, 400);
         }
+        const artPruefung = await pruefeTerminart(db, body.ruleSet);
+        if (typeof artPruefung !== "string") return json(artPruefung.error, artPruefung.status);
+        const ruleSetKey = artPruefung;
 
         const ctx = await buildContext(db, s, projectId);
         if ("error" in ctx) return json(ctx, 404);
@@ -388,7 +437,7 @@ Deno.serve(async (req) => {
         // Tag NEU rechnen — dem Frontend wird nicht geglaubt.
         const dayStart = DateTime.fromISO(slot.startsAt, { zone: "utc" }).setZone(TZ).startOf("day");
         const res = await availabilityFor(
-          db, s, dayStart.toUTC().toISO()!, dayStart.plus({ days: 1 }).toUTC().toISO()!, geo,
+          db, s, dayStart.toUTC().toISO()!, dayStart.plus({ days: 1 }).toUTC().toISO()!, geo, ruleSetKey,
         );
         if ("error" in res) return json(res, 503);
         const wanted = DateTime.fromISO(slot.startsAt, { zone: "utc" }).toISO();
@@ -459,7 +508,10 @@ Deno.serve(async (req) => {
             title: `${rs.label} – ${ctx.customerName}`.trim(),
             startIso: start.toISO()!, endIso: end.toISO()!,
             description: [addressText, body.hinweis ? `Hinweis: ${body.hinweis}` : ""].filter(Boolean).join("\n"),
-            categoryId: s.heroCategoryId, partnerId,
+            // HERO-Kategorie zuerst von der Terminart, dann die allgemeine
+            // Einstellung: eine Montage soll nicht unter "Aufmass" landen.
+            categoryId: Number((rs.config ?? {}).hero_category_id) || s.heroCategoryId,
+            partnerId,
           });
           if (r.id) await db.from("booking").update({ hero_event_ref: String(r.id) }).eq("id", created!.id);
           else heroError = r.error ?? "unbekannt";

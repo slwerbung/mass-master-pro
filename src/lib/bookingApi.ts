@@ -16,9 +16,18 @@ export interface BookingAddress {
   located?: boolean;
 }
 
+export interface AppointmentType {
+  key: string;
+  label: string;
+  durationMinutes: number;
+  formFields: unknown[];
+  bookingWindowDays: number;
+}
+
 export interface BookingContext {
   project: { id: string; number: string; customerName: string; heroLinked: boolean };
-  appointment: { label: string; durationMinutes: number; formFields: unknown[]; bookingWindowDays: number };
+  /** Alle buchbaren Terminarten. Bei einer geht es direkt zum Kalender. */
+  appointments: AppointmentType[];
   address: BookingAddress | null;
   contact: { name: string; email: string | null; phone: string | null };
 }
@@ -69,11 +78,11 @@ export const loadBookingContext = (projectId: string) =>
   get<BookingContext>({ action: "context", project: projectId });
 
 export const loadAvailability = (
-  projectId: string, from: string, to: string,
+  projectId: string, ruleSet: string, from: string, to: string,
   address?: { street?: string; zip?: string; city?: string },
 ) =>
   get<{ slots: Slot[]; addressLocated: boolean }>({
-    action: "availability", project: projectId, from, to,
+    action: "availability", project: projectId, ruleSet, from, to,
     ...(address?.street ? { street: address.street } : {}),
     ...(address?.zip ? { zip: address.zip } : {}),
     ...(address?.city ? { city: address.city } : {}),
@@ -81,6 +90,7 @@ export const loadAvailability = (
 
 export const createBooking = (payload: {
   project: string;
+  ruleSet: string;
   slot: { startsAt: string; endsAt: string };
   staffId: string;
   contact: { name: string; email: string; phone?: string };
