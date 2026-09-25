@@ -3,12 +3,16 @@
 Umsetzung der Spec (`terminbuchungSPEC.md`) in Meilensteinen. Dieses Dokument
 hält Stand + bewusste Abweichungen fest.
 
-## Stand (24.09.2026)
+## Stand (25.09.2026)
 - **M1 — Datenmodell & Seeds:** ✅ angewandt (`20260828000000_booking_m1.sql`).
 - **M2 — Engine:** ✅ reine `computeSlots` + `TravelTimeProvider` + Unit-Tests.
-- **M3 — Buchungs-API:** ✅ `booking-api` **deployt** (v2, byte-genau gegen das Repo
-  verifiziert). Projektbezogen, Adresse und Kontakt aus HERO.
-- **Feiertage + Admin-Aktionen:** ✅ `booking-admin` **deployt** (v2).
+- **M3 — Buchungs-API:** ✅ `booking-api` **deployt** (v5, byte-genau gegen das Repo
+  verifiziert). Projektbezogen, Adresse und Kontakt aus HERO, **mehrere
+  Terminarten**.
+- **Feiertage + Admin-Aktionen:** ✅ `booking-admin` **deployt** (v4). Abweichung
+  zum Repo: dem deployten Stand fehlt ein dreizeiliger Kommentar über
+  `sync_staff_from_employees` (beim Deploy verlorengegangen), der Code ist
+  identisch. Richtet sich beim nächsten Deploy von selbst.
 - **Echtes Routing:** ✅ im Code (OpenRouteService). Wartet nur noch auf den
   Schlüssel im Supabase-Secret `ORS_API_KEY` und `booking_travel_mode=routing`.
 - **HERO-Leserichtung:** ✅ `booking-hero-sync` deployt, pg_cron alle 10 Minuten,
@@ -19,7 +23,11 @@ hält Stand + bewusste Abweichungen fest.
   Startseite.
 - **Durchlauf mit echter Buchung:** ✅ 24.09.2026 zweimal komplett gefahren
   (siehe unten). Dabei kamen zwei echte Fehler heraus.
-- **Offen:** Standort-Koordinaten der Mitarbeiter, ORS-Schlüssel fürs Routing.
+- **Plausibilitätscheck Adminmenü:** ✅ 25.09.2026 (siehe unten). Ergebnis:
+  mehrere Terminarten, Mitarbeiter-Startadresse statt Koordinaten,
+  HERO-Verknüpfung im Buchungs-Reiter sichtbar.
+- **Offen:** Startadressen der Mitarbeiter, ORS-Schlüssel fürs Routing,
+  Qualifikation `montage` (sonst ist „Montage vor Ort“ dauerhaft ohne Slots).
 
 ### Migrationen
 | Datei | Inhalt |
@@ -28,7 +36,8 @@ hält Stand + bewusste Abweichungen fest.
 | `20260924000000_booking_m2_project_travel_holidays.sql` | `booking.project_id/hero_project_id/address_source/contact_overrides`, `travel_time_cache`, `public_holiday`, `booking_*`-Einstellungen, Regelset `aufmass_vor_ort` |
 | `20260924094606_booking_m3_geocode_staff_actions.sql` | `geocode_cache`, `booking.staff_token`, `booking.cancel_reason` |
 | `20260924110000_booking_m4_hero_sync.sql` | Eindeutigkeit `busy_block(source, source_ref, staff_id)`, Poll-Secret, pg_cron-Job |
-| `booking_m5_mail_cron` | pg_cron für `booking-mail` (alle 5 Min.), Index auf fällige `notification`-Zeilen |
+| `20260924115156_booking_m5_mail_cron.sql` | pg_cron für `booking-mail` (alle 5 Min.), Index auf fällige `notification`-Zeilen |
+| `20260925055651_booking_m6_staff_home_address.sql` | `staff.home_base_address` — Startadresse statt Koordinatenpaar |
 
 ## Abgestimmte Produktentscheidungen
 - **Ein Link = ein Projekt.** Ohne Projekt keine Buchung. Objektadresse aus HERO,
@@ -44,17 +53,31 @@ hält Stand + bewusste Abweichungen fest.
 - **Sperrzeiten ergeben sich aus den Arbeitszeiten**, es gibt keine zweite Liste.
 - **Feiertage** kommen pro Bundesland aus einer öffentlichen Quelle und bleiben
   danach bearbeitbar.
+- **Mehrere Terminarten.** Buchbar ist eine Terminart, wenn sie `active` ist
+  **und** ihre Kategorie `is_bookable` trägt. Bei genau einer geht die
+  Buchungsseite direkt in den Kalender, bei mehreren lässt sie erst wählen.
+  Jede Art hat eigene Dauer, Puffer, Vorlauf, Qualifikationen, HERO-Kategorie
+  und optional eigenes Personal.
+- **Der Mitarbeiterstandort ist eine Adresse.** Koordinaten tippt niemand ein;
+  der Server geocodiert die Adresse (und nur bei Änderung).
 
 ## M3 — Buchungs-API (`supabase/functions/booking-api`)
 `verify_jwt=false`, Zugriff via `service_role`. Nur Slots lesen + Buchen/Stornieren, nie Config.
-- `GET  ?action=context&project=<uuid>` — Terminart, Adresse (mit Quelle), Kontakt.
-- `GET  ?action=availability&project=&from=&to=[&street=&zip=&city=]` — Slots,
-  serverseitig gerechnet. Eine eingegebene Adresse schlägt die aus HERO.
-- `POST {action:'create', project, slot, staffId, contact, addressOverride?, hinweis?}` —
+- `GET  ?action=context&project=<uuid>` — **alle** buchbaren Terminarten
+  (`appointments`, nach Dauer sortiert), Adresse (mit Quelle), Kontakt.
+- `GET  ?action=availability&project=&ruleSet=&from=&to=[&street=&zip=&city=]` —
+  Slots, serverseitig gerechnet. Eine eingegebene Adresse schlägt die aus HERO.
+  Eine unbekannte Terminart → **400** („Diese Terminart ist nicht buchbar“),
+  unlesbare Zeitangaben ebenfalls **400** statt stillschweigend 0 Slots.
+  `ruleSet` darf fehlen: dann die einzige buchbare Art, sonst `aufmass_vor_ort`
+  — alte Links bleiben damit gültig.
+- `POST {action:'create', project, ruleSet, slot, staffId, contact, addressOverride?, hinweis?}` —
   rechnet den Tag **neu** (dem Frontend wird nichts geglaubt), prüft den Slot,
   schreibt `booking` + `busy_block(source='booking')` + Outbox-Zeilen
   (`confirmation`, `internal_new`, ggf. `reminder`) und legt den Termin **am
-  HERO-Projekt** an (`project_match_id`, Partner aus `employees.hero_partner_id`).
+  HERO-Projekt** an (`project_match_id`, Partner aus `employees.hero_partner_id`,
+  Kategorie aus `rule_set.config.hero_category_id`, sonst
+  `booking_hero_category_id`).
   Doppelbuchung fängt der GiST-Constraint ab → **409**. HERO-Fehler sind nicht
   fatal: der Termin steht dann bei uns, die Antwort enthält `heroError`.
 - `POST {action:'cancel', cancelToken}` — Kunde storniert (`cancel_reason='customer'`).
@@ -67,9 +90,33 @@ Deploy braucht die Import-Map `deno.json` (`luxon` → `npm:luxon`).
 `types.ts` erscheint bewusst nicht im Bundle: es wird nur mit `import type`
 benutzt und fällt beim Bündeln weg.
 
-## Feiertage (`supabase/functions/booking-admin`)
-Admin-Token nötig. Aktionen: `import_holidays` (Bundesland + Jahre),
-`list_holidays`, `add_holiday`, `set_holiday_active`, `delete_holiday`.
+## Adminmenü (`supabase/functions/booking-admin`)
+Admin-Token nötig, alle Writes laufen über diese Function — direkte
+Supabase-Writes gibt es im Adminbereich nicht. Geschrieben wird nur, was
+ausdrücklich erlaubt ist: `ERLAUBTE_KEYS` für `app_config`,
+`ERLAUBTE_RULESET_SPALTEN` für die Terminart. Sonst wäre der Admin-Token ein
+Generalschlüssel für `app_config` (dort liegt auch `hero_api_key`).
+
+Aktionen:
+- `get_config` — alles, was der Reiter braucht: Einstellungen, **alle**
+  Terminarten (mit Kategorie, Qualifikationen, zugeordnetem Personal,
+  HERO-Kategorie), Personal (mit HERO-Partner und Arbeitszeiten),
+  Kategorien, Mitarbeiter, `routingKeyVorhanden`, `heroAktiv`.
+- `set_config`, `set_rule_set` (pro `key`), `set_rule_set_staff`,
+  `set_category_blocks`.
+- `staff_upsert` (Adresse; geocodiert **nur bei Änderung**), `geocode_staff`
+  (alle nachträglich, sobald der Schlüssel da ist), `staff_delete`
+  (deaktiviert statt löscht, wenn Buchungen hängen), `set_working_hours`
+  (ersetzt, ergänzt nicht), `sync_staff_from_employees`.
+- `list_bookings`, `mail_queue` (was in der Outbox hängt).
+- Feiertage: `import_holidays` (Bundesland + Jahre), `list_holidays`,
+  `add_holiday`, `set_holiday_active`, `delete_holiday`.
+
+`routingKeyVorhanden` kommt vom Server, weil nur er es weiß: `ORS_API_KEY`
+liegt in den Supabase-Secrets, nicht in `app_config` — ein Schlüssel, den der
+Admin-Reiter lesen könnte, wäre kein Schlüssel mehr.
+
+### Feiertage
 
 Zwei kostenlose Quellen, in dieser Reihenfolge: **feiertage-api.de**, dann
 **date.nager.at**. Das Lesen beider Antwortformen liegt in
@@ -170,18 +217,30 @@ Rechenfehler.
 
 ## M6 — Oberflächen
 - **`/termin/:projectId`** — öffentliche Buchungsseite, Calendly-Aufmachung.
-  Links der Anlass, rechts Tag und Uhrzeit, dann die Bestätigung. Adresse und
-  Kontakt aus HERO, editierbar; eine geänderte Adresse lässt die freien Zeiten
-  neu rechnen. Bei 409 wird sofort neu geladen.
+  Gibt es mehrere Terminarten, wählt der Kunde zuerst die Art (mit Dauer), bei
+  genau einer entfällt der Schritt. Links der Anlass, rechts Tag und Uhrzeit,
+  dann die Bestätigung. Adresse und Kontakt aus HERO, editierbar; eine geänderte
+  Adresse lässt die freien Zeiten neu rechnen. Bei 409 wird sofort neu geladen.
+  Ist im ganzen geladenen Monat kein einziger Slot frei, sagt die Seite auch,
+  was dann zu tun ist (andere Terminart oder einfach antworten) — sonst klickt
+  sich der Kunde bei einer Terminart ohne Personal endlos durch Monate.
 - **`/termin/absagen/:token`** — Absage durch den Kunden.
 - **`/termin/intern/:token?mode=cancel|reschedule`** — unsere zwei Knöpfe aus
   der internen Mail. Beide Seiten fragen nach, bevor sie handeln: ein
   Mailprogramm, das Links vorab anklickt (Outlook Safe Links, Virenscanner),
   würde sonst von allein Termine absagen.
-- **Adminmenue → Reiter „Termine“** — Terminart, Personal mit Arbeitszeiten,
-  Feiertage, Anfahrt, HERO/Mails, kommende Termine, offene Mailschlange.
-  Alle Writes über `booking-admin`; die Function nimmt nur eine feste Liste
-  von Einstellungsschlüsseln und bekannte Regelset-Spalten an.
+- **Adminmenue → Reiter „Termine“** — sechs Abschnitte: Terminarten (Liste
+  **aller** Arten mit Dauer, Qualifikation, HERO-Kategorie, Personal; darunter
+  der Editor für die gewählte), Personal mit Arbeitszeiten und
+  HERO-Verknüpfung, Feiertage, Anfahrt, HERO/Mails, kommende Termine samt
+  offener Mailschlange. Alle Writes über `booking-admin`, die HERO-Verknüpfung
+  über `admin-manage` (`hero_list_options`, `set_employee_hero_partner`) —
+  also über dasselbe Feld wie im Reiter „Mitarbeiter“, nicht über eine zweite
+  Quelle. Der Reiter warnt aktiv bei zwei Dingen: eine Terminart verlangt eine
+  Qualifikation, die niemand hat (→ dauerhaft null freie Zeiten), und bei
+  aktiver HERO-Integration fehlt einem Mitarbeiter die HERO-Verknüpfung
+  (→ seine HERO-Termine blockieren nichts, unsere Termine landen in HERO ohne
+  Zuständigen).
 - **Startseite** — schmale Leiste mit den Terminen von heute und morgen
   (auf Klick sieben Tage). Liest direkt aus Supabase (RLS `is_staff()`) und
   zeigt nichts, wenn es nichts gibt.
@@ -194,7 +253,7 @@ react-day-picker nicht im Haupt-Bundle liegen.
 Gefahren wurde die ganze Kette gegen die Produktionsdatenbank und das echte
 HERO: Kontext laden → freie Zeiten → buchen → HERO-Termin → Mails → absagen →
 HERO-Termin weg → Absagemail. Dazu die Oberflaechen mit Playwright gegen
-abgefangene Antworten (`playwright.booking.config.ts`, 11 Tests).
+abgefangene Antworten (`playwright.booking.config.ts`, inzwischen 14 Tests).
 
 Drei Fehler, die nur so auffallen konnten:
 
@@ -224,6 +283,43 @@ Unschoen, aber absichtlich so gelassen: eine Zeit, die als `from`/`to` unlesbar
 ist, gab frueher eine leere Slotliste zurueck (sah aus wie "nichts frei"). Das
 gibt jetzt einen 400 mit Klartext.
 
+## Was der Plausibilitätscheck im Adminmenü gefunden hat (25.09.2026)
+
+Drei Dinge, die im Betrieb aufgefallen wären — alle mit derselben Ursache: die
+Buchung war auf **genau eine** Terminart gebaut.
+
+1. **Zwei von drei Terminarten waren unerreichbar.** M1 legt
+   `aufmass_vor_ort`, `kundentermin_vor_ort` und `montage_vor_ort` an, alle
+   aktiv und buchbar. `booking-api` hatte die Kennung aber fest verdrahtet —
+   die anderen beiden waren also weder im Adminmenü noch auf der Buchungsseite
+   zu sehen und über den Link nicht buchbar. Behoben: `context` liefert alle
+   buchbaren Arten, `availability`/`create` rechnen mit der übergebenen.
+   Gegengeprüft gegen Produktion (`WER-1744`): `context` → 3 Arten;
+   `availability` → `aufmass_vor_ort` 276 Slots (Raster 15 Min.),
+   `kundentermin_vor_ort` 154 (Raster 30 Min.), `montage_vor_ort` **0**
+   (verlangt `montage`, das hat niemand), unbekannte Art → 400.
+2. **„Breite“ und „Länge“ beim Mitarbeiter.** Zwei Zahlenfelder, die niemand
+   von Hand einträgt und die falsch getippt stillschweigend einen falschen
+   Einsatzradius ergeben. Ersetzt durch **eine Startadresse**
+   (`staff.home_base_address`); der Server geocodiert sie, und nur bei
+   Änderung. `geocode_staff` holt das für alle nach, sobald der
+   Routing-Schlüssel hinterlegt ist.
+3. **HERO-Verknüpfung war im Buchungskontext unsichtbar.** Das Feld
+   (`employees.hero_partner_id`) gab es schon im Reiter „Mitarbeiter“, aber
+   ohne die Verknüpfung blockieren HERO-Termine keine Slots und unsere Termine
+   landen in HERO ohne Zuständigen. Deshalb steht dieselbe Auswahl jetzt auch
+   am Mitarbeiter im Buchungs-Reiter — gleiche Function, gleiches Feld, plus
+   Warnung, wenn sie bei aktiver Integration fehlt.
+
+Dazu zwei Kleinigkeiten:
+- Eine Terminart, für die niemand qualifiziert ist, liefert korrekt null
+  Slots — der Kunde hätte sich aber durch Monate geklickt. Die Buchungsseite
+  sagt jetzt, was zu tun ist, wenn im geladenen Monat gar nichts frei ist.
+- `enqueueHeroUpload` kannte `lager_label_pdf` in seinem Typ nicht, obwohl
+  `LabelPrint.tsx` genau das einreiht (zur Laufzeit harmlos, aber der Typ log).
+  Ergänzt; damit bleiben in `tsc -p tsconfig.app.json` 5 alte, unverwandte
+  Fehler.
+
 ## Bewusste Abweichungen vom Spec-Entwurf (§8/§14, gegen Repo geprüft)
 - **Einzelmandant:** kein `org_id`. Die App ist single-tenant; Struktur bleibt additiv erweiterbar.
 - **`staff` verweist auf `employees`** (`employee_id`, nullable) statt Identitäten zu duplizieren.
@@ -250,20 +346,24 @@ Mindest-Vorlaufzeit, Buchungsfenster, Tageslimits, Qualifikation, Zuweisung
 (`fixed`/`round_robin`/`by_skill`/`collective`), Notfall-Reserve.
 
 ## Nächste Schritte
-1. **Ein Durchlauf mit echter Buchung.** Alles einzeln geprüft, aber die Kette
-   Buchung → HERO-Eintrag → Mails ist noch nicht am Stück gelaufen. Dabei gehen
-   echte Mails raus (Bestätigung an den Kunden, Benachrichtigung an uns).
-2. Kleinigkeit für später: der Buchungslink könnte direkt aus der
-   Projektansicht kopierbar sein, statt die Projekt-ID von Hand zu setzen.
+1. Der Buchungslink ist noch nicht aus der Projektansicht kopierbar; die
+   Projekt-ID muss von Hand in die URL. Nächster sinnvoller Schritt, sobald
+   die Buchung im Alltag benutzt wird.
+2. Zwei Leute, die **denselben** Termin gleichzeitig ändern, bleiben
+   last-write-wins (wie beim Standort-Sync). Der GiST-Constraint verhindert
+   dabei nur die Doppelbuchung, nicht die zweite Absage.
 
 ### Was der Betrieb noch beisteuern muss
 - OpenRouteService-Schlüssel als Supabase-Secret `ORS_API_KEY`, danach
   `booking_travel_mode` auf `routing` stellen.
-- Standort-Koordinaten je Mitarbeiter (`staff.home_base_lat/lng`) nachtragen —
-  ohne sie greift der Einsatzradius nicht. Angelegt sind die beiden
-  Mitarbeiter mit HERO-Partner-ID bereits, mit Arbeitszeiten Mo–Fr 08–17 Uhr
-  als Startwert.
+- **Startadresse je Mitarbeiter** im Reiter „Termine“ eintragen — ohne sie
+  greift der Einsatzradius nicht. Koordinaten rechnet der Server daraus;
+  `geocode_staff` holt sie für alle nach. Angelegt sind die beiden Mitarbeiter
+  mit HERO-Partner-ID bereits, mit Arbeitszeiten Mo–Fr 08–17 Uhr als Startwert.
 - Feiertage einmal importieren (`booking-admin`, Bundesland `BW`).
+- Entscheiden, was mit **„Montage vor Ort“** passiert: entweder jemandem die
+  Qualifikation `montage` geben oder die Terminart abschalten. Aktiv und ohne
+  Personal heißt: der Kunde sieht sie und findet nie einen Termin.
 
 ### Tests
 ```

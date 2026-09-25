@@ -376,9 +376,19 @@ export default function BookingPage() {
                       <Loader2 className="h-4 w-4 animate-spin mr-2" /> wird geladen…
                     </div>
                   ) : daySlots.length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-6">
-                      In diesem Monat ist nichts frei. Bitte im nächsten Monat schauen.
-                    </p>
+                    // Ein leerer Monat ist normal. Ein Monat ohne EINEN einzigen
+                    // Slot kann aber auch heissen, dass fuer diese Terminart
+                    // niemand eingeteilt ist — dann hilft Vorwaertsklicken nicht.
+                    <div className="text-sm text-muted-foreground py-6 space-y-2">
+                      <p>In diesem Monat ist nichts frei. Bitte im nächsten Monat schauen.</p>
+                      {slots.length === 0 && (
+                        <p>
+                          {ctx.appointments.length > 1
+                            ? "Falls hier dauerhaft nichts frei ist: oben eine andere Terminart wählen oder einfach auf unsere E-Mail antworten."
+                            : "Falls hier dauerhaft nichts frei ist: einfach auf unsere E-Mail antworten, wir finden gemeinsam einen Termin."}
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[420px] overflow-auto pr-1">
                       {daySlots.map((s) => (

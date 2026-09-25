@@ -100,9 +100,15 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
   (`docs/probo-katalog.md`)
 - `booking-api` – öffentliche Terminbuchung, projektbezogen (`context`/
   `availability`/`create`/`cancel`/`staff-action`). Rechnet Slots immer
-  serverseitig, schreibt den Termin am HERO-Projekt (`docs/terminbuchung.md`)
-- `booking-admin` – Admin-Aktionen zur Terminbuchung, Schwerpunkt Feiertage
-  (Import pro Bundesland aus öffentlicher Quelle, danach bearbeitbar)
+  serverseitig, schreibt den Termin am HERO-Projekt (`docs/terminbuchung.md`).
+  Kennt **mehrere Terminarten**: buchbar ist, was `rule_set.active` ist und
+  dessen Kategorie `is_bookable` trägt. `ruleSet` gehört deshalb zu
+  `availability` und `create` – nie eine Kennung fest verdrahten
+- `booking-admin` – Admin-Aktionen zur Terminbuchung (alle Terminarten,
+  Personal mit Startadresse + Arbeitszeiten, Feiertage, Anfahrt, Mailschlange).
+  Feiertage: Import pro Bundesland aus öffentlicher Quelle, danach bearbeitbar.
+  Schreibt nur Whitelist-Schlüssel/-Spalten – der Admin-Token darf kein
+  Generalschlüssel für `app_config` sein
 - `booking-hero-sync` – liest HERO-Termine in `busy_block(source='hero')`,
   damit sie Slots blockieren. pg_cron alle 10 Min (`x-poll-secret`)
 - `booking-mail` – Outbox-Worker fuer die Terminmails via Resend (Bestaetigung
@@ -128,6 +134,11 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 4. Edge-Function-Änderungen manuell via `supabase functions deploy <name>`
 5. Migrations via `supabase db push`
 
+Typprüfung: **`npx tsc --noEmit` prüft hier nichts** (das Root-`tsconfig.json`
+hat `files: []` und arbeitet nur mit References). Der echte Befehl ist
+`npx tsc --noEmit -p tsconfig.app.json`. `npm run build` (esbuild) prüft
+ebenfalls keine Typen.
+
 ## Commit-Stil
 Kurze prägnante Messages auf Englisch:
 - `fix: beschreibung`
@@ -146,3 +157,10 @@ Kurze prägnante Messages auf Englisch:
 - Bei `updateLocationMetadata` (und ähnlichen partial-updates) niemals
   Felder blind `...record, field: data.field` setzen – das überschreibt mit
   undefined. Immer `Object.prototype.hasOwnProperty.call(data, 'field')`.
+- Keine Koordinaten-Eingabefelder im Adminmenue. Der Anwender trägt eine
+  Adresse ein, der Server geocodiert (`staff.home_base_address`, nur bei
+  Änderung).
+- Der Routing-Schlüssel `ORS_API_KEY` gehört in die Supabase-Secrets, **nicht**
+  in `app_config` – das Adminmenue kann `app_config` lesen.
+- Keine fest verdrahtete Terminart-Kennung. Es gibt mehrere Terminarten; wer
+  eine Kennung hart einträgt, macht die anderen unsichtbar (genau so passiert).
