@@ -118,10 +118,20 @@ Deno.serve(async (req) => {
     }
 
     // ── Bereits Gesehenes laden ────────────────────────────────────────
-    const { data: syncedRows } = await supabase.from("dropbox_synced").select("kind, hero_id");
+    // Seitenweise lesen: PostgREST liefert pro Abfrage hoechstens 1000 Zeilen.
+    // Ohne Paging galt alles jenseits davon als "neu" und wurde bei jedem Lauf
+    // erneut gefeuert (25er-Limit voll mit Altkunden, echte Projekte blieben liegen).
+    const syncedRows: any[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from("dropbox_synced")
+        .select("kind, hero_id").order("kind").order("hero_id").range(from, from + 999);
+      if (error) return json({ error: `dropbox_synced lesen fehlgeschlagen: ${error.message}` }, 500);
+      syncedRows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
     const seenProjects = new Set<number>();
     const seenCustomers = new Set<number>();
-    for (const r of (syncedRows || []) as any[]) {
+    for (const r of syncedRows) {
       if (r.kind === "project") seenProjects.add(Number(r.hero_id));
       if (r.kind === "customer") seenCustomers.add(Number(r.hero_id));
     }
