@@ -60,6 +60,9 @@ Kunden können Projekte online einsehen und freigeben.
 - `src/pages/LocationDetails.tsx` – Standort speichern
 - `src/pages/ProjectDetail.tsx` – Projektansicht
 - `src/pages/CustomerView.tsx` – Kundenansicht (alle Writes über customer-data mit Token)
+- `src/pages/CamperRepairInquiry.tsx` – öffentliches Formular `/wohnmobil-reparatur`
+  (Reparaturbeschriftung für Wohnmobil-Fachbetriebe). Nutzt `submit-vehicle-request`
+  mit `inquiryType: "wohnmobil_reparatur"`; Trigger `camper_repair_inquiry_submitted`
 - `src/pages/ProboCatalog.tsx` – interner Probo-Katalog-Generator, Route
   `/probo-katalog` (unverlinkt, lazy, `docs/probo-katalog.md`)
 - `src/pages/BookingPage.tsx` – oeffentliche Terminbuchung `/termin/:projectId`

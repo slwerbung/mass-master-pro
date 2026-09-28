@@ -44,6 +44,11 @@ export const TRIGGERS: TriggerDef[] = [
     description: "Ein Kunde hat über das Fahrzeug-Formular eine Anfrage gesendet.",
   },
   {
+    type: "camper_repair_inquiry_submitted",
+    label: "Wohnmobil-Reparatur abgeschickt",
+    description: "Ein Fachbetrieb hat über das Wohnmobil-Reparatur-Formular eine Reparaturbeschriftung angefragt.",
+  },
+  {
     type: "first_location_created",
     label: "Erster Standort angelegt (Nach Aufmaß)",
     description: "Im Projekt wurde der erste Standort erstellt – z.B. nach dem Aufmaß vor Ort.",
