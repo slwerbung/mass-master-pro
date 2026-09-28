@@ -12,6 +12,9 @@
  *     {cameraInput}
  *     <Button onClick={triggerCamera}>Kamera</Button>
  *   </>;
+ *
+ * `handleFileChange` is the same handler, exposed so a FileDropZone can feed
+ * dropped files through it (`onFiles={dropToChange(handleFileChange)}`).
  */
 import { useRef } from "react";
 import { readImageFileForEditor } from "./imageFile";
@@ -60,5 +63,5 @@ export function useDirectCamera({ onCapture, uploadMode = false }: Options) {
     />
   );
 
-  return { cameraInput, triggerCamera };
+  return { cameraInput, triggerCamera, handleFileChange: handleChange };
 }

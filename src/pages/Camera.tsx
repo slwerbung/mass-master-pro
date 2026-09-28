@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { X, Check, ImagePlus, Camera as CameraIcon } from "lucide-react";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { readImageFileForEditor } from "@/lib/imageFile";
 import { setEditorHandoff } from "@/lib/editorHandoff";
 
@@ -171,7 +172,12 @@ const Camera = () => {
   };
 
   return (
-    <div className="w-screen h-[100dvh] bg-foreground flex flex-col overflow-hidden">
+    <FileDropZone
+      accept="image/*"
+      onFiles={dropToChange(handleFileChange)}
+      label="Foto hier ablegen"
+      className="w-screen h-[100dvh] bg-foreground flex flex-col overflow-hidden"
+    >
       {/* Hidden file input for mobile / upload mode */}
       <input
         ref={fileInputRef}
@@ -260,7 +266,7 @@ const Camera = () => {
           </>
         )}
       </div>
-    </div>
+    </FileDropZone>
   );
 };
 

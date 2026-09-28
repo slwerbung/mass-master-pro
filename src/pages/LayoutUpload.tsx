@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { FileUp, CheckCircle2, Loader2, X, FileText, Image } from "lucide-react";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 
 // Public page: a customer uploads layout file(s) for the vehicle project they
 // just created. Multiple files of different types are supported. An optional
@@ -128,6 +129,7 @@ export default function LayoutUpload() {
           </p>
         </div>
 
+        <FileDropZone accept={ACCEPTED} multiple onFiles={dropToChange(onPick)} disabled={uploading} label="Dateien hier ablegen">
         <Card>
           <CardHeader>
             <CardTitle>Ihre Dateien</CardTitle>
@@ -139,7 +141,7 @@ export default function LayoutUpload() {
               className="w-full h-32 rounded-lg border-2 border-dashed border-border hover:border-primary/50 flex flex-col items-center justify-center text-muted-foreground hover:text-primary transition-colors"
             >
               <FileUp className="h-8 w-8 mb-1" />
-              <span className="font-medium text-sm">Dateien hinzufügen</span>
+              <span className="font-medium text-sm">Dateien hinzufügen oder hierher ziehen</span>
               <span className="text-xs mt-1">PDF, JPG, PNG, SVG u.a. – max. 25 MB pro Datei</span>
             </button>
 
@@ -204,6 +206,7 @@ export default function LayoutUpload() {
             </Button>
           </CardContent>
         </Card>
+        </FileDropZone>
       </div>
     </div>
   );

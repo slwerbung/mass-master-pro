@@ -12,6 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
@@ -27,6 +28,9 @@ import { signedFileUrl } from "@/lib/storageUrl";
 
 // Which layout files can be previewed inline (PDF via pdf.js, images via <img>).
 // .ai/.eps and similar stay as a download link only.
+// Layout / Produktionsdatei: same list for the picker and for drag & drop.
+const LAYOUT_ACCEPT = ".pdf,.png,.jpg,.jpeg,.svg,.ai,.eps";
+
 function layoutPreviewKind(name: string): "pdf" | "image" | null {
   const n = (name || "").toLowerCase();
   if (/\.pdf$/.test(n)) return "pdf";
@@ -107,7 +111,6 @@ const VehicleDetail = () => {
   const [uploadingLayout, setUploadingLayout] = useState(false);
   const [savingFields, setSavingFields] = useState(false);
   const [editingCaptionId, setEditingCaptionId] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState(false);
   const [captionDraft, setCaptionDraft] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [sendingMsg, setSendingMsg] = useState(false);
@@ -209,12 +212,6 @@ const VehicleDetail = () => {
     if (!e.target.files || !projectId) return;
     await uploadFiles(e.target.files);
     e.target.value = "";
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    if (e.dataTransfer.files.length > 0) await uploadFiles(e.dataTransfer.files);
   };
 
   const handleLayoutUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -589,6 +586,7 @@ const VehicleDetail = () => {
         </div>
 
         {/* Layout / Produktionsdatei — oben und sichtbar (wie das Aufmaß-Bild) */}
+        <FileDropZone accept={LAYOUT_ACCEPT} onFiles={dropToChange(handleLayoutUpload)} disabled={uploadingLayout} label={layout ? "Datei ablegen – ersetzt das Layout" : "Layout ablegen"}>
         <Card>
           <CardHeader className="p-4 pb-2">
             <div className="flex items-center justify-between">
@@ -597,7 +595,7 @@ const VehicleDetail = () => {
                 <Upload className="h-4 w-4 mr-1" />
                 {uploadingLayout ? "Lädt..." : layout ? "Ersetzen" : "Hochladen"}
               </Button>
-              <input ref={layoutInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.svg,.ai,.eps" className="hidden" onChange={handleLayoutUpload} />
+              <input ref={layoutInputRef} type="file" accept={LAYOUT_ACCEPT} className="hidden" onChange={handleLayoutUpload} />
             </div>
           </CardHeader>
           <CardContent className="p-4 space-y-3">
@@ -632,12 +630,14 @@ const VehicleDetail = () => {
             )}
           </CardContent>
         </Card>
+        </FileDropZone>
 
         {/* Gesprächsnotizen (Diktiergerät → Transkript → Protokoll → HERO) */}
         <MeetingNotesCard projectId={projectId!} projectNumber={project.project_number} />
 
         {/* Fahrzeugbilder (unbeschriftet, i.d.R. vom Kunden) — ansehen & einklappbar */}
         <Collapsible open={unlabeledOpen} onOpenChange={setUnlabeledOpen}>
+        <FileDropZone accept="image/*" multiple onFiles={uploadFiles} disabled={uploadingImage} label="Fahrzeugbilder ablegen">
         <Card>
           <CardHeader className="p-4 pb-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -668,10 +668,7 @@ const VehicleDetail = () => {
             {images.length === 0 ? (
               <label
                 htmlFor="vehicle-image-drop"
-                className={`flex flex-col items-center justify-center gap-3 border-2 border-dashed rounded-xl p-8 cursor-pointer transition-colors ${dragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"}`}
-                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleDrop}
+                className="flex flex-col items-center justify-center gap-3 border-2 border-dashed rounded-xl p-8 cursor-pointer transition-colors border-border hover:border-primary/50 hover:bg-muted/30"
               >
                 <input id="vehicle-image-drop" ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
                 <ImagePlus className="h-10 w-10 text-muted-foreground" />
@@ -711,6 +708,7 @@ const VehicleDetail = () => {
           </CardContent>
           </CollapsibleContent>
         </Card>
+        </FileDropZone>
         </Collapsible>
 
         {/* Vehicle Information — einklappbar */}
@@ -761,6 +759,7 @@ const VehicleDetail = () => {
         )}
 
         {/* Bilder bemaßt */}
+        <FileDropZone accept="image/*" onFiles={dropToChange(pickMeasuredFile)} disabled={uploadingMeasured} label="Bild ablegen – öffnet den Editor">
         <Card>
           <CardHeader className="p-4 pb-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -833,6 +832,7 @@ const VehicleDetail = () => {
             )}
           </CardContent>
         </Card>
+        </FileDropZone>
 
         {/* Freigabe & Korrekturen zum Layout — Chat wie beim Aufmaß */}
         <Card>

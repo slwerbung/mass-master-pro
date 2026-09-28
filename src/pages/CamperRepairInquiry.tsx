@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ImagePlus, X, Loader2, CheckCircle2, Plus, CalendarClock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { formatPlate, isValidPlate } from "@/lib/licensePlate";
 
 // Public form for camper repair shops that need a repair lettering
@@ -335,7 +336,7 @@ const CamperRepairInquiry = () => {
               </div>
 
               {/* Images - optional here, the survey happens on site */}
-              <div className="space-y-2 pt-2">
+              <FileDropZone accept="image/*" multiple onFiles={dropToChange(handleImageSelect)} label="Bilder hier ablegen" className="space-y-2 pt-2">
                 <Label>Bilder (optional, max. {MAX_IMAGES})</Label>
                 <p className="text-xs text-muted-foreground">
                   Hilfreich sind Fotos der beschädigten Stelle und der Beschriftung drumherum.
@@ -372,7 +373,8 @@ const CamperRepairInquiry = () => {
                   className="hidden"
                   onChange={handleImageSelect}
                 />
-              </div>
+                <p className="hidden sm:block text-xs text-muted-foreground">Bilder können auch direkt hierher gezogen werden.</p>
+              </FileDropZone>
 
               {/* Signup fields - shown only when HERO didn't match */}
               {needsSignup && (

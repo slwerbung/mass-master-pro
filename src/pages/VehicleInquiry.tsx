@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ImagePlus, X, Loader2, CheckCircle2, Plus, FileUp, Wand2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { formatPlate, isValidPlate, isPlateField } from "@/lib/licensePlate";
 
 // Public-facing form for customers to request vehicle lettering. Submits
@@ -412,7 +413,7 @@ const VehicleInquiry = () => {
               )}
 
               {/* Image upload */}
-              <div className="space-y-2 pt-2">
+              <FileDropZone accept="image/*" multiple onFiles={dropToChange(handleImageSelect)} label="Bilder hier ablegen" className="space-y-2 pt-2">
                 <Label>
                   Bilder Ihres Fahrzeugs (max. {MAX_IMAGES}) <span className="text-red-600">*</span>
                 </Label>
@@ -449,7 +450,8 @@ const VehicleInquiry = () => {
                   className="hidden"
                   onChange={handleImageSelect}
                 />
-              </div>
+                <p className="hidden sm:block text-xs text-muted-foreground">Bilder können auch direkt hierher gezogen werden.</p>
+              </FileDropZone>
 
               {/* Signup fields - shown only when HERO didn't match */}
               {needsSignup && (

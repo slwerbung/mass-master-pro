@@ -12,6 +12,7 @@ import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { getSession, clearSession, applySupabaseSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { mergeWithDefaultProjectFields } from "@/lib/projectFields";
@@ -1366,10 +1367,14 @@ const CustomerView = () => {
 
             {/* Customer File Upload */}
             {isRealCustomerId(session?.id) && (
+              <FileDropZone accept=".pdf,.png,.jpg,.jpeg,.svg,.ai,.eps" onFiles={dropToChange(handleFileUpload)} disabled={uploadingFile} label="Datei hier ablegen">
               <Card>
                 <CardContent className="p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">Dateien hochladen</p>
+                    <div>
+                      <p className="text-sm font-medium">Dateien hochladen</p>
+                      <p className="hidden sm:block text-xs text-muted-foreground">Auch per Drag &amp; Drop hierher</p>
+                    </div>
                     <label className="cursor-pointer">
                       <input type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg,.svg,.ai,.eps" onChange={handleFileUpload} disabled={uploadingFile} />
                       <Button size="sm" variant="outline" asChild disabled={uploadingFile}>
@@ -1403,6 +1408,7 @@ const CustomerView = () => {
                   )}
                 </CardContent>
               </Card>
+              </FileDropZone>
             )}
 
 

@@ -9,6 +9,7 @@ import {
   FileText, Loader2, CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 
 // ── Vehicle Branding Design Finder ────────────────────────────────────
 // A guided, visual configurator that turns a customer's gut feeling into
@@ -461,7 +462,7 @@ export default function Gestaltung() {
               </div>
             </div>
 
-            <div>
+            <FileDropZone accept="image/jpeg,image/png,application/pdf" multiple onFiles={dropToChange(onPickInspiration)} disabled={state.inspiration.length >= 5} label="Dateien hier ablegen">
               <h2 className="font-semibold mb-2">Inspiration oder Beispiele hochladen</h2>
               <div className="flex flex-wrap gap-2">
                 {state.inspiration.map((f, i) => (
@@ -490,7 +491,8 @@ export default function Gestaltung() {
                 )}
               </div>
               <input ref={fileRef} type="file" accept="image/jpeg,image/png,application/pdf" multiple className="hidden" onChange={onPickInspiration} />
-            </div>
+              <p className="hidden sm:block text-xs text-muted-foreground mt-2">Dateien können auch direkt hierher gezogen werden.</p>
+            </FileDropZone>
           </div>
         )}
 

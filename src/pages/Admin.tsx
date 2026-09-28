@@ -11,6 +11,7 @@ import { DropboxCard } from "@/components/admin/DropboxCard";
 import { Label } from "@/components/ui/label";
 import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle, Mail, RefreshCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { getSession, clearSession } from "@/lib/session";
 import { mergeWithDefaultProjectFields, isProtectedProjectField } from "@/lib/projectFields";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1646,6 +1647,7 @@ const Admin = () => {
               </CardContent>
             </Card>
 
+            <FileDropZone accept="image/png,image/jpeg,image/svg+xml,image/webp" onFiles={dropToChange(handleLogoUpload)} disabled={savingLogo} label="Logo hier ablegen">
             <Card>
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><ImageIcon className="h-5 w-5" /> Firmenlogo</CardTitle></CardHeader>
               <CardContent className="space-y-4">
@@ -1672,6 +1674,7 @@ const Admin = () => {
                 </div>
               </CardContent>
             </Card>
+            </FileDropZone>
 
           </TabsContent>
 

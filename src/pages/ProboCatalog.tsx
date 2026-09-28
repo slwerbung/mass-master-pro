@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { FileDropZone } from "@/components/FileDropZone";
 import { ArrowLeft, FileDown, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -290,7 +291,7 @@ const ProboCatalog = () => {
                 rows={3}
               />
             </div>
-            <div className="space-y-2">
+            <FileDropZone accept="image/*" onFiles={(files) => void handleLogo(files[0])} label="Logo hier ablegen" className="space-y-2">
               <Label htmlFor="customerLogo">Kundenlogo (optional)</Label>
               <div className="flex items-center gap-2">
                 <Input
@@ -308,7 +309,7 @@ const ProboCatalog = () => {
               {customerLogo ? (
                 <img src={customerLogo} alt="Kundenlogo" className="mt-2 h-12 object-contain" />
               ) : null}
-            </div>
+            </FileDropZone>
             <div className="space-y-2">
               <Label>Branding-Farben</Label>
               <div className="flex items-center gap-4">

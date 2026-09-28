@@ -9,6 +9,7 @@ import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { scheduleSyncProject } from "@/lib/supabaseSync";
 import { FloorPlan } from "@/types/project";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import * as pdfjsLib from "pdfjs-dist";
 
 // Set up PDF.js worker
@@ -139,6 +140,7 @@ const FloorPlanUpload = () => {
           </p>
         </div>
 
+        <FileDropZone accept="application/pdf" multiple onFiles={dropToChange(handleFileSelect)} disabled={isProcessing} label="PDF-Grundrisse hier ablegen">
         <Card>
           <CardHeader className="p-4 md:p-6 pb-3">
             <CardTitle className="flex items-center gap-2 text-lg">
@@ -169,12 +171,13 @@ const FloorPlanUpload = () => {
               ) : (
                 <>
                   <Upload className="h-5 w-5 mr-2" />
-                  PDF-Datei(en) auswählen
+                  PDF-Datei(en) auswählen oder hierher ziehen
                 </>
               )}
             </Button>
           </CardContent>
         </Card>
+        </FileDropZone>
 
         {renderedPages.length > 0 && (
           <div className="space-y-4">

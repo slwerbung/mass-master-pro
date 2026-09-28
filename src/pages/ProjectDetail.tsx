@@ -6,6 +6,7 @@ import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map, Fi
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { getSession } from "@/lib/session";
 import { deleteDetailImageFromSupabase, deleteProjectFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, scheduleSyncProject } from "@/lib/supabaseSync";
 import {
@@ -262,7 +263,17 @@ const ProjectDetail = () => {
     // "pb-28" neben "md:p-6", und ab 768 px hat das md:p-6 ihn ueberschrieben.
     // Auf dem Rechner blieben so 24 px statt 112 px, und der letzte Standort
     // lag 32 px unter der Leiste: "Detailbild hinzufuegen" war nicht klickbar.
-    <div className="min-h-screen bg-muted/30 pb-32">
+    // Ein Foto irgendwo auf die Seite ziehen = wie "Hochladen" (neuer
+    // Standort). Druckdateien lassen sich direkt auf die Standortkarte ziehen;
+    // die innere Ablagefläche hat dort Vorrang.
+    <FileDropZone
+      accept="image/*"
+      onFiles={dropToChange(handleImageUpload)}
+      disabled={isPlanProject}
+      fullscreen
+      label="Foto ablegen – neuer Standort"
+      className="min-h-screen bg-muted/30 pb-32"
+    >
       {/* Sticky header */}
       <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/60 px-4 py-2.5">
         <div className="container max-w-4xl mx-auto flex items-center gap-2">
@@ -496,7 +507,7 @@ const ProjectDetail = () => {
           locations={project.locations.map((l) => ({ id: l.id, locationNumber: l.locationNumber }))}
         />
       )}
-    </div>
+    </FileDropZone>
   );
 };
 

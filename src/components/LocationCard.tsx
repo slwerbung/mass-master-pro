@@ -19,6 +19,7 @@ import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import LocationInfoFields from "@/components/LocationInfoFields";
 import LocationChat, { ChatMessage } from "@/components/LocationChat";
 import { getSession } from "@/lib/session";
@@ -73,11 +74,14 @@ interface LocationCardProps {
   projectFieldConfigs?: any[];
 }
 
+// Same list for the picker and for drag & drop.
+const PRINT_FILE_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.svg,.ai,.eps";
+
 const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fieldConfigs = [], showPrintFiles = true, showDetailImages = true, project, projectFieldConfigs = [] }: LocationCardProps) => {
   const navigate = useNavigate();
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
-  const { cameraInput: detailCameraInput, triggerCamera: triggerDetailCamera } = useDirectCamera({
+  const { cameraInput: detailCameraInput, triggerCamera: triggerDetailCamera, handleFileChange: handleDetailFile } = useDirectCamera({
     onCapture: (imageData) => { setEditorHandoff({ imageData }); navigate(`/projects/${projectId}/editor?detail=true&locationId=${location.id}`); },
   });
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -508,7 +512,13 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           </div>
         </div>
 
-        <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
+        <FileDropZone
+          accept={PRINT_FILE_ACCEPT}
+          onFiles={dropToChange(handlePrintFileUpload)}
+          disabled={!showPrintFiles || uploadingPdf}
+          label={pdfUrl ? "Datei ablegen – ersetzt die vorhandene" : "Produktionsdatei ablegen"}
+          className="border rounded-lg p-3 space-y-2 bg-muted/30"
+        >
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Layout / Produktionsdatei</p>
           {showPrintFiles ? (
             pdfUrl && pdfName ? (
@@ -552,7 +562,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           ) : (
             <p className="text-sm text-muted-foreground">In der internen Ansicht ausgeblendet.</p>
           )}
-        </div>
+        </FileDropZone>
 
         <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
           <div className="flex items-center gap-2">
@@ -572,6 +582,13 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           />
         </div>
 
+        <FileDropZone
+          accept="image/*"
+          onFiles={dropToChange(handleDetailFile)}
+          disabled={!showDetailImages}
+          label="Detailbild ablegen"
+          className="space-y-3"
+        >
         {showDetailImages && location.detailImages && location.detailImages.length > 0 && (
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Detailbilder</p>
@@ -620,10 +637,11 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         {showDetailImages && (<Button variant="outline" size="sm" className="w-full" onClick={() => { if (isMobile) { triggerDetailCamera(); } else { navigate(`/projects/${projectId}/camera?detail=true&locationId=${location.id}`); } }}>
           <ImagePlus className="h-4 w-4 mr-2" /> Detailbild hinzufügen
         </Button>)}
+        </FileDropZone>
       </CardContent>
 
       {detailCameraInput}
-      <input ref={pdfInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,.ai,.eps" onChange={handlePrintFileUpload} className="hidden" />
+      <input ref={pdfInputRef} type="file" accept={PRINT_FILE_ACCEPT} onChange={handlePrintFileUpload} className="hidden" />
 
       {/* Lightbox: view an image large without opening the editor */}
       {lightbox && (
