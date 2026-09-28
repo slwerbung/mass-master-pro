@@ -228,11 +228,21 @@ const FREE_EMAIL_DOMAINS = new Set([
   "arcor.de", "mail.de", "posteo.de", "protonmail.com", "proton.me", "msn.com",
 ]);
 
-// Fallback: kein exakter E-Mail-Treffer, aber die DOMAIN (@firma.de) gehört
-// eindeutig zu genau EINEM HERO-Kunden → diesem zuordnen statt neu anzulegen.
-// Nur für Firmen-Domains (keine Freemailer) und nur bei eindeutiger Zuordnung
-// (mehrere verschiedene Kunden mit derselben Domain ⇒ lieber nicht raten).
-async function heroMatchByDomain(apiKey: string, email: string): Promise<{ id: number; isContactPerson: boolean; parentCustomerId: number; displayName: string; address?: { street?: string; city?: string; zipcode?: string } } | null> {
+// Fallback: kein exakter E-Mail-Treffer, aber die DOMAIN (@firma.de) ist in
+// HERO bekannt → Bestandskunde, auch wenn der Teil vor dem @ neu ist.
+// Nur für Firmen-Domains (keine Freemailer).
+//
+// Eine Domain gehört in der Praxis oft zu mehreren HERO-Kunden: die Firma
+// selbst plus Mitarbeiter, die privat mit Dienstadresse angelegt sind, ein
+// Verein, dessen Ansprechpartner die Firmenadresse nutzt, oder die Firma ist
+// doppelt angelegt. Statt dann aufzugeben (früheres Verhalten → Neukunde),
+// nehmen wir den naheliegendsten Kunden:
+//   1. Firmenkunde vor Privatkunde
+//   2. mit hinterlegter PLZ (sonst kann kein HERO-Projekt angelegt werden)
+//   3. die meisten Kontakte mit dieser Domain
+//   4. bei Gleichstand der älteste Datensatz (kleinste ID)
+// Die Mail an info@ weist auf die Domain-Zuordnung hin, damit sie geprüft wird.
+async function heroMatchByDomain(apiKey: string, email: string): Promise<{ id: number; isContactPerson: boolean; parentCustomerId: number; displayName: string; address?: { street?: string; city?: string; zipcode?: string }; domain: string; candidateCount: number } | null> {
   const domain = (email.split("@")[1] || "").toLowerCase().trim();
   if (!domain || FREE_EMAIL_DOMAINS.has(domain)) return null;
   const query = `
@@ -240,6 +250,7 @@ async function heroMatchByDomain(apiKey: string, email: string): Promise<{ id: n
       contacts(search: $search) {
         id
         email
+        type
         is_contact_person
         parent_customer_id
         full_name
@@ -260,12 +271,31 @@ async function heroMatchByDomain(apiKey: string, email: string): Promise<{ id: n
     const contacts: any[] = (data?.data?.contacts || [])
       .filter((c: any) => (c.email || "").toLowerCase().endsWith("@" + domain));
     if (contacts.length === 0) return null;
-    // Auf den zugehörigen Kunden auflösen (Ansprechpartner → Mutterkunde).
-    const customerIdOf = (c: any) => (c.is_contact_person && c.parent_customer_id) ? c.parent_customer_id : c.id;
-    const distinct = new Set(contacts.map(customerIdOf));
-    if (distinct.size !== 1) return null; // uneindeutig → nicht raten
-    // Repräsentanten wählen: bevorzugt den Firmen-Datensatz.
-    const rep = contacts.find((c: any) => !c.is_contact_person) || contacts[0];
+    // Auf den zugehörigen Kunden auflösen (Ansprechpartner → Mutterkunde)
+    // und pro Kunde bewerten.
+    const customerIdOf = (c: any) => Number((c.is_contact_person && c.parent_customer_id) ? c.parent_customer_id : c.id);
+    const groups = new Map<number, any[]>();
+    for (const c of contacts) {
+      const id = customerIdOf(c);
+      groups.set(id, [...(groups.get(id) || []), c]);
+    }
+    const ranked = [...groups.entries()].map(([customerId, members]) => ({
+      customerId,
+      members,
+      commercial: members.some((m: any) => m.type === "commercial" || !!(m.company_name || "").trim()),
+      hasZip: members.some((m: any) => !!(m.address?.zipcode || "").trim()),
+    })).sort((a, b) =>
+      Number(b.commercial) - Number(a.commercial) ||
+      Number(b.hasZip) - Number(a.hasZip) ||
+      b.members.length - a.members.length ||
+      a.customerId - b.customerId
+    );
+    const best = ranked[0];
+    // Repräsentant: bevorzugt der Kunden-Datensatz selbst. Ist nur ein
+    // Ansprechpartner dabei, löst der Aufrufer über parentCustomerId auf.
+    const rep = best.members.find((c: any) => Number(c.id) === best.customerId && !c.is_contact_person)
+      || best.members.find((c: any) => !c.is_contact_person)
+      || best.members[0];
     const displayName =
       rep.full_name || rep.company_name || [rep.first_name, rep.last_name].filter(Boolean).join(" ") || "";
     const address = rep.address ? {
@@ -273,7 +303,7 @@ async function heroMatchByDomain(apiKey: string, email: string): Promise<{ id: n
       city: rep.address.city || undefined,
       zipcode: rep.address.zipcode || undefined,
     } : undefined;
-    return { id: rep.id, isContactPerson: !!rep.is_contact_person, parentCustomerId: rep.parent_customer_id || 0, displayName, address };
+    return { id: rep.id, isContactPerson: !!rep.is_contact_person, parentCustomerId: rep.parent_customer_id || 0, displayName, address, domain, candidateCount: ranked.length };
   } catch (e) {
     console.warn("heroMatchByDomain failed", e);
     return null;
@@ -648,8 +678,15 @@ async function sendNotificationEmail(opts: {
   heroError: string | null;
   kind: InquiryKind;
   subjectSuffix: string;
+  customerName: string;
+  domainMatch: { domain: string; candidateCount: number } | null;
 }) {
   const variant = INQUIRY_VARIANTS[opts.kind];
+  // Matched only via the company domain: the sender's own address is not in
+  // HERO yet, so say which customer we picked and whether there were others.
+  const domainBlock = opts.domainMatch
+    ? `<p style="background:#fff3cd;padding:12px;border-radius:6px;color:#856404">Zugeordnet über die Domain <strong>@${escapeHtml(opts.domainMatch.domain)}</strong> zu <strong>${escapeHtml(opts.customerName || "Bestandskunde")}</strong>. Die Adresse ${escapeHtml(opts.email)} selbst ist in HERO noch nicht hinterlegt.${opts.domainMatch.candidateCount > 1 ? ` Unter dieser Domain gibt es ${opts.domainMatch.candidateCount} HERO-Kunden – bitte Zuordnung prüfen.` : ""}</p>`
+    : "";
   const fieldRows = Object.entries(opts.vehicleFields)
     .filter(([_, v]) => v && v.trim())
     .map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#666">${opts.fieldLabels[k] || k}</td><td>${escapeHtml(v)}</td></tr>`)
@@ -682,6 +719,7 @@ async function sendNotificationEmail(opts: {
       <h2 style="color:#1976d2">${variant.mailHeading}</h2>
       <p><strong>${escapeHtml(opts.email)}</strong> hat eine Anfrage über das Formular gesendet.</p>
       ${variant.mailNextStep ? `<p style="background:#e3f2fd;padding:12px;border-radius:6px">${escapeHtml(variant.mailNextStep)}</p>` : ""}
+      ${domainBlock}
       ${heroBlock}
       <h3 style="margin-top:24px">Projekt</h3>
       <table>
@@ -926,6 +964,9 @@ serve(async (req) => {
     let heroCustomerAddress: { street?: string; city?: string; zipcode?: string } | undefined;
     let heroCustomerIdForProject: number | null = null;
     let foundExistingContact = false;
+    // Set when the customer was matched only via the email domain - the
+    // notification mail flags it so the team can double-check.
+    let domainMatchInfo: { domain: string; candidateCount: number } | null = null;
     const debug: any = {};
 
     if (heroEnabled) {
@@ -937,7 +978,8 @@ serve(async (req) => {
         const domainMatch = await heroMatchByDomain(heroApiKey, body.email.trim());
         if (domainMatch) {
           match = domainMatch;
-          debug.heroDomainMatch = { id: domainMatch.id, customerId: domainMatch.parentCustomerId || domainMatch.id, displayName: domainMatch.displayName };
+          domainMatchInfo = { domain: domainMatch.domain, candidateCount: domainMatch.candidateCount };
+          debug.heroDomainMatch = { id: domainMatch.id, customerId: domainMatch.parentCustomerId || domainMatch.id, displayName: domainMatch.displayName, candidates: domainMatch.candidateCount };
         }
       }
       debug.heroSearch = match ? { id: match.id, isContactPerson: match.isContactPerson, parentCustomerId: match.parentCustomerId, displayName: match.displayName, hasAddress: !!match.address?.zipcode, viaDomain: !!debug.heroDomainMatch } : null;
@@ -1187,6 +1229,8 @@ serve(async (req) => {
           heroError,
           kind,
           subjectSuffix: kind === "wohnmobil_reparatur" ? (projectTitle || body.email.trim()) : body.email.trim(),
+          customerName: displayCustomerName,
+          domainMatch: domainMatchInfo,
         });
       } catch (e) {
         console.warn("Email notification failed:", e);
