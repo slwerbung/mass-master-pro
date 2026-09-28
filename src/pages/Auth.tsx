@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Shield, User, Users, ArrowLeft, Lock, Car, UserPlus } from "lucide-react";
+import { Shield, User, Users, ArrowLeft, Lock, Car, Caravan, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { setSession, getSession, applySupabaseSession } from "@/lib/session";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
@@ -331,6 +331,17 @@ const Auth = () => {
                   <div className="min-w-0 flex-1 whitespace-normal">
                     <div className="font-semibold break-words">FAHRZEUG EINREICHEN</div>
                     <div className="text-xs text-muted-foreground break-words">Fahrzeugdaten angeben für Beschriftung und Folierung</div>
+                  </div>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full min-h-16 h-auto py-3 justify-start gap-3 text-left"
+                  onClick={() => navigate("/wohnmobil-reparatur")}
+                >
+                  <Caravan className="h-6 w-6 text-primary shrink-0" />
+                  <div className="min-w-0 flex-1 whitespace-normal">
+                    <div className="font-semibold break-words">WOHNMOBIL-REPARATUR</div>
+                    <div className="text-xs text-muted-foreground break-words">Reparaturbeschriftung für Fachbetriebe beauftragen</div>
                   </div>
                 </Button>
                 <Button

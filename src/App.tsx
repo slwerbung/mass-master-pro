@@ -29,6 +29,7 @@ import GuestProject from "./pages/GuestProject";
 import VehicleDetail from "./pages/VehicleDetail";
 import NewCustomerSignup from "./pages/NewCustomerSignup";
 import VehicleInquiry from "./pages/VehicleInquiry";
+import CamperRepairInquiry from "./pages/CamperRepairInquiry";
 import LayoutUpload from "./pages/LayoutUpload";
 import Gestaltung from "./pages/Gestaltung";
 import HeroOfferAction from "./pages/HeroOfferAction";
@@ -217,6 +218,7 @@ const App = () => {
           {/* Public new-customer signup form */}
           <Route path="/neukunde" element={<NewCustomerSignup />} />
           <Route path="/fahrzeug-anfrage" element={<VehicleInquiry />} />
+          <Route path="/wohnmobil-reparatur" element={<CamperRepairInquiry />} />
           <Route path="/layout-upload" element={<LayoutUpload />} />
           <Route path="/gestaltung" element={<Gestaltung />} />
           <Route path="/hero-aktion" element={<HeroOfferAction />} />

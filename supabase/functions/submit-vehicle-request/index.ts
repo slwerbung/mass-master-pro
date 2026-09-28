@@ -12,6 +12,14 @@
 //
 // All HERO operations are best-effort: if HERO breaks halfway, we still
 // finalize the local project and notify, so no inquiries get lost.
+//
+// Two form variants share this function (`inquiryType`):
+// - "fahrzeug" (default): /fahrzeug-anfrage, dynamic fields from
+//   vehicle_field_config, at least one image.
+// - "wohnmobil_reparatur": /wohnmobil-reparatur, for camper repair shops.
+//   Only Kennzeichen, Hersteller and Modell (`repairFields`), images optional.
+//   We come by for the detailed survey afterwards, so the mail, HERO notes
+//   and the automation trigger say so.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -47,7 +55,60 @@ interface FormData {
   images: { dataUrl: string; filename: string }[];
   // Honeypot - real humans never fill this in
   website?: string;
+  inquiryType?: "fahrzeug" | "wohnmobil_reparatur";
+  // Only for inquiryType "wohnmobil_reparatur" - fixed fields, mapped onto
+  // the matching vehicle_field_config keys server-side.
+  repairFields?: { kennzeichen?: string; hersteller?: string; modell?: string };
 }
+
+type InquiryKind = "fahrzeug" | "wohnmobil_reparatur";
+
+// Everything that differs between the two form variants in one place.
+const INQUIRY_VARIANTS: Record<InquiryKind, {
+  source: string;
+  defaultNotes: string;
+  mailFrom: string;
+  mailSubject: string;
+  mailHeading: string;
+  mailNextStep: string;
+  titlePrefix: string;
+  heroImagePrefix: string;
+  automationTrigger: string;
+}> = {
+  fahrzeug: {
+    source: "Fahrzeug-Anfrage Website",
+    defaultNotes: "Anfrage für Fahrzeugbeschriftung über das Webformular",
+    // From-address must use the verified captfix.app domain so Resend
+    // accepts the send. The display name makes the mail recognizable.
+    mailFrom: "FAHRZEUG-ANFRAGE <notifications@captfix.app>",
+    mailSubject: "Fahrzeug-Anfrage",
+    mailHeading: "Neue Fahrzeug-Anfrage",
+    mailNextStep: "",
+    titlePrefix: "",
+    heroImagePrefix: "fahrzeug",
+    automationTrigger: "vehicle_inquiry_submitted",
+  },
+  wohnmobil_reparatur: {
+    source: "Wohnmobil-Reparatur Website",
+    defaultNotes: "Anfrage für Wohnmobil-Reparaturbeschriftung über das Webformular",
+    mailFrom: "WOHNMOBIL-REPARATUR <notifications@captfix.app>",
+    mailSubject: "Wohnmobil-Reparatur",
+    mailHeading: "Neue Wohnmobil-Reparaturbeschriftung",
+    mailNextStep: "Nächster Schritt: Termin für die Abnahme am Fahrzeug vereinbaren (dem Kunden wurde eine Rückmeldung in der Regel noch am selben Tag angekündigt).",
+    titlePrefix: "Reparatur",
+    heroImagePrefix: "wohnmobil",
+    automationTrigger: "camper_repair_inquiry_submitted",
+  },
+};
+
+// Fixed repair-form fields -> label aliases in vehicle_field_config. Values
+// are stored under the matching config key so VehicleDetail shows them like
+// any other vehicle field; without a match we fall back to a stable key.
+const REPAIR_FIELD_DEFS: { name: "kennzeichen" | "hersteller" | "modell"; label: string; aliases: string[] }[] = [
+  { name: "kennzeichen", label: "Kennzeichen", aliases: ["kennzeichen", "nummernschild", "amtliches"] },
+  { name: "hersteller", label: "Hersteller", aliases: ["hersteller", "marke", "fabrikat"] },
+  { name: "modell", label: "Modell", aliases: ["modell", "model", "fahrzeugbezeichnung"] },
+];
 
 // ---- HERO operations ----
 
@@ -219,7 +280,7 @@ async function heroMatchByDomain(apiKey: string, email: string): Promise<{ id: n
   }
 }
 
-async function heroCreateContact(apiKey: string, signup: NonNullable<FormData["signupData"]>, email: string): Promise<{ id: number } | { error: string }> {
+async function heroCreateContact(apiKey: string, signup: NonNullable<FormData["signupData"]>, email: string, source = INQUIRY_VARIANTS.fahrzeug.source): Promise<{ id: number } | { error: string }> {
   const hasCompany = !!signup.companyName?.trim();
   const contact: any = {
     type: hasCompany ? "commercial" : "private",
@@ -233,7 +294,7 @@ async function heroCreateContact(apiKey: string, signup: NonNullable<FormData["s
     phone_home: signup.phone || null,
     phone_mobile: signup.mobile || null,
     category: "customer",
-    source: "Fahrzeug-Anfrage Website",
+    source,
   };
   if (signup.street || signup.zip || signup.city) {
     contact.address = {
@@ -342,6 +403,7 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
   signupData?: FormData["signupData"];
   partnerNotes?: string;
   projectTitle?: string;
+  source?: string;
 }): Promise<{ id: number | null; nr: string; ok: boolean; raw: any }> {
   // Used only for new leads (HERO didn't recognize the email). For
   // existing contacts we use heroCreateProjectGraphQL instead, since
@@ -369,8 +431,8 @@ async function heroCreateProjectViaLeadAPI(apiKey: string, opts: {
     measure: HERO_MEASURE_SHORT,
     customer,
     project_match: {
-      partner_source: "Fahrzeug-Anfrage Website",
-      partner_notes: opts.partnerNotes || "Anfrage für Fahrzeugbeschriftung über das Webformular",
+      partner_source: opts.source || INQUIRY_VARIANTS.fahrzeug.source,
+      partner_notes: opts.partnerNotes || INQUIRY_VARIANTS.fahrzeug.defaultNotes,
     },
   };
   if (address) payload.address = address;
@@ -584,7 +646,10 @@ async function sendNotificationEmail(opts: {
   projectNumber: string;
   heroProjectId: number | null;
   heroError: string | null;
+  kind: InquiryKind;
+  subjectSuffix: string;
 }) {
+  const variant = INQUIRY_VARIANTS[opts.kind];
   const fieldRows = Object.entries(opts.vehicleFields)
     .filter(([_, v]) => v && v.trim())
     .map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#666">${opts.fieldLabels[k] || k}</td><td>${escapeHtml(v)}</td></tr>`)
@@ -614,8 +679,9 @@ async function sendNotificationEmail(opts: {
 
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
-      <h2 style="color:#1976d2">Neue Fahrzeug-Anfrage</h2>
+      <h2 style="color:#1976d2">${variant.mailHeading}</h2>
       <p><strong>${escapeHtml(opts.email)}</strong> hat eine Anfrage über das Formular gesendet.</p>
+      ${variant.mailNextStep ? `<p style="background:#e3f2fd;padding:12px;border-radius:6px">${escapeHtml(variant.mailNextStep)}</p>` : ""}
       ${heroBlock}
       <h3 style="margin-top:24px">Projekt</h3>
       <table>
@@ -633,16 +699,13 @@ async function sendNotificationEmail(opts: {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.resendApiKey}` },
     body: JSON.stringify({
-      // From-address must use the verified captfix.app domain so Resend
-      // accepts the send. The display name "FAHRZEUG-ANFRAGE" makes the
-      // mail recognizable in the inbox.
-      from: "FAHRZEUG-ANFRAGE <notifications@captfix.app>",
+      from: variant.mailFrom,
       to: ["info@slwerbung.de"],
       // Reply-To routes "Reply" clicks to the actual sender of the
       // inquiry, so the team can respond directly to the customer
       // without copy-pasting addresses.
       reply_to: opts.email,
-      subject: `Fahrzeug-Anfrage: ${opts.email}`,
+      subject: `${variant.mailSubject}: ${opts.subjectSuffix}`,
       html,
     }),
   });
@@ -803,6 +866,9 @@ serve(async (req) => {
       });
     }
 
+    const kind: InquiryKind = body.inquiryType === "wohnmobil_reparatur" ? "wohnmobil_reparatur" : "fahrzeug";
+    const variant = INQUIRY_VARIANTS[kind];
+
     // Read config: HERO from app_config, Resend from edge function secrets.
     // The Resend key lives in env (Deno.env) because that matches the
     // existing submit-new-customer pattern - both functions can share the
@@ -823,6 +889,31 @@ serve(async (req) => {
       .eq("is_active", true);
     const fieldLabels: Record<string, string> = {};
     (fieldConfigs || []).forEach((f: any) => { fieldLabels[f.field_key] = f.field_label; });
+
+    // Repair form: map the three fixed fields onto vehicle_field_config keys
+    // (matched by label, so admin renames/re-keys don't break it). From here
+    // on everything downstream reads body.vehicleFields as usual.
+    if (kind === "wohnmobil_reparatur") {
+      const rf = body.repairFields || {};
+      const mapped: Record<string, string> = {};
+      for (const def of REPAIR_FIELD_DEFS) {
+        const val = String(rf[def.name] ?? "").trim().slice(0, 200);
+        const cfgHit = (fieldConfigs || []).find((f: any) => {
+          const l = String(f.field_label || "").toLowerCase();
+          return def.aliases.some(a => l.includes(a));
+        });
+        const key = cfgHit?.field_key || `wm_${def.name}`;
+        if (!cfgHit) fieldLabels[key] = def.label;
+        if (val) mapped[key] = val;
+      }
+      if (!rf.kennzeichen?.trim() || !rf.hersteller?.trim() || !rf.modell?.trim()) {
+        return new Response(JSON.stringify({ ok: false, error: "Bitte Kennzeichen, Hersteller und Modell angeben" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      body.vehicleFields = mapped;
+    }
 
     // ---- HERO contact match (just for "needs_signup" detection) ----
     // We still match the email up-front: if HERO doesn't know the address
@@ -916,7 +1007,8 @@ serve(async (req) => {
     const kennzeichen = pickField("kennzeichen", "nummernschild", "kennz", "amtliches");
     const marke = pickField("hersteller", "marke", "fabrikat");
     const bezeichnung = pickField("fahrzeugbezeichnung", "bezeichnung", "modell", "model", "typ");
-    const projectTitle = [marke, bezeichnung, kennzeichen].filter(Boolean).join(" ").trim();
+    const baseTitle = [marke, bezeichnung, kennzeichen].filter(Boolean).join(" ").trim();
+    const projectTitle = baseTitle && variant.titlePrefix ? `${variant.titlePrefix} ${baseTitle}` : baseTitle;
     debug.projectTitle = projectTitle;
     debug.titleParts = { kennzeichen, marke, bezeichnung };
     debug.fieldLabels = fieldLabels;
@@ -926,7 +1018,8 @@ serve(async (req) => {
         .filter(([_, v]) => v && String(v).trim())
         .map(([k, v]) => `${fieldLabels[k] || k}: ${v}`)
         .join("\n");
-      const partnerNotes = `Anfrage über das Webformular von ${body.email.trim()}.\n\n${fieldDescriptions}`;
+      const partnerNotes = `${variant.defaultNotes} von ${body.email.trim()}.\n\n${fieldDescriptions}`
+        + (variant.mailNextStep ? `\n\n${variant.mailNextStep}` : "");
 
       if (foundExistingContact && heroCustomerIdForProject && heroCustomerAddress?.zipcode) {
         // GraphQL path: existing contact, use stored address
@@ -952,6 +1045,7 @@ serve(async (req) => {
           signupData: body.signupData,
           partnerNotes,
           projectTitle,
+          source: variant.source,
         });
         debug.heroCreateProject = { path: "lead", ok: result.ok, id: result.id, raw: result.raw, titleUpdate: (result as any).titleUpdate };
         if (!result.ok) {
@@ -1069,7 +1163,7 @@ serve(async (req) => {
 
         // Mirror to HERO
         if (heroEnabled && heroProjectId) {
-          const heroResult = await heroUploadImage(heroApiKey, heroProjectId, blob, `fahrzeug-${img.filename}`);
+          const heroResult = await heroUploadImage(heroApiKey, heroProjectId, blob, `${variant.heroImagePrefix}-${img.filename}`);
           if (!heroResult.ok) console.warn("HERO image upload failed:", heroResult.error);
         }
       } catch (e: any) {
@@ -1091,17 +1185,19 @@ serve(async (req) => {
           projectNumber,
           heroProjectId,
           heroError,
+          kind,
+          subjectSuffix: kind === "wohnmobil_reparatur" ? (projectTitle || body.email.trim()) : body.email.trim(),
         });
       } catch (e) {
         console.warn("Email notification failed:", e);
       }
     }
 
-    // Automation-Trigger: Fahrzeuganfrage abgeschickt. Best-effort, server-
+    // Automation-Trigger: Fahrzeuganfrage bzw. Wohnmobil-Reparatur abgeschickt. Best-effort, server-
     // seitig über die geteilte Dispatch-Logik (HERO-Key bleibt am Server).
     // Läuft erst nachdem das HERO-Projekt feststeht, damit heroProjectId passt.
     try {
-      await dispatchAutomations(supabase, "vehicle_inquiry_submitted", {
+      await dispatchAutomations(supabase, variant.automationTrigger, {
         projectId: project.id,
         heroProjectId,
       });
