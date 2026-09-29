@@ -430,11 +430,15 @@ const Projects = () => {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
+          // grid-cols-1 + min-w-0: grid tracks default to min-width:auto, so a
+          // long customer name or field (even with `truncate`) widened the
+          // column past the phone screen and the card's right part (actions)
+          // needed sideways scrolling. minmax(0,1fr) lets `truncate` do its job.
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {visibleProjects.map((project) => (
               <Card
                 key={project.id}
-                className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/30 ${
+                className={`min-w-0 cursor-pointer transition-all hover:shadow-md hover:border-primary/30 ${
                   selectionMode && selectedIds.has(project.id) ? "ring-2 ring-primary border-primary" : ""
                 } ${project.archivedAt ? "opacity-60" : ""}`}
                 onClick={() => selectionMode ? toggleSelection(project.id) : navigate(`/projects/${project.id}`)}
