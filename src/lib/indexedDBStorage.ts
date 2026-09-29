@@ -335,13 +335,20 @@ export const indexedDBStorage = {
     return projects;
   },
 
-  async getProject(id: string, session?: Session | null): Promise<Project | null> {
+  // withOriginals: false = "lite" load for screens that only SHOW the
+  // annotated images (project page, floor plans). Skipping the original
+  // photos halves the memory the page holds – which matters because the
+  // native camera is opened from exactly these screens, and Android ends the
+  // app in the background when memory runs short ("app reloads after taking a
+  // photo"). originalImageData is then "" (not a copy of the annotated image),
+  // so saveProject/saveDetailImage leave the stored originals untouched.
+  async getProject(id: string, session?: Session | null, opts: { withOriginals?: boolean } = {}): Promise<Project | null> {
     const db = await getDB();
     const record = await db.get('projects', id);
     
     if (!record || !canAccessProjectRecord(record, session)) return null;
     
-    const locations = await this.getLocationsByProject(id);
+    const locations = await this.getLocationsByProject(id, opts.withOriginals !== false);
     const floorPlans = await this.getFloorPlansByProject(id);
     
     return {
@@ -359,7 +366,7 @@ export const indexedDBStorage = {
     };
   },
 
-  async getLocationsByProject(projectId: string): Promise<Location[]> {
+  async getLocationsByProject(projectId: string, withOriginals = true): Promise<Location[]> {
     const db = await getDB();
     const locationRecords = await db.getAllFromIndex('locations', 'by-project', projectId);
     
@@ -370,13 +377,13 @@ export const indexedDBStorage = {
       const originalImageId = createImageId(record.id, 'original');
       
       const annotatedImage = await db.get('images', annotatedImageId);
-      const originalImage = await db.get('images', originalImageId);
+      const originalImage = withOriginals ? await db.get('images', originalImageId) : undefined;
       
       const imageData = annotatedImage ? await blobToBase64(annotatedImage.blob) : '';
-      const originalImageData = originalImage ? await blobToBase64(originalImage.blob) : imageData;
+      const originalImageData = !withOriginals ? '' : originalImage ? await blobToBase64(originalImage.blob) : imageData;
 
       // Load detail images
-      const detailImages = await this.getDetailImagesByLocation(record.id);
+      const detailImages = await this.getDetailImagesByLocation(record.id, withOriginals);
       
       locations.push({
         id: record.id,
@@ -402,7 +409,7 @@ export const indexedDBStorage = {
     return locations;
   },
 
-  async getDetailImagesByLocation(locationId: string): Promise<DetailImage[]> {
+  async getDetailImagesByLocation(locationId: string, withOriginals = true): Promise<DetailImage[]> {
     const db = await getDB();
     const records = await db.getAllFromIndex('detail-images', 'by-location', locationId);
     
@@ -410,10 +417,10 @@ export const indexedDBStorage = {
     
     for (const record of records) {
       const annotatedBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'annotated'));
-      const originalBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'original'));
+      const originalBlob = withOriginals ? await db.get('detail-image-blobs', createDetailBlobId(record.id, 'original')) : undefined;
       
       const imageData = annotatedBlob ? await blobToBase64(annotatedBlob.blob) : '';
-      const originalImageData = originalBlob ? await blobToBase64(originalBlob.blob) : imageData;
+      const originalImageData = !withOriginals ? '' : originalBlob ? await blobToBase64(originalBlob.blob) : imageData;
       
       detailImages.push({
         id: record.id,

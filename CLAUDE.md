@@ -77,6 +77,11 @@ Kunden können Projekte online einsehen und freigeben.
   `getPublicUrl` mehr verwenden.** Edge Functions laden mit
   `storage.download()` (service_role).
 - Bilder werden als **Blob** in IndexedDB gespeichert, nicht als Base64
+- Projektseite und Grundrissansicht laden **ohne Originalfotos**
+  (`getProject(id, session, { withOriginals: false })`, `originalImageData` ist
+  dann `""`). Grund: Von dort wird die Geräte-Kamera geöffnet, und Android beendet
+  die App im Hintergrund, wenn der Speicher knapp wird (Foto weg, App lädt neu).
+  `src/lib/cameraGuard.ts` erkennt so einen Neustart und führt zurück.
 - Admin-Operationen gehen immer über `invoke("admin-manage", ...)` mit `adminToken`
 - Image Hash Cache (SHA-256) in localStorage verhindert Re-Uploads unveränderter Bilder
 - Sync läuft debounced (2,5 s) und batched (6er-Gruppen)

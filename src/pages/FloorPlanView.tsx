@@ -42,7 +42,9 @@ const FloorPlanView = () => {
   const loadProject = useCallback(async () => {
     if (!projectId) return;
     try {
-      const loaded = await indexedDBStorage.getProject(projectId);
+      // Without original photos: only markers/annotated images are shown here,
+      // and the camera is opened from this page (memory, see getProject).
+      const loaded = await indexedDBStorage.getProject(projectId, undefined, { withOriginals: false });
       const remoteUpdatedAt = loaded ? await getProjectRemoteTimestamp(projectId) : null;
       const shouldHydrate = !loaded || (remoteUpdatedAt && remoteUpdatedAt.getTime() > loaded.updatedAt.getTime() + 1000);
       const resolvedProject = shouldHydrate ? await hydrateProjectFromSupabase(projectId) : loaded;

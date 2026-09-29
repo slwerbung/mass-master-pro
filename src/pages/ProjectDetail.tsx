@@ -36,6 +36,13 @@ import { SplitPdfDialog } from "@/components/SplitPdfDialog";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
 import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 
+
+// This page only shows the annotated images. Loading without the original
+// photos halves its memory; the native camera is opened from here, and Android
+// ends the app in the background when memory is short (photo lost, app
+// reloads). See indexedDBStorage.getProject.
+const LITE = { withOriginals: false } as const;
+
 const ProjectDetail = () => {
   const { projectId } = useParams();
   const [project, setProject] = useState<Project | null>(null);
@@ -84,7 +91,7 @@ const ProjectDetail = () => {
       if (!projectId) return;
       try {
         const currentSession = getSession();
-        const localProject = await indexedDBStorage.getProject(projectId, currentSession);
+        const localProject = await indexedDBStorage.getProject(projectId, currentSession, LITE);
 
         if (localProject) {
           if (currentSession?.role === "employee") {
@@ -106,7 +113,7 @@ const ProjectDetail = () => {
             const remoteIsNewer = remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000;
             if (!remoteIsNewer) return;
             await hydrateProjectFromSupabase(projectId);
-            const refreshed = await indexedDBStorage.getProject(projectId, currentSession);
+            const refreshed = await indexedDBStorage.getProject(projectId, currentSession, LITE);
             if (refreshed) {
               setProject(refreshed);
               setConflictNotice("Es wurde eine neuere Online-Version geladen.");
@@ -135,7 +142,8 @@ const ProjectDetail = () => {
           }
         }
 
-        setProject(hydratedProject);
+        // Re-read from IndexedDB without the original photos (see LITE).
+        setProject((await indexedDBStorage.getProject(projectId, currentSession, LITE)) ?? hydratedProject);
         setIsOnlineOnly(true);
       } catch (error) {
         console.error("Error loading project:", error);
@@ -166,7 +174,7 @@ const ProjectDetail = () => {
     try {
       const updatedProject = { ...project, locations: project.locations.filter((l) => l.id !== locationId) };
       await indexedDBStorage.saveProject(updatedProject);
-      const reloadedProject = await indexedDBStorage.getProject(projectId);
+      const reloadedProject = await indexedDBStorage.getProject(projectId, undefined, LITE);
       scheduleSyncProject(projectId);
       setProject(reloadedProject || updatedProject);
       toast.success("Standort gelöscht");
@@ -181,7 +189,7 @@ const ProjectDetail = () => {
       await indexedDBStorage.deleteDetailImage(detailImageId);
       await deleteDetailImageFromSupabase(detailImageId);
       if (projectId) {
-        const reloaded = await indexedDBStorage.getProject(projectId, getSession());
+        const reloaded = await indexedDBStorage.getProject(projectId, getSession(), LITE);
         scheduleSyncProject(projectId);
         if (reloaded) setProject(reloaded);
       }
