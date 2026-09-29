@@ -1,74 +1,147 @@
-// Detects when the phone killed the app while the native camera was open.
+// Tracks a native-camera round trip step by step, so a restart can be told
+// apart:
 //
-// Taking a photo through <input capture> hands control to the camera app. On
-// many phones (Android in particular) the OS frees memory by ending the
-// browser/PWA in the background; after "Foto verwenden" the app starts from
-// scratch, the photo is gone and the user lands on the start page without a
-// word. The code can't prevent that, but it can notice it:
+//   opened   → camera app is open (we are in the background)
+//   returned → we are visible again (the page survived the camera)
+//   file     → the photo arrived (size/type recorded)
+//   dims     → photo dimensions read
+//   scaled   → photo downscaled for the editor
+//   editor   → editor is building the canvas
+//   (done)   → editor shows the photo → marker removed
 //
-//   - right before opening the camera we store where the user was,
-//   - if the page survives (it gets the photo, a cancel, or simply focus back)
-//     the marker is removed again,
-//   - if a fresh marker is still there when the app starts, the page was
-//     restarted in between → bring the user back and explain what happened.
+// If the app starts while a fresh marker is still there, it was restarted in
+// between. The last stage says where:
+//   - "opened": Android ended the app while the camera was open. The photo is
+//     lost before the app ever sees it – nothing the web app can do.
+//   - "returned" or later: the app died AFTER coming back (while handling the
+//     photo) – that is ours to fix.
+// Staff devices also report it to public.client_diagnostics.
+//
+// Upload-only flows (vehicle photos, customer uploads) don't go through the
+// editor; for them the round trip counts as done once the file arrived.
 
 const KEY = "camera-pending";
-// Older markers are ignored: nobody spends longer than this in the camera.
 const MAX_AGE_MS = 10 * 60 * 1000;
+// A crash while handling the photo happens within seconds. If the page is
+// still alive this long after the file arrived, the marker was just left over
+// (e.g. the user backed out of the editor) and must not cause a false alarm.
+const ALIVE_AFTER_FILE_MS = 30 * 1000;
 
-interface Pending {
+export type CameraStage = "opened" | "returned" | "file" | "dims" | "scaled" | "editor";
+type Flow = "editor" | "upload";
+
+export interface CameraPending {
   path: string;
   at: number;
+  flow: Flow;
+  stage: CameraStage;
+  stageAt: number;
+  info: Record<string, unknown>;
 }
 
-let survivalListenersInstalled = false;
+let listenersInstalled = false;
+let aliveTimer: number | undefined;
 
-function clear() {
-  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
-}
-
-// Coming back to a still-running page means no restart happened.
-function clearSoon() {
-  window.setTimeout(clear, 1500);
-}
-
-function installSurvivalListeners() {
-  if (survivalListenersInstalled) return;
-  survivalListenersInstalled = true;
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") clearSoon(); });
-  window.addEventListener("focus", clearSoon);
-  window.addEventListener("pageshow", clearSoon);
-  // A file arrived or the picker was cancelled – the page is obviously alive.
-  const onFileInputEvent = (e: Event) => {
-    const t = e.target as HTMLInputElement | null;
-    if (t && t.tagName === "INPUT" && t.type === "file") clear();
-  };
-  document.addEventListener("change", onFileInputEvent, true);
-  document.addEventListener("cancel", onFileInputEvent, true);
-}
-
-/** Call right before opening the native camera / photo picker. */
-export function markCameraOpening() {
-  installSurvivalListeners();
-  try {
-    const pending: Pending = { path: window.location.pathname + window.location.search, at: Date.now() };
-    localStorage.setItem(KEY, JSON.stringify(pending));
-  } catch { /* storage unavailable – detection simply won't work */ }
-}
-
-/**
- * On app start: returns where the user was if the app was restarted while the
- * camera was open (and forgets it), otherwise null.
- */
-export function takeInterruptedCamera(): Pending | null {
+function read(): CameraPending | null {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    localStorage.removeItem(KEY);
-    const p = JSON.parse(raw) as Pending;
-    if (!p?.path || typeof p.at !== "number" || Date.now() - p.at > MAX_AGE_MS) return null;
-    return p;
+    return raw ? (JSON.parse(raw) as CameraPending) : null;
   } catch {
     return null;
   }
+}
+
+function write(p: CameraPending) {
+  try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ }
+}
+
+function clear() {
+  window.clearTimeout(aliveTimer);
+  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+}
+
+/** Record progress of the current camera round trip (no-op without one). */
+export function cameraStage(stage: CameraStage, info: Record<string, unknown> = {}) {
+  const p = read();
+  if (!p) return;
+  write({ ...p, stage, stageAt: Date.now(), info: { ...p.info, ...info } });
+}
+
+/** The photo is in the editor – the round trip succeeded. */
+export function cameraFinished() {
+  clear();
+}
+
+function installListeners() {
+  if (listenersInstalled) return;
+  listenersInstalled = true;
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    const p = read();
+    if (p && p.stage === "opened") cameraStage("returned", { returnedAfterMs: Date.now() - p.at });
+  });
+  const onFileInput = (e: Event) => {
+    const t = e.target as HTMLInputElement | null;
+    if (!t || t.tagName !== "INPUT" || t.type !== "file") return;
+    const p = read();
+    if (!p) return;
+    const f = t.files?.[0];
+    if (e.type === "cancel" || !f) { clear(); return; }
+    if (p.flow === "upload") { clear(); return; }
+    cameraStage("file", { fileBytes: f.size, fileType: f.type, fileAfterMs: Date.now() - p.at });
+    window.clearTimeout(aliveTimer);
+    aliveTimer = window.setTimeout(clear, ALIVE_AFTER_FILE_MS);
+  };
+  document.addEventListener("change", onFileInput, true);
+  document.addEventListener("cancel", onFileInput, true);
+}
+
+function deviceInfo(): Record<string, unknown> {
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  const standalone = window.matchMedia?.("(display-mode: standalone)").matches;
+  return {
+    deviceMemoryGB: nav.deviceMemory ?? null,
+    dpr: window.devicePixelRatio,
+    screen: `${window.screen.width}x${window.screen.height}`,
+    installedApp: !!standalone,
+  };
+}
+
+/**
+ * Call right before opening the native camera / photo picker.
+ * flow "editor": the photo goes on to the editor (tracked until it shows);
+ * flow "upload": the file is uploaded directly (done once it arrived).
+ */
+export function markCameraOpening(flow: Flow = "editor") {
+  installListeners();
+  window.clearTimeout(aliveTimer);
+  write({
+    path: window.location.pathname + window.location.search,
+    at: Date.now(),
+    flow,
+    stage: "opened",
+    stageAt: Date.now(),
+    info: deviceInfo(),
+  });
+}
+
+/** Same as markCameraOpening("upload"); usable directly as an onClick handler. */
+export function markUploadCameraOpening() {
+  markCameraOpening("upload");
+}
+
+/**
+ * On app start: the interrupted round trip (and forgets it), if the app was
+ * restarted during one; otherwise null.
+ */
+export function takeInterruptedCamera(): CameraPending | null {
+  const p = read();
+  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+  if (!p?.path || typeof p.at !== "number" || Date.now() - p.at > MAX_AGE_MS) return null;
+  return p;
+}
+
+/** True when the restart happened after the photo came back to the app. */
+export function diedAfterReturn(p: CameraPending): boolean {
+  return p.stage !== "opened";
 }

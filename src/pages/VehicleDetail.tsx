@@ -12,7 +12,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
-import { markCameraOpening } from "@/lib/cameraGuard";
+import { readImageFileForEditor } from "@/lib/imageFile";
+import { markCameraOpening, markUploadCameraOpening } from "@/lib/cameraGuard";
 import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
@@ -291,16 +292,21 @@ const VehicleDetail = () => {
   // picked/captured file is handed to the editor, which returns the annotated
   // + original image via router state (consumed in the effect below). No more
   // "upload first, edit later".
-  const pickMeasuredFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const pickMeasuredFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setEditorHandoff({ imageData: String(reader.result || "") });
+    // Downscale like every other photo that goes into the editor. Handing the
+    // full-resolution camera photo on as a data URL (as before) meant a multi-
+    // MB string plus a full-size decode in the editor – a memory spike right
+    // after the camera app, when the phone has the least to spare.
+    try {
+      const imageData = await readImageFileForEditor(file);
+      setEditorHandoff({ imageData });
       navigate(`/projects/${projectId}/editor?vehicle=true`);
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      toast.error("Bild konnte nicht geladen werden");
+    }
   };
 
   // Persist an image handed back from the editor: annotated + original, mirror
@@ -635,7 +641,7 @@ const VehicleDetail = () => {
                 )}
               </div>
               <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
-              <input ref={imageCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onClick={markCameraOpening} onChange={handleImageUpload} />
+              <input ref={imageCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onClick={markUploadCameraOpening} onChange={handleImageUpload} />
             </div>
           </CardHeader>
           <CollapsibleContent>
@@ -747,7 +753,7 @@ const VehicleDetail = () => {
                 )}
               </div>
               <input ref={measuredInputRef} type="file" accept="image/*" className="hidden" onChange={pickMeasuredFile} />
-              <input ref={measuredCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onClick={markCameraOpening} onChange={pickMeasuredFile} />
+              <input ref={measuredCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onClick={() => markCameraOpening("editor")} onChange={pickMeasuredFile} />
             </div>
           </CardHeader>
           <CollapsibleContent>

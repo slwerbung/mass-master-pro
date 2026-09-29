@@ -14,6 +14,7 @@ import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import MeasurementInputDialog from "@/components/MeasurementInputDialog";
 import AreaMeasurementDialog from "@/components/AreaMeasurementDialog";
 import { setEditorHandoff, takeEditorHandoff, setMeasuredResult } from "@/lib/editorHandoff";
+import { cameraStage, cameraFinished } from "@/lib/cameraGuard";
 
 type Tool = "select" | "draw" | "text" | "measure" | "area";
 
@@ -282,6 +283,7 @@ const PhotoEditor = () => {
     canvas.on("object:removed", onMutate);
     setFabricCanvas(canvas);
 
+    cameraStage("editor", { editorImageBytes: imageDataState.length });
     img.onload = () => {
       const scale = Math.min(canvas.width! / img.width, canvas.height! / img.height);
       const fabricImage = new FabricImage(img, {
@@ -291,6 +293,8 @@ const PhotoEditor = () => {
       canvas.backgroundImage = fabricImage;
       fitView(canvas);
       pushHistoryState(canvas);
+      // The photo is on screen: a camera round trip (if any) completed.
+      cameraFinished();
     };
     img.src = imageDataState;
 

@@ -15,6 +15,8 @@
  * (Chrome 81+, Safari 13.4+, Firefox 77+).
  */
 
+import { cameraStage } from "./cameraGuard";
+
 function loadHtmlImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -54,10 +56,15 @@ export async function readImageFileForEditor(
     const img = await loadHtmlImage(objectUrl);
     const natW = img.naturalWidth || img.width || 1;
     const natH = img.naturalHeight || img.height || 1;
+    // Diagnostics: a crash between "dims" and "scaled" means decoding the
+    // full-resolution photo ran out of memory (see cameraGuard.ts).
+    cameraStage("dims", { photoW: natW, photoH: natH, megapixels: Math.round((natW * natH) / 1e5) / 10 });
     const scale = Math.min(1, maxDimension / Math.max(natW, natH));
     const width = Math.max(1, Math.round(natW * scale));
     const height = Math.max(1, Math.round(natH * scale));
-    return drawToJpegDataUrl(img, width, height, quality);
+    const url = drawToJpegDataUrl(img, width, height, quality);
+    cameraStage("scaled", { scaledW: width, scaledH: height, scaledBytes: url.length });
+    return url;
   } catch {
     // Last resort for small images: return the file bytes as a data URL.
     // (No downscaling here, so only reached if the canvas path failed.)

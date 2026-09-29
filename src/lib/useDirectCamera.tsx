@@ -59,7 +59,7 @@ export function useDirectCamera({ onCapture, uploadMode = false }: Options) {
       type="file"
       accept="image/*"
       {...(!uploadMode ? { capture: "environment" as const } : {})}
-      onClick={markCameraOpening}
+      onClick={() => markCameraOpening("editor")}
       onChange={handleChange}
       className="hidden"
     />

@@ -185,7 +185,7 @@ const Camera = () => {
         type="file"
         accept="image/*"
         {...(!isDesktop && mode !== "upload" ? { capture: "environment" as const } : {})}
-        onClick={markCameraOpening}
+        onClick={() => markCameraOpening("editor")}
         onChange={handleFileChange}
         className="hidden"
       />

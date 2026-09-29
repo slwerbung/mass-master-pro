@@ -82,6 +82,12 @@ Kunden können Projekte online einsehen und freigeben.
   dann `""`). Grund: Von dort wird die Geräte-Kamera geöffnet, und Android beendet
   die App im Hintergrund, wenn der Speicher knapp wird (Foto weg, App lädt neu).
   `src/lib/cameraGuard.ts` erkennt so einen Neustart und führt zurück.
+- Kamera-Diagnose: `cameraGuard.ts` protokolliert jeden Kamera-Vorgang in
+  Schritten (opened → returned → file → dims → scaled → editor). Bricht er
+  durch einen Neustart ab, landet der letzte Schritt samt Gerätedaten in
+  `public.client_diagnostics` (kind `camera_restart`, nur Mitarbeiter-Logins,
+  60 Tage). `stage = opened` = Android hat die App während der Kamera beendet;
+  alles danach = Absturz beim Verarbeiten in der App.
 - Admin-Operationen gehen immer über `invoke("admin-manage", ...)` mit `adminToken`
 - Image Hash Cache (SHA-256) in localStorage verhindert Re-Uploads unveränderter Bilder
 - Sync läuft debounced (2,5 s) und batched (6er-Gruppen)
