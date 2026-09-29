@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { readImageFileForEditor } from "@/lib/imageFile";
 import { setEditorHandoff } from "@/lib/editorHandoff";
+import { startCapture } from "@/lib/captureSession";
+import { dataUrlToBlob } from "@/lib/heroSyncHelpers";
 import { markCameraOpening } from "@/lib/cameraGuard";
 
 const Camera = () => {
@@ -90,12 +92,12 @@ const Camera = () => {
     if (!ctx) return;
     ctx.drawImage(video, 0, 0);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    void startCapture(dataUrlToBlob(dataUrl), editorPath());
     setCapturedImage(dataUrl);
     stopStream();
   };
 
-  const navigateToEditor = (imageData: string) => {
-    stopStream();
+  const editorPath = () => {
     let query = "";
     if (isVehicle) {
       query = `?vehicle=true`;
@@ -104,10 +106,16 @@ const Camera = () => {
     } else if (floorPlanId && presetLocationId) {
       query = `?floorPlan=${floorPlanId}&locationId=${presetLocationId}`;
     }
+    return `/projects/${projectId}/editor${query}`;
+  };
+
+  const navigateToEditor = (imageData: string) => {
+    stopStream();
     // Hand the (potentially multi-MB) image off in memory, not via router
     // state — large history.state aborts the navigation on mobile Safari.
+    // (It is also in the durable capture session, see captureSession.ts.)
     setEditorHandoff({ imageData });
-    navigate(`/projects/${projectId}/editor${query}`);
+    navigate(editorPath());
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -126,6 +134,8 @@ const Camera = () => {
     // Lock immediately before any async work
     isProcessingFile.current = true;
     try {
+      // Durable first (survives a restart while decoding), then process.
+      await startCapture(file, editorPath());
       const imageData = await readImageFileForEditor(file);
       const shouldSkipConfirmation = !isDesktop && mode !== "upload";
       if (shouldSkipConfirmation) {

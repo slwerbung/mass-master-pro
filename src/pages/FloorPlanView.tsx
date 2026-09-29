@@ -16,6 +16,7 @@ const FloorPlanView = () => {
   const navigate = useNavigate();
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
   const { cameraInput: floorCameraInput, triggerCamera: triggerFloorCamera } = useDirectCamera({
+    editorPath: () => `/projects/${projectId}/editor?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`,
     onCapture: (imageData) => {
       setShowCaptureDialog(false);
       setEditorHandoff({ imageData });
@@ -24,6 +25,7 @@ const FloorPlanView = () => {
   });
   const { cameraInput: floorUploadInput, triggerCamera: triggerFloorUpload } = useDirectCamera({
     uploadMode: true,
+    editorPath: () => `/projects/${projectId}/editor?floorPlan=${activeFloorPlanId}&locationId=${pendingLocationId}`,
     onCapture: (imageData) => {
       setShowCaptureDialog(false);
       setEditorHandoff({ imageData });

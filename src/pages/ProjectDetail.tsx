@@ -30,6 +30,7 @@ import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 import { readImageFileForEditor } from "@/lib/imageFile";
 import { useDirectCamera } from "@/lib/useDirectCamera";
 import { setEditorHandoff } from "@/lib/editorHandoff";
+import { startCapture } from "@/lib/captureSession";
 import ProjectInfoFields from "@/components/ProjectInfoFields";
 import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import { SplitPdfDialog } from "@/components/SplitPdfDialog";
@@ -60,6 +61,7 @@ const ProjectDetail = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
   const { cameraInput, triggerCamera } = useDirectCamera({
+    editorPath: () => `/projects/${projectId}/editor`,
     onCapture: (imageData) => { setEditorHandoff({ imageData }); navigate(`/projects/${projectId}/editor`); },
   });
 
@@ -208,6 +210,8 @@ const ProjectDetail = () => {
       return;
     }
     try {
+      // Durable first (survives a restart while decoding), then hand off.
+      await startCapture(file, `/projects/${projectId}/editor`);
       const imageData = await readImageFileForEditor(file);
       setEditorHandoff({ imageData });
       navigate(`/projects/${projectId}/editor`);

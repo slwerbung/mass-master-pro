@@ -13,6 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
 import { readImageFileForEditor } from "@/lib/imageFile";
+import { startCapture, getCapture, clearCapture, currentPath, blobToDataUrl } from "@/lib/captureSession";
 import { markCameraOpening, markUploadCameraOpening } from "@/lib/cameraGuard";
 import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -301,6 +302,7 @@ const VehicleDetail = () => {
     // MB string plus a full-size decode in the editor – a memory spike right
     // after the camera app, when the phone has the least to spare.
     try {
+      await startCapture(file, `/projects/${projectId}/editor?vehicle=true`);
       const imageData = await readImageFileForEditor(file);
       setEditorHandoff({ imageData });
       navigate(`/projects/${projectId}/editor?vehicle=true`);
@@ -329,6 +331,9 @@ const VehicleDetail = () => {
         uploaded_by: session?.name || "Mitarbeiter",
       });
       if (dbErr) throw dbErr;
+      // Stored for good – drop the durable copy right away, so a later
+      // restart can't offer (and save) the same photo a second time.
+      await clearCapture();
 
       const projectLike = { id: projectId!, customFields: project?.custom_fields as Record<string, string> | undefined };
       try {
@@ -371,7 +376,18 @@ const VehicleDetail = () => {
   const [pendingMeasured, setPendingMeasured] = useState<{ annotated: string; original?: string } | null>(null);
   useEffect(() => {
     const r = takeMeasuredResult();
-    if (r) setPendingMeasured(r);
+    if (r) { setPendingMeasured(r); return; }
+    // No in-memory result, but the editor finished before a restart: take it
+    // from the durable capture session (captureSession.ts).
+    let cancelled = false;
+    (async () => {
+      const s = await getCapture();
+      if (cancelled || !s || s.stage !== "edited" || !s.result || s.nextPath !== currentPath()) return;
+      const annotated = await blobToDataUrl(s.result.annotated);
+      const original = s.result.original ? await blobToDataUrl(s.result.original) : undefined;
+      if (!cancelled) setPendingMeasured({ annotated, original });
+    })();
+    return () => { cancelled = true; };
   }, []);
   useEffect(() => {
     if (!pendingMeasured || isLoading || handledMeasuredRef.current) return;

@@ -15,6 +15,11 @@ import MeasurementInputDialog from "@/components/MeasurementInputDialog";
 import AreaMeasurementDialog from "@/components/AreaMeasurementDialog";
 import { setEditorHandoff, takeEditorHandoff, setMeasuredResult } from "@/lib/editorHandoff";
 import { cameraStage, cameraFinished } from "@/lib/cameraGuard";
+import {
+  getCapture, noteEditorLoad, noteEditorShown, saveCaptureDraft, saveCaptureResult, clearCapture,
+  currentPath,
+} from "@/lib/captureSession";
+import { readImageFileForEditor } from "@/lib/imageFile";
 
 type Tool = "select" | "draw" | "text" | "measure" | "area";
 
@@ -112,7 +117,15 @@ const PhotoEditor = () => {
     const reEdit = !!locationId || !!measuredId;
     return reEdit ? null : (handoff?.imageData ?? null);
   });
-  const [loading, setLoading] = useState(false);
+  // A NEW photo (not re-editing a saved one) is backed by the durable capture
+  // session (captureSession.ts): without an in-memory hand-off – e.g. after
+  // the app was restarted – the photo and the measurements drawn so far are
+  // loaded from there instead of giving up with "Kein Bild gefunden".
+  const isFreshCapture = !locationId && !measuredId;
+  const captureActiveRef = useRef(false);
+  const pendingDraftRef = useRef<string | null>(null);
+  const draftTimerRef = useRef<number | undefined>(undefined);
+  const [loading, setLoading] = useState(() => isFreshCapture && !imageDataState);
   const [savedMaxAreaIndex, setSavedMaxAreaIndex] = useState(0);
   const pinchStateRef = useRef<{ initialDistance: number; initialZoom: number; isPinching: boolean; lastMid: { x: number; y: number } }>({ initialDistance: 0, initialZoom: 1, isPinching: false, lastMid: { x: 0, y: 0 } });
   // Wrapper around the canvas; its size is what the canvas may occupy.
@@ -125,6 +138,15 @@ const PhotoEditor = () => {
   // (not IndexedDB like the Aufmaß flow), and on save update the same
   // database row + storage path instead of inserting a new row.
   const isVehicleMeasuredReEdit = !!measuredId;
+
+  // Keep the overlay (lines, areas, text – not the photo) in the capture
+  // session, so a restart resumes with everything drawn so far. Debounced:
+  // one write after the user pauses, not one per stroke.
+  const scheduleDraftSave = (json: string) => {
+    if (!captureActiveRef.current) return;
+    window.clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = window.setTimeout(() => { void saveCaptureDraft(json); }, 600);
+  };
 
   const pushHistoryState = useCallback((canvas: FabricCanvas) => {
     if (isRestoringHistoryRef.current || isRenderingLabelsRef.current) return;
@@ -150,6 +172,7 @@ const PhotoEditor = () => {
     historyStepRef.current = nextHistory.length - 1;
     setCanvasHistory(nextHistory);
     setHistoryStep(historyStepRef.current);
+    scheduleDraftSave(json);
   }, []);
 
   const restoreHistoryStep = useCallback((step: number) => {
@@ -160,6 +183,7 @@ const PhotoEditor = () => {
     // History no longer carries the background photo, so hold on to the live one
     // and re-apply it after loadFromJSON (which would otherwise clear it).
     const bg = fabricCanvas.backgroundImage;
+    scheduleDraftSave(historyRef.current[step]);
     fabricCanvas.loadFromJSON(historyRef.current[step]).then(() => {
       if (bg) fabricCanvas.backgroundImage = bg;
       // Derived labels are not stored in history — re-derive them for the
@@ -292,9 +316,22 @@ const PhotoEditor = () => {
       });
       canvas.backgroundImage = fabricImage;
       fitView(canvas);
-      pushHistoryState(canvas);
       // The photo is on screen: a camera round trip (if any) completed.
       cameraFinished();
+      if (captureActiveRef.current) void noteEditorShown();
+      const draft = pendingDraftRef.current;
+      pendingDraftRef.current = null;
+      if (!draft) { pushHistoryState(canvas); return; }
+      // Resuming after a restart: put back what was drawn before.
+      isRestoringHistoryRef.current = true;
+      canvas.loadFromJSON(draft).then(() => {
+        canvas.backgroundImage = fabricImage;
+        try { relayoutLabels(canvas); } catch { /* labels are cosmetic */ }
+        canvas.renderAll();
+      }).catch((e) => console.warn("draft restore failed:", e)).finally(() => {
+        isRestoringHistoryRef.current = false;
+        pushHistoryState(canvas);
+      });
     };
     img.src = imageDataState;
 
@@ -885,6 +922,13 @@ const PhotoEditor = () => {
           // so we hand them over in memory (like the Aufmaß capture flow) — NOT
           // via router state, which crashes mobile WebKit on large payloads.
           if (vehicleParam === "true") {
+            if (captureActiveRef.current) {
+              window.clearTimeout(draftTimerRef.current);
+              await saveCaptureResult(
+                { annotated: dataUrlToBlob(dataUrl), original: imageDataState ? dataUrlToBlob(imageDataState) : undefined },
+                `/projects/${projectId}/vehicle`,
+              );
+            }
             setMeasuredResult({ annotated: dataUrl, original: imageDataState || undefined });
             navigate(`/projects/${projectId}/vehicle`);
             return;
@@ -893,6 +937,14 @@ const PhotoEditor = () => {
           let query = "";
           if (detailParam === "true" && locationIdParam) query = `?detail=true&locationId=${locationIdParam}`;
           else if (floorPlanParam && locationIdParam) query = `?floorPlan=${floorPlanParam}&locationId=${locationIdParam}`;
+          if (captureActiveRef.current) {
+            // Durable until the location is saved (LocationDetails clears it).
+            window.clearTimeout(draftTimerRef.current);
+            await saveCaptureResult(
+              { annotated: dataUrlToBlob(dataUrl), original: imageDataState ? dataUrlToBlob(imageDataState) : undefined, areaMeasurements },
+              `/projects/${projectId}/location-details${query}`,
+            );
+          }
           setEditorHandoff({ imageData: dataUrl, originalImageData: imageDataState, areaMeasurements });
           navigate(`/projects/${projectId}/location-details${query}`);
         }
@@ -902,6 +954,46 @@ const PhotoEditor = () => {
       }
     }, 50);
   };
+
+  // New photo: link this editor to the durable capture session. With an
+  // in-memory hand-off the session only receives drafts/results; without one
+  // (restart) the photo is loaded from it. Each load that never reached the
+  // screen is counted – if loading the photo keeps crashing the app, retry
+  // smaller and finally give up. (The "recovered" notice comes from
+  // CameraInterruptNotice on app start.)
+  useEffect(() => {
+    if (!isFreshCapture) return;
+    let cancelled = false;
+    (async () => {
+      const session = await getCapture();
+      if (cancelled) return;
+      if (!session || session.editorPath !== currentPath()) { setLoading(false); return; }
+      captureActiveRef.current = true;
+      if (imageDataState) { setLoading(false); return; }
+      const loads = await noteEditorLoad();
+      if (loads > 3) {
+        await clearCapture();
+        toast.error("Das Foto lässt sich auf diesem Gerät nicht öffnen. Bitte neu aufnehmen.");
+        navigate(`/projects/${projectId}`, { replace: true });
+        return;
+      }
+      try {
+        const file = new File([session.photo], "foto.jpg", { type: session.photo.type || "image/jpeg" });
+        // After a failed attempt, decode smaller – less memory, same workflow.
+        const imageData = await readImageFileForEditor(file, loads >= 2 ? 1600 : 2200);
+        if (cancelled) return;
+        pendingDraftRef.current = session.draft ?? null;
+        setImageDataState(imageData);
+      } catch {
+        toast.error("Foto konnte nicht wiederhergestellt werden");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // Once per editor visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Handle missing image data for new locations (must be useEffect, not render-time navigate)
   useEffect(() => {
@@ -922,7 +1014,17 @@ const PhotoEditor = () => {
     <div className="app-screen bg-background flex flex-col overflow-hidden">
       <div className="shrink-0 bg-card border-b p-2">
         <div className="flex items-center justify-between gap-2">
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/projects/${projectId}`)} className="shrink-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              // Leaving a NEW photo on purpose discards it (as before) – also
+              // from the durable session, so it isn't offered again later.
+              if (captureActiveRef.current) { window.clearTimeout(draftTimerRef.current); void clearCapture(); }
+              navigate(`/projects/${projectId}`);
+            }}
+            className="shrink-0"
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="flex gap-1 justify-center flex-1 flex-wrap">

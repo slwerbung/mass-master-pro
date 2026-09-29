@@ -82,6 +82,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
   const { cameraInput: detailCameraInput, triggerCamera: triggerDetailCamera, handleFileChange: handleDetailFile } = useDirectCamera({
+    editorPath: () => `/projects/${projectId}/editor?detail=true&locationId=${location.id}`,
     onCapture: (imageData) => { setEditorHandoff({ imageData }); navigate(`/projects/${projectId}/editor?detail=true&locationId=${location.id}`); },
   });
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);

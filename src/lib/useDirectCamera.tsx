@@ -18,6 +18,7 @@
  */
 import { useRef } from "react";
 import { readImageFileForEditor } from "./imageFile";
+import { startCapture } from "./captureSession";
 import { markCameraOpening } from "@/lib/cameraGuard";
 
 interface Options {
@@ -25,9 +26,15 @@ interface Options {
   onCapture: (imageData: string) => void;
   /** If true, shows gallery picker instead of camera (no capture attribute) */
   uploadMode?: boolean;
+  /**
+   * Editor route the photo is headed for. When set, the photo is stored in
+   * the durable capture session BEFORE it is decoded, so a restart while
+   * handling it can resume there (see captureSession.ts).
+   */
+  editorPath?: () => string;
 }
 
-export function useDirectCamera({ onCapture, uploadMode = false }: Options) {
+export function useDirectCamera({ onCapture, uploadMode = false, editorPath }: Options) {
   const inputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
 
@@ -44,6 +51,7 @@ export function useDirectCamera({ onCapture, uploadMode = false }: Options) {
     if (!file) return;
     processingRef.current = true;
     try {
+      if (editorPath) await startCapture(file, editorPath());
       const imageData = await readImageFileForEditor(file);
       onCapture(imageData);
     } catch {

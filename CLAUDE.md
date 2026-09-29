@@ -88,6 +88,13 @@ Kunden können Projekte online einsehen und freigeben.
   `public.client_diagnostics` (kind `camera_restart`, nur Mitarbeiter-Logins,
   60 Tage). `stage = opened` = Android hat die App während der Kamera beendet;
   alles danach = Absturz beim Verarbeiten in der App.
+- Neue Fotos sind ab Ankunft neustartfest: `src/lib/captureSession.ts` (eigene
+  IndexedDB `captfix-capture`) hält Foto, Zeichnung (Entwurf) und Editor-Ergebnis,
+  bis der Standort bzw. das Fahrzeugbild gespeichert ist (`clearCapture()`).
+  Editor, Standort-Details und Fahrzeugseite greifen darauf zurück, wenn die
+  In-Memory-Übergabe (`editorHandoff.ts`) fehlt; `CameraInterruptNotice` führt
+  beim App-Start dorthin zurück (mit „Verwerfen"). Jeder neue Einstieg in den
+  Editor muss vorher `startCapture(file, editorPath)` aufrufen.
 - Admin-Operationen gehen immer über `invoke("admin-manage", ...)` mit `adminToken`
 - Image Hash Cache (SHA-256) in localStorage verhindert Re-Uploads unveränderter Bilder
 - Sync läuft debounced (2,5 s) und batched (6er-Gruppen)

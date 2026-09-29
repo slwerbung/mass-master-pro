@@ -18,6 +18,7 @@ import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 import { getSession } from "@/lib/session";
 import { takeEditorHandoff } from "@/lib/editorHandoff";
+import { getCapture, clearCapture, currentPath, blobToDataUrl } from "@/lib/captureSession";
 
 interface FieldConfig {
   id: string;
@@ -73,6 +74,28 @@ const LocationDetails = () => {
   // Sync ref if state arrives after initial render (edge case)
   if (stateImageData && !imageDataRef.current) imageDataRef.current = stateImageData;
   if (stateOriginalImageData && !originalImageDataRef.current) originalImageDataRef.current = stateOriginalImageData;
+
+  // New photo without an in-memory hand-off (the app was restarted after the
+  // editor): take the edited photo from the durable capture session.
+  useEffect(() => {
+    if (isEditMode || isDetailEditMode || imageDataRef.current) return;
+    let cancelled = false;
+    (async () => {
+      const session = await getCapture();
+      if (cancelled || !session || session.stage !== "edited" || !session.result || session.nextPath !== currentPath()) return;
+      const annotated = await blobToDataUrl(session.result.annotated);
+      const original = session.result.original ? await blobToDataUrl(session.result.original) : annotated;
+      if (cancelled) return;
+      imageDataRef.current = annotated;
+      originalImageDataRef.current = original;
+      // As if it had come through the hand-off (the page renders from it).
+      handoffRef.current = { imageData: annotated, originalImageData: original, areaMeasurements: session.result.areaMeasurements };
+      setPreviewImage(annotated);
+    })();
+    return () => { cancelled = true; };
+    // Once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [caption, setCaption] = useState("");
   const [previewImage, setPreviewImage] = useState<string | null>(stateImageData || null);
@@ -267,6 +290,7 @@ const LocationDetails = () => {
 
         toast.dismiss();
         toast.success("Detailbild gespeichert");
+        await clearCapture(); // saved for good – the durable copy can go
         navigate(`/projects/${projectId}`);
         scheduleSyncProject(projectId);
       } else if (imageDataRef.current) {
@@ -348,6 +372,7 @@ const LocationDetails = () => {
 
         toast.dismiss();
         toast.success("Standort gespeichert");
+        await clearCapture(); // saved for good – the durable copy can go
         scheduleSyncProject(projectId);
         // Sync area measurements to HERO notes BEFORE navigating - the
         // navigate() calls below unmount this component and would cancel
