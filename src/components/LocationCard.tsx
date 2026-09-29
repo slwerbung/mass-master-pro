@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { setEditorHandoff } from "@/lib/editorHandoff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, Maximize2, X, Plus, Ruler } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, Maximize2, X, Plus, Ruler, Type } from "lucide-react";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import { Input } from "@/components/ui/input";
 import {
@@ -87,7 +87,9 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState<string | null>(null);
   // Large-view overlay for looking at an image without opening the editor.
-  const [lightbox, setLightbox] = useState<string | null>(null);
+  // Large-view overlay. Clicking an image only views it; `editPath` feeds the
+  // "Bearbeiten" button there, so the editor is always an explicit choice.
+  const [lightbox, setLightbox] = useState<{ src: string; editPath: string } | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState(false);
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
   const [updatingFeedbackId, setUpdatingFeedbackId] = useState<string | null>(null);
@@ -419,19 +421,22 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           />
         </div>
       ) : (
-        <div className="min-h-[180px] bg-muted relative cursor-pointer group rounded-lg overflow-hidden flex items-center justify-center" onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/edit-image`)}>
+        <div
+          className="min-h-[180px] bg-muted relative cursor-zoom-in group rounded-lg overflow-hidden flex items-center justify-center"
+          onClick={() => setLightbox({ src: location.imageData, editPath: `/projects/${projectId}/locations/${location.id}/edit-image` })}
+        >
           <img src={location.imageData} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-            <Pencil className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+            <Maximize2 className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
-          {/* Always-visible "view large" (no editing). */}
+          {/* Editing is an explicit choice: only via the pencil. */}
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setLightbox(location.imageData); }}
+            onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/edit-image`); }}
             className="absolute top-2 right-2 z-10 rounded-md bg-black/55 hover:bg-black/75 text-white p-1.5"
-            title="Groß ansehen (ohne bearbeiten)"
+            title="Bild bearbeiten / bemaßen"
           >
-            <Maximize2 className="h-4 w-4" />
+            <Pencil className="h-4 w-4" />
           </button>
         </div>
       )}
@@ -596,20 +601,20 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
               {location.detailImages.map((detail) => (
                 <div key={detail.id} className="relative group bg-muted rounded overflow-hidden flex items-center justify-center min-h-[140px]">
                   <img src={detail.imageData} alt={detail.caption || "Detailbild"}
-                    className="w-full h-auto max-h-[240px] object-contain cursor-pointer"
-                    onClick={() => navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`)} />
-                  {/* Always-visible "view large" (no editing). */}
+                    className="w-full h-auto max-h-[240px] object-contain cursor-zoom-in"
+                    onClick={() => setLightbox({ src: detail.imageData, editPath: `/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image` })} />
+                  {/* Editing is an explicit choice: only via the pencil. */}
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); setLightbox(detail.imageData); }}
+                    onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image`); }}
                     className="absolute bottom-1 right-1 z-10 rounded-md bg-black/55 hover:bg-black/75 text-white p-1"
-                    title="Groß ansehen (ohne bearbeiten)"
+                    title="Bild bearbeiten / bemaßen"
                   >
-                    <Maximize2 className="h-3.5 w-3.5" />
+                    <Pencil className="h-3.5 w-3.5" />
                   </button>
                   {detail.caption && <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate pr-8">{detail.caption}</div>}
-                  <Button variant="ghost" size="sm" className="absolute top-0 left-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-muted/80 hover:bg-muted text-foreground rounded-none rounded-br" onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit`); }}>
-                    <Pencil className="h-3 w-3" />
+                  <Button variant="ghost" size="sm" title="Beschreibung bearbeiten" className="absolute top-0 left-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-0 bg-muted/80 hover:bg-muted text-foreground rounded-none rounded-br" onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit`); }}>
+                    <Type className="h-3 w-3" />
                   </Button>
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
@@ -646,10 +651,15 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
       {/* Lightbox: view an image large without opening the editor */}
       {lightbox && (
         <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" onClick={() => setLightbox(null)}>
-          <img src={lightbox} alt="Großansicht" className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
-          <Button variant="secondary" size="icon" className="absolute top-4 right-4" onClick={() => setLightbox(null)}>
-            <X className="h-4 w-4" />
-          </Button>
+          <img src={lightbox.src} alt="Großansicht" className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
+          <div className="absolute top-4 right-4 flex gap-2">
+            <Button variant="secondary" onClick={(e) => { e.stopPropagation(); const to = lightbox.editPath; setLightbox(null); navigate(to); }}>
+              <Pencil className="h-4 w-4 mr-1.5" /> Bearbeiten
+            </Button>
+            <Button variant="secondary" size="icon" onClick={() => setLightbox(null)}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       )}
 

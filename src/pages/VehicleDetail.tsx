@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock, Mail, Camera, ChevronDown, Maximize2 } from "lucide-react";
+import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock, Mail, Camera, ChevronDown } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
@@ -77,6 +77,28 @@ interface FeedbackItem {
   created_at: string;
 }
 
+// Collapsed by default; remembered for the browser session only.
+function useSessionOpen(key: string) {
+  const [open, setOpen] = useState<boolean>(() => {
+    try { return sessionStorage.getItem(key) === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem(key, open ? "1" : "0"); } catch { /* ignore */ }
+  }, [key, open]);
+  return [open, setOpen] as const;
+}
+
+// Header toggle shared by all sections on this page.
+const SectionToggle = ({ open, title, count }: { open: boolean; title: string; count?: number | string }) => (
+  <CollapsibleTrigger asChild>
+    <button className="flex items-center gap-2 flex-1 min-w-0 text-left">
+      <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      <CardTitle className="text-base">{title}</CardTitle>
+      {count !== undefined && count !== 0 && count !== "" && <span className="text-xs text-muted-foreground">{count}</span>}
+    </button>
+  </CollapsibleTrigger>
+);
+
 const VehicleDetail = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -84,16 +106,17 @@ const VehicleDetail = () => {
   // Guards the one-shot consumption of an image handed back from the editor.
   const handledMeasuredRef = useRef(false);
   // Large-view overlay for the (view-only) customer photos.
-  const [lightbox, setLightbox] = useState<string | null>(null);
-  // Collapsible state, remembered per project: the customer photos and the
-  // vehicle info are only relevant early on, so they can be folded away.
-  const readOpen = (key: string, fallback: boolean) => {
-    try { const v = localStorage.getItem(key); return v === null ? fallback : v === "1"; } catch { return fallback; }
-  };
-  const [infoOpen, setInfoOpen] = useState<boolean>(() => readOpen(`veh-info-open-${projectId}`, true));
-  const [unlabeledOpen, setUnlabeledOpen] = useState<boolean>(() => readOpen(`veh-unlabeled-open-${projectId}`, true));
-  useEffect(() => { try { localStorage.setItem(`veh-info-open-${projectId}`, infoOpen ? "1" : "0"); } catch { /* ignore */ } }, [infoOpen, projectId]);
-  useEffect(() => { try { localStorage.setItem(`veh-unlabeled-open-${projectId}`, unlabeledOpen ? "1" : "0"); } catch { /* ignore */ } }, [unlabeledOpen, projectId]);
+  // Large view. Clicking an image only views it; bemaßte Bilder carry an
+  // `editPath` for the "Bearbeiten" button, so editing is always explicit.
+  const [lightbox, setLightbox] = useState<{ src: string; editPath?: string } | null>(null);
+  // Every section starts collapsed. Within the browser session the state is
+  // kept per project, so coming back from the editor doesn't fold it again.
+  const [notesOpen, setNotesOpen] = useSessionOpen(`veh-notes-open-${projectId}`);
+  const [unlabeledOpen, setUnlabeledOpen] = useSessionOpen(`veh-unlabeled-open-${projectId}`);
+  const [infoOpen, setInfoOpen] = useSessionOpen(`veh-info-open-${projectId}`);
+  const [measuredOpen, setMeasuredOpen] = useSessionOpen(`veh-measured-open-${projectId}`);
+  const [layoutOpen, setLayoutOpen] = useSessionOpen(`veh-layout-open-${projectId}`);
+  const [chatOpen, setChatOpen] = useSessionOpen(`veh-chat-open-${projectId}`);
 
   const [project, setProject] = useState<any>(null);
   const [fieldConfigs, setFieldConfigs] = useState<VehicleFieldConfig[]>([]);
@@ -173,6 +196,7 @@ const VehicleDetail = () => {
   const uploadFiles = async (files: FileList | File[]) => {
     const imageFiles = Array.from(files).filter(f => f.type.startsWith("image/"));
     if (imageFiles.length === 0) { toast.error("Bitte Bilddateien auswählen"); return; }
+    setUnlabeledOpen(true); // show the result even if the section was folded
     setUploadingImage(true);
     let uploaded = 0;
     let lastError = "";
@@ -217,6 +241,7 @@ const VehicleDetail = () => {
   const handleLayoutUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !projectId) return;
+    setLayoutOpen(true); // show the result even if the section was folded
     setUploadingLayout(true);
     try {
       // Remove old layout from storage if exists
@@ -446,6 +471,7 @@ const VehicleDetail = () => {
   // Maps a stored feedback row to the LocationChat shape. author_type may be
   // missing on very old rows; fall back to customer for anything not marked
   // as an employee reply.
+  const openFeedbackCount = feedbacks.filter((f) => f.status === "open").length;
   const chatMessages: ChatMessage[] = feedbacks.map((f) => ({
     id: f.id,
     author_name: f.author_name,
@@ -585,55 +611,9 @@ const VehicleDetail = () => {
           {project.customer_name && <p className="text-sm text-muted-foreground mt-0.5">{project.customer_name}</p>}
         </div>
 
-        {/* Layout / Produktionsdatei — oben und sichtbar (wie das Aufmaß-Bild) */}
-        <FileDropZone accept={LAYOUT_ACCEPT} onFiles={dropToChange(handleLayoutUpload)} disabled={uploadingLayout} label={layout ? "Datei ablegen – ersetzt das Layout" : "Layout ablegen"}>
-        <Card>
-          <CardHeader className="p-4 pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Layout / Produktionsdatei</CardTitle>
-              <Button size="sm" variant="outline" onClick={() => layoutInputRef.current?.click()} disabled={uploadingLayout}>
-                <Upload className="h-4 w-4 mr-1" />
-                {uploadingLayout ? "Lädt..." : layout ? "Ersetzen" : "Hochladen"}
-              </Button>
-              <input ref={layoutInputRef} type="file" accept={LAYOUT_ACCEPT} className="hidden" onChange={handleLayoutUpload} />
-            </div>
-          </CardHeader>
-          <CardContent className="p-4 space-y-3">
-            {!layout ? (
-              <p className="text-sm text-muted-foreground text-center py-4">Noch kein Layout hochgeladen.</p>
-            ) : (
-              <>
-                {(() => {
-                  const kind = layoutPreviewKind(layout.file_name);
-                  const url = urlFor(layout.storage_path);
-                  const thumb = images[0] ? urlFor(images[0].storage_path) : undefined;
-                  if (kind === "pdf") return <LocationApprovalMedia pdfs={[{ url, name: layout.file_name }]} annotatedUrl={thumb} />;
-                  if (kind === "image") return <LocationApprovalMedia pdfs={[]} annotatedUrl={url} />;
-                  return null;
-                })()}
-                <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/20">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <FileText className="h-5 w-5 text-primary shrink-0" />
-                    <span className="text-sm font-medium truncate">{layout.file_name}</span>
-                    <span className="text-xs text-muted-foreground shrink-0">{formatDateTimeSafe(layout.uploaded_at)}</span>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => openStorageFile(layout.storage_path)}>
-                      <Download className="h-4 w-4" />
-                    </Button>
-                    <Button size="sm" variant="ghost" className="text-destructive" onClick={deleteLayout}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-        </FileDropZone>
 
-        {/* Gesprächsnotizen (Diktiergerät → Transkript → Protokoll → HERO) */}
-        <MeetingNotesCard projectId={projectId!} projectNumber={project.project_number} />
+        {/* Gesprächsnotizen (Diktiergerät → Transkript → Protokoll → HERO) — ganz oben, eingeklappt */}
+        <MeetingNotesCard projectId={projectId!} projectNumber={project.project_number} expanded={notesOpen} onExpandedChange={setNotesOpen} />
 
         {/* Fahrzeugbilder (unbeschriftet, i.d.R. vom Kunden) — ansehen & einklappbar */}
         <Collapsible open={unlabeledOpen} onOpenChange={setUnlabeledOpen}>
@@ -641,13 +621,7 @@ const VehicleDetail = () => {
         <Card>
           <CardHeader className="p-4 pb-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <CollapsibleTrigger asChild>
-                <button className="flex items-center gap-2 flex-1 min-w-0 text-left">
-                  <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${unlabeledOpen ? "rotate-180" : ""}`} />
-                  <CardTitle className="text-base">Fahrzeugbilder</CardTitle>
-                  <span className="text-xs text-muted-foreground">{images.length}</span>
-                </button>
-              </CollapsibleTrigger>
+              <SectionToggle open={unlabeledOpen} title="Fahrzeugbilder" count={images.length} />
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => imageInputRef.current?.click()} disabled={uploadingImage}>
                   <ImagePlus className="h-4 w-4 mr-1" />
@@ -682,7 +656,7 @@ const VehicleDetail = () => {
               <div className="grid grid-cols-2 gap-3">
                 {images.map(img => (
                   <div key={img.id} className="relative group rounded-lg overflow-hidden border bg-muted">
-                    <img src={urlFor(img.storage_path)} alt={img.caption || "Fahrzeugbild"} className="w-full h-40 object-cover cursor-pointer" onClick={() => setLightbox(urlFor(img.storage_path))} title="Groß ansehen" />
+                    <img src={urlFor(img.storage_path)} alt={img.caption || "Fahrzeugbild"} className="w-full h-40 object-cover cursor-pointer" onClick={() => setLightbox({ src: urlFor(img.storage_path) })} title="Groß ansehen" />
                     <div className="p-2 space-y-1">
                       {editingCaptionId === img.id ? (
                         <div className="flex gap-1">
@@ -717,12 +691,7 @@ const VehicleDetail = () => {
           <Card>
             <CardHeader className="p-4 pb-2">
               <div className="flex items-center justify-between gap-2">
-                <CollapsibleTrigger asChild>
-                  <button className="flex items-center gap-2 flex-1 min-w-0 text-left">
-                    <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${infoOpen ? "rotate-180" : ""}`} />
-                    <CardTitle className="text-base">Fahrzeuginformationen</CardTitle>
-                  </button>
-                </CollapsibleTrigger>
+                <SectionToggle open={infoOpen} title="Fahrzeuginformationen" />
                 {infoOpen && (!editingFields ? (
                   <Button size="sm" variant="outline" onClick={startEditFields}><Pencil className="h-3 w-3 mr-1" /> Bearbeiten</Button>
                 ) : (
@@ -759,11 +728,12 @@ const VehicleDetail = () => {
         )}
 
         {/* Bilder bemaßt */}
+        <Collapsible open={measuredOpen} onOpenChange={setMeasuredOpen}>
         <FileDropZone accept="image/*" onFiles={dropToChange(pickMeasuredFile)} disabled={uploadingMeasured} label="Bild ablegen – öffnet den Editor">
         <Card>
           <CardHeader className="p-4 pb-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle className="text-base">Bilder bemaßt</CardTitle>
+              <SectionToggle open={measuredOpen} title="Bilder bemaßt" count={measuredImages.length} />
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => measuredInputRef.current?.click()} disabled={uploadingMeasured}>
                   <ImagePlus className="h-4 w-4 mr-1" />
@@ -779,6 +749,7 @@ const VehicleDetail = () => {
               <input ref={measuredCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={pickMeasuredFile} />
             </div>
           </CardHeader>
+          <CollapsibleContent>
           <CardContent className="p-4">
             {measuredImages.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">
@@ -791,25 +762,22 @@ const VehicleDetail = () => {
                     <img
                       src={urlFor(img.storage_path)}
                       alt={img.caption || "Bemaßtes Bild"}
-                      className="w-full h-36 object-cover cursor-pointer"
-                      onClick={() => navigate(`/projects/${projectId}/vehicle/measured/${img.id}/edit-image`)}
+                      className="w-full h-36 object-cover cursor-zoom-in"
+                      onClick={() => setLightbox({ src: urlFor(img.storage_path), editPath: `/projects/${projectId}/vehicle/measured/${img.id}/edit-image` })}
                     />
-                    {/* Always-visible "view large" (no editing) — works on touch too. */}
+                    {/* Editing is an explicit choice: only via the pencil. */}
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); setLightbox(urlFor(img.storage_path)); }}
+                      onClick={(e) => { e.stopPropagation(); navigate(`/projects/${projectId}/vehicle/measured/${img.id}/edit-image`); }}
                       className="absolute top-1.5 right-1.5 z-10 rounded-md bg-black/55 hover:bg-black/75 text-white p-1.5"
-                      title="Groß ansehen (ohne bearbeiten)"
+                      title="Bild bearbeiten / bemaßen"
                     >
-                      <Maximize2 className="h-3.5 w-3.5" />
+                      <Pencil className="h-3.5 w-3.5" />
                     </button>
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                      <Button size="sm" variant="secondary" onClick={() => navigate(`/projects/${projectId}/vehicle/measured/${img.id}/edit-image`)}>
-                        <Pencil className="h-3 w-3 mr-1" /> Bemaßen
-                      </Button>
+                    <div className="absolute top-1.5 left-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button size="sm" variant="destructive"><Trash2 className="h-3 w-3" /></Button>
+                          <Button size="sm" variant="destructive" className="h-7 w-7 p-0" title="Löschen"><Trash2 className="h-3 w-3" /></Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
@@ -831,14 +799,70 @@ const VehicleDetail = () => {
               </div>
             )}
           </CardContent>
+          </CollapsibleContent>
         </Card>
         </FileDropZone>
+        </Collapsible>
 
-        {/* Freigabe & Korrekturen zum Layout — Chat wie beim Aufmaß */}
+        {/* Layout / Produktionsdatei — direkt über Freigabe & Korrekturen */}
+        <Collapsible open={layoutOpen} onOpenChange={setLayoutOpen}>
+        <FileDropZone accept={LAYOUT_ACCEPT} onFiles={dropToChange(handleLayoutUpload)} disabled={uploadingLayout} label={layout ? "Datei ablegen – ersetzt das Layout" : "Layout ablegen"}>
         <Card>
           <CardHeader className="p-4 pb-2">
-            <CardTitle className="text-base">Freigabe &amp; Korrekturen zum Layout</CardTitle>
+            <div className="flex items-center justify-between gap-2">
+              <SectionToggle open={layoutOpen} title="Layout / Produktionsdatei" count={layout ? 1 : 0} />
+              <Button size="sm" variant="outline" onClick={() => layoutInputRef.current?.click()} disabled={uploadingLayout}>
+                <Upload className="h-4 w-4 mr-1" />
+                {uploadingLayout ? "Lädt..." : layout ? "Ersetzen" : "Hochladen"}
+              </Button>
+              <input ref={layoutInputRef} type="file" accept={LAYOUT_ACCEPT} className="hidden" onChange={handleLayoutUpload} />
+            </div>
           </CardHeader>
+          <CollapsibleContent>
+          <CardContent className="p-4 space-y-3">
+            {!layout ? (
+              <p className="text-sm text-muted-foreground text-center py-4">Noch kein Layout hochgeladen.</p>
+            ) : (
+              <>
+                {(() => {
+                  const kind = layoutPreviewKind(layout.file_name);
+                  const url = urlFor(layout.storage_path);
+                  const thumb = images[0] ? urlFor(images[0].storage_path) : undefined;
+                  if (kind === "pdf") return <LocationApprovalMedia pdfs={[{ url, name: layout.file_name }]} annotatedUrl={thumb} />;
+                  if (kind === "image") return <LocationApprovalMedia pdfs={[]} annotatedUrl={url} />;
+                  return null;
+                })()}
+                <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/20">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="h-5 w-5 text-primary shrink-0" />
+                    <span className="text-sm font-medium truncate">{layout.file_name}</span>
+                    <span className="text-xs text-muted-foreground shrink-0">{formatDateTimeSafe(layout.uploaded_at)}</span>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => openStorageFile(layout.storage_path)}>
+                      <Download className="h-4 w-4" />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={deleteLayout}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+          </CollapsibleContent>
+        </Card>
+        </FileDropZone>
+        </Collapsible>
+
+
+        {/* Freigabe & Korrekturen zum Layout — Chat wie beim Aufmaß */}
+        <Collapsible open={chatOpen} onOpenChange={setChatOpen}>
+        <Card>
+          <CardHeader className="p-4 pb-2">
+            <SectionToggle open={chatOpen} title="Freigabe & Korrekturen zum Layout" count={openFeedbackCount ? `${openFeedbackCount} offen` : undefined} />
+          </CardHeader>
+          <CollapsibleContent>
           <CardContent className="p-4">
             <LocationChat
               messages={chatMessages}
@@ -858,7 +882,9 @@ const VehicleDetail = () => {
               placeholder="Antwort an den Kunden schreiben…"
             />
           </CardContent>
+          </CollapsibleContent>
         </Card>
+        </Collapsible>
       </div>
 
       {projectId && (
@@ -874,10 +900,17 @@ const VehicleDetail = () => {
       {/* Lightbox: view a customer photo large */}
       {lightbox && (
         <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" onClick={() => setLightbox(null)}>
-          <img src={lightbox} alt="Großansicht" className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
-          <Button variant="secondary" size="icon" className="absolute top-4 right-4" onClick={() => setLightbox(null)}>
-            <X className="h-4 w-4" />
-          </Button>
+          <img src={lightbox.src} alt="Großansicht" className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
+          <div className="absolute top-4 right-4 flex gap-2">
+            {lightbox.editPath && (
+              <Button variant="secondary" onClick={(e) => { e.stopPropagation(); const to = lightbox.editPath!; setLightbox(null); navigate(to); }}>
+                <Pencil className="h-4 w-4 mr-1.5" /> Bearbeiten
+              </Button>
+            )}
+            <Button variant="secondary" size="icon" onClick={() => setLightbox(null)}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       )}
     </div>

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, FileImage, FileText, Download, Archive, Loader2, Send } from "lucide-react";
+import { ArrowLeft, FileImage, FileText, Download, Archive, Loader2, Send, ChevronDown } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
@@ -128,6 +129,7 @@ const Export = () => {
   const [sendingToHero, setSendingToHero] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadingImages, setDownloadingImages] = useState<Record<string, boolean>>({});
+  const [singleImagesOpen, setSingleImagesOpen] = useState(false);
   const [pdfOptions, setPdfOptions] = useState<PDFExportOptions>(defaultPDFOptions);
   const [viewSettings, setViewSettings] = useState(defaultViewSettings);
   const [companyLogo, setCompanyLogo] = useState<string | null>(null);
@@ -627,12 +629,23 @@ const Export = () => {
           </CardContent>
         </Card>
 
+        {/* Einzelne Bilder: selten gebraucht und lang, daher eingeklappt. */}
+        <Collapsible open={singleImagesOpen} onOpenChange={setSingleImagesOpen}>
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-3"><FileImage className="h-5 w-5 text-primary" /> Einzelne Bilder</CardTitle>
-          </CardHeader>
+          <CollapsibleTrigger asChild>
+            <button type="button" className="w-full text-left">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-3">
+                  <FileImage className="h-5 w-5 text-primary" />
+                  <span className="flex-1">Einzelne Bilder</span>
+                  <ChevronDown className={`h-5 w-5 text-muted-foreground transition-transform ${singleImagesOpen ? "rotate-180" : ""}`} />
+                </CardTitle>
+                <p className="text-sm text-muted-foreground font-normal">Standortbilder und Detailbilder einzeln herunterladen</p>
+              </CardHeader>
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
           <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">Standortbilder und Detailbilder einzeln herunterladen</p>
             {sortedLocations.map((location) => (
               <div key={location.id} className="border rounded-lg p-3 space-y-3">
                 <div className="font-medium text-sm">Standort {location.locationNumber}{location.locationName && <span className="text-muted-foreground font-normal ml-2">{location.locationName}</span>}</div>
@@ -678,7 +691,9 @@ const Export = () => {
               </div>
             ))}
           </CardContent>
+          </CollapsibleContent>
         </Card>
+        </Collapsible>
       </div>
     </div>
   );

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  Plus, FolderOpen, Calendar, LogOut, Users, RefreshCw, Trash2,
+  Plus, FolderOpen, Calendar, LogOut, RefreshCw, Trash2,
   CheckSquare, X, Archive, ArchiveRestore, UserPlus, Tag, MapPin, Car, Mic, Search,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -345,7 +345,6 @@ const Projects = () => {
               </>
             ) : (
               <>
-                <Button size="sm" variant="ghost" onClick={() => navigate("/projects/customers")} title="Kunden"><Users className="h-4 w-4" /></Button>
                 <Button size="sm" variant="ghost" onClick={() => navigate("/etiketten")} title="Etiketten"><Tag className="h-4 w-4" /></Button>
                 <Button size="sm" variant="ghost" onClick={() => navigate("/protokoll")} title="Protokoll (Diktat)"><Mic className="h-4 w-4" /></Button>
                 <Button size="sm" variant="ghost" onClick={syncToSupabase} disabled={isSyncing} title="Synchronisieren"><RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} /></Button>

@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Mic, Square, Loader2, FileText, CheckCircle2, ChevronRight, Pencil, Save, Mail } from "lucide-react";
+import { Mic, Square, Loader2, FileText, CheckCircle2, ChevronRight, ChevronDown, Pencil, Save, Mail } from "lucide-react";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { useMeetingRecorder, MeetingMarkdown } from "@/components/MeetingRecorder";
 import { SendProtocolDialog } from "@/components/SendProtocolDialog";
@@ -23,7 +23,17 @@ interface Note {
   created_at: string;
 }
 
-export function MeetingNotesCard({ projectId, projectNumber }: { projectId: string; projectNumber: string }) {
+// `expanded` / `onExpandedChange` make the card collapsible (header click
+// toggles the notes list; the record button stays reachable while folded).
+// Without them the card is always expanded, as before.
+export function MeetingNotesCard({ projectId, projectNumber, expanded, onExpandedChange }: {
+  projectId: string;
+  projectNumber: string;
+  expanded?: boolean;
+  onExpandedChange?: (open: boolean) => void;
+}) {
+  const collapsible = expanded !== undefined && !!onExpandedChange;
+  const showBody = !collapsible || expanded;
   const { phase, activeProjectId, elapsedSec, start, stop } = useMeetingRecorder();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,9 +113,22 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
     <Card className="shadow-sm">
       <CardContent className="p-4 space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
-            <Mic className="h-3.5 w-3.5" /> Gesprächsnotizen
-          </p>
+          {collapsible ? (
+            <button
+              type="button"
+              onClick={() => onExpandedChange!(!expanded)}
+              className="flex items-center gap-2 flex-1 min-w-0 text-left"
+              aria-expanded={expanded}
+            >
+              <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
+              <span className="text-base font-semibold">Gesprächsnotizen</span>
+              {!loading && notes.length > 0 && <span className="text-xs text-muted-foreground">{notes.length}</span>}
+            </button>
+          ) : (
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+              <Mic className="h-3.5 w-3.5" /> Gesprächsnotizen
+            </p>
+          )}
           {isThisRecording ? (
             <Button size="sm" variant="destructive" className="gap-1.5" onClick={stop}>
               <Square className="h-3.5 w-3.5" /> Stopp ({fmt(elapsedSec)})
@@ -121,6 +144,7 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
           )}
         </div>
 
+        {showBody && (<>
         <p className="text-xs text-muted-foreground">
           Nimmt das Gespräch auf (läuft im Hintergrund weiter), transkribiert es und legt ein Ergebnisprotokoll + To-dos (für uns und für den Kunden) an – auch im HERO-Logbuch.
         </p>
@@ -150,6 +174,7 @@ export function MeetingNotesCard({ projectId, projectNumber }: { projectId: stri
             ))}
           </div>
         )}
+        </>)}
       </CardContent>
 
       <Dialog open={!!open} onOpenChange={(o) => { if (!o) setOpen(null); }}>

@@ -20,7 +20,6 @@ import Export from "./pages/Export";
 import Auth from "./pages/Auth";
 import Admin from "./pages/Admin";
 import CustomerView from "./pages/CustomerView";
-import CustomerManage from "./pages/CustomerManage";
 import CustomerLogin from "./pages/CustomerLogin";
 import FloorPlanUpload from "./pages/FloorPlanUpload";
 import FloorPlanView from "./pages/FloorPlanView";
@@ -194,7 +193,6 @@ const App = () => {
           <Route path="/admin" element={<RoleGuard allowedRoles={["admin"]}><Admin /></RoleGuard>} />
           <Route path="/projects" element={<RoleGuard allowedRoles={["admin", "employee"]}><Projects /></RoleGuard>} />
           <Route path="/projects/new" element={<RoleGuard allowedRoles={["admin", "employee"]}><NewProject /></RoleGuard>} />
-          <Route path="/projects/customers" element={<RoleGuard allowedRoles={["admin", "employee"]}><CustomerManage /></RoleGuard>} />
           <Route path="/etiketten" element={<RoleGuard allowedRoles={["admin", "employee"]}><LabelPrint /></RoleGuard>} />
           <Route path="/protokoll" element={<RoleGuard allowedRoles={["admin", "employee"]}><Protokoll /></RoleGuard>} />
           <Route path="/projects/:projectId" element={<RoleGuard allowedRoles={["admin", "employee"]}><ProjectDetail /></RoleGuard>} />

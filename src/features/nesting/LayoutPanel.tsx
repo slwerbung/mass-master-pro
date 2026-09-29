@@ -68,7 +68,7 @@ export default function LayoutPanel({ initialTeile, projektnummer }: LayoutPanel
     const pad = (n: number) => String(n).padStart(2, "0");
     const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
     const safeNr = (projektnummer || "Projekt").replace(/[^A-Za-z0-9-]/g, "_");
-    const ok = await downloadBlob(blob, `Layout_${safeNr}_${stamp}.svg`);
+    const ok = await downloadBlob(blob, `${safeNr}_Layout_${stamp}.svg`);
     if (ok) toast.success("Layout-SVG gespeichert");
   };
 

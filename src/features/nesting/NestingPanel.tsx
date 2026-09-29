@@ -107,7 +107,7 @@ export default function NestingPanel({ initialTeile, projektnummer }: NestingPan
     const pad = (n: number) => String(n).padStart(2, "0");
     const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
     const safeNr = (projektnummer || "Projekt").replace(/[^A-Za-z0-9-]/g, "_");
-    const ok = await downloadBlob(blob, `Flaechenzuschnitt_${safeNr}_${res.folienbreite}mm_${stamp}.svg`);
+    const ok = await downloadBlob(blob, `${safeNr}_Flaechenzuschnitt_${res.folienbreite}mm_${stamp}.svg`);
     if (ok) toast.success("SVG gespeichert");
   };
 
