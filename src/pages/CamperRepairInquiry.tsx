@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ImagePlus, X, Loader2, CheckCircle2, Plus, CalendarClock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { CompanyHeader } from "@/components/CompanyHeader";
 import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { formatPlate, isValidPlate } from "@/lib/licensePlate";
 
@@ -207,7 +208,9 @@ const CamperRepairInquiry = () => {
   // ---- Success view ----
   if (submitted) {
     return (
-      <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-muted/30">
+        <CompanyHeader />
+        <div className="flex items-center justify-center p-4 pt-12">
         <Card className="max-w-lg w-full">
           <CardContent className="pt-8 pb-8 space-y-5">
             <div className="text-center space-y-3">
@@ -256,6 +259,7 @@ const CamperRepairInquiry = () => {
             </div>
           </CardContent>
         </Card>
+        </div>
       </div>
     );
   }
@@ -280,8 +284,9 @@ const CamperRepairInquiry = () => {
   );
 
   return (
-    <div className="min-h-screen bg-muted/30 py-8 px-4">
-      <div className="max-w-2xl mx-auto">
+    <div className="min-h-screen bg-muted/30">
+      <CompanyHeader />
+      <div className="max-w-2xl mx-auto py-8 px-4">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold mb-2">Wohnmobil-Reparaturbeschriftung</h1>
           <p className="text-muted-foreground">
