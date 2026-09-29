@@ -21,7 +21,8 @@ export default defineConfig(() => ({
         theme_color: "#ffffff",
         background_color: "#ffffff",
         display: "standalone",
-        orientation: "portrait",
+        // "any": the photo editor needs landscape (rotate the phone to measure).
+        orientation: "any",
         scope: "/",
         start_url: "/",
         icons: [

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Canvas as FabricCanvas, PencilBrush, Line, IText, FabricImage, Point, Shadow } from "fabric";
-import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2, RectangleHorizontal, Copy } from "lucide-react";
+import { Pencil, Type, Ruler, Undo, Redo, ArrowLeft, Check, Trash2, RectangleHorizontal, Copy, ZoomIn, ZoomOut, Maximize } from "lucide-react";
 import { toast } from "sonner";
 import { createMeasurementGroup } from "@/lib/measurement";
 import { createAreaMeasurementGroup, renderAreaLabels } from "@/lib/areaMeasurement";
@@ -16,6 +16,68 @@ import AreaMeasurementDialog from "@/components/AreaMeasurementDialog";
 import { setEditorHandoff, takeEditorHandoff, setMeasuredResult } from "@/lib/editorHandoff";
 
 type Tool = "select" | "draw" | "text" | "measure" | "area";
+
+// ── View (zoom / pan / resize) ────────────────────────────────────────────
+// Everything on the canvas lives in fixed "scene" coordinates: the photo is
+// laid out once when the editor opens, and every line, label and area is
+// stored relative to it. Zooming, panning and rotating the phone only change
+// the viewport transform on top of that, so annotations never move relative
+// to the photo and the export (done at the identity viewport) is always the
+// whole photo – no matter how far the user is zoomed in.
+
+/** Photo rectangle in scene coordinates (the background is centred). */
+function photoSceneRect(canvas: FabricCanvas): { left: number; top: number; width: number; height: number } | null {
+  const bg: any = canvas.backgroundImage;
+  if (!bg || typeof bg.width !== "number" || typeof bg.height !== "number") return null;
+  const width = bg.width * (bg.scaleX ?? 1);
+  const height = bg.height * (bg.scaleY ?? 1);
+  return { left: (bg.left ?? 0) - width / 2, top: (bg.top ?? 0) - height / 2, width, height };
+}
+
+/** Zoom at which the whole photo fits the current canvas size. */
+function fitZoomFor(canvas: FabricCanvas): number {
+  const r = photoSceneRect(canvas);
+  if (!r || r.width <= 0 || r.height <= 0) return 1;
+  return Math.min(canvas.getWidth() / r.width, canvas.getHeight() / r.height);
+}
+
+/**
+ * Keeps the photo in view: when it is smaller than the canvas on an axis it is
+ * centred on that axis, when it is larger there are no empty margins – so the
+ * picture can never be pushed out of sight or appear cut off.
+ */
+function constrainView(canvas: FabricCanvas) {
+  const r = photoSceneRect(canvas);
+  if (!r) return;
+  const vpt = [...canvas.viewportTransform] as [number, number, number, number, number, number];
+  const z = vpt[0];
+  const W = canvas.getWidth(), H = canvas.getHeight();
+  const vw = z * r.width, vh = z * r.height;
+  vpt[4] = vw <= W ? (W - vw) / 2 - z * r.left : Math.min(-z * r.left, Math.max(W - z * (r.left + r.width), vpt[4]));
+  vpt[5] = vh <= H ? (H - vh) / 2 - z * r.top : Math.min(-z * r.top, Math.max(H - z * (r.top + r.height), vpt[5]));
+  canvas.setViewportTransform(vpt);
+}
+
+/** Show the whole photo, centred. */
+function fitView(canvas: FabricCanvas) {
+  const z = fitZoomFor(canvas);
+  canvas.setViewportTransform([z, 0, 0, z, 0, 0]);
+  constrainView(canvas);
+  canvas.requestRenderAll();
+}
+
+// Zoom range relative to "whole photo visible".
+const MIN_ZOOM_FACTOR = 1;
+const MAX_ZOOM_FACTOR = 8;
+
+/** Zoom around a point in canvas (viewport) pixels, clamped and kept in view. */
+function zoomAt(canvas: FabricCanvas, point: Point, nextZoom: number) {
+  const fit = fitZoomFor(canvas);
+  const z = Math.max(fit * MIN_ZOOM_FACTOR, Math.min(fit * MAX_ZOOM_FACTOR, nextZoom));
+  canvas.zoomToPoint(point, z);
+  constrainView(canvas);
+  canvas.requestRenderAll();
+}
 
 const PhotoEditor = () => {
   const { projectId, locationId, detailId, measuredId } = useParams();
@@ -51,7 +113,9 @@ const PhotoEditor = () => {
   });
   const [loading, setLoading] = useState(false);
   const [savedMaxAreaIndex, setSavedMaxAreaIndex] = useState(0);
-  const pinchStateRef = useRef<{ initialDistance: number; initialZoom: number; isPinching: boolean }>({ initialDistance: 0, initialZoom: 1, isPinching: false });
+  const pinchStateRef = useRef<{ initialDistance: number; initialZoom: number; isPinching: boolean; lastMid: { x: number; y: number } }>({ initialDistance: 0, initialZoom: 1, isPinching: false, lastMid: { x: 0, y: 0 } });
+  // Wrapper around the canvas; its size is what the canvas may occupy.
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
   const suppressTapUntilRef = useRef(0);
 
   const isReEdit = !!locationId || !!measuredId;
@@ -178,12 +242,17 @@ const PhotoEditor = () => {
     loadImage();
   }, [isReEdit, isDetailReEdit, isVehicleMeasuredReEdit, locationId, detailId, measuredId, projectId, navigate, imageDataState]);
 
+  // Space available for the canvas (the flex area below the toolbar).
+  const measureCanvasArea = () => {
+    const el = canvasAreaRef.current;
+    const w = el ? el.clientWidth - 8 : window.innerWidth - 8;
+    const h = el ? el.clientHeight - 8 : window.innerHeight - 100;
+    return { width: Math.max(120, Math.floor(w)), height: Math.max(120, Math.floor(h)) };
+  };
+
   useEffect(() => {
     if (!imageDataState || !canvasRef.current) return;
-    const headerHeight = window.innerWidth < 768 ? 100 : 80;
-    const padding = window.innerWidth < 768 ? 8 : 32;
-    const availableHeight = window.innerHeight - headerHeight - padding;
-    const availableWidth = window.innerWidth - padding;
+    const { width: availableWidth, height: availableHeight } = measureCanvasArea();
 
     const canvas = new FabricCanvas(canvasRef.current, {
       width: availableWidth, height: availableHeight, backgroundColor: "#ffffff",
@@ -220,7 +289,7 @@ const PhotoEditor = () => {
         left: canvas.width! / 2, top: canvas.height! / 2,
       });
       canvas.backgroundImage = fabricImage;
-      canvas.renderAll();
+      fitView(canvas);
       pushHistoryState(canvas);
     };
     img.src = imageDataState;
@@ -497,6 +566,7 @@ const PhotoEditor = () => {
         initialDistance: getDistance(event.touches),
         initialZoom: fabricCanvas.getZoom(),
         isPinching: true,
+        lastMid: getMidpoint(event.touches),
       };
       suppressTapUntilRef.current = Date.now() + 250;
     };
@@ -506,12 +576,14 @@ const PhotoEditor = () => {
       event.preventDefault();
       const currentDistance = getDistance(event.touches);
       const scale = currentDistance / Math.max(pinchStateRef.current.initialDistance, 1);
-      const nextZoom = Math.max(0.4, Math.min(5, pinchStateRef.current.initialZoom * scale));
       const midpoint = getMidpoint(event.touches);
       const rect = target.getBoundingClientRect();
-      const point = new Point(midpoint.x - rect.left, midpoint.y - rect.top);
-      fabricCanvas.zoomToPoint(point, nextZoom);
-      fabricCanvas.requestRenderAll();
+      // Two fingers zoom AND move the picture: follow the midpoint, then zoom
+      // around it. Without the pan, zoomed-in parts were unreachable.
+      const last = pinchStateRef.current.lastMid;
+      fabricCanvas.relativePan(new Point(midpoint.x - last.x, midpoint.y - last.y));
+      pinchStateRef.current.lastMid = midpoint;
+      zoomAt(fabricCanvas, new Point(midpoint.x - rect.left, midpoint.y - rect.top), pinchStateRef.current.initialZoom * scale);
       suppressTapUntilRef.current = Date.now() + 250;
     };
 
@@ -535,6 +607,117 @@ const PhotoEditor = () => {
     };
   }, [fabricCanvas]);
 
+  // Zoom around the middle of the visible area (toolbar buttons).
+  const zoomBy = (factor: number) => {
+    if (!fabricCanvas) return;
+    zoomAt(fabricCanvas, new Point(fabricCanvas.getWidth() / 2, fabricCanvas.getHeight() / 2), fabricCanvas.getZoom() * factor);
+  };
+
+  // Rotating the phone (or resizing the window) resizes the canvas to the new
+  // space and shows the whole photo again. Annotations keep their place on the
+  // photo because only the viewport changes.
+  useEffect(() => {
+    if (!fabricCanvas) return;
+    let timer: number | undefined;
+    const apply = () => {
+      const { width, height } = measureCanvasArea();
+      if (width === fabricCanvas.getWidth() && height === fabricCanvas.getHeight()) return;
+      fabricCanvas.setDimensions({ width, height });
+      fitView(fabricCanvas);
+    };
+    // Wait for the layout to settle (iOS reports the old size right after
+    // an orientation change).
+    const schedule = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => requestAnimationFrame(apply), 150);
+    };
+    window.addEventListener("resize", schedule);
+    window.addEventListener("orientationchange", schedule);
+    window.visualViewport?.addEventListener("resize", schedule);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("orientationchange", schedule);
+      window.visualViewport?.removeEventListener("resize", schedule);
+    };
+  }, [fabricCanvas]);
+
+  // Desktop: mouse wheel / trackpad pinch zooms at the cursor; dragging with
+  // the space bar held or the middle mouse button moves the picture.
+  useEffect(() => {
+    if (!fabricCanvas) return;
+    const onWheel = (opt: any) => {
+      const e = opt.e as WheelEvent;
+      e.preventDefault();
+      e.stopPropagation();
+      const factor = Math.pow(0.998, e.deltaY);
+      zoomAt(fabricCanvas, fabricCanvas.getViewportPoint(e), fabricCanvas.getZoom() * factor);
+    };
+    fabricCanvas.on("mouse:wheel", onWheel);
+
+    const host = fabricCanvas.upperCanvasEl?.parentElement;
+    let spaceHeld = false;
+    let panning: { x: number; y: number } | null = null;
+    const isTyping = () => {
+      const a = document.activeElement as HTMLElement | null;
+      return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable);
+    };
+    // Space is only the pan modifier here. Swallow it (down AND up) so it
+    // never "clicks" a focused toolbar button – e.g. the back arrow, which
+    // would leave the editor without saving.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || isTyping()) return;
+      e.preventDefault();
+      spaceHeld = true;
+      if (host) host.style.cursor = "grab";
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || !spaceHeld) return;
+      e.preventDefault();
+      spaceHeld = false;
+      if (host && !panning) host.style.cursor = "";
+    };
+    // Capture phase on the wrapper runs before Fabric's own listeners on the
+    // canvas, so a pan drag never draws, selects or measures.
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType === "touch") return;
+      if (!(e.button === 1 || (e.button === 0 && spaceHeld))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      panning = { x: e.clientX, y: e.clientY };
+      if (host) host.style.cursor = "grabbing";
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!panning) return;
+      e.preventDefault();
+      e.stopPropagation();
+      fabricCanvas.relativePan(new Point(e.clientX - panning.x, e.clientY - panning.y));
+      constrainView(fabricCanvas);
+      fabricCanvas.requestRenderAll();
+      panning = { x: e.clientX, y: e.clientY };
+    };
+    const onUp = (e: PointerEvent) => {
+      if (!panning) return;
+      e.preventDefault();
+      e.stopPropagation();
+      panning = null;
+      if (host) host.style.cursor = spaceHeld ? "grab" : "";
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    host?.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    return () => {
+      fabricCanvas.off("mouse:wheel", onWheel);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      host?.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+    };
+  }, [fabricCanvas]);
+
   const handleNext = async () => {
     if (!fabricCanvas) return;
     fabricCanvas.renderAll();
@@ -550,27 +733,19 @@ const PhotoEditor = () => {
         const bgScale = (bg && typeof bg.scaleX === "number" && bg.scaleX > 0) ? bg.scaleX : 1;
         const nativeMultiplier = Math.min(Math.max(1 / bgScale, 1), 4);
         let exportOptions: any = { format: "jpeg", quality: 0.95, multiplier: nativeMultiplier };
-        if (bg && typeof bg.width === "number" && typeof bg.height === "number") {
-          const bounds = typeof bg.getBoundingRect === "function"
-            ? bg.getBoundingRect()
-            : {
-                left: (bg.left ?? fabricCanvas.getWidth() / 2) - ((bg.width ?? 0) * (bg.scaleX ?? 1)) / 2,
-                top: (bg.top ?? fabricCanvas.getHeight() / 2) - ((bg.height ?? 0) * (bg.scaleY ?? 1)) / 2,
-                width: (bg.width ?? 0) * (bg.scaleX ?? 1),
-                height: (bg.height ?? 0) * (bg.scaleY ?? 1),
-              };
-
-          const safeLeft = Math.max(0, bounds.left ?? 0);
-          const safeTop = Math.max(0, bounds.top ?? 0);
-          const safeWidth = Math.min(fabricCanvas.getWidth() - safeLeft, bounds.width ?? fabricCanvas.getWidth());
-          const safeHeight = Math.min(fabricCanvas.getHeight() - safeTop, bounds.height ?? fabricCanvas.getHeight());
-
+        // The crop box is the whole photo in SCENE coordinates. toDataURL crops
+        // in viewport coordinates, so the export runs at the identity viewport
+        // (see below) – otherwise a zoomed-in or rotated view would be saved
+        // cut off. Deliberately not clamped to the canvas size: after rotating
+        // the phone the canvas can be smaller than the scene.
+        const photo = photoSceneRect(fabricCanvas);
+        if (photo) {
           exportOptions = {
             ...exportOptions,
-            left: safeLeft,
-            top: safeTop,
-            width: Math.max(1, safeWidth),
-            height: Math.max(1, safeHeight),
+            left: photo.left,
+            top: photo.top,
+            width: Math.max(1, photo.width),
+            height: Math.max(1, photo.height),
           };
         }
 
@@ -584,7 +759,14 @@ const PhotoEditor = () => {
           const MAX_OUT = 2600;
           if (outLongest > MAX_OUT) exportOptions.multiplier = (exportOptions.multiplier ?? 1) * (MAX_OUT / outLongest);
         }
-        let dataUrl = fabricCanvas.toDataURL(exportOptions);
+        const viewBefore = [...fabricCanvas.viewportTransform] as typeof fabricCanvas.viewportTransform;
+        let dataUrl: string;
+        try {
+          fabricCanvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+          dataUrl = fabricCanvas.toDataURL(exportOptions);
+        } finally {
+          fabricCanvas.setViewportTransform(viewBefore);
+        }
         // No compressImage() here on purpose - annotated images stay at
         // full resolution so dimension labels remain sharp. (Originals
         // are still lightly compressed in supabaseSync, annotated are not.)
@@ -782,8 +964,21 @@ const PhotoEditor = () => {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-hidden flex items-center justify-center p-1">
-        <canvas ref={canvasRef} className="max-w-full max-h-full" />
+      <div ref={canvasAreaRef} className="relative flex-1 min-h-0 overflow-hidden flex items-center justify-center p-1">
+        <canvas ref={canvasRef} />
+        {/* Zoom: also pinch with two fingers (moves the picture too), mouse
+            wheel on desktop; drag with space or the middle mouse button. */}
+        <div className="absolute bottom-3 right-3 z-10 flex flex-col gap-1.5">
+          <Button variant="secondary" size="icon" className="h-9 w-9 shadow-md" onClick={() => zoomBy(1.4)} title="Hineinzoomen">
+            <ZoomIn className="h-4 w-4" />
+          </Button>
+          <Button variant="secondary" size="icon" className="h-9 w-9 shadow-md" onClick={() => zoomBy(1 / 1.4)} title="Herauszoomen">
+            <ZoomOut className="h-4 w-4" />
+          </Button>
+          <Button variant="secondary" size="icon" className="h-9 w-9 shadow-md" onClick={() => fabricCanvas && fitView(fabricCanvas)} title="Ganzes Bild anzeigen">
+            <Maximize className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {measureStart && !showMeasureDialog && (
