@@ -18,6 +18,7 @@
  */
 import { useRef } from "react";
 import { readImageFileForEditor } from "./imageFile";
+import { markCameraOpening } from "@/lib/cameraGuard";
 
 interface Options {
   /** Called with base64 imageData after the user picks/shoots an image */
@@ -58,6 +59,7 @@ export function useDirectCamera({ onCapture, uploadMode = false }: Options) {
       type="file"
       accept="image/*"
       {...(!uploadMode ? { capture: "environment" as const } : {})}
+      onClick={markCameraOpening}
       onChange={handleChange}
       className="hidden"
     />

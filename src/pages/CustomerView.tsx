@@ -12,6 +12,7 @@ import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { toast } from "sonner";
+import { markCameraOpening } from "@/lib/cameraGuard";
 import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { getSession, clearSession, applySupabaseSession } from "@/lib/session";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
@@ -1189,7 +1190,7 @@ const CustomerView = () => {
                     </label>
                     {navigator.maxTouchPoints > 0 && (
                       <label className="mt-3 flex items-center gap-2 cursor-pointer w-fit">
-                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleVehicleImageUpload} disabled={uploadingVehicleImage} />
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onClick={markCameraOpening} onChange={handleVehicleImageUpload} disabled={uploadingVehicleImage} />
                         <Button size="sm" variant="outline" asChild disabled={uploadingVehicleImage}>
                           <span><Camera className="h-4 w-4 mr-1" /> Mit Kamera aufnehmen</span>
                         </Button>
@@ -1223,7 +1224,7 @@ const CustomerView = () => {
                         </label>
                         {navigator.maxTouchPoints > 0 && (
                           <label className="flex items-center gap-2 cursor-pointer">
-                            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleVehicleImageUpload} disabled={uploadingVehicleImage} />
+                            <input type="file" accept="image/*" capture="environment" className="hidden" onClick={markCameraOpening} onChange={handleVehicleImageUpload} disabled={uploadingVehicleImage} />
                             <Button size="sm" variant="outline" asChild disabled={uploadingVehicleImage}>
                               <span><Camera className="h-4 w-4 mr-1" /> Kamera</span>
                             </Button>

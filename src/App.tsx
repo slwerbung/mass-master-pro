@@ -37,6 +37,7 @@ import LabelPrint from "./pages/LabelPrint";
 import Protokoll from "./pages/Protokoll";
 import NotFound from "./pages/NotFound";
 import { MeetingRecorderProvider } from "@/components/MeetingRecorder";
+import { CameraInterruptNotice } from "@/components/CameraInterruptNotice";
 
 // Interner Probo-Katalog-Generator: bewusst lazy, damit @react-pdf/renderer
 // nicht im Haupt-Bundle landet, das alle Mitarbeiter laden.
@@ -187,6 +188,8 @@ const App = () => {
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        {/* Brings the user back if the phone restarted the app while the camera was open. */}
+        <CameraInterruptNotice />
         <MeetingRecorderProvider>
         <Routes>
           <Route path="/" element={<Auth />} />

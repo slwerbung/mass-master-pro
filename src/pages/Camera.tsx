@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { readImageFileForEditor } from "@/lib/imageFile";
 import { setEditorHandoff } from "@/lib/editorHandoff";
+import { markCameraOpening } from "@/lib/cameraGuard";
 
 const Camera = () => {
   const { projectId } = useParams();
@@ -184,6 +185,7 @@ const Camera = () => {
         type="file"
         accept="image/*"
         {...(!isDesktop && mode !== "upload" ? { capture: "environment" as const } : {})}
+        onClick={markCameraOpening}
         onChange={handleFileChange}
         className="hidden"
       />

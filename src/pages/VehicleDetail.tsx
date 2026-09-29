@@ -12,6 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
+import { markCameraOpening } from "@/lib/cameraGuard";
 import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
@@ -634,7 +635,7 @@ const VehicleDetail = () => {
                 )}
               </div>
               <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
-              <input ref={imageCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageUpload} />
+              <input ref={imageCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onClick={markCameraOpening} onChange={handleImageUpload} />
             </div>
           </CardHeader>
           <CollapsibleContent>
@@ -746,7 +747,7 @@ const VehicleDetail = () => {
                 )}
               </div>
               <input ref={measuredInputRef} type="file" accept="image/*" className="hidden" onChange={pickMeasuredFile} />
-              <input ref={measuredCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={pickMeasuredFile} />
+              <input ref={measuredCameraRef} type="file" accept="image/*" capture="environment" className="hidden" onClick={markCameraOpening} onChange={pickMeasuredFile} />
             </div>
           </CardHeader>
           <CollapsibleContent>
