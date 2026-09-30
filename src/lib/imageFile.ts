@@ -8,11 +8,9 @@
  * ~190 MB) and crashes mobile browsers with an out-of-memory error the moment
  * the user confirms the shot in the native camera app.
  *
- * Instead we load via an object URL (no giant base64 string), read the
- * intrinsic dimensions, and draw straight onto a downscaled canvas. The
- * browser decodes large <img> elements with managed/downsampled memory, and
- * EXIF orientation is applied automatically by drawImage on modern browsers
- * (Chrome 81+, Safari 13.4+, Firefox 77+).
+ * Instead we read the intrinsic dimensions via an object URL (no giant
+ * base64 string) and let createImageBitmap decode straight to the target
+ * size (see decodeScaled). EXIF orientation is applied ("from-image").
  */
 
 import { cameraStage } from "./cameraGuard";
@@ -46,6 +44,39 @@ function drawToJpegDataUrl(
   return url;
 }
 
+// Reads only the (orientation-corrected) dimensions. The <img> is never
+// drawn, so the photo is not decoded here; src is dropped right after.
+async function readDimensions(objectUrl: string): Promise<{ w: number; h: number }> {
+  const img = await loadHtmlImage(objectUrl);
+  const w = img.naturalWidth || img.width || 1;
+  const h = img.naturalHeight || img.height || 1;
+  img.src = "";
+  return { w, h };
+}
+
+// Decode straight to the target size. Measured (Sept. 2026): drawing the
+// <img> of a 12 MP photo kept ~48 MB per photo in the page that the browser
+// did not give back – on a 50 MP camera ~200 MB. Photo 1 worked, and for
+// photo 2 Android ended the app while the camera was open. createImageBitmap
+// with a resize target never keeps the full-size pixels around.
+async function decodeScaled(file: File, width: number, height: number): Promise<ImageBitmap | null> {
+  if (typeof createImageBitmap !== "function") return null;
+  const attempt = (w: number, h: number) =>
+    createImageBitmap(file, { resizeWidth: w, resizeHeight: h, resizeQuality: "high", imageOrientation: "from-image" });
+  try {
+    let bmp = await attempt(width, height);
+    if (bmp.width === width && bmp.height === height) return bmp;
+    // Some engines resize BEFORE applying the EXIF rotation → sides swapped.
+    bmp.close();
+    bmp = await attempt(height, width);
+    if (bmp.width === width && bmp.height === height) return bmp;
+    bmp.close();
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function readImageFileForEditor(
   file: File,
   maxDimension = 2200,
@@ -53,17 +84,23 @@ export async function readImageFileForEditor(
 ): Promise<string> {
   const objectUrl = URL.createObjectURL(file);
   try {
-    const img = await loadHtmlImage(objectUrl);
-    const natW = img.naturalWidth || img.width || 1;
-    const natH = img.naturalHeight || img.height || 1;
+    const { w: natW, h: natH } = await readDimensions(objectUrl);
     // Diagnostics: a crash between "dims" and "scaled" means decoding the
-    // full-resolution photo ran out of memory (see cameraGuard.ts).
+    // photo ran out of memory (see cameraGuard.ts).
     cameraStage("dims", { photoW: natW, photoH: natH, megapixels: Math.round((natW * natH) / 1e5) / 10 });
     const scale = Math.min(1, maxDimension / Math.max(natW, natH));
     const width = Math.max(1, Math.round(natW * scale));
     const height = Math.max(1, Math.round(natH * scale));
-    const url = drawToJpegDataUrl(img, width, height, quality);
-    cameraStage("scaled", { scaledW: width, scaledH: height, scaledBytes: url.length });
+    let url: string;
+    const bmp = await decodeScaled(file, width, height);
+    if (bmp) {
+      try { url = drawToJpegDataUrl(bmp, width, height, quality); } finally { bmp.close(); }
+    } else {
+      // Fallback (old browsers): via <img>, dropped again right after.
+      const img = await loadHtmlImage(objectUrl);
+      try { url = drawToJpegDataUrl(img, width, height, quality); } finally { img.src = ""; }
+    }
+    cameraStage("scaled", { scaledW: width, scaledH: height, scaledBytes: url.length, decoder: bmp ? "bitmap" : "img" });
     return url;
   } catch {
     // Last resort for small images: return the file bytes as a data URL.

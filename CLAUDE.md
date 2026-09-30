@@ -95,6 +95,18 @@ Kunden können Projekte online einsehen und freigeben.
   In-Memory-Übergabe (`editorHandoff.ts`) fehlt; `CameraInterruptNotice` führt
   beim App-Start dorthin zurück (mit „Verwerfen"). Jeder neue Einstieg in den
   Editor muss vorher `startCapture(file, editorPath)` aufrufen.
+- Speicher beim Fotografieren (Messung Sept. 2026, Feld-Diagnose: Abbrüche
+  immer bei `stage = opened`, meist ab dem 2. Foto):
+  - Kamerafotos nur über `readImageFileForEditor` (`src/lib/imageFile.ts`)
+    einlesen: `createImageBitmap` mit Zielgröße. **Nie ein `<img>` des
+    Originalfotos auf ein Canvas zeichnen** – das hielt pro Foto die volle
+    Auflösung im Speicher (12 MP ≈ 48 MB, 50 MP ≈ 200 MB), bis Android die
+    App beim nächsten Kamerabesuch beendete.
+  - Schwere Hintergrundarbeit (Bild-Sync, HERO-Upload) wartet über
+    `waitForQuiet()` / `isQuiet()` (`src/lib/quietTime.ts`): nicht bei offener
+    Kamera, nicht im Editor/Standort-Dialog, nicht im Hintergrund. Der Sync
+    liest Bilder einzeln (`getProject(..., { withImages: false })` +
+    `getLocationImageData`), nie das ganze Projekt als base64 auf einmal.
 - Admin-Operationen gehen immer über `invoke("admin-manage", ...)` mit `adminToken`
 - Image Hash Cache (SHA-256) in localStorage verhindert Re-Uploads unveränderter Bilder
 - Sync läuft debounced (2,5 s) und batched (6er-Gruppen)

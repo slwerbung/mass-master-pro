@@ -342,7 +342,18 @@ const PhotoEditor = () => {
       canvas.off("object:added", onMutate);
       canvas.off("object:modified", onMutate);
       canvas.off("object:removed", onMutate);
-      canvas.dispose();
+      // Hand the pixel memory back right away. Otherwise the canvases and the
+      // decoded photo (tens of MB on a phone) linger until the browser gets
+      // round to collecting the old editor – and with every photo the app got
+      // bigger until Android ended it while the camera was open.
+      const lower = canvas.getElement();
+      const upper = (canvas as unknown as { upperCanvasEl?: HTMLCanvasElement }).upperCanvasEl;
+      img.onload = null;
+      img.src = "";
+      const release = () => {
+        for (const el of [lower, upper]) if (el) { el.width = 0; el.height = 0; }
+      };
+      Promise.resolve(canvas.dispose()).then(release, release);
       historyRef.current = []; historyStepRef.current = -1;
       setCanvasHistory([]); setHistoryStep(-1);
     };

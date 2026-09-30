@@ -141,6 +141,12 @@ export function takeInterruptedCamera(): CameraPending | null {
   return p;
 }
 
+/** A camera round trip is under way right now (camera open or photo on its way to the editor). */
+export function cameraInProgress(): boolean {
+  const p = read();
+  return !!p && typeof p.at === "number" && Date.now() - p.at < MAX_AGE_MS;
+}
+
 /** True when the restart happened after the photo came back to the app. */
 export function diedAfterReturn(p: CameraPending): boolean {
   return p.stage !== "opened";

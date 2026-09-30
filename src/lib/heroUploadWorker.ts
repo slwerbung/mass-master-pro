@@ -15,6 +15,7 @@
 
 import { indexedDBStorage } from "./indexedDBStorage";
 import { supabase } from "@/integrations/supabase/client";
+import { isQuiet } from "./quietTime";
 
 // Poll interval while the queue has items. When idle (queue empty) we
 // back off to a longer interval to save battery on mobile.
@@ -155,6 +156,14 @@ async function tick() {
     return;
   }
   tickInProgress = true;
+
+  // Not while the camera / editor is open or the app is in the background
+  // (see quietTime.ts). Checked again on the next tick.
+  if (!isQuiet()) {
+    tickInProgress = false;
+    scheduleNext(TICK_BUSY_MS);
+    return;
+  }
 
   // Pause gracefully while offline - we'll wake up on the online event.
   if (typeof navigator !== "undefined" && navigator.onLine === false) {

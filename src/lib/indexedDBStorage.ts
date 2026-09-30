@@ -342,14 +342,20 @@ export const indexedDBStorage = {
   // app in the background when memory runs short ("app reloads after taking a
   // photo"). originalImageData is then "" (not a copy of the annotated image),
   // so saveProject/saveDetailImage leave the stored originals untouched.
-  async getProject(id: string, session?: Session | null, opts: { withOriginals?: boolean } = {}): Promise<Project | null> {
+  //
+  // withImages: false loads NO image data at all (imageData and
+  // originalImageData are ""; floor plans without imageData) – for the sync,
+  // which then reads the images one at a time (getLocationImageData). Never
+  // pass such a project to saveProject.
+  async getProject(id: string, session?: Session | null, opts: { withOriginals?: boolean; withImages?: boolean } = {}): Promise<Project | null> {
     const db = await getDB();
     const record = await db.get('projects', id);
     
     if (!record || !canAccessProjectRecord(record, session)) return null;
     
-    const locations = await this.getLocationsByProject(id, opts.withOriginals !== false);
-    const floorPlans = await this.getFloorPlansByProject(id);
+    const withImages = opts.withImages !== false;
+    const locations = await this.getLocationsByProject(id, opts.withOriginals !== false, withImages);
+    const floorPlans = await this.getFloorPlansByProject(id, withImages);
     
     return {
       id: record.id,
@@ -366,24 +372,19 @@ export const indexedDBStorage = {
     };
   },
 
-  async getLocationsByProject(projectId: string, withOriginals = true): Promise<Location[]> {
+  async getLocationsByProject(projectId: string, withOriginals = true, withImages = true): Promise<Location[]> {
     const db = await getDB();
     const locationRecords = await db.getAllFromIndex('locations', 'by-project', projectId);
     
     const locations: Location[] = [];
     
     for (const record of locationRecords) {
-      const annotatedImageId = createImageId(record.id, 'annotated');
-      const originalImageId = createImageId(record.id, 'original');
-      
-      const annotatedImage = await db.get('images', annotatedImageId);
-      const originalImage = withOriginals ? await db.get('images', originalImageId) : undefined;
-      
-      const imageData = annotatedImage ? await blobToBase64(annotatedImage.blob) : '';
-      const originalImageData = !withOriginals ? '' : originalImage ? await blobToBase64(originalImage.blob) : imageData;
+      const { imageData, originalImageData } = withImages
+        ? await this.getLocationImageData(record.id, withOriginals)
+        : { imageData: '', originalImageData: '' };
 
       // Load detail images
-      const detailImages = await this.getDetailImagesByLocation(record.id, withOriginals);
+      const detailImages = await this.getDetailImagesByLocation(record.id, withOriginals, withImages);
       
       locations.push({
         id: record.id,
@@ -409,15 +410,25 @@ export const indexedDBStorage = {
     return locations;
   },
 
-  async getDetailImagesByLocation(locationId: string, withOriginals = true): Promise<DetailImage[]> {
+  /** The images of one location (originalImageData falls back to the annotated one). */
+  async getLocationImageData(locationId: string, withOriginals = true): Promise<{ imageData: string; originalImageData: string }> {
+    const db = await getDB();
+    const annotatedImage = await db.get('images', createImageId(locationId, 'annotated'));
+    const originalImage = withOriginals ? await db.get('images', createImageId(locationId, 'original')) : undefined;
+    const imageData = annotatedImage ? await blobToBase64(annotatedImage.blob) : '';
+    const originalImageData = !withOriginals ? '' : originalImage ? await blobToBase64(originalImage.blob) : imageData;
+    return { imageData, originalImageData };
+  },
+
+  async getDetailImagesByLocation(locationId: string, withOriginals = true, withImages = true): Promise<DetailImage[]> {
     const db = await getDB();
     const records = await db.getAllFromIndex('detail-images', 'by-location', locationId);
     
     const detailImages: DetailImage[] = [];
     
     for (const record of records) {
-      const annotatedBlob = await db.get('detail-image-blobs', createDetailBlobId(record.id, 'annotated'));
-      const originalBlob = withOriginals ? await db.get('detail-image-blobs', createDetailBlobId(record.id, 'original')) : undefined;
+      const annotatedBlob = withImages ? await db.get('detail-image-blobs', createDetailBlobId(record.id, 'annotated')) : undefined;
+      const originalBlob = withImages && withOriginals ? await db.get('detail-image-blobs', createDetailBlobId(record.id, 'original')) : undefined;
       
       const imageData = annotatedBlob ? await blobToBase64(annotatedBlob.blob) : '';
       const originalImageData = !withOriginals ? '' : originalBlob ? await blobToBase64(originalBlob.blob) : imageData;
@@ -662,14 +673,14 @@ export const indexedDBStorage = {
   },
 
   // Floor Plan methods
-  async getFloorPlansByProject(projectId: string): Promise<FloorPlan[]> {
+  async getFloorPlansByProject(projectId: string, withImages = true): Promise<FloorPlan[]> {
     const db = await getDB();
     const records = await db.getAllFromIndex('floor-plans', 'by-project', projectId);
     
     const floorPlans: FloorPlan[] = [];
     
     for (const record of records) {
-      const imageRecord = await db.get('floor-plan-images', record.id);
+      const imageRecord = withImages ? await db.get('floor-plan-images', record.id) : undefined;
       const imageData = imageRecord ? await blobToBase64(imageRecord.blob) : '';
       
       floorPlans.push({

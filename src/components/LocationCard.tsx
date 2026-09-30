@@ -426,7 +426,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           className="min-h-[180px] bg-muted relative cursor-zoom-in group rounded-lg overflow-hidden flex items-center justify-center"
           onClick={() => setLightbox({ src: location.imageData, editPath: `/projects/${projectId}/locations/${location.id}/edit-image` })}
         >
-          <img src={location.imageData} alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
+          <img src={location.imageData} loading="lazy" decoding="async" alt={`Standort ${location.locationNumber}`} className="w-full h-auto max-h-[70vh] object-contain" />
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
             <Maximize2 className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
@@ -601,7 +601,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {location.detailImages.map((detail) => (
                 <div key={detail.id} className="relative group bg-muted rounded overflow-hidden flex items-center justify-center min-h-[140px]">
-                  <img src={detail.imageData} alt={detail.caption || "Detailbild"}
+                  <img src={detail.imageData} loading="lazy" decoding="async" alt={detail.caption || "Detailbild"}
                     className="w-full h-auto max-h-[240px] object-contain cursor-zoom-in"
                     onClick={() => setLightbox({ src: detail.imageData, editPath: `/projects/${projectId}/locations/${location.id}/details/${detail.id}/edit-image` })} />
                   {/* Editing is an explicit choice: only via the pencil. */}

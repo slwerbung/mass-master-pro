@@ -5,6 +5,7 @@ import { Project, Location, DetailImage, FloorPlan } from "@/types/project";
 import { finishSyncError, finishSyncSuccess, startSync } from "./syncStatus";
 import { compressImage } from "./imageCompression";
 import { signedFileUrl } from "./storageUrl";
+import { waitForQuiet } from "./quietTime";
 
 // ─── Image hash cache ────────────────────────────────────────────────────────
 // Persists to localStorage. Skips re-upload of unchanged images across sessions.
@@ -79,12 +80,28 @@ function invalidateImageCache(key: string) {
 const _debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const DEBOUNCE_MS = 2500;
 
+// One sync per project at a time; a request during a run syncs once more after it.
+const _running = new Set<string>();
+const _rerun = new Set<string>();
+
 export function scheduleSyncProject(projectId: string): void {
   const existing = _debounceTimers.get(projectId);
   if (existing) clearTimeout(existing);
   _debounceTimers.set(projectId, setTimeout(async () => {
     _debounceTimers.delete(projectId);
-    await syncProjectToSupabase(projectId);
+    if (_running.has(projectId)) { _rerun.add(projectId); return; }
+    _running.add(projectId);
+    try {
+      // Not while the camera / editor is open or the app is in the background
+      // (see quietTime.ts) – the data is safe in IndexedDB until then.
+      await waitForQuiet();
+      await syncProjectToSupabase(projectId);
+    } catch {
+      /* status is recorded by syncProjectToSupabase */
+    } finally {
+      _running.delete(projectId);
+      if (_rerun.delete(projectId)) scheduleSyncProject(projectId);
+    }
   }, DEBOUNCE_MS));
 }
 
@@ -253,7 +270,11 @@ async function syncDetailImage(detailImage: DetailImage, locationId: string): Pr
 async function syncDetailImages(locationId: string, detailImages?: DetailImage[]): Promise<void> {
   const current = detailImages || [];
   const currentIds = new Set(current.map((d) => d.id));
-  await Promise.all(current.map(d => syncDetailImage(d, locationId)));
+  // One after the other (memory), pausing while the camera is open.
+  for (const d of current) {
+    await waitForQuiet();
+    await syncDetailImage(d, locationId);
+  }
   const { data: existingRows } = await supabase.from('detail_images').select('id, annotated_path, original_path').eq('location_id', locationId);
   const rowsToDelete = (existingRows || []).filter((row) => !currentIds.has(row.id));
   if (rowsToDelete.length) {
@@ -292,7 +313,10 @@ async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<v
 async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Promise<void> {
   const current = floorPlans || [];
   const currentIds = new Set(current.map((fp) => fp.id));
-  await Promise.all(current.map(fp => syncFloorPlan(projectId, fp)));
+  for (const fp of current) {
+    await waitForQuiet();
+    await syncFloorPlan(projectId, fp);
+  }
   const { data: existingRows, error } = await (supabase as any).from('floor_plans').select('id, storage_path').eq('project_id', projectId);
   if (error) return;
   const rowsToDelete = (existingRows || []).filter((row: any) => !currentIds.has(row.id));
@@ -592,18 +616,25 @@ async function reapplyLocalLocations(projectId: string, preserved: Location[]): 
 
 async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'remote-won' | 'merged' | 'skipped'> {
   const session = getSession();
-  const project = await indexedDBStorage.getProject(projectId, session);
+  // Structure only – images are read one at a time below. Loading every image
+  // of the project at once (as base64) was the memory spike that got the app
+  // ended while the camera was open (see quietTime.ts).
+  const project = await indexedDBStorage.getProject(projectId, session, { withImages: false });
   if (!project) return 'skipped';
 
   const remoteUpdatedAt = await getProjectRemoteTimestamp(projectId);
   if (remoteUpdatedAt && remoteUpdatedAt.getTime() > project.updatedAt.getTime() + 1000) {
+    // Rare path: the preserved locations must carry their images through
+    // the hydrate, so this one works on the full project.
+    const full = await indexedDBStorage.getProject(projectId, session);
+    if (!full) return 'skipped';
     // Remote ist insgesamt neuer. Frueher wurde hier der komplette lokale
     // Stand verworfen (last-write-wins auf Projekt-Ebene) – wer parallel an
     // einem ANDEREN Standort gearbeitet hatte, verlor seine Arbeit.
     // Jetzt wird pro Standort verglichen: alles, was lokal nachweislich
     // neuer ist (oder remote gar nicht existiert), ueberlebt den Hydrate und
     // wird anschliessend hochgeladen.
-    const preserved = await findLocallyNewerLocations(project);
+    const preserved = await findLocallyNewerLocations(full);
     await hydrateProjectFromSupabase(projectId);
     if (preserved.length === 0) return 'remote-won';
     await reapplyLocalLocations(projectId, preserved);
@@ -629,14 +660,17 @@ async function syncProjectInternal(projectId: string): Promise<'uploaded' | 'rem
 
   if (project.locations?.length) {
     await supabase.from('locations').upsert(buildLocationRows(project), { onConflict: 'id' });
-    await Promise.all(project.locations.map(async (loc) => {
-      await syncLocationImages(loc.id, loc.imageData, loc.originalImageData);
-      await syncDetailImages(loc.id, loc.detailImages);
-    }));
+    for (const loc of project.locations) {
+      await waitForQuiet();
+      const { imageData, originalImageData } = await indexedDBStorage.getLocationImageData(loc.id);
+      await syncLocationImages(loc.id, imageData, originalImageData);
+      await syncDetailImages(loc.id, await indexedDBStorage.getDetailImagesByLocation(loc.id));
+    }
   }
 
   await removeDeletedLocationsFromSupabase(project);
-  await syncFloorPlans(project.id, project.floorPlans);
+  await waitForQuiet();
+  await syncFloorPlans(project.id, await indexedDBStorage.getFloorPlansByProject(project.id));
   await indexedDBStorage.updateProjectTimestamp(project.id, syncTimestamp);
   return 'uploaded';
 }
@@ -650,6 +684,7 @@ export async function syncAllToSupabase(): Promise<void> {
   // Each project syncs independently – one failure doesn't abort the others
   for (const id of projectIds) {
     try {
+      await waitForQuiet();
       await syncProjectInternal(id);
     } catch (e) {
       errors.push(id);
