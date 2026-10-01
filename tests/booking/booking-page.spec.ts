@@ -367,6 +367,44 @@ test.describe("Einladung eines Mitarbeiters", () => {
     expect(buchung.staff).toBe("Langner");
   });
 
+  test("Vorlagenform im Pfad: Nachname, Projektnummer und Terminart", async ({ page }) => {
+    // Die Form, die HERO-Mailvorlagen bekommen. Kein Query-Parameter mehr: der
+    // Vorlagen-Editor hatte den Link hinter "&p={{...}}" abgeschnitten, und
+    // die Seite stand dann ohne Projekt (und damit ohne Adresse) da.
+    const gesendet = await stub(page, { arten: [AUFMASS, MONTAGE] });
+    await page.goto("/termin/m/Langner/1744/aufmass_vor_ort");
+
+    // Terminart steht fest: keine Auswahl, direkt der Kalender.
+    await expect(page.getByText("Montage vor Ort")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
+
+    const abfrage = gesendet.find((g) => g.action === "availability");
+    expect(abfrage.staff).toBe("Langner");
+    expect(abfrage.projectNr).toBe("1744");
+    expect(abfrage.ruleSet).toBe("aufmass_vor_ort");
+
+    await page.getByRole("button", { name: "09:00" }).click();
+    await page.getByRole("button", { name: "Termin bestätigen" }).click();
+    await expect(page.getByText("Termin steht")).toBeVisible();
+
+    const buchung = gesendet.find((b) => b.action === "create");
+    expect(buchung.projectNr).toBe("1744");
+    expect(buchung.staff).toBe("Langner");
+  });
+
+  test("ungefuellter Platzhalter im Pfad: buchen geht trotzdem", async ({ page }) => {
+    // Ersetzt HERO die Projektnummer nicht, steht die Klammer selbst im Link.
+    // Sie darf nicht als Projektnummer mitgeschickt werden — der Server wiese
+    // ab und der Kunde koennte nichts buchen.
+    const gesendet = await stub(page);
+    await page.goto("/termin/m/Langner/%7B%7BProjectMatch.display_id%7D%7D/aufmass_vor_ort");
+
+    await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
+    const abfrage = gesendet.find((g) => g.action === "availability");
+    expect(abfrage.staff).toBe("Langner");
+    expect(abfrage.projectNr).toBe(null);
+  });
+
   test("Projektlink mit Mitarbeiter: schickt beides mit", async ({ page }) => {
     const gesendet = await stub(page);
     await page.goto(`/termin/${PROJEKT}?m=langner`);

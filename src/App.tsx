@@ -230,6 +230,11 @@ const App = () => {
               mit /termin/:projectId: React Router bewertet das feste "m"
               hoeher als ein Platzhalter (wie bei absagen/ und intern/). */}
           <Route path="/termin/m/:slug" element={<BookingSuspense><BookingPage /></BookingSuspense>} />
+          {/* Form fuer HERO-Mailvorlagen: Mitarbeiter, Projektnummer und
+              Terminart stehen im PFAD. Der Vorlagen-Editor hatte den Link
+              hinter "&p={{...}}" abgeschnitten — im Pfad passiert das nicht. */}
+          <Route path="/termin/m/:slug/:nr" element={<BookingSuspense><BookingPage /></BookingSuspense>} />
+          <Route path="/termin/m/:slug/:nr/:art" element={<BookingSuspense><BookingPage /></BookingSuspense>} />
           <Route path="/termin/:projectId" element={<BookingSuspense><BookingPage /></BookingSuspense>} />
           <Route path="/termin/absagen/:token" element={<BookingSuspense><BookingCancel /></BookingSuspense>} />
           <Route path="/termin/intern/:token" element={<BookingSuspense><BookingStaffAction /></BookingSuspense>} />

@@ -212,8 +212,13 @@ Kurze prägnante Messages auf Englisch:
 - In HERO-Mailvorlagen gibt es **kein** `{{ProjectMatch.id}}` – nur
   `{{ProjectMatch.display_id}}`, und das ist die reine Zahl („1744", nicht
   „WER-1744"). Platzhalter werden auch innerhalb eines Links ersetzt (geprüft).
-  Terminlink für Vorlagen:
-  `/termin/m/{{Partner.last_name}}?art=<terminart>&p={{ProjectMatch.display_id}}`
+- Platzhalter in HERO-Mailvorlagen gehören **in den Pfad, nie in den
+  Query-String**: der Vorlagen-Editor hat den Link hinter
+  `&p={{ProjectMatch.display_id}}` abgeschnitten (im Serverlog kam der Klick
+  ohne `p` an, die Buchungsseite blieb ohne Adresse). Terminlink für Vorlagen:
+  `/termin/m/{{Partner.last_name}}/{{ProjectMatch.display_id}}/<terminart>`
+  – Terminart als festes Segment am Ende, damit der Link nicht auf einer
+  Klammer endet.
 - Bei HERO-Kalendereinträgen ist `category_id` PFLICHT (`project_match_id`
   dagegen optional). Ohne Kategorie entsteht kein Termin.
 - In Kundenmails steht **nie** „Captfix" und nie nur ein Mitarbeiter-Nachname.

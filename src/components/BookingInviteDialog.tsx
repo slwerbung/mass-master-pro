@@ -181,6 +181,7 @@ export function BookingInviteDialog({ open, onOpenChange, projectId, projectNumb
                   <p className="text-[11px] text-muted-foreground">
                     Mitarbeiter und Projekt füllt HERO beim Versand aus. Einmal pro Terminart in
                     die passende Vorlage einsetzen – danach braucht es diesen Dialog dafür nicht mehr.
+                    Beim Einsetzen bitte prüfen, dass der Link bis zum letzten Zeichen verlinkt ist.
                   </p>
                 </div>
               </div>

@@ -1,12 +1,21 @@
-// Oeffentliche Buchungsseite. Zwei Linkformen, eine Seite:
+// Oeffentliche Buchungsseite. Drei Linkformen, eine Seite:
 //   /termin/m/:slug            Dauerlink eines Mitarbeiters, ohne Projekt.
 //                              Der Kunde traegt Adresse und Kontakt selbst ein.
 //   /termin/:projectId?m=slug  Mit Projekt: Adresse und Kontakt kommen aus HERO
 //                              und sind editierbar.
-// In beiden Faellen gehoert der Termin dem Mitarbeiter aus dem Link — wer
-// einlaedt, bekommt den Termin. `?art=<terminart>` legt auch die Terminart
-// fest: die waehlt der Mitarbeiter beim Einladen, nicht der Kunde. Ein alter
-// Link ohne `m`/`art` funktioniert weiter und laesst dann waehlen.
+//   /termin/m/:slug/:nr/:art   Dieselbe Sache fuer HERO-Mailvorlagen, alles im
+//                              PFAD. Grund siehe unten.
+// In allen Faellen gehoert der Termin dem Mitarbeiter aus dem Link — wer
+// einlaedt, bekommt den Termin. Auch die Terminart steht im Link: die waehlt
+// der Mitarbeiter beim Einladen, nicht der Kunde. Ein alter Link ohne
+// `m`/`art` funktioniert weiter und laesst dann waehlen.
+//
+// Warum die Vorlagenform ohne Fragezeichen auskommt: HERO ersetzt Platzhalter
+// auch innerhalb eines Links, aber der Mailvorlagen-Editor hat den Link hinter
+// `&p={{ProjectMatch.display_id}}` abgeschnitten (im Serverlog kam er ohne `p`
+// an, und die Adresse blieb leer). Im Pfad ging derselbe Platzhalter durch.
+// Deshalb: Platzhalter nur noch in Pfadsegmenten, und die Terminart als
+// festes Segment am Ende — so steht am Linkende keine Klammer.
 //
 // Aufmachung an Calendly angelehnt (so gewuenscht): links steht, worum es geht,
 // rechts waehlt man Tag und Uhrzeit, danach die Bestaetigung.
@@ -37,19 +46,38 @@ const TZ = "Europe/Berlin";
 const dayKey = (iso: string) => DateTime.fromISO(iso, { zone: "utc" }).setZone(TZ).toFormat("yyyy-MM-dd");
 const timeLabel = (iso: string) => DateTime.fromISO(iso, { zone: "utc" }).setZone(TZ).toFormat("HH:mm");
 
+/**
+ * Einen Linkbestandteil nur nehmen, wenn er wirklich gefuellt ist.
+ *
+ * Ersetzt HERO einen Platzhalter nicht (Vorlage falsch geschrieben, Projekt
+ * ohne Nummer), steht die Klammer selbst im Link. Die darf nicht als
+ * Projektnummer oder Mitarbeiter durchgehen: der Server wuerde mit "Projekt
+ * nicht gefunden" abweisen und der Kunde koennte gar nichts buchen. Lieber
+ * ohne diesen Bestandteil weiter — Adresse und Terminart traegt er dann selbst
+ * ein.
+ */
+const echt = (v: string | null | undefined): string => {
+  const wert = String(v ?? "").trim();
+  if (!wert || /[{}]/.test(wert)) return "";
+  // Unersetzter Platzhalter ohne Klammern, z.B. "ProjectMatch.display_id".
+  if (/^[A-Za-z]+\.[A-Za-z_]+$/.test(wert)) return "";
+  return wert;
+};
+
 export default function BookingPage() {
-  // Zwei Routen auf derselben Seite: /termin/:projectId und /termin/m/:slug.
-  const { projectId = "", slug = "" } = useParams();
+  // Drei Routen auf derselben Seite: /termin/:projectId, /termin/m/:slug und
+  // /termin/m/:slug/:nr/:art (Vorlagenform, alles im Pfad).
+  const { projectId = "", slug = "", nr = "", art: artImPfad = "" } = useParams();
   const [query] = useSearchParams();
   // Der Mitarbeiter steckt entweder im Pfad (Dauerlink) oder in `?m=`.
-  const staffSlug = slug || query.get("m") || "";
+  const staffSlug = echt(slug) || query.get("m") || "";
   // Die Terminart kommt aus der Einladung. Steht sie im Link, bekommt der
   // Kunde keine Auswahl zu sehen.
-  const artAusLink = query.get("art") || "";
-  // Projekt: unsere UUID im Pfad (Links aus der App) oder die HERO-Nummer als
-  // `?p=` (Mailvorlage, {{ProjectMatch.display_id}}).
-  const projektNr = query.get("p") || "";
-  const heroId = query.get("hp") || "";
+  const artAusLink = echt(artImPfad) || echt(query.get("art"));
+  // Projekt: unsere UUID im Pfad (Links aus der App), die HERO-Nummer als
+  // Pfadsegment (Mailvorlage) oder als `?p=` (aeltere Vorlagen).
+  const projektNr = echt(nr) || echt(query.get("p"));
+  const heroId = echt(query.get("hp"));
   const ziel = useMemo(
     () => ({
       projectId: projectId || null,

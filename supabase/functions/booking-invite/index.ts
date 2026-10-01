@@ -7,6 +7,9 @@
 // im Link:
 //   * allgemein:    https://captfix.app/termin/m/<slug>?art=<terminart>
 //   * mit Projekt:  https://captfix.app/termin/<projekt>?m=<slug>&art=<terminart>
+//   * HERO-Vorlage: https://captfix.app/termin/m/<nachname>/<projektnr>/<terminart>
+//     (alles im Pfad — der Vorlagen-Editor schnitt Query-Parameter mit
+//      Platzhaltern ab)
 // Der Link entsteht erst, wenn die Terminart gewaehlt ist. Der Slug selbst ist
 // dauerhaft. Rechnen tut ohnehin `booking-api`: dieser Dienst stellt nur Link
 // und Mail bereit und kann keine Termine anlegen.
@@ -245,10 +248,15 @@ Deno.serve(async (req) => {
      * Mitarbeiter aus einer Vorlage benennen laesst. Gesucht wird damit sowohl
      * nach Slug als auch nach Anzeigename.
      * Die Klammern bleiben hier UNKODIERT — so gehoeren sie in die Vorlage.
+     *
+     * Warum alles im PFAD und kein `?art=…&p=…` mehr: der Vorlagen-Editor hat
+     * genau dort abgeschnitten. Im Serverlog kam der Klick ohne `p` an, und
+     * die Buchungsseite stand mit leerer Adresse da. Im Pfad ging derselbe
+     * Platzhalter durch. Die Terminart steht deshalb als festes Segment
+     * HINTEN — so endet der Link nie auf einer Klammer.
      */
     const vorlage = (artKey: string) =>
-      `${APP_BASE}/termin/m/{{Partner.last_name}}?art=${encodeURIComponent(artKey)}` +
-      `&p={{ProjectMatch.display_id}}`;
+      `${APP_BASE}/termin/m/{{Partner.last_name}}/{{ProjectMatch.display_id}}/${encodeURIComponent(artKey)}`;
 
     if (body.action === "link") {
       return json({

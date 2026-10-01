@@ -125,7 +125,7 @@ Linkformen (`art` ist die gewählte Terminart):
 | --- | --- | --- |
 | Projektübersicht | `/termin/m/<slug>?art=<art>` | Der Kunde trägt beides selbst ein |
 | Projektansicht | `/termin/<projekt>?m=<slug>&art=<art>` | Aus HERO, editierbar |
-| **HERO-Mailvorlage** | `/termin/m/{{Partner.last_name}}?art=<art>&p={{ProjectMatch.display_id}}` | Aus HERO, editierbar |
+| **HERO-Mailvorlage** | `/termin/m/{{Partner.last_name}}/{{ProjectMatch.display_id}}/<art>` | Aus HERO, editierbar |
 
 ### Links aus HERO-Mailvorlagen (Okt. 2026)
 HERO ersetzt Platzhalter **auch innerhalb eines Links** — im Testversand
@@ -141,6 +141,20 @@ Zwei Dinge, die den ersten Versuch scheitern ließen:
   `/hero-aktion` zeigt — in `automation_runs` steht dazu kein einziger Lauf.)
 - **`display_id` ist die REINE Zahl** („1744"), unsere `project_number` heißt
   „WER-1744" und trägt oft einen Zusatz („WER-1744 Beschriftungen Büro").
+- **Der Vorlagen-Editor schneidet Query-Parameter mit Platzhaltern ab.** Beim
+  zweiten Testversand (`?art=…&p={{ProjectMatch.display_id}}`) kam der Klick im
+  Serverlog als `action=context&staff=Layer` an — **ohne `p`**. Beim Einsetzen
+  war schon zu sehen, dass die letzten beiden Klammern nicht mehr blau (also
+  nicht Teil des Links) waren. Der Mitarbeiter ging durch, weil er im **Pfad**
+  steht. Status 200, keine Fehlermeldung, nur eine leere Adresse — ein Link
+  ohne Projekt ist eine erlaubte Form.
+  Deshalb steht in der Vorlagenform jetzt **alles im Pfad**
+  (`/termin/m/<nachname>/<projektnr>/<art>`, Routen in `src/App.tsx`), mit der
+  Terminart als festem Segment am Ende: so endet der Link nie auf einer
+  Klammer, an der ein Editor kürzen könnte. Ersetzt HERO einen Platzhalter
+  trotzdem nicht, wirft die Buchungsseite das Segment weg (`echt()` in
+  `BookingPage.tsx`) statt mit „Projekt nicht gefunden" abzuweisen — buchen
+  bleibt möglich.
 
 `aufloeseProjekt` in `booking-api` geht deshalb von genau nach grob:
 `project_number` exakt → `%-1744` → `%-1744 %` → und wenn das Projekt bei uns
