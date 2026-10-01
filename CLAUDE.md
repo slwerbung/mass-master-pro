@@ -69,6 +69,8 @@ Kunden können Projekte online einsehen und freigeben.
   (lazy), dazu `BookingCancel.tsx` und `BookingStaffAction.tsx`
 - `src/components/admin/BookingTab.tsx` – Adminmenue-Reiter „Termine"
   (`docs/terminbuchung.md`)
+- `src/components/BookingInviteDialog.tsx` – Termineinladung aus der App
+  (Projektuebersicht = allgemeiner Link, Projekt = Link mit Projektbezug)
 
 ## Bekannte Architektur-Entscheidungen
 - Storage Bucket `project-files` ist **privat** (Phase 3, `docs/phase3-storage.md`).
@@ -146,6 +148,9 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
   damit sie Slots blockieren. pg_cron alle 10 Min (`x-poll-secret`)
 - `booking-mail` – Outbox-Worker fuer die Terminmails via Resend (Bestaetigung
   mit .ics, interne Benachrichtigung, Erinnerung, Absage). pg_cron alle 5 Min
+- `booking-invite` – Terminlink + Einladungsmail, verlangt einen
+  **Mitarbeiter**-Token. Wer einlaedt, bekommt den Termin; der Admin-Login
+  kann nicht einladen (kein Mitarbeiter, keine HERO-Zuordnung)
 
 ## Offene Baustellen
 1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)
@@ -197,3 +202,10 @@ Kurze prägnante Messages auf Englisch:
   in `app_config` – das Adminmenue kann `app_config` lesen.
 - Keine fest verdrahtete Terminart-Kennung. Es gibt mehrere Terminarten; wer
   eine Kennung hart einträgt, macht die anderen unsichtbar (genau so passiert).
+- Keine Qualifikationen/Skills bei Terminarten. `rule_set.required_skills`
+  bleibt leer – gefüllt heißt es „niemand kann das" und damit dauerhaft null
+  freie Zeiten.
+- Terminlinks nie im Frontend zusammenbauen. Sie kommen aus `booking-invite`,
+  sonst steht in der Mail etwas anderes als im Kalender.
+- Bei HERO-Kalendereinträgen ist `category_id` PFLICHT (`project_match_id`
+  dagegen optional). Ohne Kategorie entsteht kein Termin.

@@ -226,6 +226,10 @@ const App = () => {
           <Route path="/datenschutz" element={<PrivacyPolicy />} />
           {/* Terminbuchung. Der Link ist der Zugang: die Edge Function
               rechnet serverseitig und der Token haengt am einzelnen Termin. */}
+          {/* Dauerlink eines Mitarbeiters, ohne Projektbezug. Kollidiert nicht
+              mit /termin/:projectId: React Router bewertet das feste "m"
+              hoeher als ein Platzhalter (wie bei absagen/ und intern/). */}
+          <Route path="/termin/m/:slug" element={<BookingSuspense><BookingPage /></BookingSuspense>} />
           <Route path="/termin/:projectId" element={<BookingSuspense><BookingPage /></BookingSuspense>} />
           <Route path="/termin/absagen/:token" element={<BookingSuspense><BookingCancel /></BookingSuspense>} />
           <Route path="/termin/intern/:token" element={<BookingSuspense><BookingStaffAction /></BookingSuspense>} />

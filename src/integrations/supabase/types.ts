@@ -325,6 +325,33 @@ export type Database = {
           },
         ]
       }
+      client_diagnostics: {
+        Row: {
+          created_at: string
+          id: string
+          kind: string
+          payload: Json
+          user_agent: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: string
+          payload?: Json
+          user_agent?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: string
+          payload?: Json
+          user_agent?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       customer_location_permissions: {
         Row: {
           assignment_id: string
@@ -1553,6 +1580,7 @@ export type Database = {
       staff: {
         Row: {
           active: boolean
+          booking_slug: string | null
           created_at: string
           display_name: string
           employee_id: string | null
@@ -1567,6 +1595,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          booking_slug?: string | null
           created_at?: string
           display_name: string
           employee_id?: string | null
@@ -1581,6 +1610,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          booking_slug?: string | null
           created_at?: string
           display_name?: string
           employee_id?: string | null
@@ -2035,6 +2065,7 @@ export type Database = {
         Args: { p_limit: number; p_offset: number }
         Returns: Json
       }
+      hero_open_invoice_map: { Args: never; Returns: Json }
       hero_open_projects: { Args: { max_pages?: number }; Returns: Json }
       hero_open_summary: { Args: never; Returns: Json }
       hero_project_by_nr: { Args: { p_search: string }; Returns: Json }

@@ -5,18 +5,27 @@
 //     Buchen nichts geglaubt: der Tag wird noch einmal neu berechnet.
 //   * Letzte Wahrheit gegen Doppelbuchung ist der GiST-Exclusion-Constraint in
 //     der Datenbank (-> 409), nicht diese Logik.
-//   * Der Link haengt an EINEM Projekt. Ohne Projekt keine Buchung — Adresse
-//     und Kontakt kommen aus HERO, der Kunde waehlt nur die Zeit.
 //   * HERO-Fehler brechen eine Buchung NICHT ab. Der Termin steht dann bei uns
 //     und die interne Mail sagt, dass HERO fehlt.
+//
+// ZWEI Linkformen, beide vom Mitarbeiter verschickt:
+//   1. Dauerlink eines Mitarbeiters: /termin/m/<slug>  (`staff=<slug>`)
+//      Ohne Projektbezug. Der Kunde traegt Adresse und Kontakt selbst ein, der
+//      Termin gehoert dem Mitarbeiter, der eingeladen hat. In HERO entsteht ein
+//      Kalendereintrag ohne Projekt (gegen die echte API geprueft).
+//   2. Projektlink: /termin/<projekt>?m=<slug>  (`project=<uuid>&staff=<slug>`)
+//      Adresse, Kundenname und Kontakt kommen aus HERO, der Termin wird am
+//      HERO-Projekt eingetragen — und ebenfalls dem einladenden Mitarbeiter.
+// Ohne `staff` rechnet die Verfuegbarkeit wie bisher ueber alle Mitarbeiter;
+// dadurch bleiben schon verschickte Projektlinks ohne `m` gueltig.
 //
 // verify_jwt=false: eigenes Modell, Zugriff via service_role.
 //
 // Aktionen:
-//   GET  ?action=context&project=<uuid>
-//   GET  ?action=availability&project=<uuid>&from=&to=[&ruleSet=&street=&zip=&city=]
-//   POST { action:'create', project, ruleSet?, slot:{startsAt,endsAt}, staffId,
-//          contact:{name,email,phone}, addressOverride?, hinweis? }
+//   GET  ?action=context[&project=<uuid>][&staff=<slug>]   (eins von beiden Pflicht)
+//   GET  ?action=availability&from=&to=[&project=&staff=&ruleSet=&street=&zip=&city=]
+//   POST { action:'create', project?, staff?, ruleSet?, slot:{startsAt,endsAt},
+//          staffId, contact:{name,email,phone}, addressOverride?, hinweis? }
 //   POST { action:'cancel', cancelToken }
 //   POST { action:'staff-action', staffToken, mode:'cancel'|'reschedule' }
 
@@ -149,6 +158,19 @@ async function resolveProject(db: DB, projectId: string) {
   };
 }
 
+/**
+ * Mitarbeiter aus dem Dauerlink. Nur aktive — ein ausgeschiedener Kollege soll
+ * nicht ueber einen alten Link weiter Termine bekommen.
+ */
+async function aufloeseStaff(db: DB, slug: unknown) {
+  const key = typeof slug === "string" ? slug.trim().toLowerCase() : "";
+  if (!key) return null;
+  const { data } = await db.from("staff")
+    .select("id, display_name, booking_slug, employee_id, active")
+    .eq("booking_slug", key).eq("active", true).maybeSingle();
+  return data ?? null;
+}
+
 /** Adresse + Kontakt: HERO wenn verknuepft, sonst das lokale Projekt. */
 async function buildContext(db: DB, s: Settings, projectId: string) {
   const proj = await resolveProject(db, projectId);
@@ -179,16 +201,25 @@ async function buildContext(db: DB, s: Settings, projectId: string) {
 
 async function availabilityFor(
   db: DB, s: Settings, from: string, to: string, address: Geo | null, ruleSetKey: string,
+  nurStaffId?: string | null,
 ) {
   const { data: rs } = await db.from("rule_set").select("*")
     .eq("key", ruleSetKey).eq("active", true).maybeSingle();
   if (!rs) return { error: "Terminart nicht eingerichtet" as const };
 
-  const { data: rss } = await db.from("rule_set_staff").select("staff_id").eq("rule_set_id", rs.id);
-  let staffIds = (rss ?? []).map((r: any) => r.staff_id);
-  if (staffIds.length === 0) {
-    const { data: all } = await db.from("staff").select("id").eq("active", true);
-    staffIds = (all ?? []).map((s2: any) => s2.id);
+  let staffIds: string[];
+  if (nurStaffId) {
+    // Einladung eines Mitarbeiters: nur dessen Kalender. Eine Zuordnung der
+    // Terminart zu anderen Leuten darf hier nichts aufweichen, sonst bekaeme
+    // der Kunde Zeiten von jemandem, der ihn nie eingeladen hat.
+    staffIds = [nurStaffId];
+  } else {
+    const { data: rss } = await db.from("rule_set_staff").select("staff_id").eq("rule_set_id", rs.id);
+    staffIds = (rss ?? []).map((r: any) => r.staff_id);
+    if (staffIds.length === 0) {
+      const { data: all } = await db.from("staff").select("id").eq("active", true);
+      staffIds = (all ?? []).map((s2: any) => s2.id);
+    }
   }
   if (staffIds.length === 0) return { rs, slots: [] as any[] };
 
@@ -296,12 +327,24 @@ Deno.serve(async (req) => {
       // Alles, was die Buchungsseite zum Start braucht.
       if (action === "context") {
         const projectId = url.searchParams.get("project") || "";
-        if (!projectId) return json({ error: "project erforderlich" }, 400);
-        const ctx = await buildContext(db, s, projectId);
-        if ("error" in ctx) return json(ctx, 404);
+        const slug = url.searchParams.get("staff") || "";
+        if (!projectId && !slug) return json({ error: "project oder staff erforderlich" }, 400);
+
+        const st = slug ? await aufloeseStaff(db, slug) : null;
+        if (slug && !st) return json({ error: "Dieser Einladungslink gilt nicht mehr" }, 404);
 
         const arten = await buchbareTerminarten(db);
         if (arten.length === 0) return json({ error: "Terminart nicht eingerichtet" }, 503);
+        const mitarbeiter = st ? { name: st.display_name as string, slug: st.booking_slug as string } : null;
+
+        // Dauerlink ohne Projekt: wir wissen nichts ueber den Kunden. Adresse
+        // und Kontakt traegt er selbst ein — deshalb beides leer statt geraten.
+        if (!projectId) {
+          return json({ project: null, staff: mitarbeiter, appointments: arten, address: null, contact: { name: "", email: null, phone: null } });
+        }
+
+        const ctx = await buildContext(db, s, projectId);
+        if ("error" in ctx) return json(ctx, 404);
 
         const addressText = formatAddress(ctx.address);
         const geo = addressText ? await geocode(addressText, routingKey(), geoCache(db)) : null;
@@ -313,6 +356,9 @@ Deno.serve(async (req) => {
             customerName: ctx.customerName,
             heroLinked: !!ctx.proj.heroProjectId,
           },
+          // Wer eingeladen hat. Null heisst: alter Link ohne `m`, dann rechnet
+          // die Verfuegbarkeit wie frueher ueber alle Mitarbeiter.
+          staff: mitarbeiter,
           // Alle buchbaren Terminarten. Bei genau einer geht die Seite direkt
           // in den Kalender, bei mehreren laesst sie erst waehlen.
           appointments: arten,
@@ -323,9 +369,12 @@ Deno.serve(async (req) => {
 
       if (action === "availability") {
         const projectId = url.searchParams.get("project") || "";
+        const slug = url.searchParams.get("staff") || "";
         const from = url.searchParams.get("from") || "";
         const to = url.searchParams.get("to") || "";
-        if (!projectId || !from || !to) return json({ error: "project, from, to erforderlich" }, 400);
+        if ((!projectId && !slug) || !from || !to) {
+          return json({ error: "project oder staff, dazu from und to erforderlich" }, 400);
+        }
         if (!istZeit(from) || !istZeit(to)) {
           return json({ error: "from und to muessen ISO-8601-Zeitpunkte sein, z.B. 2026-09-28T06:00:00Z" }, 400);
         }
@@ -339,6 +388,9 @@ Deno.serve(async (req) => {
         if (typeof artFehler !== "string") return json(artFehler.error, artFehler.status);
         const ruleSetKey = artFehler;
 
+        const st = slug ? await aufloeseStaff(db, slug) : null;
+        if (slug && !st) return json({ error: "Dieser Einladungslink gilt nicht mehr" }, 404);
+
         // Hat der Kunde die Adresse geaendert, zaehlt seine Eingabe.
         const street = url.searchParams.get("street");
         const zip = url.searchParams.get("zip");
@@ -346,14 +398,16 @@ Deno.serve(async (req) => {
         let addressText: string;
         if (zip || street || city) {
           addressText = formatAddress({ street, zipcode: zip, city });
-        } else {
+        } else if (projectId) {
           const ctx = await buildContext(db, s, projectId);
           if ("error" in ctx) return json(ctx, 404);
           addressText = formatAddress(ctx.address);
+        } else {
+          addressText = "";
         }
         const geo = addressText ? await geocode(addressText, routingKey(), geoCache(db)) : null;
 
-        const res = await availabilityFor(db, s, from, to, geo, ruleSetKey);
+        const res = await availabilityFor(db, s, from, to, geo, ruleSetKey, st?.id ?? null);
         if ("error" in res) return json(res, 503);
         return json({ slots: res.slots, addressLocated: !!geo });
       }
@@ -409,10 +463,10 @@ Deno.serve(async (req) => {
       // ── Buchen ──
       if (body.action === "create") {
         const projectId = String(body.project || "");
+        const slug = String(body.staff || "");
         const slot = body.slot || {};
-        const staffId = String(body.staffId || "");
         const contact = body.contact || {};
-        if (!projectId || !slot.startsAt || !slot.endsAt || !staffId || !contact.name || !contact.email) {
+        if ((!projectId && !slug) || !slot.startsAt || !slot.endsAt || !contact.name || !contact.email) {
           return json({ error: "Pflichtfelder fehlen" }, 400);
         }
         if (!istZeit(slot.startsAt) || !istZeit(slot.endsAt)) {
@@ -422,15 +476,25 @@ Deno.serve(async (req) => {
         if (typeof artPruefung !== "string") return json(artPruefung.error, artPruefung.status);
         const ruleSetKey = artPruefung;
 
-        const ctx = await buildContext(db, s, projectId);
-        if ("error" in ctx) return json(ctx, 404);
+        // Wer eingeladen hat, bekommt den Termin. Steht ein Slug im Link,
+        // entscheidet DER — nicht die staffId aus dem Formular, die sich
+        // jeder ausdenken koennte.
+        const eingeladenVon = slug ? await aufloeseStaff(db, slug) : null;
+        if (slug && !eingeladenVon) return json({ error: "Dieser Einladungslink gilt nicht mehr" }, 404);
+        const staffId = eingeladenVon ? String(eingeladenVon.id) : String(body.staffId || "");
+        if (!staffId) return json({ error: "Pflichtfelder fehlen" }, 400);
 
-        // Adresse: Eingabe des Kunden schlaegt HERO.
+        const geladen = projectId ? await buildContext(db, s, projectId) : null;
+        if (geladen && "error" in geladen) return json(geladen, 404);
+        const ctx = geladen && !("error" in geladen) ? geladen : null;
+
+        // Adresse: Eingabe des Kunden schlaegt HERO. Ohne Projekt gibt es nur
+        // seine Eingabe.
         const ov = body.addressOverride || null;
         const address: HeroAddress | null = ov
           ? { street: ov.street ?? null, zipcode: ov.zip ?? null, city: ov.city ?? null }
-          : ctx.address;
-        const addressSource = ov ? "manual" : ctx.addressSource;
+          : (ctx?.address ?? null);
+        const addressSource = ov ? "manual" : (ctx?.addressSource ?? "manual");
         const addressText = formatAddress(address);
         const geo = addressText ? await geocode(addressText, routingKey(), geoCache(db)) : null;
 
@@ -438,6 +502,7 @@ Deno.serve(async (req) => {
         const dayStart = DateTime.fromISO(slot.startsAt, { zone: "utc" }).setZone(TZ).startOf("day");
         const res = await availabilityFor(
           db, s, dayStart.toUTC().toISO()!, dayStart.plus({ days: 1 }).toUTC().toISO()!, geo, ruleSetKey,
+          eingeladenVon?.id ?? null,
         );
         if ("error" in res) return json(res, 503);
         const wanted = DateTime.fromISO(slot.startsAt, { zone: "utc" }).toISO();
@@ -457,10 +522,12 @@ Deno.serve(async (req) => {
         // Korrekturen des Kunden getrennt festhalten — bewusst NICHT nach HERO
         // zurueckschreiben, damit eine Buchung keine Stammdaten ueberschreibt.
         const overrides: Record<string, string> = {};
-        for (const f of ["name", "email", "phone"] as const) {
-          const was = (ctx.contact as any)[f];
-          if (contact[f] && was && String(contact[f]).trim() !== String(was).trim()) {
-            overrides[f] = String(contact[f]).trim();
+        if (ctx) {
+          for (const f of ["name", "email", "phone"] as const) {
+            const was = (ctx.contact as any)[f];
+            if (contact[f] && was && String(contact[f]).trim() !== String(was).trim()) {
+              overrides[f] = String(contact[f]).trim();
+            }
           }
         }
 
@@ -470,7 +537,7 @@ Deno.serve(async (req) => {
           customer_name: contact.name, customer_email: contact.email, customer_phone: contact.phone ?? null,
           address: addressText || null, address_lat: geo?.lat ?? null, address_lng: geo?.lng ?? null,
           address_source: addressSource, contact_overrides: overrides,
-          project_id: ctx.proj.id, hero_project_id: ctx.proj.heroProjectId,
+          project_id: ctx?.proj.id ?? null, hero_project_id: ctx?.proj.heroProjectId ?? null,
           answers: body.hinweis ? { hinweis: String(body.hinweis) } : {},
           cancel_token: cancelToken, reschedule_token: rescheduleToken, staff_token: staffToken,
         }).select("id, status, starts_at, ends_at").single();
@@ -489,9 +556,11 @@ Deno.serve(async (req) => {
           geo_lat: geo?.lat ?? null, geo_lng: geo?.lng ?? null,
         });
 
-        // HERO: am Projekt, nicht lose im Kalender. Fehler sind nicht fatal.
+        // HERO: am Projekt, wenn es eins gibt — sonst als Termin beim
+        // Mitarbeiter (project_match_id ist in HERO optional, Kategorie nicht;
+        // beides gegen die echte API geprueft). Fehler sind nicht fatal.
         let heroError: string | null = null;
-        if (s.heroWrite && s.heroApiKey && ctx.proj.heroProjectId) {
+        if (s.heroWrite && s.heroApiKey) {
           const { data: st } = await db.from("staff")
             .select("display_name, employee_id").eq("id", staffId).maybeSingle();
           let partnerId: number | null = null;
@@ -503,11 +572,17 @@ Deno.serve(async (req) => {
           }
           const start = DateTime.fromISO(slot.startsAt, { zone: "utc" }).setZone(TZ);
           const end = DateTime.fromISO(slot.endsAt, { zone: "utc" }).setZone(TZ);
+          const wer = ctx?.customerName || String(contact.name || "").trim();
           const r = await heroCreateAppointment(s.heroApiKey, {
-            heroProjectId: ctx.proj.heroProjectId,
-            title: `${rs.label} – ${ctx.customerName}`.trim(),
+            heroProjectId: ctx?.proj.heroProjectId ?? null,
+            title: [rs.label, wer].filter(Boolean).join(" – "),
             startIso: start.toISO()!, endIso: end.toISO()!,
-            description: [addressText, body.hinweis ? `Hinweis: ${body.hinweis}` : ""].filter(Boolean).join("\n"),
+            description: [
+              addressText,
+              contact.email ? `E-Mail: ${contact.email}` : "",
+              contact.phone ? `Telefon: ${contact.phone}` : "",
+              body.hinweis ? `Hinweis: ${body.hinweis}` : "",
+            ].filter(Boolean).join("\n"),
             // HERO-Kategorie zuerst von der Terminart, dann die allgemeine
             // Einstellung: eine Montage soll nicht unter "Aufmass" landen.
             categoryId: Number((rs.config ?? {}).hero_category_id) || s.heroCategoryId,

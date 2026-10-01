@@ -25,12 +25,26 @@ export interface AppointmentType {
 }
 
 export interface BookingContext {
-  project: { id: string; number: string; customerName: string; heroLinked: boolean };
+  /** null = Dauerlink eines Mitarbeiters, ohne Projektbezug. */
+  project: { id: string; number: string; customerName: string; heroLinked: boolean } | null;
+  /** Wer eingeladen hat. Dieser Mitarbeiter bekommt den Termin. */
+  staff: { name: string; slug: string } | null;
   /** Alle buchbaren Terminarten. Bei einer geht es direkt zum Kalender. */
   appointments: AppointmentType[];
   address: BookingAddress | null;
   contact: { name: string; email: string | null; phone: string | null };
 }
+
+/** Beide Linkformen in einem Objekt — die Seite kennt nur dieses. */
+export interface BookingTarget {
+  projectId?: string | null;
+  staffSlug?: string | null;
+}
+
+const ziel = (t: BookingTarget): Record<string, string> => ({
+  ...(t.projectId ? { project: t.projectId } : {}),
+  ...(t.staffSlug ? { staff: t.staffSlug } : {}),
+});
 
 export interface Slot {
   startsAt: string;
@@ -74,22 +88,23 @@ async function post<T>(body: Record<string, unknown>): Promise<T> {
   return data as T;
 }
 
-export const loadBookingContext = (projectId: string) =>
-  get<BookingContext>({ action: "context", project: projectId });
+export const loadBookingContext = (target: BookingTarget) =>
+  get<BookingContext>({ action: "context", ...ziel(target) });
 
 export const loadAvailability = (
-  projectId: string, ruleSet: string, from: string, to: string,
+  target: BookingTarget, ruleSet: string, from: string, to: string,
   address?: { street?: string; zip?: string; city?: string },
 ) =>
   get<{ slots: Slot[]; addressLocated: boolean }>({
-    action: "availability", project: projectId, ruleSet, from, to,
+    action: "availability", ...ziel(target), ruleSet, from, to,
     ...(address?.street ? { street: address.street } : {}),
     ...(address?.zip ? { zip: address.zip } : {}),
     ...(address?.city ? { city: address.city } : {}),
   });
 
 export const createBooking = (payload: {
-  project: string;
+  project?: string | null;
+  staff?: string | null;
   ruleSet: string;
   slot: { startsAt: string; endsAt: string };
   staffId: string;
@@ -114,3 +129,33 @@ export const staffBookingAction = (staffToken: string, mode: "cancel" | "resched
     /** true = HERO-Termin entfernt, false = blieb stehen, null = es gab keinen. */
     heroRemoved: boolean | null;
   }>({ action: "staff-action", staffToken, mode });
+
+// ── Einladungen (Mitarbeiteransicht, deshalb mit Session-Token) ──
+
+export interface BookingInviteLinks {
+  slug: string;
+  name: string;
+  /** Dauerlink des Mitarbeiters, ohne Projektbezug. */
+  linkAllgemein: string;
+  /** Mitarbeiter UND Projekt. Null, wenn kein Projekt uebergeben wurde. */
+  linkProjekt: string | null;
+  neuAngelegt: boolean;
+}
+
+async function invite<T>(body: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.functions.invoke("booking-invite", { body });
+  if (error) throw new Error((await fehlertext(error)) || error.message);
+  if ((data as any)?.error) throw new Error((data as any).error);
+  return data as T;
+}
+
+export const loadInviteLinks = (token: string, projectId?: string | null) =>
+  invite<BookingInviteLinks>({ action: "link", token, ...(projectId ? { projectId } : {}) });
+
+export const sendBookingInvite = (payload: {
+  token: string;
+  email: string;
+  projectId?: string | null;
+  projectNumber?: string | null;
+  note?: string;
+}) => invite<{ ok: boolean; email: string; link: string; subject: string }>({ action: "send", ...payload });

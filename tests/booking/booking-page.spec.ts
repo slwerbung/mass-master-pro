@@ -26,6 +26,7 @@ const MONTAGE = { key: "montage_vor_ort", label: "Montage vor Ort", durationMinu
 
 const kontext = {
   project: { id: PROJEKT, number: "WER-1234", customerName: "Musterfirma GmbH", heroLinked: true },
+  staff: null as null | { name: string; slug: string },
   // Eine Terminart: die Seite geht direkt in den Kalender.
   appointments: [AUFMASS],
   address: {
@@ -33,6 +34,15 @@ const kontext = {
     text: "Hauptstr. 1, 71332 Waiblingen", source: "project", located: true,
   },
   contact: { name: "Erika Muster", email: "erika@example.org", phone: "07151 1234" },
+};
+
+/** Dauerlink eines Mitarbeiters: kein Projekt, also auch keine Adresse. */
+const kontextOhneProjekt = {
+  project: null,
+  staff: { name: "Langner", slug: "langner" },
+  appointments: [AUFMASS],
+  address: null,
+  contact: { name: "", email: null, phone: null },
 };
 
 /** Faengt alle Aufrufe der Buchungs-API ab und merkt sich, was gesendet wurde. */
@@ -47,12 +57,21 @@ async function stub(page: Page, opts: { onCreate?: (body: any) => any; arten?: a
     if (req.method() === "GET" || url.searchParams.get("action")) {
       const action = url.searchParams.get("action");
       if (action === "context") {
-        return json(opts.arten ? { ...kontext, appointments: opts.arten } : kontext);
+        // Ohne `project` ist es der Dauerlink eines Mitarbeiters.
+        const basis = url.searchParams.get("project")
+          ? { ...kontext, staff: url.searchParams.get("staff") ? { name: "Langner", slug: "langner" } : null }
+          : kontextOhneProjekt;
+        return json(opts.arten ? { ...basis, appointments: opts.arten } : basis);
       }
       if (action === "availability") {
-        // Die Terminart MUSS mitkommen, sonst wuesste der Server nicht, was
-        // gerechnet werden soll.
-        gesendet.push({ action: "availability", ruleSet: url.searchParams.get("ruleSet") });
+        // Terminart und Mitarbeiter MUESSEN mitkommen, sonst wuesste der
+        // Server nicht, was fuer wen gerechnet werden soll.
+        gesendet.push({
+          action: "availability",
+          ruleSet: url.searchParams.get("ruleSet"),
+          project: url.searchParams.get("project"),
+          staff: url.searchParams.get("staff"),
+        });
         return json({ slots: slots(), addressLocated: true });
       }
     }
@@ -268,5 +287,54 @@ test.describe("Mehrere Terminarten", () => {
     await expect(page.getByRole("heading", { name: "Aufmass vor Ort" })).toBeVisible();
     await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
     expect(gesendet.find((g) => g.action === "availability").ruleSet).toBe("aufmass_vor_ort");
+  });
+});
+
+// Der Termin gehoert dem, der eingeladen hat. Deshalb muss der Mitarbeiter aus
+// dem Link bei JEDER Anfrage mitgehen — sonst rechnet der Server ueber alle und
+// der Termin landete beim Falschen.
+test.describe("Einladung eines Mitarbeiters", () => {
+  test("Dauerlink ohne Projekt: fragt die Adresse ab und nennt den Mitarbeiter", async ({ page }) => {
+    const gesendet = await stub(page);
+    await page.goto("/termin/m/langner");
+
+    await expect(page.getByRole("heading", { name: "Aufmass vor Ort" })).toBeVisible();
+    await expect(page.getByText("mit Langner")).toBeVisible();
+    // Ohne Projekt gibt es keine Adresse aus HERO: die Felder stehen offen.
+    await expect(page.getByLabel("Straße und Nr.")).toBeVisible();
+
+    const abfrage = gesendet.find((g) => g.action === "availability");
+    expect(abfrage.staff).toBe("langner");
+    expect(abfrage.project).toBe(null);
+
+    await page.getByRole("button", { name: "09:00" }).click();
+    await page.getByLabel("Name *").fill("Neuer Kunde");
+    await page.getByLabel("E-Mail *").fill("kunde@example.org");
+    await page.getByRole("button", { name: "Termin bestätigen" }).click();
+    await expect(page.getByText("Termin steht")).toBeVisible();
+
+    const buchung = gesendet.find((b) => b.action === "create");
+    expect(buchung.staff).toBe("langner");
+    expect(buchung.project).toBe(null);
+  });
+
+  test("Projektlink mit Mitarbeiter: schickt beides mit", async ({ page }) => {
+    const gesendet = await stub(page);
+    await page.goto(`/termin/${PROJEKT}?m=langner`);
+
+    await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
+    await expect(page.getByText(/Projekt WER-1234 · mit Langner/)).toBeVisible();
+
+    const abfrage = gesendet.find((g) => g.action === "availability");
+    expect(abfrage.staff).toBe("langner");
+    expect(abfrage.project).toBe(PROJEKT);
+
+    await page.getByRole("button", { name: "09:00" }).click();
+    await page.getByRole("button", { name: "Termin bestätigen" }).click();
+    await expect(page.getByText("Termin steht")).toBeVisible();
+
+    const buchung = gesendet.find((b) => b.action === "create");
+    expect(buchung.staff).toBe("langner");
+    expect(buchung.project).toBe(PROJEKT);
   });
 });

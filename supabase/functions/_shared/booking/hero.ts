@@ -149,7 +149,8 @@ export async function loadHeroContext(apiKey: string, heroProjectId: number): Pr
 export async function heroCreateAppointment(
   apiKey: string,
   opts: {
-    heroProjectId: number;
+    /** null = Termin ohne Projektbezug (Dauerlink eines Mitarbeiters). */
+    heroProjectId: number | null;
     title: string;
     startIso: string;      // mit Offset, z.B. 2026-09-10T09:45:00+02:00
     endIso: string;
@@ -158,14 +159,20 @@ export async function heroCreateAppointment(
     partnerId?: number | null;
   },
 ): Promise<{ id: number | null; error?: string }> {
+  // `category_id` ist in HERO PFLICHT. Ohne sie antwortet die API mit
+  // "Bitte waehlen Sie eine Kategorie aus" und der Termin entsteht nicht —
+  // gegen die echte API geprueft. `project_match_id` ist dagegen optional.
+  if (!opts.categoryId) {
+    return { id: null, error: "HERO verlangt eine Kategorie (Einstellung „HERO-Kategorie“ ist leer)" };
+  }
   const input: Record<string, unknown> = {
     title: opts.title,
     start: opts.startIso,
     end: opts.endIso,
-    project_match_id: opts.heroProjectId,
+    category_id: opts.categoryId,
   };
+  if (opts.heroProjectId) input.project_match_id = opts.heroProjectId;
   if (opts.description) input.description = opts.description;
-  if (opts.categoryId) input.category_id = opts.categoryId;
   if (opts.partnerId) input.partner_ids = [opts.partnerId];
 
   const mutation = `mutation Create($calendar_event: CalendarEventInput!) {

@@ -51,7 +51,6 @@ const ERLAUBTE_RULESET_SPALTEN = new Set([
   "label", "active", "duration_minutes", "buffer_before_min", "buffer_after_min",
   "travel_buffer", "min_notice_min", "booking_window_days", "slot_granularity_min",
   "max_per_day_global", "max_per_day_per_staff", "requires_approval",
-  "required_skills",
 ]);
 
 // Es gibt MEHRERE Terminarten (M1 hat drei angelegt). Frueher stand hier eine
@@ -195,7 +194,7 @@ Deno.serve(async (req) => {
         // ALLE Terminarten, nicht nur eine.
         db.from("rule_set").select("*").order("label"),
         db.from("staff")
-          .select("id, employee_id, display_name, active, skills, home_base_address, home_base_lat, home_base_lng")
+          .select("id, employee_id, display_name, active, booking_slug, home_base_address, home_base_lat, home_base_lng")
           .order("display_name"),
         db.from("working_hours").select("id, staff_id, weekday, start_time, end_time").order("weekday"),
         db.from("appointment_category").select("id, key, label, source, blocks_availability, is_bookable").order("label"),
@@ -221,7 +220,7 @@ Deno.serve(async (req) => {
           categoryKey: katById.get(r.category_id)?.key ?? null,
           categoryLabel: katById.get(r.category_id)?.label ?? null,
           isBookable: katById.get(r.category_id)?.is_bookable ?? false,
-          // Leere Liste heisst: jeder mit passender Qualifikation.
+          // Leere Liste heisst: jeder.
           staffIds: (rss.data ?? []).filter((x: any) => x.rule_set_id === r.id).map((x: any) => x.staff_id),
           heroCategoryId: (r.config ?? {}).hero_category_id ?? null,
         })),
@@ -265,9 +264,7 @@ Deno.serve(async (req) => {
         if (k === "label") update[k] = String(v ?? "").trim() || key;
         else if (k === "travel_buffer" || k === "active" || k === "requires_approval") update[k] = v === true || v === "true";
         else if (k === "max_per_day_global" || k === "max_per_day_per_staff") update[k] = zahl(v);
-        else if (k === "required_skills") {
-          update[k] = Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : [];
-        } else {
+        else {
           const n = zahl(v);
           if (n != null && n >= 0) update[k] = n;
         }
@@ -291,8 +288,8 @@ Deno.serve(async (req) => {
     }
 
     // ── Wer macht diese Terminart? ──
-    // Leere Liste = jeder mit passender Qualifikation (so rechnet die Engine).
-    // Eine ausdrueckliche Auswahl schlaegt das.
+    // Leere Liste = jeder (so rechnet die Engine). Eine ausdrueckliche Auswahl
+    // schlaegt das. Bei einer Einladung zaehlt ohnehin nur, wer eingeladen hat.
     if (body.action === "set_rule_set_staff") {
       const key = String(body.key || "");
       if (!key) return json({ error: "key erforderlich" }, 400);
@@ -329,7 +326,6 @@ Deno.serve(async (req) => {
         active: body.active !== false,
         employee_id: body.employeeId || null,
         home_base_address: adresse,
-        skills: Array.isArray(body.skills) ? body.skills.map((x: unknown) => String(x)) : [],
         updated_at: new Date().toISOString(),
       };
       if (!row.display_name) return json({ error: "Name erforderlich" }, 400);
@@ -436,7 +432,7 @@ Deno.serve(async (req) => {
       if (neu.length === 0) return json({ ok: true, angelegt: 0 });
 
       const { data: created, error } = await db.from("staff")
-        .insert(neu.map((e: any) => ({ employee_id: e.id, display_name: e.name, active: true, skills: [] })))
+        .insert(neu.map((e: any) => ({ employee_id: e.id, display_name: e.name, active: true })))
         .select("id");
       if (error) return json({ error: error.message }, 500);
 

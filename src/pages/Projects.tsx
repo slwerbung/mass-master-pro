@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Plus, FolderOpen, Calendar, LogOut, RefreshCw, Trash2,
   CheckSquare, X, Archive, ArchiveRestore, UserPlus, Tag, MapPin, Car, Mic, Search,
+  CalendarClock,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { HeroSyncIndicator } from "@/components/HeroSyncIndicator";
 import { UpcomingAppointments } from "@/components/UpcomingAppointments";
+import { BookingInviteDialog } from "@/components/BookingInviteDialog";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
@@ -67,6 +69,9 @@ const Projects = () => {
   const [showArchived, setShowArchived] = useState(false);
   const [showUnassigned, setShowUnassigned] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  // Termineinladung ohne Projektbezug: der Dauerlink des angemeldeten
+  // Mitarbeiters. Aus einem Projekt heraus gibt es den Projektlink.
+  const [terminEinladung, setTerminEinladung] = useState(false);
   const navigate = useNavigate();
   const session = getSession();
   const syncDoneRef = useRef(false);
@@ -347,6 +352,7 @@ const Projects = () => {
               <>
                 <Button size="sm" variant="ghost" onClick={() => navigate("/etiketten")} title="Etiketten"><Tag className="h-4 w-4" /></Button>
                 <Button size="sm" variant="ghost" onClick={() => navigate("/protokoll")} title="Protokoll (Diktat)"><Mic className="h-4 w-4" /></Button>
+                <Button size="sm" variant="ghost" onClick={() => setTerminEinladung(true)} title="Termineinladung senden"><CalendarClock className="h-4 w-4" /></Button>
                 <Button size="sm" variant="ghost" onClick={syncToSupabase} disabled={isSyncing} title="Synchronisieren"><RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} /></Button>
                 <Button size="sm" variant="ghost" onClick={handleLogout} title="Abmelden"><LogOut className="h-4 w-4" /></Button>
                 <Button size="sm" onClick={() => navigate("/projects/new")} className="ml-1">
@@ -564,6 +570,8 @@ const Projects = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <BookingInviteDialog open={terminEinladung} onOpenChange={setTerminEinladung} />
     </div>
   );
 };

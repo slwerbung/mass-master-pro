@@ -3,6 +3,13 @@
 Umsetzung der Spec (`terminbuchungSPEC.md`) in Meilensteinen. Dieses Dokument
 hält Stand + bewusste Abweichungen fest.
 
+## Stand (01.10.2026)
+- **Einladung durch einen Mitarbeiter:** ✅ Der Termin gehört dem, der
+  eingeladen hat. Zwei Linkformen, zwei Einstiege in der App, keine
+  Qualifikationen mehr (siehe „Einladungen“ weiter unten).
+- `booking-api` v6, `booking-admin` v5, `booking-invite` v1 — alle byte-genau
+  gegen das Repo verifiziert.
+
 ## Stand (25.09.2026)
 - **M1 — Datenmodell & Seeds:** ✅ angewandt (`20260828000000_booking_m1.sql`).
 - **M2 — Engine:** ✅ reine `computeSlots` + `TravelTimeProvider` + Unit-Tests.
@@ -38,6 +45,7 @@ hält Stand + bewusste Abweichungen fest.
 | `20260924110000_booking_m4_hero_sync.sql` | Eindeutigkeit `busy_block(source, source_ref, staff_id)`, Poll-Secret, pg_cron-Job |
 | `20260924115156_booking_m5_mail_cron.sql` | pg_cron für `booking-mail` (alle 5 Min.), Index auf fällige `notification`-Zeilen |
 | `20260925055651_booking_m6_staff_home_address.sql` | `staff.home_base_address` — Startadresse statt Koordinatenpaar |
+| `20261001070000_booking_m7_staff_links_no_skills.sql` | `staff.booking_slug` (Dauerlink pro Mitarbeiter, Teilindex unique), `rule_set.required_skills` geleert |
 
 ## Abgestimmte Produktentscheidungen
 - **Ein Link = ein Projekt.** Ohne Projekt keine Buchung. Objektadresse aus HERO,
@@ -60,6 +68,14 @@ hält Stand + bewusste Abweichungen fest.
   und optional eigenes Personal.
 - **Der Mitarbeiterstandort ist eine Adresse.** Koordinaten tippt niemand ein;
   der Server geocodiert die Adresse (und nur bei Änderung).
+- **Die Einladung geht von einem Mitarbeiter aus, und wer einlädt, bekommt den
+  Termin.** Deshalb steckt im Link immer ein Mitarbeiter. Einladen darf jeder,
+  der in HERO zugeordnet ist — ohne Zuordnung blockieren seine HERO-Termine
+  nichts und unsere Termine hätten in HERO keinen Zuständigen.
+- **Keine Qualifikationen.** Sie waren im Adminmenü nie pflegbar, und eine
+  Terminart mit einer Qualifikation, die niemand hat, liefert dauerhaft null
+  freie Zeiten (genau so war „Montage vor Ort“ unbuchbar). Die Engine kann sie
+  weiterhin, bekommt aber keine mehr vorgesetzt (`required_skills` leer).
 
 ## M3 — Buchungs-API (`supabase/functions/booking-api`)
 `verify_jwt=false`, Zugriff via `service_role`. Nur Slots lesen + Buchen/Stornieren, nie Config.
@@ -89,6 +105,38 @@ Reine DB→Engine-Abbildung liegt in `booking/inputs.ts` (unit-getestet).
 Deploy braucht die Import-Map `deno.json` (`luxon` → `npm:luxon`).
 `types.ts` erscheint bewusst nicht im Bundle: es wird nur mit `import type`
 benutzt und fällt beim Bündeln weg.
+
+## Einladungen (`supabase/functions/booking-invite`)
+Verlangt einen Mitarbeiter-Token. Der Admin-Login kann **nicht** einladen: er
+ist kein Mitarbeiter, hat keine HERO-Zuordnung und der Termin bräuchte einen
+Zuständigen.
+
+Zwei Aktionen:
+- `link` — gibt beide Links zurück. Legt dabei bei Bedarf den
+  Buchungsdatensatz des Mitarbeiters an, vergibt den Slug und setzt Mo–Fr
+  08–17 Uhr als Arbeitszeit. Ohne Arbeitszeiten stünde der Kunde sonst vor
+  einem leeren Kalender.
+- `send` — verschickt die Einladungsmail über Resend (Firmenname aus
+  `legal_info`, optionale persönliche Zeile).
+
+Linkformen:
+
+| Einstieg | Link | Woher kommen Adresse und Kontakt? |
+| --- | --- | --- |
+| Projektübersicht | `/termin/m/<slug>` | Der Kunde trägt beides selbst ein |
+| Projektansicht | `/termin/<projekt>?m=<slug>` | Aus HERO, editierbar |
+
+Der Slug ist **dauerhaft** (so gewünscht): er darf in einer Mailsignatur
+stehen und mehrfach benutzt werden. Rechnen tut immer `booking-api` — dieser
+Dienst kann keine Termine anlegen.
+
+In HERO entsteht der Termin auch **ohne** Projekt: `project_match_id` ist
+optional, `category_id` dagegen Pflicht (beides gegen die echte API geprüft).
+Fehlt die HERO-Kategorie in den Einstellungen, meldet `heroCreateAppointment`
+das im Klartext statt still zu scheitern.
+
+Ein Link ohne `m` (alte, schon verschickte Projektlinks) funktioniert weiter
+und rechnet dann wie früher über alle Mitarbeiter.
 
 ## Adminmenü (`supabase/functions/booking-admin`)
 Admin-Token nötig, alle Writes laufen über diese Function — direkte
@@ -216,7 +264,10 @@ Oktette, Escaping, CRLF) und ein falscher Link in der Mail ist teurer als ein
 Rechenfehler.
 
 ## M6 — Oberflächen
-- **`/termin/:projectId`** — öffentliche Buchungsseite, Calendly-Aufmachung.
+- **`/termin/m/:slug`** — Dauerlink eines Mitarbeiters, ohne Projektbezug.
+  Dieselbe Seite; der Kunde trägt Adresse und Kontakt selbst ein, oben steht
+  „mit <Name>“.
+- **`/termin/:projectId`** (optional `?m=<slug>`) — öffentliche Buchungsseite, Calendly-Aufmachung.
   Gibt es mehrere Terminarten, wählt der Kunde zuerst die Art (mit Dauer), bei
   genau einer entfällt der Schritt. Links der Anlass, rechts Tag und Uhrzeit,
   dann die Bestätigung. Adresse und Kontakt aus HERO, editierbar; eine geänderte
@@ -241,6 +292,11 @@ Rechenfehler.
   aktiver HERO-Integration fehlt einem Mitarbeiter die HERO-Verknüpfung
   (→ seine HERO-Termine blockieren nichts, unsere Termine landen in HERO ohne
   Zuständigen).
+- **Projektübersicht und Projektansicht** — je ein Knopf „Termineinladung“
+  (Kalender-Uhr-Symbol). Der Dialog zeigt den Link mit Kopierknopf und
+  verschickt die Mail; bei Projektbezug ist die Mailadresse aus HERO
+  vorbelegt. Der Dialog baut den Link NICHT selbst zusammen — er kommt vom
+  Server, sonst stände in der Mail etwas anderes als im Kalender.
 - **Startseite** — schmale Leiste mit den Terminen von heute und morgen
   (auf Klick sieben Tage). Liest direkt aus Supabase (RLS `is_staff()`) und
   zeigt nichts, wenn es nichts gibt.
@@ -352,6 +408,20 @@ Mindest-Vorlaufzeit, Buchungsfenster, Tageslimits, Qualifikation, Zuweisung
 2. Zwei Leute, die **denselben** Termin gleichzeitig ändern, bleiben
    last-write-wins (wie beim Standort-Sync). Der GiST-Constraint verhindert
    dabei nur die Doppelbuchung, nicht die zweite Absage.
+
+### Nachgewiesen gegen Produktion (01.10.2026)
+
+| Aufruf | Ergebnis |
+| --- | --- |
+| `context&staff=langner` | Projekt null, Mitarbeiter „Langner", 3 Terminarten |
+| `context&project=…&staff=langner` | Projekt WER-1744 **und** Langner |
+| `context&project=…` (ohne `m`) | wie früher, Mitarbeiter null |
+| `context&staff=gibtesnicht` | 404 „Dieser Einladungslink gilt nicht mehr" |
+| `context` ohne beides | 400 |
+| `availability&staff=langner` | 141 Slots, **nur** Langner zugeordnet |
+| `availability&staff=layer` | 155 Slots, **nur** Layer zugeordnet |
+| `availability` Montage | 12 Slots (vorher 0 — Qualifikation war der Grund) |
+| `booking-invite` ohne Token | 401 |
 
 ### Was der Betrieb noch beisteuern muss
 - OpenRouteService-Schlüssel als Supabase-Secret `ORS_API_KEY`, danach

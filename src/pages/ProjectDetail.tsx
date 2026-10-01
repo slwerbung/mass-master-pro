@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map, FileText, ExternalLink, Mail, Upload, CheckCheck, Clock } from "lucide-react";
+import { ArrowLeft, Camera, Download, MapPin, Trash2, ImagePlus, Share2, Map, FileText, ExternalLink, Mail, Upload, CheckCheck, Clock, CalendarClock } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { toast } from "sonner";
@@ -33,6 +33,7 @@ import { setEditorHandoff } from "@/lib/editorHandoff";
 import { startCapture } from "@/lib/captureSession";
 import ProjectInfoFields from "@/components/ProjectInfoFields";
 import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
+import { BookingInviteDialog } from "@/components/BookingInviteDialog";
 import { SplitPdfDialog } from "@/components/SplitPdfDialog";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
 import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
@@ -49,6 +50,8 @@ const ProjectDetail = () => {
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [inviteOpen, setInviteOpen] = useState(false);
+  // Termineinladung MIT Projektbezug: der Link traegt Mitarbeiter und Projekt.
+  const [terminOpen, setTerminOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
   const [isOnlineOnly, setIsOnlineOnly] = useState(false);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
@@ -304,6 +307,9 @@ const ProjectDetail = () => {
             <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setInviteOpen(true)} title="Kunde einladen">
               <Mail className="h-4 w-4" />
             </Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setTerminOpen(true)} title="Termineinladung senden">
+              <CalendarClock className="h-4 w-4" />
+            </Button>
             <Button variant="ghost" size="icon" className="h-9 w-9" onClick={copyGuestLink} title="Gast-Link kopieren">
               <Share2 className="h-4 w-4" />
             </Button>
@@ -507,6 +513,15 @@ const ProjectDetail = () => {
           projectId={projectId}
           projectNumber={project.projectNumber}
           heroProjectId={getHeroProjectMatchId(project)}
+        />
+      )}
+
+      {projectId && (
+        <BookingInviteDialog
+          open={terminOpen}
+          onOpenChange={setTerminOpen}
+          projectId={projectId}
+          projectNumber={project.projectNumber}
         />
       )}
 

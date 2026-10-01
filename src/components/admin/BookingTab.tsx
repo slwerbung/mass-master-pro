@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  AlertTriangle, CalendarClock, CalendarDays, Car, Clock, Link2, Loader2, Mail,
+  AlertTriangle, CalendarClock, CalendarDays, Car, Clock, Copy, Link2, Loader2, Mail,
   MapPin, Plus, RefreshCw, Trash2, Users,
 } from "lucide-react";
 
@@ -46,7 +46,7 @@ const BUNDESLAENDER: [string, string][] = [
 interface WorkingHour { id?: string; staff_id?: string; weekday: number; start_time: string; end_time: string }
 interface StaffRow {
   id: string; employee_id: string | null; display_name: string; active: boolean;
-  skills: string[] | null; home_base_address: string | null;
+  home_base_address: string | null; booking_slug: string | null;
   home_base_lat: number | null; home_base_lng: number | null;
   heroPartnerId: number | null;
   workingHours: WorkingHour[];
@@ -56,7 +56,7 @@ interface RuleSetRow {
   buffer_before_min: number; buffer_after_min: number; travel_buffer: boolean;
   min_notice_min: number; booking_window_days: number; slot_granularity_min: number;
   max_per_day_global: number | null; max_per_day_per_staff: number | null;
-  requires_approval: boolean; required_skills: string[] | null;
+  requires_approval: boolean;
   assignment_mode: string;
   categoryKey: string | null; categoryLabel: string | null; isBookable: boolean;
   staffIds: string[]; heroCategoryId: number | null;
@@ -194,7 +194,7 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
         travel_buffer: art.travel_buffer, min_notice_min: art.min_notice_min,
         booking_window_days: art.booking_window_days, slot_granularity_min: art.slot_granularity_min,
         max_per_day_global: art.max_per_day_global, max_per_day_per_staff: art.max_per_day_per_staff,
-        requires_approval: art.requires_approval, required_skills: art.required_skills ?? [],
+        requires_approval: art.requires_approval,
       },
       heroCategoryId: art.heroCategoryId ?? null,
     });
@@ -231,16 +231,6 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
     toast.success(`${d.sent ?? 0} verschickt, ${d.skipped ?? 0} übersprungen, ${d.failed ?? 0} fehlgeschlagen`);
     setQueue((await invoke("mail_queue")).queue ?? []);
   });
-
-  /** Alle Qualifikationen, die irgendwo vorkommen — damit man sie ankreuzen
-   *  statt tippen kann. Tippfehler wie "aufmaß" vs. "aufmass" sind sonst
-   *  unsichtbar und kosten einen halben Tag Suche. */
-  const skillListe = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of ruleSets) for (const q of r.required_skills ?? []) set.add(q);
-    for (const s of staff) for (const q of s.skills ?? []) set.add(q);
-    return [...set].sort();
-  }, [ruleSets, staff]);
 
   const offeneMitarbeiter = employees.filter((e) => !e.uebernommen);
   const ohneHero = heroAktiv ? staff.filter((s) => s.active && !s.heroPartnerId) : [];
@@ -288,13 +278,8 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
               >
                 <span className="font-medium flex-1 min-w-[140px]">{r.label}</span>
                 <span className="text-muted-foreground">{r.duration_minutes} Min.</span>
-                {(r.required_skills ?? []).length > 0 && (
-                  <span className="text-muted-foreground">
-                    {(r.required_skills ?? []).join(", ")}
-                  </span>
-                )}
                 <span className="text-muted-foreground">
-                  {r.staffIds.length > 0 ? `${r.staffIds.length} zugeordnet` : "alle passenden"}
+                  {r.staffIds.length > 0 ? `${r.staffIds.length} zugeordnet` : "alle"}
                 </span>
                 {!r.active
                   ? <Badge variant="outline">aus</Badge>
@@ -349,31 +334,6 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
               </div>
 
               <div>
-                <Label className="text-xs">Nötige Qualifikation</Label>
-                <div className="flex flex-wrap gap-3 mt-1.5">
-                  {skillListe.length === 0 && (
-                    <span className="text-xs text-muted-foreground">Noch keine Qualifikationen angelegt.</span>
-                  )}
-                  {skillListe.map((q) => {
-                    const an = (art.required_skills ?? []).includes(q);
-                    return (
-                      <label key={q} className="flex items-center gap-1.5 text-sm">
-                        <Checkbox checked={an} onCheckedChange={(v) => setArt({
-                          required_skills: v
-                            ? [...(art.required_skills ?? []), q]
-                            : (art.required_skills ?? []).filter((x) => x !== q),
-                        })} />
-                        {q}
-                      </label>
-                    );
-                  })}
-                </div>
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  Nur wer alle angekreuzten Qualifikationen hat, wird für diese Terminart angeboten.
-                </p>
-              </div>
-
-              <div>
                 <Label className="text-xs">Wer macht das?</Label>
                 <div className="flex flex-wrap gap-3 mt-1.5">
                   {staff.map((s) => (
@@ -391,8 +351,9 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
                   ))}
                 </div>
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Niemand angekreuzt = jeder mit der nötigen Qualifikation. Eine Auswahl schränkt
-                  zusätzlich ein.
+                  Niemand angekreuzt = jeder. Diese Auswahl gilt nur für Terminseiten ohne
+                  Einladung — bei einer Einladung bekommt immer der den Termin, der sie
+                  verschickt hat.
                 </p>
               </div>
 
@@ -464,27 +425,13 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
             sich aus den Arbeitszeiten — eine zweite Liste gibt es bewusst nicht.
           </p>
 
-          {(() => {
-            // Verlangt eine buchbare Terminart eine Qualifikation, die niemand
-            // hat, findet der Kunde keine Zeiten und nichts sagt einem warum.
-            const luecken = ruleSets.filter((r) =>
-              r.active && r.isBookable && (r.required_skills ?? []).length > 0 &&
-              !staff.some((s) => s.active && (r.required_skills ?? []).every((q) => (s.skills ?? []).includes(q))));
-            if (luecken.length === 0) return null;
-            return (
-              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                Für {luecken.map((r) => `„${r.label}“`).join(", ")} hat niemand die nötige
-                Qualifikation. Solange das so ist, findet der Kunde dafür keine freien Zeiten.
-              </div>
-            );
-          })()}
-
           {ohneHero.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
               {ohneHero.map((s) => s.display_name).join(", ")}{" "}
               {ohneHero.length === 1 ? "ist" : "sind"} nicht mit HERO verknüpft. Dann blockieren
-              HERO-Termine dieser Person keine Zeiten, und unsere Termine landen in HERO ohne
-              Zuständigen. Unten zuordnen.
+              HERO-Termine dieser Person keine Zeiten, unsere Termine landen in HERO ohne
+              Zuständigen — und <strong>Termineinladungen aus der App sind für sie gesperrt</strong>.
+              Unten zuordnen.
             </div>
           )}
 
@@ -515,7 +462,7 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
             <p className="text-sm text-muted-foreground">Noch kein Personal angelegt.</p>
           ) : staff.map((s) => (
             <StaffKarte
-              key={s.id} staff={s} busy={busy} skillListe={skillListe}
+              key={s.id} staff={s} busy={busy}
               heroAktiv={heroAktiv} heroPartner={heroPartner} routingKey={routingKey}
               onHeroPartner={async (wert) => mitBusy(`hero-${s.id}`, async () => {
                 if (!s.employee_id) throw new Error("Dieses Personal hängt an keinem Mitarbeiter-Datensatz");
@@ -530,7 +477,6 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
                 const res = await invoke("staff_upsert", {
                   id: s.id, displayName: patch.display_name, active: patch.active,
                   employeeId: s.employee_id, homeBaseAddress: patch.home_base_address,
-                  skills: patch.skills ?? [],
                 });
                 await invoke("set_working_hours", {
                   staffId: s.id,
@@ -893,15 +839,14 @@ function Schalter({ label, hilfe, checked, onChange }: {
   );
 }
 
-/** Ein Mitarbeiter mit Arbeitszeiten, Qualifikation, Standort und HERO-Bezug.
+/** Ein Mitarbeiter mit Arbeitszeiten, Standort, HERO-Bezug und Terminlink.
  *  Lokaler Zustand, damit beim Tippen nicht die ganze Seite neu rendert. */
 function StaffKarte({
-  staff, busy, skillListe, heroAktiv, heroPartner, routingKey,
+  staff, busy, heroAktiv, heroPartner, routingKey,
   onSpeichern, onLoeschen, onHeroPartner,
 }: {
   staff: StaffRow;
   busy: string | null;
-  skillListe: string[];
   heroAktiv: boolean;
   heroPartner: Option[];
   routingKey: boolean;
@@ -912,13 +857,15 @@ function StaffKarte({
   const [name, setName] = useState(staff.display_name);
   const [aktiv, setAktiv] = useState(staff.active);
   const [adresse, setAdresse] = useState(staff.home_base_address ?? "");
-  const [skills, setSkills] = useState<string[]>(staff.skills ?? []);
-  const [neuerSkill, setNeuerSkill] = useState("");
   const [hours, setHours] = useState<WorkingHour[]>(staff.workingHours ?? []);
 
   const perTag = (wd: number) => hours.find((h) => h.weekday === wd);
   const laufend = busy === `staff-${staff.id}`;
-  const alleSkills = [...new Set([...skillListe, ...skills])].sort();
+  // Der Link entsteht erst beim ersten Einladen (dann vergibt der Server den
+  // Slug) — hier steht deshalb notfalls ein Hinweis statt einer falschen URL.
+  const terminLink = staff.booking_slug
+    ? `${window.location.origin}/termin/m/${staff.booking_slug}`
+    : "— entsteht beim ersten Einladen —";
 
   function setzeTag(wd: number, an: boolean) {
     setHours((list) => an
@@ -989,35 +936,23 @@ function StaffKarte({
       </div>
 
       <div>
-        <Label className="text-xs">Qualifikationen</Label>
-        <div className="flex flex-wrap items-center gap-3 mt-1.5">
-          {alleSkills.map((q) => (
-            <label key={q} className="flex items-center gap-1.5 text-sm">
-              <Checkbox
-                checked={skills.includes(q)}
-                onCheckedChange={(v) => setSkills((list) =>
-                  v ? [...list, q] : list.filter((x) => x !== q))}
-              />
-              {q}
-            </label>
-          ))}
-          <div className="flex items-center gap-1">
-            <Input
-              value={neuerSkill} onChange={(e) => setNeuerSkill(e.target.value)}
-              placeholder="neue Qualifikation" className="h-8 w-[160px]"
-              onKeyDown={(e) => {
-                if (e.key !== "Enter" || !neuerSkill.trim()) return;
-                e.preventDefault();
-                setSkills((l) => [...new Set([...l, neuerSkill.trim()])]);
-                setNeuerSkill("");
-              }}
-            />
-            <Button size="sm" variant="ghost" className="h-8" disabled={!neuerSkill.trim()}
-              onClick={() => { setSkills((l) => [...new Set([...l, neuerSkill.trim()])]); setNeuerSkill(""); }}>
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+        <Label className="text-xs">Terminlink dieses Mitarbeiters</Label>
+        <div className="flex items-center gap-2">
+          <Input readOnly value={terminLink} className="text-xs"
+            onFocus={(e) => e.currentTarget.select()} />
+          <Button type="button" variant="outline" size="icon" title="Link kopieren"
+            disabled={!staff.booking_slug}
+            onClick={async () => {
+              try { await navigator.clipboard.writeText(terminLink); toast.success("Link kopiert"); }
+              catch { toast.error("Kopieren hat nicht geklappt – Link bitte markieren"); }
+            }}>
+            <Copy className="h-4 w-4" />
+          </Button>
         </div>
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Ein Termin über diesen Link gehört diesem Mitarbeiter. Den Link gibt es auch direkt in
+          der App: Projektübersicht oder Projekt → Termineinladung.
+        </p>
       </div>
 
       <div className="grid gap-1.5">
@@ -1048,7 +983,7 @@ function StaffKarte({
           onClick={() => onSpeichern({
             ...staff, display_name: name, active: aktiv,
             home_base_address: adresse.trim() || null,
-            skills, workingHours: hours,
+            workingHours: hours,
           })}>
           {laufend && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />} Speichern
         </Button>

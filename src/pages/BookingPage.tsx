@@ -1,15 +1,21 @@
-// Oeffentliche Buchungsseite: /termin/:projectId
+// Oeffentliche Buchungsseite. Zwei Linkformen, eine Seite:
+//   /termin/m/:slug            Dauerlink eines Mitarbeiters, ohne Projekt.
+//                              Der Kunde traegt Adresse und Kontakt selbst ein.
+//   /termin/:projectId?m=slug  Mit Projekt: Adresse und Kontakt kommen aus HERO
+//                              und sind editierbar.
+// In beiden Faellen gehoert der Termin dem Mitarbeiter aus dem Link — wer
+// einlaedt, bekommt den Termin. Ein alter Projektlink ohne `m` funktioniert
+// weiter und rechnet dann ueber alle Mitarbeiter.
 //
 // Aufmachung an Calendly angelehnt (so gewuenscht): links steht, worum es geht,
-// rechts waehlt man Tag und Uhrzeit, danach die Bestaetigung. Der Link haengt
-// an EINEM Projekt — Adresse und Kontakt kommen aus HERO und sind editierbar.
+// rechts waehlt man Tag und Uhrzeit, danach die Bestaetigung.
 //
 // Gerechnet wird nichts hier: welche Zeiten frei sind, entscheidet der Server,
 // und beim Buchen rechnet er den Tag noch einmal neu. Das Frontend darf sich
 // also irren, ohne dass daraus ein doppelt vergebener Termin wird.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { DateTime } from "luxon";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -31,7 +37,15 @@ const dayKey = (iso: string) => DateTime.fromISO(iso, { zone: "utc" }).setZone(T
 const timeLabel = (iso: string) => DateTime.fromISO(iso, { zone: "utc" }).setZone(TZ).toFormat("HH:mm");
 
 export default function BookingPage() {
-  const { projectId = "" } = useParams();
+  // Zwei Routen auf derselben Seite: /termin/:projectId und /termin/m/:slug.
+  const { projectId = "", slug = "" } = useParams();
+  const [query] = useSearchParams();
+  // Der Mitarbeiter steckt entweder im Pfad (Dauerlink) oder in `?m=`.
+  const staffSlug = slug || query.get("m") || "";
+  const ziel = useMemo(
+    () => ({ projectId: projectId || null, staffSlug: staffSlug || null }),
+    [projectId, staffSlug],
+  );
 
   const [ctx, setCtx] = useState<BookingContext | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -66,7 +80,7 @@ export default function BookingPage() {
   // ── Kontext laden ──
   useEffect(() => {
     let alive = true;
-    loadBookingContext(projectId)
+    loadBookingContext(ziel)
       .then((c) => {
         if (!alive) return;
         setCtx(c);
@@ -74,14 +88,14 @@ export default function BookingPage() {
         setStreet(c.address?.street || "");
         setZip(c.address?.zipcode || "");
         setCity(c.address?.city || "");
-        setName(c.contact.name || c.project.customerName || "");
+        setName(c.contact.name || c.project?.customerName || "");
         setEmail(c.contact.email || "");
         setPhone(c.contact.phone || "");
         if (!c.address) setEditAddress(true);
       })
       .catch((e) => alive && setLoadError(e.message || "Die Buchungsseite konnte nicht geladen werden."));
     return () => { alive = false; };
-  }, [projectId]);
+  }, [ziel]);
 
   // ── Freie Zeiten fuer den sichtbaren Monat ──
   const range = useMemo(() => {
@@ -95,7 +109,7 @@ export default function BookingPage() {
     if (!ctx || !art) return;
     setLoadingSlots(true);
     try {
-      const res = await loadAvailability(projectId, art.key, range.from, range.to,
+      const res = await loadAvailability(ziel, art.key, range.from, range.to,
         editAddress || addressApplied ? { street, zip, city } : undefined);
       setSlots(res.slots || []);
     } catch (e) {
@@ -107,7 +121,7 @@ export default function BookingPage() {
     // street/zip/city bewusst NICHT in den Abhaengigkeiten: es soll erst beim
     // Uebernehmen neu gerechnet werden, nicht bei jedem Tastendruck.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx, art, projectId, range.from, range.to, addressApplied]);
+  }, [ctx, art, ziel, range.from, range.to, addressApplied]);
 
   useEffect(() => { fetchSlots(); }, [fetchSlots]);
 
@@ -154,7 +168,8 @@ export default function BookingPage() {
     setSubmitting(true);
     try {
       await createBooking({
-        project: projectId,
+        project: ziel.projectId,
+        staff: ziel.staffSlug,
         ruleSet: art.key,
         slot: { startsAt: selectedSlot.startsAt, endsAt: selectedSlot.endsAt },
         staffId,
@@ -230,8 +245,13 @@ export default function BookingPage() {
             <div>
               <p className="text-xs uppercase tracking-wide text-muted-foreground">SL WERBUNG</p>
               <h1 className="text-xl font-semibold leading-tight mt-1">Termin vereinbaren</h1>
-              {ctx.project.number && (
-                <p className="text-sm text-muted-foreground mt-1">Projekt {ctx.project.number}</p>
+              {(ctx.project?.number || ctx.staff) && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  {[
+                    ctx.project?.number ? `Projekt ${ctx.project.number}` : "",
+                    ctx.staff ? `mit ${ctx.staff.name}` : "",
+                  ].filter(Boolean).join(" · ")}
+                </p>
               )}
             </div>
             <p className="text-sm text-muted-foreground">Worum geht es?</p>
@@ -269,8 +289,13 @@ export default function BookingPage() {
             <div>
               <p className="text-xs uppercase tracking-wide text-muted-foreground">SL WERBUNG</p>
               <h1 className="text-xl font-semibold leading-tight mt-1">{art.label}</h1>
-              {ctx.project.number && (
-                <p className="text-sm text-muted-foreground mt-1">Projekt {ctx.project.number}</p>
+              {(ctx.project?.number || ctx.staff) && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  {[
+                    ctx.project?.number ? `Projekt ${ctx.project.number}` : "",
+                    ctx.staff ? `mit ${ctx.staff.name}` : "",
+                  ].filter(Boolean).join(" · ")}
+                </p>
               )}
             </div>
             <div className="space-y-2 text-sm">
