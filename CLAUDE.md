@@ -209,6 +209,11 @@ Kurze prägnante Messages auf Englisch:
   freie Zeiten.
 - Terminlinks nie im Frontend zusammenbauen. Sie kommen aus `booking-invite`,
   sonst steht in der Mail etwas anderes als im Kalender.
+- In HERO-Mailvorlagen gibt es **kein** `{{ProjectMatch.id}}` – nur
+  `{{ProjectMatch.display_id}}`, und das ist die reine Zahl („1744", nicht
+  „WER-1744"). Platzhalter werden auch innerhalb eines Links ersetzt (geprüft).
+  Terminlink für Vorlagen:
+  `/termin/m/{{Partner.last_name}}?art=<terminart>&p={{ProjectMatch.display_id}}`
 - Bei HERO-Kalendereinträgen ist `category_id` PFLICHT (`project_match_id`
   dagegen optional). Ohne Kategorie entsteht kein Termin.
 - In Kundenmails steht **nie** „Captfix" und nie nur ein Mitarbeiter-Nachname.

@@ -46,9 +46,18 @@ export default function BookingPage() {
   // Die Terminart kommt aus der Einladung. Steht sie im Link, bekommt der
   // Kunde keine Auswahl zu sehen.
   const artAusLink = query.get("art") || "";
+  // Projekt: unsere UUID im Pfad (Links aus der App) oder die HERO-Nummer als
+  // `?p=` (Mailvorlage, {{ProjectMatch.display_id}}).
+  const projektNr = query.get("p") || "";
+  const heroId = query.get("hp") || "";
   const ziel = useMemo(
-    () => ({ projectId: projectId || null, staffSlug: staffSlug || null }),
-    [projectId, staffSlug],
+    () => ({
+      projectId: projectId || null,
+      projectNr: projektNr || null,
+      heroId: heroId || null,
+      staffSlug: staffSlug || null,
+    }),
+    [projectId, projektNr, heroId, staffSlug],
   );
 
   const [ctx, setCtx] = useState<BookingContext | null>(null);
@@ -176,6 +185,8 @@ export default function BookingPage() {
     try {
       await createBooking({
         project: ziel.projectId,
+        projectNr: ziel.projectNr,
+        heroProject: ziel.heroId,
         staff: ziel.staffSlug,
         ruleSet: art.key,
         slot: { startsAt: selectedSlot.startsAt, endsAt: selectedSlot.endsAt },

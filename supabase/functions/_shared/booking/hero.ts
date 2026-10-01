@@ -142,6 +142,37 @@ export async function loadHeroContext(apiKey: string, heroProjectId: number): Pr
 }
 
 /**
+ * Projekt in HERO anhand der NUMMER finden.
+ *
+ * Gebraucht fuer Links aus HERO-Mailvorlagen: dort gibt es nur
+ * `{{ProjectMatch.display_id}}` (die reine Zahl, z.B. "1744") — eine
+ * Projekt-ID als Platzhalter existiert nicht. `relative_id` ist genau diese
+ * Zahl und trifft exakt; `search` waere unscharf.
+ *
+ * Wichtig fuer den Anwendungsfall: eine Terminmail geht oft raus, BEVOR das
+ * Projekt in Captfix existiert (das entsteht erst beim Aufmass). Ohne diesen
+ * Weg waere der Link in genau diesen Faellen wertlos.
+ */
+export async function heroProjectByNumber(
+  apiKey: string, nummer: string,
+): Promise<{ id: number; projectNumber: string; name: string | null } | null> {
+  const zahl = String(nummer || "").replace(/\D/g, "");
+  if (!zahl) return null;
+  const query = `query ByNr($nr: String) {
+    project_matches(relative_id: $nr) { id project_nr name }
+  }`;
+  try {
+    const data = await heroPost(apiKey, HERO_V7, query, { nr: zahl });
+    const pm = data?.project_matches?.[0];
+    if (!pm?.id) return null;
+    return { id: Number(pm.id), projectNumber: String(pm.project_nr || ""), name: pm.name ?? null };
+  } catch (e) {
+    console.warn("[hero] Projekt zur Nummer nicht ladbar:", (e as Error)?.message);
+    return null;
+  }
+}
+
+/**
  * Legt den Termin in HERO am Projekt an. Gibt die Event-ID zurueck oder null —
  * eine Buchung darf NICHT scheitern, nur weil HERO gerade nicht mag. Der
  * Termin steht dann bei uns und die interne Mail weist darauf hin.

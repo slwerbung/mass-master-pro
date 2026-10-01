@@ -58,7 +58,9 @@ async function stub(page: Page, opts: { onCreate?: (body: any) => any; arten?: a
       const action = url.searchParams.get("action");
       if (action === "context") {
         // Ohne `project` ist es der Dauerlink eines Mitarbeiters.
-        const basis = url.searchParams.get("project")
+        // `p` ist die HERO-Projektnummer: der Server loest sie auf, fuer die
+        // Seite ist das Ergebnis dasselbe wie bei unserer UUID.
+        const basis = (url.searchParams.get("project") || url.searchParams.get("p"))
           ? { ...kontext, staff: url.searchParams.get("staff") ? { name: "Langner", slug: "langner" } : null }
           : kontextOhneProjekt;
         return json(opts.arten ? { ...basis, appointments: opts.arten } : basis);
@@ -70,6 +72,7 @@ async function stub(page: Page, opts: { onCreate?: (body: any) => any; arten?: a
           action: "availability",
           ruleSet: url.searchParams.get("ruleSet"),
           project: url.searchParams.get("project"),
+          projectNr: url.searchParams.get("p"),
           staff: url.searchParams.get("staff"),
         });
         return json({ slots: slots(), addressLocated: true });
@@ -340,6 +343,28 @@ test.describe("Einladung eines Mitarbeiters", () => {
 
     await expect(page.getByRole("heading", { name: "Termin vereinbaren" })).toBeVisible();
     await expect(page.getByText("Montage vor Ort")).toBeVisible();
+  });
+
+  test("Link aus einer HERO-Vorlage: Nachname und Projektnummer gehen mit", async ({ page }) => {
+    // So sieht der Link aus, wenn HERO die Platzhalter gefuellt hat:
+    // {{Partner.last_name}} -> Langner, {{ProjectMatch.display_id}} -> 1744.
+    const gesendet = await stub(page);
+    await page.goto("/termin/m/Langner?art=aufmass_vor_ort&p=1744");
+
+    await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
+
+    const abfrage = gesendet.find((g) => g.action === "availability");
+    expect(abfrage.staff).toBe("Langner");     // Gross-/Kleinschreibung loest der Server auf
+    expect(abfrage.projectNr).toBe("1744");
+    expect(abfrage.project).toBe(null);
+
+    await page.getByRole("button", { name: "09:00" }).click();
+    await page.getByRole("button", { name: "Termin bestätigen" }).click();
+    await expect(page.getByText("Termin steht")).toBeVisible();
+
+    const buchung = gesendet.find((b) => b.action === "create");
+    expect(buchung.projectNr).toBe("1744");
+    expect(buchung.staff).toBe("Langner");
   });
 
   test("Projektlink mit Mitarbeiter: schickt beides mit", async ({ page }) => {

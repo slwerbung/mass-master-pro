@@ -76,13 +76,12 @@ export function BookingInviteDialog({ open, onOpenChange, projectId, projectNumb
     return () => { abgebrochen = true; };
   }, [open, projectId]);
 
-  async function kopieren() {
-    if (!gewaehlt) return;
+  async function kopieren(text: string, was: string) {
     try {
-      await navigator.clipboard.writeText(gewaehlt.link);
-      toast.success("Link kopiert");
+      await navigator.clipboard.writeText(text);
+      toast.success(`${was} kopiert`);
     } catch {
-      toast.error("Kopieren hat nicht geklappt – Link bitte markieren");
+      toast.error("Kopieren hat nicht geklappt – bitte markieren");
     }
   }
 
@@ -154,14 +153,35 @@ export function BookingInviteDialog({ open, onOpenChange, projectId, projectNumb
             {/* Der Link entsteht erst mit der Terminart — sonst wüsste er nicht,
                 worauf der Kunde landen soll. */}
             {gewaehlt ? (
-              <div className="space-y-1">
-                <Label className="text-xs">Link für „{gewaehlt.label}“</Label>
-                <div className="flex gap-2">
-                  <Input readOnly value={gewaehlt.link} className="text-xs"
-                    onFocus={(e) => e.currentTarget.select()} />
-                  <Button type="button" variant="outline" size="icon" onClick={kopieren} title="Link kopieren">
-                    <Copy className="h-4 w-4" />
-                  </Button>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Link für „{gewaehlt.label}“</Label>
+                  <div className="flex gap-2">
+                    <Input readOnly value={gewaehlt.link} className="text-xs"
+                      onFocus={(e) => e.currentTarget.select()} />
+                    <Button type="button" variant="outline" size="icon" title="Link kopieren"
+                      onClick={() => kopieren(gewaehlt.link, "Link")}>
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Fuer HERO-Mailvorlagen: Mitarbeiter und Projekt als
+                    Platzhalter, die HERO beim Versand fuellt. */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Für eine HERO-Mailvorlage</Label>
+                  <div className="flex gap-2">
+                    <Input readOnly value={gewaehlt.vorlage} className="text-xs font-mono"
+                      onFocus={(e) => e.currentTarget.select()} />
+                    <Button type="button" variant="outline" size="icon" title="Vorlagenlink kopieren"
+                      onClick={() => kopieren(gewaehlt.vorlage, "Vorlagenlink")}>
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Mitarbeiter und Projekt füllt HERO beim Versand aus. Einmal pro Terminart in
+                    die passende Vorlage einsetzen – danach braucht es diesen Dialog dafür nicht mehr.
+                  </p>
                 </div>
               </div>
             ) : (

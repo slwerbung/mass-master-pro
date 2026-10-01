@@ -35,14 +35,26 @@ export interface BookingContext {
   contact: { name: string; email: string | null; phone: string | null };
 }
 
-/** Beide Linkformen in einem Objekt — die Seite kennt nur dieses. */
+/**
+ * Alle Linkformen in einem Objekt — die Seite kennt nur dieses.
+ *
+ * `projectNr`/`heroId` gibt es, weil HERO unsere UUID nicht kennt: eine
+ * Mailvorlage kann nur `{{ProjectMatch.display_id}}` einsetzen.
+ */
 export interface BookingTarget {
   projectId?: string | null;
+  /** Projektnummer aus HERO ("1744" oder "WER-1744"). */
+  projectNr?: string | null;
+  /** HERO-Projekt-ID, falls sie mal als Platzhalter verfuegbar ist. */
+  heroId?: string | null;
+  /** Slug ODER Nachname des Mitarbeiters. */
   staffSlug?: string | null;
 }
 
 const ziel = (t: BookingTarget): Record<string, string> => ({
   ...(t.projectId ? { project: t.projectId } : {}),
+  ...(t.projectNr ? { p: t.projectNr } : {}),
+  ...(t.heroId ? { hp: t.heroId } : {}),
   ...(t.staffSlug ? { staff: t.staffSlug } : {}),
 });
 
@@ -104,6 +116,8 @@ export const loadAvailability = (
 
 export const createBooking = (payload: {
   project?: string | null;
+  projectNr?: string | null;
+  heroProject?: string | null;
   staff?: string | null;
   ruleSet: string;
   slot: { startsAt: string; endsAt: string };
@@ -138,10 +152,11 @@ export interface BookingInviteLinks {
   /** true = die Links tragen das Projekt mit. */
   mitProjekt: boolean;
   /**
-   * Buchbare Terminarten, jede mit FERTIGEM Link. Die Terminart waehlt der
-   * Mitarbeiter vor dem Verschicken — deshalb gibt es keinen Link "ohne Art".
+   * Buchbare Terminarten, jede mit zwei fertigen Links: `link` zum direkten
+   * Verschicken, `vorlage` mit HERO-Platzhaltern fuer eine Mailvorlage. Die
+   * Terminart waehlt der Mitarbeiter — deshalb gibt es keinen Link "ohne Art".
    */
-  appointments: (AppointmentType & { link: string })[];
+  appointments: (AppointmentType & { link: string; vorlage: string })[];
   neuAngelegt: boolean;
 }
 

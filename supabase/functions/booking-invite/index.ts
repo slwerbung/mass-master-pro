@@ -13,7 +13,9 @@
 //
 // Aktionen:
 //   POST { action:'link',  token, projectId? }
-//     -> Slug, Name und die buchbaren Terminarten, jede mit FERTIGEM Link.
+//     -> Slug, Name und die buchbaren Terminarten, jede mit zwei Links:
+//        `link`      fertig ausgefuellt (zum Verschicken aus der App)
+//        `vorlage`   mit HERO-Platzhaltern (zum Einsetzen in eine Mailvorlage)
 //   POST { action:'send',  token, email, ruleSet, projectId?, projectNumber?, note? }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -231,13 +233,30 @@ Deno.serve(async (req) => {
         : `${APP_BASE}/termin/m/${encodeURIComponent(slug)}?${art}`;
     };
 
+    /**
+     * Derselbe Link, aber fuer eine HERO-Mailvorlage: Mitarbeiter und Projekt
+     * stehen als Platzhalter drin und werden von HERO beim Versand gefuellt
+     * (im Testversand nachgewiesen).
+     *
+     * Warum `display_id` und nicht die Projekt-ID: eine ID gibt es als
+     * Platzhalter NICHT, nur die Nummer. `booking-api` loest sie auf — erst
+     * gegen unsere Projekte, dann gegen HERO.
+     * Warum `Partner.last_name`: der Nachname ist das Einzige, womit sich der
+     * Mitarbeiter aus einer Vorlage benennen laesst. Gesucht wird damit sowohl
+     * nach Slug als auch nach Anzeigename.
+     * Die Klammern bleiben hier UNKODIERT — so gehoeren sie in die Vorlage.
+     */
+    const vorlage = (artKey: string) =>
+      `${APP_BASE}/termin/m/{{Partner.last_name}}?art=${encodeURIComponent(artKey)}` +
+      `&p={{ProjectMatch.display_id}}`;
+
     if (body.action === "link") {
       return json({
         slug, name: res.staff.display_name,
         mitProjekt: !!projectId,
         // Jede Terminart mit ihrem eigenen Link: der Mitarbeiter waehlt, der
         // Kunde bekommt nur noch den Kalender dieser einen Art zu sehen.
-        appointments: arten.map((a) => ({ ...a, link: link(a.key) })),
+        appointments: arten.map((a) => ({ ...a, link: link(a.key), vorlage: vorlage(a.key) })),
         neuAngelegt: !!(res as any).angelegt,
       });
     }

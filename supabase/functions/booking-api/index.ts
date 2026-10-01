@@ -8,24 +8,33 @@
 //   * HERO-Fehler brechen eine Buchung NICHT ab. Der Termin steht dann bei uns
 //     und die interne Mail sagt, dass HERO fehlt.
 //
-// ZWEI Linkformen, beide vom Mitarbeiter verschickt:
+// Linkformen, alle vom Mitarbeiter verschickt:
 //   1. Dauerlink eines Mitarbeiters: /termin/m/<slug>  (`staff=<slug>`)
 //      Ohne Projektbezug. Der Kunde traegt Adresse und Kontakt selbst ein, der
 //      Termin gehoert dem Mitarbeiter, der eingeladen hat. In HERO entsteht ein
 //      Kalendereintrag ohne Projekt (gegen die echte API geprueft).
-//   2. Projektlink: /termin/<projekt>?m=<slug>  (`project=<uuid>&staff=<slug>`)
-//      Adresse, Kundenname und Kontakt kommen aus HERO, der Termin wird am
-//      HERO-Projekt eingetragen — und ebenfalls dem einladenden Mitarbeiter.
+//   2. Projektlink aus der App: /termin/<projekt>?m=<slug>
+//      (`project=<uuid>&staff=<slug>`) Adresse, Kundenname und Kontakt kommen
+//      aus HERO, der Termin wird am HERO-Projekt eingetragen.
+//   3. Link aus einer HERO-Mailvorlage — Platzhalter werden ersetzt, auch im
+//      Link (im Testversand nachgewiesen):
+//        /termin/m/{{Partner.last_name}}?art=<terminart>&p={{ProjectMatch.display_id}}
+//      HERO kennt unsere UUID nicht, und eine Projekt-ID gibt es als
+//      Platzhalter NICHT — nur `display_id`, und das ist die REINE Zahl
+//      ("1744", nicht "WER-1744"). Deshalb nimmt das Projekt auch `p`
+//      (Nummer, wird aufgeloest) oder `hp` (HERO-ID, falls je verfuegbar), und
+//      der Mitarbeiter darf als NACHNAME kommen.
 // Ohne `staff` rechnet die Verfuegbarkeit wie bisher ueber alle Mitarbeiter;
 // dadurch bleiben schon verschickte Projektlinks ohne `m` gueltig.
 //
 // verify_jwt=false: eigenes Modell, Zugriff via service_role.
 //
 // Aktionen:
-//   GET  ?action=context[&project=<uuid>][&staff=<slug>]   (eins von beiden Pflicht)
-//   GET  ?action=availability&from=&to=[&project=&staff=&ruleSet=&street=&zip=&city=]
-//   POST { action:'create', project?, staff?, ruleSet?, slot:{startsAt,endsAt},
-//          staffId, contact:{name,email,phone}, addressOverride?, hinweis? }
+//   GET  ?action=context[&project=<uuid>|&hp=<heroId>|&p=<nr>][&staff=<slug|nachname>]
+//   GET  ?action=availability&from=&to=[&project=&hp=&p=&staff=&ruleSet=&street=&zip=&city=]
+//   POST { action:'create', project?|heroProject?|projectNr?, staff?, ruleSet?,
+//          slot:{startsAt,endsAt}, staffId, contact:{name,email,phone},
+//          addressOverride?, hinweis? }
 //   POST { action:'cancel', cancelToken }
 //   POST { action:'staff-action', staffToken, mode:'cancel'|'reschedule' }
 
@@ -36,7 +45,7 @@ import { buildComputeInput } from "../_shared/booking/inputs.ts";
 import { createTravelProvider, type TravelCache } from "../_shared/booking/travel.ts";
 import {
   formatAddress, geocode, heroCreateAppointment, heroDeleteAppointment,
-  loadHeroContext, type GeocodeCache, type HeroAddress,
+  heroProjectByNumber, loadHeroContext, type GeocodeCache, type HeroAddress,
 } from "../_shared/booking/hero.ts";
 import type { Geo } from "../_shared/booking/types.ts";
 
@@ -158,22 +167,124 @@ async function resolveProject(db: DB, projectId: string) {
   };
 }
 
+/** Welche Projekt-Kennung ein Link mitbringen kann. */
+interface ProjektZiel { projectId: string; heroId: string; projectNr: string }
+
 /**
- * Mitarbeiter aus dem Dauerlink. Nur aktive — ein ausgeschiedener Kollege soll
- * nicht ueber einen alten Link weiter Termine bekommen.
+ * Projekt aus allem, was ein Link mitbringen kann:
+ *   * `project` — unsere UUID (Links aus der App)
+ *   * `hp`      — HERO-Projekt-ID, Platzhalter {{ProjectMatch.id}}
+ *   * `p`       — Projektnummer, Platzhalter {{ProjectMatch.display_id}}
+ *
+ * Die beiden Zusatzwege gibt es, weil HERO unsere UUID nicht kennt. Findet sich
+ * zu einer HERO-ID kein Projekt bei uns, wird trotzdem gebucht: Adresse und
+ * Kontakt kommen dann direkt aus HERO. In HERO stehen deutlich mehr Projekte
+ * als in Captfix — ein Link darf daran nicht scheitern.
  */
-async function aufloeseStaff(db: DB, slug: unknown) {
-  const key = typeof slug === "string" ? slug.trim().toLowerCase() : "";
-  if (!key) return null;
-  const { data } = await db.from("staff")
-    .select("id, display_name, booking_slug, employee_id, active")
-    .eq("booking_slug", key).eq("active", true).maybeSingle();
-  return data ?? null;
+async function aufloeseProjekt(db: DB, z: ProjektZiel, s: Settings) {
+  if (z.projectId) return await resolveProject(db, z.projectId);
+
+  const spalten = "id, project_number, customer_name, custom_fields";
+  const ausZeile = (d: any) => {
+    const roh = Number((d.custom_fields as any)?.__hero_project_id);
+    return {
+      id: d.id as string,
+      projectNumber: (d.project_number as string) || "",
+      customerName: (d.custom_fields as any)?.__customer_name || d.customer_name || "",
+      heroProjectId: Number.isFinite(roh) && roh > 0 ? roh : null,
+    };
+  };
+
+  if (z.heroId) {
+    const id = Number(z.heroId);
+    if (!Number.isFinite(id) || id <= 0) return null;
+    const { data } = await db.from("projects").select(spalten)
+      .eq("custom_fields->>__hero_project_id", String(id)).limit(1);
+    if (data && data.length > 0) return ausZeile(data[0]);
+    // Kein Projekt bei uns: nur HERO. Das reicht fuer Adresse, Kontakt und
+    // den Kalendereintrag am HERO-Projekt.
+    return { id: null as string | null, projectNumber: "", customerName: "", heroProjectId: id };
+  }
+
+  if (z.projectNr) {
+    // Platzhalter koennen Jokerzeichen enthalten; die gehoeren nicht ins LIKE.
+    const nr = z.projectNr.trim().replace(/[%_]/g, "");
+    if (!nr) return null;
+
+    // HERO liefert als `display_id` die REINE Zahl ("1744"), unsere Nummer
+    // heisst "WER-1744" und traegt oft noch einen Zusatz ("WER-1744 Banner").
+    // Deshalb vier Versuche, von genau nach grob.
+    const muster = /^\d+$/.test(nr)
+      ? [{ art: "eq", wert: nr }, { art: "like", wert: `%-${nr}` }, { art: "like", wert: `%-${nr} %` }]
+      : [{ art: "eq", wert: nr }, { art: "like", wert: `${nr} %` }];
+    for (const m of muster) {
+      const frage = db.from("projects").select(spalten);
+      const { data } = m.art === "eq"
+        ? await frage.eq("project_number", m.wert).limit(1)
+        : await frage.ilike("project_number", m.wert).limit(1);
+      if (data && data.length > 0) return ausZeile(data[0]);
+    }
+
+    // Nicht bei uns: dann in HERO nachsehen. Das ist der Normalfall, denn eine
+    // Terminmail geht meist raus, bevor zu dem Projekt in Captfix etwas
+    // existiert.
+    if (s.heroApiKey) {
+      const hero = await heroProjectByNumber(s.heroApiKey, nr);
+      if (hero) {
+        return {
+          id: null as string | null,
+          projectNumber: hero.projectNumber,
+          customerName: "",
+          heroProjectId: hero.id,
+        };
+      }
+    }
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * Mitarbeiter aus dem Link. Erlaubt ist der Slug ODER der Nachname — aus einer
+ * HERO-Vorlage kommt {{Partner.last_name}}, und HERO kennt unsere Slugs nicht.
+ * Deshalb wird die Eingabe mit denselben Regeln normalisiert wie beim Anlegen
+ * des Slugs (Umlaute aufgeloest), und zusaetzlich gegen den Anzeigenamen
+ * verglichen.
+ *
+ * Rueckgabe: der Mitarbeiter, `"inaktiv"` (es gibt ihn, aber er ist
+ * abgeschaltet — dann gilt der Link nicht mehr) oder null (unbekannter Name).
+ */
+async function aufloeseStaff(db: DB, wert: unknown): Promise<any | "inaktiv" | null> {
+  const roh = typeof wert === "string" ? wert.trim() : "";
+  if (!roh) return null;
+  const umlaute: Record<string, string> = {
+    "ä": "ae", "ö": "oe", "ü": "ue", "Ä": "ae", "Ö": "oe", "Ü": "ue", "ß": "ss",
+  };
+  const slug = roh.replace(/[äöüÄÖÜß]/g, (c) => umlaute[c] ?? c)
+    .toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const spalten = "id, display_name, booking_slug, employee_id, active";
+
+  if (slug) {
+    const { data } = await db.from("staff").select(spalten).eq("booking_slug", slug).maybeSingle();
+    if (data) return (data as any).active ? data : "inaktiv";
+  }
+  // Zweiter Versuch ueber den Anzeigenamen: ein Datensatz ohne Slug oder ein
+  // Name, der sich anders verkuerzt, soll trotzdem gefunden werden.
+  const { data: nachName } = await db.from("staff").select(spalten)
+    .ilike("display_name", roh.replace(/[%_]/g, "")).limit(1);
+  if (nachName && nachName.length > 0) {
+    return (nachName[0] as any).active ? nachName[0] : "inaktiv";
+  }
+  return null;
 }
 
 /** Adresse + Kontakt: HERO wenn verknuepft, sonst das lokale Projekt. */
-async function buildContext(db: DB, s: Settings, projectId: string) {
-  const proj = await resolveProject(db, projectId);
+async function buildContext(db: DB, s: Settings, ziel: ProjektZiel) {
+  const proj = await aufloeseProjekt(db, ziel, s);
   if (!proj) return { error: "Projekt nicht gefunden" as const };
 
   let address: HeroAddress | null = null;
@@ -314,6 +425,19 @@ async function entferneHeroTermin(s: Settings, ref: string | null): Promise<bool
 
 // ── Handler ──
 
+/** Projekt-Kennungen aus der Query (GET) bzw. dem Body (POST). */
+const zielAusQuery = (url: URL): ProjektZiel => ({
+  projectId: url.searchParams.get("project") || "",
+  heroId: url.searchParams.get("hp") || "",
+  projectNr: url.searchParams.get("p") || "",
+});
+const zielAusBody = (b: any): ProjektZiel => ({
+  projectId: String(b?.project || ""),
+  heroId: String(b?.heroProject || ""),
+  projectNr: String(b?.projectNr || ""),
+});
+const hatProjekt = (z: ProjektZiel) => !!(z.projectId || z.heroId || z.projectNr);
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   const db = sb();
@@ -326,12 +450,12 @@ Deno.serve(async (req) => {
 
       // Alles, was die Buchungsseite zum Start braucht.
       if (action === "context") {
-        const projectId = url.searchParams.get("project") || "";
+        const ziel = zielAusQuery(url);
         const slug = url.searchParams.get("staff") || "";
-        if (!projectId && !slug) return json({ error: "project oder staff erforderlich" }, 400);
+        if (!hatProjekt(ziel) && !slug) return json({ error: "project oder staff erforderlich" }, 400);
 
         const st = slug ? await aufloeseStaff(db, slug) : null;
-        if (slug && !st) return json({ error: "Dieser Einladungslink gilt nicht mehr" }, 404);
+        if (st === "inaktiv") return json({ error: "Dieser Einladungslink gilt nicht mehr" }, 404);
 
         const arten = await buchbareTerminarten(db);
         if (arten.length === 0) return json({ error: "Terminart nicht eingerichtet" }, 503);
@@ -339,11 +463,11 @@ Deno.serve(async (req) => {
 
         // Dauerlink ohne Projekt: wir wissen nichts ueber den Kunden. Adresse
         // und Kontakt traegt er selbst ein — deshalb beides leer statt geraten.
-        if (!projectId) {
+        if (!hatProjekt(ziel)) {
           return json({ project: null, staff: mitarbeiter, appointments: arten, address: null, contact: { name: "", email: null, phone: null } });
         }
 
-        const ctx = await buildContext(db, s, projectId);
+        const ctx = await buildContext(db, s, ziel);
         if ("error" in ctx) return json(ctx, 404);
 
         const addressText = formatAddress(ctx.address);
@@ -351,6 +475,7 @@ Deno.serve(async (req) => {
 
         return json({
           project: {
+            // null = Projekt steht nur in HERO, nicht bei uns.
             id: ctx.proj.id,
             number: ctx.proj.projectNumber,
             customerName: ctx.customerName,
@@ -368,11 +493,11 @@ Deno.serve(async (req) => {
       }
 
       if (action === "availability") {
-        const projectId = url.searchParams.get("project") || "";
+        const ziel = zielAusQuery(url);
         const slug = url.searchParams.get("staff") || "";
         const from = url.searchParams.get("from") || "";
         const to = url.searchParams.get("to") || "";
-        if ((!projectId && !slug) || !from || !to) {
+        if ((!hatProjekt(ziel) && !slug) || !from || !to) {
           return json({ error: "project oder staff, dazu from und to erforderlich" }, 400);
         }
         if (!istZeit(from) || !istZeit(to)) {
@@ -389,7 +514,7 @@ Deno.serve(async (req) => {
         const ruleSetKey = artFehler;
 
         const st = slug ? await aufloeseStaff(db, slug) : null;
-        if (slug && !st) return json({ error: "Dieser Einladungslink gilt nicht mehr" }, 404);
+        if (st === "inaktiv") return json({ error: "Dieser Einladungslink gilt nicht mehr" }, 404);
 
         // Hat der Kunde die Adresse geaendert, zaehlt seine Eingabe.
         const street = url.searchParams.get("street");
@@ -398,8 +523,8 @@ Deno.serve(async (req) => {
         let addressText: string;
         if (zip || street || city) {
           addressText = formatAddress({ street, zipcode: zip, city });
-        } else if (projectId) {
-          const ctx = await buildContext(db, s, projectId);
+        } else if (hatProjekt(ziel)) {
+          const ctx = await buildContext(db, s, ziel);
           if ("error" in ctx) return json(ctx, 404);
           addressText = formatAddress(ctx.address);
         } else {
@@ -407,7 +532,7 @@ Deno.serve(async (req) => {
         }
         const geo = addressText ? await geocode(addressText, routingKey(), geoCache(db)) : null;
 
-        const res = await availabilityFor(db, s, from, to, geo, ruleSetKey, st?.id ?? null);
+        const res = await availabilityFor(db, s, from, to, geo, ruleSetKey, st ? st.id : null);
         if ("error" in res) return json(res, 503);
         return json({ slots: res.slots, addressLocated: !!geo });
       }
@@ -462,11 +587,11 @@ Deno.serve(async (req) => {
 
       // ── Buchen ──
       if (body.action === "create") {
-        const projectId = String(body.project || "");
+        const ziel = zielAusBody(body);
         const slug = String(body.staff || "");
         const slot = body.slot || {};
         const contact = body.contact || {};
-        if ((!projectId && !slug) || !slot.startsAt || !slot.endsAt || !contact.name || !contact.email) {
+        if ((!hatProjekt(ziel) && !slug) || !slot.startsAt || !slot.endsAt || !contact.name || !contact.email) {
           return json({ error: "Pflichtfelder fehlen" }, 400);
         }
         if (!istZeit(slot.startsAt) || !istZeit(slot.endsAt)) {
@@ -480,11 +605,11 @@ Deno.serve(async (req) => {
         // entscheidet DER — nicht die staffId aus dem Formular, die sich
         // jeder ausdenken koennte.
         const eingeladenVon = slug ? await aufloeseStaff(db, slug) : null;
-        if (slug && !eingeladenVon) return json({ error: "Dieser Einladungslink gilt nicht mehr" }, 404);
+        if (eingeladenVon === "inaktiv") return json({ error: "Dieser Einladungslink gilt nicht mehr" }, 404);
         const staffId = eingeladenVon ? String(eingeladenVon.id) : String(body.staffId || "");
         if (!staffId) return json({ error: "Pflichtfelder fehlen" }, 400);
 
-        const geladen = projectId ? await buildContext(db, s, projectId) : null;
+        const geladen = hatProjekt(ziel) ? await buildContext(db, s, ziel) : null;
         if (geladen && "error" in geladen) return json(geladen, 404);
         const ctx = geladen && !("error" in geladen) ? geladen : null;
 
@@ -502,7 +627,7 @@ Deno.serve(async (req) => {
         const dayStart = DateTime.fromISO(slot.startsAt, { zone: "utc" }).setZone(TZ).startOf("day");
         const res = await availabilityFor(
           db, s, dayStart.toUTC().toISO()!, dayStart.plus({ days: 1 }).toUTC().toISO()!, geo, ruleSetKey,
-          eingeladenVon?.id ?? null,
+          eingeladenVon ? eingeladenVon.id : null,
         );
         if ("error" in res) return json(res, 503);
         const wanted = DateTime.fromISO(slot.startsAt, { zone: "utc" }).toISO();

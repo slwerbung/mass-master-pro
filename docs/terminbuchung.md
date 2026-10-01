@@ -125,6 +125,37 @@ Linkformen (`art` ist die gewählte Terminart):
 | --- | --- | --- |
 | Projektübersicht | `/termin/m/<slug>?art=<art>` | Der Kunde trägt beides selbst ein |
 | Projektansicht | `/termin/<projekt>?m=<slug>&art=<art>` | Aus HERO, editierbar |
+| **HERO-Mailvorlage** | `/termin/m/{{Partner.last_name}}?art=<art>&p={{ProjectMatch.display_id}}` | Aus HERO, editierbar |
+
+### Links aus HERO-Mailvorlagen (Okt. 2026)
+HERO ersetzt Platzhalter **auch innerhalb eines Links** — im Testversand
+nachgewiesen. Damit lässt sich jede Vorlage einmalig mit einem Terminlink
+versehen, und die App braucht es dafür danach nicht mehr.
+
+Zwei Dinge, die den ersten Versuch scheitern ließen:
+
+- **`{{ProjectMatch.id}}` gibt es nicht.** Platzhalter sind nur
+  `{{ProjectMatch.display_id}}` und `{{ProjectMatch.name}}`. Deshalb lief die
+  Projektzuordnung ins Leere. (Dieselbe Falle steckt noch in der Vorlage
+  „Angebot verschicken MIT FREIGABE", die `pid={{ProjectMatch.id}}` auf
+  `/hero-aktion` zeigt — in `automation_runs` steht dazu kein einziger Lauf.)
+- **`display_id` ist die REINE Zahl** („1744"), unsere `project_number` heißt
+  „WER-1744" und trägt oft einen Zusatz („WER-1744 Beschriftungen Büro").
+
+`aufloeseProjekt` in `booking-api` geht deshalb von genau nach grob:
+`project_number` exakt → `%-1744` → `%-1744 %` → und wenn das Projekt bei uns
+gar nicht existiert, über HERO (`project_matches(relative_id:"1744")`). Der
+letzte Schritt ist der **Normalfall**, nicht die Ausnahme: eine „Termin Findung
+vor Ort"-Mail geht raus, bevor das Captfix-Projekt angelegt ist. Adresse,
+Kundenname und Kontakt kommen dann direkt aus HERO, `booking.project_id` bleibt
+null und `hero_project_id` trägt den Bezug.
+
+Beim Mitarbeiter gibt es nur den Namen (`{{Partner.last_name}}` bzw.
+`{{ProjectPartner.last_name}}`), keine ID. `aufloeseStaff` normalisiert die
+Eingabe mit den Slug-Regeln (Umlaute aufgelöst, Groß-/Kleinschreibung egal) und
+vergleicht zusätzlich gegen `display_name`. Ein unbekannter Name rechnet über
+alle Mitarbeiter statt den Kunden auszusperren; ein **abgeschalteter**
+Mitarbeiter gibt dagegen 404 — dort ist der Link wirklich ungültig.
 
 **Die Terminart wählt der Mitarbeiter, nicht der Kunde** (Testlauf Okt. 2026:
 der Kunde kann mit „Aufmaß vor Ort" vs. „Kundentermin" nichts anfangen). Der
