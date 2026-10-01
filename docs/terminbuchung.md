@@ -155,6 +155,19 @@ Zwei Dinge, die den ersten Versuch scheitern ließen:
   trotzdem nicht, wirft die Buchungsseite das Segment weg (`echt()` in
   `BookingPage.tsx`) statt mit „Projekt nicht gefunden" abzuweisen — buchen
   bleibt möglich.
+- **Der erste Test der neuen Form endete im 404 — und zwar im eigenen.** Vercel
+  antwortete mit 200, und das Produktionsbundle trug die Route schon (beides
+  über `http_get` aus der Datenbank geprüft, weil die Sandbox nicht nach
+  draußen darf). Schuld war der Service Worker: wer die App schon besucht hat,
+  bekommt die precachte `index.html` mit dem **alten** JS, und dessen Router
+  kennt eine neue Route nicht. `/termin/**` steht deshalb jetzt in
+  `navigateFallbackDenylist` (`vite.config.ts`) — öffentliche Links aus Mails
+  holen ihr HTML immer frisch. Ein bereits installierter Service Worker
+  übernimmt das erst beim nächsten Laden (`skipWaiting`).
+  Die Route selbst ist zudem ein Sternchen (`/termin/m/*`): `pfadTeile()`
+  erkennt die Segmente am Inhalt (Zahl bzw. „WER-1744" = Projektnummer, sonst
+  Terminart), damit ein Segment zu viel oder in anderer Reihenfolge nicht
+  wieder im 404 endet.
 
 `aufloeseProjekt` in `booking-api` geht deshalb von genau nach grob:
 `project_number` exakt → `%-1744` → `%-1744 %` → und wenn das Projekt bei uns

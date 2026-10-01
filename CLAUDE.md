@@ -219,6 +219,12 @@ Kurze prägnante Messages auf Englisch:
   `/termin/m/{{Partner.last_name}}/{{ProjectMatch.display_id}}/<terminart>`
   – Terminart als festes Segment am Ende, damit der Link nicht auf einer
   Klammer endet.
+- Neue öffentliche Route + PWA = 404 aus dem Cache. Der Service Worker liefert
+  Wiederkehrern die precachte `index.html` mit dem ALTEN JS; eine neu
+  hinzugekommene Route landet dann im 404 der App, obwohl sie live ist. Routen
+  für Links aus Mails gehören deshalb in `navigateFallbackDenylist`
+  (`vite.config.ts`, bereits `/^\/termin\//` und `/^\/mister-x-live\//`).
+  Beim Prüfen daran denken: Vercel antwortet dabei mit 200.
 - Bei HERO-Kalendereinträgen ist `category_id` PFLICHT (`project_match_id`
   dagegen optional). Ohne Kategorie entsteht kein Termin.
 - In Kundenmails steht **nie** „Captfix" und nie nur ein Mitarbeiter-Nachname.
