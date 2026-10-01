@@ -392,6 +392,28 @@ test.describe("Einladung eines Mitarbeiters", () => {
     expect(buchung.staff).toBe("Langner");
   });
 
+  test("zusaetzliches Segment im Pfad: kein 404, Projekt bleibt erhalten", async ({ page }) => {
+    // Die Links stehen in HERO-Mailvorlagen. Was ein Editor oder ein
+    // Mailprogramm anhaengt, ist nicht vorhersehbar — es darf nur nicht im
+    // 404 der App enden.
+    const gesendet = await stub(page);
+    await page.goto("/termin/m/Langner/1744/aufmass_vor_ort/noch_was");
+
+    await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
+    const abfrage = gesendet.find((g) => g.action === "availability");
+    expect(abfrage.projectNr).toBe("1744");
+    expect(abfrage.ruleSet).toBe("aufmass_vor_ort");
+  });
+
+  test("Projektnummer mit Praefix im Pfad: wird als Projekt erkannt", async ({ page }) => {
+    const gesendet = await stub(page);
+    await page.goto("/termin/m/Langner/WER-1744/aufmass_vor_ort");
+
+    await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
+    const abfrage = gesendet.find((g) => g.action === "availability");
+    expect(abfrage.projectNr).toBe("WER-1744");
+  });
+
   test("ungefuellter Platzhalter im Pfad: buchen geht trotzdem", async ({ page }) => {
     // Ersetzt HERO die Projektnummer nicht, steht die Klammer selbst im Link.
     // Sie darf nicht als Projektnummer mitgeschickt werden — der Server wiese

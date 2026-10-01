@@ -50,7 +50,13 @@ export default defineConfig(() => ({
         // Bundle beim Installieren mit, obwohl es niemand ausser Silas
         // braucht. Die Seite laedt es bei Bedarf aus dem Netz nach.
         globIgnores: ["mister-x-live/**", "assets/react-pdf.browser-*.js"],
-        navigateFallbackDenylist: [/^\/mister-x-live\//],
+        // /termin/** sind oeffentliche Links aus Mails (Terminbuchung). Die
+        // muessen immer frisch aus dem Netz kommen: wer die App schon einmal
+        // besucht hat, bekaeme aus dem Precache die ALTE index.html samt altem
+        // JS — und eine neu hinzugekommene Route landet dann im 404 der App,
+        // obwohl sie live ist (genau so passiert, Okt. 2026). Offline nuetzt
+        // die Seite ohnehin nichts, sie rechnet serverseitig.
+        navigateFallbackDenylist: [/^\/mister-x-live\//, /^\/termin\//],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

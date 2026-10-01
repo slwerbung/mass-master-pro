@@ -3,8 +3,9 @@
 //                              Der Kunde traegt Adresse und Kontakt selbst ein.
 //   /termin/:projectId?m=slug  Mit Projekt: Adresse und Kontakt kommen aus HERO
 //                              und sind editierbar.
-//   /termin/m/:slug/:nr/:art   Dieselbe Sache fuer HERO-Mailvorlagen, alles im
-//                              PFAD. Grund siehe unten.
+//   /termin/m/<name>/<nr>/<art>  Dieselbe Sache fuer HERO-Mailvorlagen, alles
+//                              im PFAD. Grund siehe unten. Die Route ist ein
+//                              Sternchen, die Segmente erkennt `pfadTeile`.
 // In allen Faellen gehoert der Termin dem Mitarbeiter aus dem Link — wer
 // einlaedt, bekommt den Termin. Auch die Terminart steht im Link: die waehlt
 // der Mitarbeiter beim Einladen, nicht der Kunde. Ein alter Link ohne
@@ -64,19 +65,44 @@ const echt = (v: string | null | undefined): string => {
   return wert;
 };
 
+/**
+ * Die Segmente hinter `/termin/m/` auseinandernehmen.
+ *
+ * Erstes Segment ist immer der Mitarbeiter. Was danach kommt, wird am Inhalt
+ * erkannt statt an der Position: eine reine Zahl (oder „WER-1744") ist die
+ * Projektnummer, alles andere die Terminart. Grund: diese Links stehen in
+ * HERO-Mailvorlagen, und was ein Mailprogramm oder ein Vorlagen-Editor damit
+ * macht, ist nicht vorhersehbar. Ein Segment zu viel oder eines in anderer
+ * Reihenfolge darf nicht im 404 enden — eine falsch geratene Terminart fällt
+ * ohnehin durch, weil sie gegen die buchbaren Arten geprüft wird.
+ */
+function pfadTeile(rest: string): { slug: string; nr: string; art: string } {
+  const teile = rest.split("/").map(echt).filter(Boolean);
+  const slug = teile.shift() || "";
+  let nr = "";
+  let art = "";
+  for (const t of teile) {
+    if (!nr && /^[A-Za-z]{0,5}-?\d+$/.test(t)) nr = t;
+    else if (!art) art = t;
+  }
+  return { slug, nr, art };
+}
+
 export default function BookingPage() {
-  // Drei Routen auf derselben Seite: /termin/:projectId, /termin/m/:slug und
-  // /termin/m/:slug/:nr/:art (Vorlagenform, alles im Pfad).
-  const { projectId = "", slug = "", nr = "", art: artImPfad = "" } = useParams();
+  // Zwei Routen auf derselben Seite: /termin/:projectId und /termin/m/*.
+  // Hinter dem Sternchen stehen Mitarbeiter, Projektnummer und Terminart
+  // (Vorlagenform, alles im Pfad) — in beliebiger Zahl.
+  const { projectId = "", "*": rest = "" } = useParams();
   const [query] = useSearchParams();
+  const pfad = useMemo(() => pfadTeile(rest), [rest]);
   // Der Mitarbeiter steckt entweder im Pfad (Dauerlink) oder in `?m=`.
-  const staffSlug = echt(slug) || query.get("m") || "";
+  const staffSlug = pfad.slug || query.get("m") || "";
   // Die Terminart kommt aus der Einladung. Steht sie im Link, bekommt der
   // Kunde keine Auswahl zu sehen.
-  const artAusLink = echt(artImPfad) || echt(query.get("art"));
+  const artAusLink = pfad.art || echt(query.get("art"));
   // Projekt: unsere UUID im Pfad (Links aus der App), die HERO-Nummer als
   // Pfadsegment (Mailvorlage) oder als `?p=` (aeltere Vorlagen).
-  const projektNr = echt(nr) || echt(query.get("p"));
+  const projektNr = pfad.nr || echt(query.get("p"));
   const heroId = echt(query.get("hp"));
   const ziel = useMemo(
     () => ({
