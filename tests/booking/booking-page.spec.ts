@@ -318,6 +318,30 @@ test.describe("Einladung eines Mitarbeiters", () => {
     expect(buchung.project).toBe(null);
   });
 
+  test("Terminart aus dem Link: der Kunde waehlt sie nicht mehr", async ({ page }) => {
+    // Zwei Arten verfuegbar, aber die Einladung nennt eine - dann darf keine
+    // Auswahl erscheinen und auch kein Weg zurueck dazu.
+    const gesendet = await stub(page, { arten: [AUFMASS, MONTAGE] });
+    await page.goto("/termin/m/langner?art=montage_vor_ort");
+
+    await expect(page.getByRole("heading", { name: "Montage vor Ort" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Termin vereinbaren" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "andere Terminart" })).toHaveCount(0);
+
+    const abfrage = gesendet.find((g) => g.action === "availability");
+    expect(abfrage.ruleSet).toBe("montage_vor_ort");
+    expect(abfrage.staff).toBe("langner");
+  });
+
+  test("unbekannte Terminart im Link: dann darf der Kunde doch waehlen", async ({ page }) => {
+    // Eine abgeschaltete Terminart soll nicht in eine leere Seite fuehren.
+    await stub(page, { arten: [AUFMASS, MONTAGE] });
+    await page.goto("/termin/m/langner?art=gibt_es_nicht_mehr");
+
+    await expect(page.getByRole("heading", { name: "Termin vereinbaren" })).toBeVisible();
+    await expect(page.getByText("Montage vor Ort")).toBeVisible();
+  });
+
   test("Projektlink mit Mitarbeiter: schickt beides mit", async ({ page }) => {
     const gesendet = await stub(page);
     await page.goto(`/termin/${PROJEKT}?m=langner`);

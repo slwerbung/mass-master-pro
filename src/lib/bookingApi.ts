@@ -20,8 +20,8 @@ export interface AppointmentType {
   key: string;
   label: string;
   durationMinutes: number;
-  formFields: unknown[];
-  bookingWindowDays: number;
+  formFields?: unknown[];
+  bookingWindowDays?: number;
 }
 
 export interface BookingContext {
@@ -135,10 +135,13 @@ export const staffBookingAction = (staffToken: string, mode: "cancel" | "resched
 export interface BookingInviteLinks {
   slug: string;
   name: string;
-  /** Dauerlink des Mitarbeiters, ohne Projektbezug. */
-  linkAllgemein: string;
-  /** Mitarbeiter UND Projekt. Null, wenn kein Projekt uebergeben wurde. */
-  linkProjekt: string | null;
+  /** true = die Links tragen das Projekt mit. */
+  mitProjekt: boolean;
+  /**
+   * Buchbare Terminarten, jede mit FERTIGEM Link. Die Terminart waehlt der
+   * Mitarbeiter vor dem Verschicken — deshalb gibt es keinen Link "ohne Art".
+   */
+  appointments: (AppointmentType & { link: string })[];
   neuAngelegt: boolean;
 }
 
@@ -155,7 +158,9 @@ export const loadInviteLinks = (token: string, projectId?: string | null) =>
 export const sendBookingInvite = (payload: {
   token: string;
   email: string;
+  /** Pflicht: welche Terminart eingeladen wird. */
+  ruleSet: string;
   projectId?: string | null;
   projectNumber?: string | null;
   note?: string;
-}) => invite<{ ok: boolean; email: string; link: string; subject: string }>({ action: "send", ...payload });
+}) => invite<{ ok: boolean; email: string; link: string; subject: string; ruleSet: string }>({ action: "send", ...payload });

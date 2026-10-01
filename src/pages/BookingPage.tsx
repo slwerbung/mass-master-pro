@@ -4,8 +4,9 @@
 //   /termin/:projectId?m=slug  Mit Projekt: Adresse und Kontakt kommen aus HERO
 //                              und sind editierbar.
 // In beiden Faellen gehoert der Termin dem Mitarbeiter aus dem Link — wer
-// einlaedt, bekommt den Termin. Ein alter Projektlink ohne `m` funktioniert
-// weiter und rechnet dann ueber alle Mitarbeiter.
+// einlaedt, bekommt den Termin. `?art=<terminart>` legt auch die Terminart
+// fest: die waehlt der Mitarbeiter beim Einladen, nicht der Kunde. Ein alter
+// Link ohne `m`/`art` funktioniert weiter und laesst dann waehlen.
 //
 // Aufmachung an Calendly angelehnt (so gewuenscht): links steht, worum es geht,
 // rechts waehlt man Tag und Uhrzeit, danach die Bestaetigung.
@@ -42,6 +43,9 @@ export default function BookingPage() {
   const [query] = useSearchParams();
   // Der Mitarbeiter steckt entweder im Pfad (Dauerlink) oder in `?m=`.
   const staffSlug = slug || query.get("m") || "";
+  // Die Terminart kommt aus der Einladung. Steht sie im Link, bekommt der
+  // Kunde keine Auswahl zu sehen.
+  const artAusLink = query.get("art") || "";
   const ziel = useMemo(
     () => ({ projectId: projectId || null, staffSlug: staffSlug || null }),
     [projectId, staffSlug],
@@ -84,7 +88,10 @@ export default function BookingPage() {
       .then((c) => {
         if (!alive) return;
         setCtx(c);
-        if (c.appointments.length === 1) setArt(c.appointments[0]);
+        // Terminart aus dem Link, sonst: bei genau einer Art direkt diese.
+        const ausLink = artAusLink ? c.appointments.find((a) => a.key === artAusLink) : null;
+        if (ausLink) setArt(ausLink);
+        else if (c.appointments.length === 1) setArt(c.appointments[0]);
         setStreet(c.address?.street || "");
         setZip(c.address?.zipcode || "");
         setCity(c.address?.city || "");
@@ -95,7 +102,7 @@ export default function BookingPage() {
       })
       .catch((e) => alive && setLoadError(e.message || "Die Buchungsseite konnte nicht geladen werden."));
     return () => { alive = false; };
-  }, [ziel]);
+  }, [ziel, artAusLink]);
 
   // ── Freie Zeiten fuer den sichtbaren Monat ──
   const range = useMemo(() => {
@@ -318,7 +325,9 @@ export default function BookingPage() {
               </div>
             </div>
 
-            {ctx.appointments.length > 1 && (
+            {/* Nur wer selbst gewaehlt hat, darf zurueck. Steht die Terminart
+                im Einladungslink, ist sie vorgegeben. */}
+            {!artAusLink && ctx.appointments.length > 1 && (
               <Button
                 variant="ghost" size="sm" className="w-full -ml-1 justify-start"
                 onClick={() => { setArt(null); setSelectedSlot(null); setSlots([]); }}
@@ -408,7 +417,7 @@ export default function BookingPage() {
                       <p>In diesem Monat ist nichts frei. Bitte im nächsten Monat schauen.</p>
                       {slots.length === 0 && (
                         <p>
-                          {ctx.appointments.length > 1
+                          {!artAusLink && ctx.appointments.length > 1
                             ? "Falls hier dauerhaft nichts frei ist: oben eine andere Terminart wählen oder einfach auf unsere E-Mail antworten."
                             : "Falls hier dauerhaft nichts frei ist: einfach auf unsere E-Mail antworten, wir finden gemeinsam einen Termin."}
                         </p>

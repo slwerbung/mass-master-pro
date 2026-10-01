@@ -26,7 +26,10 @@ const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 const APP_BASE = "https://captfix.app";
-const FROM = "Captfix <notifications@captfix.app>";
+// Die Mailadresse muss bei captfix.app bleiben (dort liegt die bei Resend
+// verifizierte Domain), der ANZEIGENAME aber nicht: im Postfach des Kunden
+// steht unsere Firma. "Captfix" sagt ihm nichts und kostet Vertrauen.
+const MAIL_ABSENDER = "notifications@captfix.app";
 const MAX_ATTEMPTS = 5;
 const BATCH = 20;
 const sb = () => createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -34,19 +37,19 @@ const sb = () => createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPAB
 interface Attachment { filename: string; content: string; content_type?: string }
 
 async function sendMail(
-  apiKey: string, to: string, subject: string, html: string, attachments?: Attachment[],
+  apiKey: string, from: string, to: string, subject: string, html: string, attachments?: Attachment[],
 ): Promise<void> {
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: FROM, to: [to], subject, html, ...(attachments?.length ? { attachments } : {}) }),
+    body: JSON.stringify({ from, to: [to], subject, html, ...(attachments?.length ? { attachments } : {}) }),
   });
   if (!resp.ok) throw new Error(`Resend ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
 }
 
 /** Der Kalendereintrag. Gleiche UID wie bei der Einladung, damit eine Absage
  *  im Kalender den bestehenden Termin trifft statt einen zweiten anzulegen. */
-function icsFor(kind: MailKind, bk: any, label: string, address: string | null): Attachment | null {
+function icsFor(kind: MailKind, bk: any, label: string, address: string | null, firma: string): Attachment | null {
   if (kind !== "confirmation" && kind !== "cancellation") return null;
   const text = buildIcs({
     uid: `booking-${bk.id}@captfix.app`,
@@ -54,7 +57,7 @@ function icsFor(kind: MailKind, bk: any, label: string, address: string | null):
     end: new Date(bk.ends_at),
     summary: `${label}${bk.customer_name ? ` – ${bk.customer_name}` : ""}`,
     location: address ?? undefined,
-    organizer: { name: "SL WERBUNG", email: "info@slwerbung.de" },
+    organizer: { name: firma, email: "info@slwerbung.de" },
     method: kind === "cancellation" ? "CANCEL" : "REQUEST",
     sequence: kind === "cancellation" ? 1 : 0,
   });
@@ -70,7 +73,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
 
     const { data: cfgRows } = await db.from("app_config").select("key, value")
-      .in("key", ["booking_poll_secret", "booking_notify_internal", "notification_global_email"]);
+      .in("key", ["booking_poll_secret", "booking_notify_internal", "notification_global_email", "legal_info"]);
     const cfg = new Map((cfgRows ?? []).map((r: any) => [r.key, r.value]));
 
     const secret = cfg.get("booking_poll_secret");
@@ -86,6 +89,15 @@ Deno.serve(async (req) => {
     if (!resendKey) return json({ error: "RESEND_API_KEY ist nicht gesetzt" }, 500);
 
     const internal = String(cfg.get("booking_notify_internal") || cfg.get("notification_global_email") || "").trim();
+
+    // Firmenname aus dem Adminmenue: Fusszeile der Mail und Anzeigename des
+    // Absenders. Steht dort nichts, bleibt der Betriebsname als Vorgabe.
+    let firma = "SL WERBUNG";
+    try {
+      const info = JSON.parse(String(cfg.get("legal_info") || "{}"));
+      if (info?.companyName && String(info.companyName).trim()) firma = String(info.companyName).trim();
+    } catch { /* Vorgabe behalten */ }
+    const from = `${firma} <${MAIL_ABSENDER}>`;
 
     // Faellige Zeilen. `send_after` steuert die Erinnerung, `attempts` sorgt
     // dafuer, dass eine dauerhaft kaputte Adresse nicht ewig wiederholt wird.
@@ -149,6 +161,7 @@ Deno.serve(async (req) => {
           bookingUrl: bk.project_id ? `${APP_BASE}/termin/${bk.project_id}` : undefined,
           staffCancelUrl: bk.staff_token ? `${APP_BASE}/termin/intern/${bk.staff_token}?mode=cancel` : undefined,
           staffRescheduleUrl: bk.staff_token ? `${APP_BASE}/termin/intern/${bk.staff_token}?mode=reschedule` : undefined,
+          companyName: firma,
         };
 
         // Projektnummer nur holen, wenn es ein Projekt gibt.
@@ -159,8 +172,8 @@ Deno.serve(async (req) => {
         }
 
         const { subject, html } = buildBookingMail(kind, info);
-        const ics = icsFor(kind, bk, label, info.address);
-        await sendMail(resendKey, empfaenger, subject, html, ics ? [ics] : undefined);
+        const ics = icsFor(kind, bk, label, info.address, firma);
+        await sendMail(resendKey, from, empfaenger, subject, html, ics ? [ics] : undefined);
 
         await db.from("notification").update({ sent_at: new Date().toISOString(), last_error: null }).eq("id", n.id);
         sent++;

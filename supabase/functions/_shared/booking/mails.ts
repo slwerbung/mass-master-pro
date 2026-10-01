@@ -28,6 +28,13 @@ export interface MailInfo {
   /** Fehlt HERO, steht das in der internen Mail. */
   heroError?: string | null;
   timezone?: string;
+  /**
+   * Firmenname aus `legal_info`. Er steht in der Fusszeile und macht die
+   * Absenderseite aus. Absichtlich NICHT "Captfix": der Kunde kennt unsere
+   * Firma, nicht das Werkzeug dahinter — ein fremder Name in einer
+   * Terminmail kostet Vertrauen.
+   */
+  companyName?: string | null;
 }
 
 const TZ = "Europe/Berlin";
@@ -59,10 +66,10 @@ function button(url: string, text: string, color = "#111827"): string {
     `background:${color};color:#ffffff;text-decoration:none;font-weight:600">${escapeHtml(text)}</a>`;
 }
 
-function shell(inner: string): string {
+function huelle(inner: string, companyName: string): string {
   return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;` +
     `font-size:15px;line-height:1.55;color:#111827;max-width:560px">${inner}` +
-    `<p style="margin-top:28px;color:#6b7280;font-size:13px">SL WERBUNG &middot; Aufmass-Termine &uuml;ber Captfix</p></div>`;
+    `<p style="margin-top:28px;color:#6b7280;font-size:13px">${escapeHtml(companyName)}</p></div>`;
 }
 
 /** Termin-Steckbrief, in jeder Mail gleich aufgebaut. */
@@ -88,6 +95,8 @@ export function buildBookingMail(kind: MailKind, info: MailInfo): { subject: str
   const kurz = dt(info.start, tz).setLocale("de").toFormat("dd.LL.yyyy HH:mm");
   const name = escapeHtml(info.customerName || "");
   const anrede = name ? `Hallo ${name},` : "Hallo,";
+  const firma = String(info.companyName ?? "").trim() || "SL WERBUNG";
+  const shell = (inner: string) => huelle(inner, firma);
 
   if (kind === "confirmation") {
     return {

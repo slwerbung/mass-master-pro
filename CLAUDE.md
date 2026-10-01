@@ -150,7 +150,9 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
   mit .ics, interne Benachrichtigung, Erinnerung, Absage). pg_cron alle 5 Min
 - `booking-invite` – Terminlink + Einladungsmail, verlangt einen
   **Mitarbeiter**-Token. Wer einlaedt, bekommt den Termin; der Admin-Login
-  kann nicht einladen (kein Mitarbeiter, keine HERO-Zuordnung)
+  kann nicht einladen (kein Mitarbeiter, keine HERO-Zuordnung). `link` gibt
+  jede buchbare Terminart mit fertigem Link zurueck, `send` verlangt `ruleSet`
+  – die Terminart waehlt der Mitarbeiter, nicht der Kunde
 
 ## Offene Baustellen
 1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)
@@ -209,3 +211,7 @@ Kurze prägnante Messages auf Englisch:
   sonst steht in der Mail etwas anderes als im Kalender.
 - Bei HERO-Kalendereinträgen ist `category_id` PFLICHT (`project_match_id`
   dagegen optional). Ohne Kategorie entsteht kein Termin.
+- In Kundenmails steht **nie** „Captfix" und nie nur ein Mitarbeiter-Nachname.
+  Branding ist der Firmenname aus `legal_info` (Fußzeile, Anzeigename des
+  Absenders, ORGANIZER im .ics). Die Absenderadresse bleibt
+  `notifications@captfix.app` – dort liegt die bei Resend verifizierte Domain.

@@ -2,17 +2,19 @@
 // oder Admin-Token.
 //
 // Der Kern der Entscheidung: die Einladung geht von einem MITARBEITER aus, und
-// wer sie verschickt, bekommt den Termin. Deshalb steckt im Link immer ein
-// Mitarbeiter:
-//   * allgemein:    https://captfix.app/termin/m/<slug>
-//   * mit Projekt:  https://captfix.app/termin/<projekt>?m=<slug>
-// Der Slug ist dauerhaft — er darf in einer Mailsignatur stehen und mehrfach
-// benutzt werden. Rechnen tut ohnehin `booking-api`: dieser Dienst stellt nur
-// Link und Mail bereit und kann keine Termine anlegen.
+// wer sie verschickt, bekommt den Termin. Auch die TERMINART waehlt der
+// Mitarbeiter, nicht der Kunde — er weiss, worum es geht. Deshalb stehen beide
+// im Link:
+//   * allgemein:    https://captfix.app/termin/m/<slug>?art=<terminart>
+//   * mit Projekt:  https://captfix.app/termin/<projekt>?m=<slug>&art=<terminart>
+// Der Link entsteht erst, wenn die Terminart gewaehlt ist. Der Slug selbst ist
+// dauerhaft. Rechnen tut ohnehin `booking-api`: dieser Dienst stellt nur Link
+// und Mail bereit und kann keine Termine anlegen.
 //
 // Aktionen:
 //   POST { action:'link',  token, projectId? }
-//   POST { action:'send',  token, email, projectId?, projectNumber?, note? }
+//     -> Slug, Name und die buchbaren Terminarten, jede mit FERTIGEM Link.
+//   POST { action:'send',  token, email, ruleSet, projectId?, projectNumber?, note? }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
@@ -101,6 +103,26 @@ async function freierSlug(db: any, basis: string): Promise<string> {
   return `${start}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+/**
+ * Die buchbaren Terminarten — dieselbe Regel wie in `booking-api`: aktiv UND
+ * ihre Kategorie als buchbar markiert. Sortiert nach Dauer.
+ *
+ * Die Liste kommt vom Server, damit im Dialog nichts auftaucht, was gar nicht
+ * buchbar ist (der Kunde liefe sonst in einen leeren Kalender).
+ */
+async function buchbareTerminarten(db: any): Promise<{ key: string; label: string; durationMinutes: number }[]> {
+  const { data } = await db.from("rule_set")
+    .select("key, label, duration_minutes, category_id").eq("active", true);
+  const arten = data ?? [];
+  if (arten.length === 0) return [];
+  const { data: cats } = await db.from("appointment_category").select("id, is_bookable");
+  const buchbar = new Map((cats ?? []).map((c: any) => [c.id, c.is_bookable]));
+  return arten
+    .filter((r: any) => buchbar.get(r.category_id) === true)
+    .sort((a: any, b: any) => a.duration_minutes - b.duration_minutes)
+    .map((r: any) => ({ key: r.key, label: r.label, durationMinutes: r.duration_minutes }));
+}
+
 /** Firmenname fuer die Mail. */
 async function firma(db: any): Promise<string> {
   const { data } = await db.from("app_config").select("value").eq("key", "legal_info").maybeSingle();
@@ -113,30 +135,43 @@ async function firma(db: any): Promise<string> {
   return "SL WERBUNG";
 }
 
+/**
+ * Die Einladungsmail.
+ *
+ * Zwei Dinge bewusst so:
+ *   * KEIN Mitarbeitername. In der Mail stand vorher nur der Nachname
+ *     ("Langner möchte…"), und das wirkt auf einen Kunden befremdlich. Es
+ *     schreibt die Firma, nicht eine Einzelperson.
+ *   * Das Branding ist UNSERE Firma, nicht "Captfix". Der Kunde kennt den
+ *     Namen des Werkzeugs nicht; er würde die Mail eher für Spam halten.
+ */
 function baueMail(opts: {
-  companyName: string; absender: string; link: string;
+  companyName: string; link: string; artLabel: string;
   projectNumber: string | null; note: string;
 }) {
   const bezug = opts.projectNumber
     ? ` zu Ihrem Projekt <strong>${escapeHtml(opts.projectNumber)}</strong>`
     : "";
   const subject = opts.projectNumber
-    ? `Terminvereinbarung – ${opts.companyName} · Projekt ${opts.projectNumber}`
-    : `Terminvereinbarung – ${opts.companyName}`;
+    ? `Terminvorschlag: ${opts.artLabel} · Projekt ${opts.projectNumber}`
+    : `Terminvorschlag: ${opts.artLabel}`;
   const noteBlock = opts.note.trim()
     ? `<p style="margin:16px 0;white-space:pre-wrap">${escapeHtml(opts.note.trim())}</p>`
     : "";
   const html = `
-    <div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:560px;line-height:1.5">
+    <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827;max-width:560px;line-height:1.55;font-size:15px">
+      <p style="font-weight:600;font-size:17px;margin:0 0 18px">${escapeHtml(opts.companyName)}</p>
       <p>Guten Tag,</p>
-      <p><strong>${escapeHtml(opts.absender)}</strong> von <strong>${escapeHtml(opts.companyName)}</strong> möchte${bezug} einen Termin mit Ihnen vereinbaren.</p>
+      <p>gerne vereinbaren wir${bezug} einen Termin mit Ihnen: <strong>${escapeHtml(opts.artLabel)}</strong>.
+         Den Zeitpunkt können Sie selbst aussuchen.</p>
       ${noteBlock}
-      <p style="margin:16px 0"><strong>So geht's:</strong> Link öffnen, Terminart und eine freie Zeit auswählen, Kontaktdaten prüfen – fertig. Die Bestätigung kommt sofort per E-Mail, mit Kalendereintrag zum Hinzufügen.</p>
+      <p style="margin:16px 0">Link öffnen, eine freie Zeit wählen, Kontaktdaten prüfen – fertig.
+         Die Bestätigung kommt sofort per E-Mail, mit Kalendereintrag zum Hinzufügen.</p>
       <p style="margin:24px 0">
-        <a href="${opts.link}" style="background:#0E73E8;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:600">Termin auswählen</a>
+        <a href="${opts.link}" style="display:inline-block;background:#111827;color:#ffffff;padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:600">Freie Zeit auswählen</a>
       </p>
-      <p style="font-size:13px;color:#666">Link: ${opts.link}</p>
-      <p style="margin-top:20px">Mit freundlichen Grüßen<br>${escapeHtml(opts.absender)}<br>${escapeHtml(opts.companyName)}</p>
+      <p style="font-size:13px;color:#6b7280">Falls der Knopf nicht geht: ${opts.link}</p>
+      <p style="margin-top:22px">Mit freundlichen Grüßen<br>${escapeHtml(opts.companyName)}</p>
     </div>`;
   return { subject, html };
 }
@@ -185,15 +220,24 @@ Deno.serve(async (req) => {
     }
 
     const projectId = String(body.projectId || "").trim();
-    const linkAllgemein = `${APP_BASE}/termin/m/${encodeURIComponent(slug)}`;
-    const linkProjekt = projectId
-      ? `${APP_BASE}/termin/${encodeURIComponent(projectId)}?m=${encodeURIComponent(slug)}`
-      : null;
+    const arten = await buchbareTerminarten(db);
+    if (arten.length === 0) return json({ error: "Es ist keine Terminart buchbar (Adminmenü → Termine)." }, 503);
+
+    /** Der fertige Link zu EINER Terminart. Nur hier wird er gebaut. */
+    const link = (artKey: string) => {
+      const art = `art=${encodeURIComponent(artKey)}`;
+      return projectId
+        ? `${APP_BASE}/termin/${encodeURIComponent(projectId)}?m=${encodeURIComponent(slug)}&${art}`
+        : `${APP_BASE}/termin/m/${encodeURIComponent(slug)}?${art}`;
+    };
 
     if (body.action === "link") {
       return json({
         slug, name: res.staff.display_name,
-        linkAllgemein, linkProjekt,
+        mitProjekt: !!projectId,
+        // Jede Terminart mit ihrem eigenen Link: der Mitarbeiter waehlt, der
+        // Kunde bekommt nur noch den Kalender dieser einen Art zu sehen.
+        appointments: arten.map((a) => ({ ...a, link: link(a.key) })),
         neuAngelegt: !!(res as any).angelegt,
       });
     }
@@ -202,27 +246,36 @@ Deno.serve(async (req) => {
       const email = String(body.email || "").trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "Ungültige E-Mail-Adresse" }, 400);
 
+      // Die Terminart ist Pflicht: sie waehlt der Mitarbeiter, nicht der Kunde.
+      const art = arten.find((a) => a.key === String(body.ruleSet || ""));
+      if (!art) return json({ error: "Bitte eine buchbare Terminart angeben" }, 400);
+
       const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
       if (!RESEND_API_KEY) return json({ error: "RESEND_API_KEY ist nicht konfiguriert" }, 500);
 
       const companyName = await firma(db);
       const projectNumber = projectId ? (String(body.projectNumber || "").trim() || null) : null;
-      const link = linkProjekt ?? linkAllgemein;
+      const url = link(art.key);
       const { subject, html } = baueMail({
-        companyName, absender: String(res.name || res.staff.display_name),
-        link, projectNumber, note: String(body.note || ""),
+        companyName, link: url, artLabel: art.label,
+        projectNumber, note: String(body.note || ""),
       });
 
+      // Mailadresse bleibt bei captfix.app (dort liegt die verifizierte
+      // Domain), der Anzeigename ist unsere Firma.
       const mail = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ from: "Captfix <notifications@captfix.app>", to: [email], subject, html }),
+        body: JSON.stringify({
+          from: `${companyName} <notifications@captfix.app>`,
+          to: [email], subject, html,
+        }),
       });
       if (!mail.ok) {
         const txt = await mail.text();
         return json({ error: `Mailversand fehlgeschlagen: ${txt.slice(0, 200)}` }, 502);
       }
-      return json({ ok: true, email, link, subject });
+      return json({ ok: true, email, link: url, subject, ruleSet: art.key });
     }
 
     return json({ error: "Unbekannte Aktion" }, 400);

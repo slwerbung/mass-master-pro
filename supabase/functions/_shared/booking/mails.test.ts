@@ -125,3 +125,35 @@ describe("Erinnerung", () => {
     expect(mail.html).toContain("tok-abc");
   });
 });
+
+// Der Kunde kennt unsere Firma, nicht das Werkzeug dahinter. Stand in der Mail
+// ein fremder Produktname, hielt er sie fuer Spam.
+describe("Branding", () => {
+  const arten = ["confirmation", "reminder", "cancellation", "reschedule", "internal_new"] as const;
+
+  it("nennt in der Fusszeile die hinterlegte Firma", () => {
+    for (const kind of arten) {
+      const { html } = buildBookingMail(kind, { ...info, companyName: "Muster Werbetechnik GmbH" });
+      expect(html).toContain("Muster Werbetechnik GmbH");
+    }
+  });
+
+  it("nennt nirgends das Werkzeug", () => {
+    for (const kind of arten) {
+      const { html, subject } = buildBookingMail(kind, { ...info, companyName: "Muster Werbetechnik GmbH" });
+      expect(html).not.toContain("Captfix");
+      expect(subject).not.toContain("Captfix");
+    }
+  });
+
+  it("maskiert einen Firmennamen mit Sonderzeichen", () => {
+    const { html } = buildBookingMail("confirmation", { ...info, companyName: 'Meier & "Sohn"' });
+    expect(html).toContain("Meier &amp; &quot;Sohn&quot;");
+    expect(html).not.toContain('"Sohn"');
+  });
+
+  it("faellt ohne Angabe auf den Betriebsnamen zurueck", () => {
+    const { html } = buildBookingMail("confirmation", { ...info, companyName: "  " });
+    expect(html).toContain("SL WERBUNG");
+  });
+});

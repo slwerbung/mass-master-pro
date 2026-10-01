@@ -112,23 +112,25 @@ ist kein Mitarbeiter, hat keine HERO-Zuordnung und der Termin bräuchte einen
 Zuständigen.
 
 Zwei Aktionen:
-- `link` — gibt beide Links zurück. Legt dabei bei Bedarf den
-  Buchungsdatensatz des Mitarbeiters an, vergibt den Slug und setzt Mo–Fr
-  08–17 Uhr als Arbeitszeit. Ohne Arbeitszeiten stünde der Kunde sonst vor
-  einem leeren Kalender.
-- `send` — verschickt die Einladungsmail über Resend (Firmenname aus
-  `legal_info`, optionale persönliche Zeile).
+- `link` — gibt die buchbaren Terminarten zurück, **jede mit fertigem Link**.
+  Legt dabei bei Bedarf den Buchungsdatensatz des Mitarbeiters an, vergibt den
+  Slug und setzt Mo–Fr 08–17 Uhr als Arbeitszeit. Ohne Arbeitszeiten stünde
+  der Kunde sonst vor einem leeren Kalender.
+- `send` — verschickt die Einladungsmail über Resend. `ruleSet` ist **Pflicht**;
+  eine unbekannte oder nicht buchbare Art gibt 400.
 
-Linkformen:
+Linkformen (`art` ist die gewählte Terminart):
 
 | Einstieg | Link | Woher kommen Adresse und Kontakt? |
 | --- | --- | --- |
-| Projektübersicht | `/termin/m/<slug>` | Der Kunde trägt beides selbst ein |
-| Projektansicht | `/termin/<projekt>?m=<slug>` | Aus HERO, editierbar |
+| Projektübersicht | `/termin/m/<slug>?art=<art>` | Der Kunde trägt beides selbst ein |
+| Projektansicht | `/termin/<projekt>?m=<slug>&art=<art>` | Aus HERO, editierbar |
 
-Der Slug ist **dauerhaft** (so gewünscht): er darf in einer Mailsignatur
-stehen und mehrfach benutzt werden. Rechnen tut immer `booking-api` — dieser
-Dienst kann keine Termine anlegen.
+**Die Terminart wählt der Mitarbeiter, nicht der Kunde** (Testlauf Okt. 2026:
+der Kunde kann mit „Aufmaß vor Ort" vs. „Kundentermin" nichts anfangen). Der
+Link entsteht deshalb erst, wenn die Art gewählt ist. Der Slug selbst ist
+**dauerhaft**. Rechnen tut immer `booking-api` — dieser Dienst kann keine
+Termine anlegen.
 
 In HERO entsteht der Termin auch **ohne** Projekt: `project_match_id` ist
 optional, `category_id` dagegen Pflicht (beides gegen die echte API geprüft).
@@ -136,7 +138,23 @@ Fehlt die HERO-Kategorie in den Einstellungen, meldet `heroCreateAppointment`
 das im Klartext statt still zu scheitern.
 
 Ein Link ohne `m` (alte, schon verschickte Projektlinks) funktioniert weiter
-und rechnet dann wie früher über alle Mitarbeiter.
+und rechnet dann wie früher über alle Mitarbeiter. Fehlt `art` oder nennt es
+eine abgeschaltete Art, darf der Kunde doch wählen — besser als eine leere
+Seite.
+
+### Branding und Absender
+Jede Mail (Einladung, Bestätigung, Erinnerung, Absage, Umbuchung) trägt den
+**Firmennamen aus `legal_info`** — in der Fußzeile, im Anzeigenamen des
+Absenders und als ORGANIZER im Kalendereintrag. „Captfix" steht nirgends, wo
+der Kunde hinsieht: er kennt unsere Firma, nicht das Werkzeug dahinter, und
+ein fremder Name in einer Terminmail sieht nach Spam aus. Die Absenderadresse
+bleibt `notifications@captfix.app`, weil dort die bei Resend verifizierte
+Domain liegt — der Anzeigename davor ist die Firma.
+
+Die Einladungsmail nennt **keinen Mitarbeiternamen**. Vorher stand dort nur
+der Nachname („Langner möchte…"), was befremdlich wirkte; es schreibt die
+Firma, nicht eine Einzelperson. Nur die interne Mail an uns nennt weiterhin
+den Kollegen.
 
 ## Adminmenü (`supabase/functions/booking-admin`)
 Admin-Token nötig, alle Writes laufen über diese Function — direkte
