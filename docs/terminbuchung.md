@@ -351,6 +351,16 @@ Der Lauf liest `calendar_events(start, end)` fuer die naechsten
     `heroWallClock()`. Vorher landete ein HERO-Termin um 14:00 als Sperre um
     16:00; 14:00 blieb buchbar und wurde doppelt vergeben. Genau so passiert.
   - Tests: `_shared/booking/hero.test.ts` (inkl. Winterzeit und Umstellnacht).
+- **Ein liegengebliebener Index ließ den ganzen Sync scheitern** (M8,
+  02.10.2026). M1 hatte `busy_block_source_ref_uidx` auf (source, source_ref),
+  M4 brauchte (source, source_ref, staff_id) und legte den neuen Index dazu —
+  der alte blieb liegen. Sobald ein HERO-Termin ZWEI zugeordnete Mitarbeiter
+  hatte, scheiterte der Upsert des ganzen Laufs („duplicate key value violates
+  unique constraint"), es wurde **kein einziger** HERO-Block geschrieben, und
+  die Buchungsseite bot längst belegte Zeiten an. Unsichtbar, weil die Function
+  Fehler als HTTP 200 mit Fehlertext zurückgibt: im Edge-Log sah jeder Lauf
+  erfolgreich aus. Lehre: bei dieser Function nicht den Status, sondern
+  `ok`/`error` im Body prüfen.
 - **Die Objektadresse hängt am `project_match`, nicht am `project`.** Wir haben
   zuerst nur `project.address` gelesen — dort steht in der Praxis die
   Kundenadresse, und genau die stand dann im Buchungskalender (WER-1760:
