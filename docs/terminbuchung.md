@@ -168,6 +168,33 @@ Zwei Dinge, die den ersten Versuch scheitern ließen:
   erkennt die Segmente am Inhalt (Zahl bzw. „WER-1744" = Projektnummer, sonst
   Terminart), damit ein Segment zu viel oder in anderer Reihenfolge nicht
   wieder im 404 endet.
+- **Der Editor kodiert Klammern in einem `href`.** In Vorlage 56239 steht
+  `pid=%7B%7BProjectMatch.id%7D%7D` — so kodiert wird ein Platzhalter nie
+  ersetzt. Beim Versand aus dem Projekt kam dann `…/termin/m/Layer//…` an:
+  der Mitarbeiter gefüllt, die Projektnummer leer.
+  Deshalb stehen die Terminlinks in den Vorlagen als **reiner Text**, ohne
+  `<a href>` (genau wie der frühere Calendly-Link). Im Text wird zuverlässig
+  ersetzt, und das Mailprogramm macht die URL selbst klickbar.
+
+### Die Vorlagen in HERO (Okt. 2026, über die API angelegt)
+Je Terminart eine Vorlage per Du und per Sie, Kontext `PARTNER_CUSTOMER`,
+Versand **aus dem Projekt** (sonst ist `{{ProjectMatch.display_id}}` leer):
+
+| id | Vorlage | Terminart |
+| --- | --- | --- |
+| 63591 / 63592 | Terminbuchung Kundentermin (PER SIE / PER DU) | `kundentermin_vor_ort` |
+| 63593 / 63594 | Terminbuchung Aufmaß vor Ort (PER SIE / PER DU) | `aufmass_vor_ort` |
+| 63595 / 63596 | Terminbuchung Montage vor Ort (PER SIE / PER DU) | `montage_vor_ort` |
+
+Angelegt per `create_email_template` (GraphQL v9, `file_upload_id: 0`). Über die
+API bleiben die Klammern unkodiert — nachgelesen und geprüft. **Wer eine dieser
+Vorlagen im HERO-Editor speichert, sollte danach den Link kontrollieren**: der
+Editor kann die URL verlinken und die Klammern dabei kodieren, dann fehlt wieder
+der Projektbezug. Löschen kann die API nicht (kein `delete_email_template`) —
+das geht nur im HERO-Menü.
+
+Kommt eine neue buchbare Terminart dazu, braucht sie zwei weitere Vorlagen; die
+alten Vorlagen „Termin Findung vor Ort" (37302/37303) zeigen noch auf Calendly.
 
 `aufloeseProjekt` in `booking-api` geht deshalb von genau nach grob:
 `project_number` exakt → `%-1744` → `%-1744 %` → und wenn das Projekt bei uns

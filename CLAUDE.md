@@ -219,6 +219,12 @@ Kurze prägnante Messages auf Englisch:
   `/termin/m/{{Partner.last_name}}/{{ProjectMatch.display_id}}/<terminart>`
   – Terminart als festes Segment am Ende, damit der Link nicht auf einer
   Klammer endet.
+- Terminlinks in HERO-Vorlagen stehen als **reiner Text**, nie als `<a href>`:
+  der Editor kodiert Klammern im href (`%7B%7B…%7D%7D`), und kodiert wird nie
+  ersetzt. Die Vorlagen (63591–63596, je Terminart per Du und per Sie) sind
+  über `create_email_template` angelegt; wer sie im HERO-Editor speichert, muss
+  den Link danach prüfen. Versand nur **aus dem Projekt**, sonst ist
+  `{{ProjectMatch.display_id}}` leer (`docs/terminbuchung.md`).
 - Neue öffentliche Route + PWA = 404 aus dem Cache. Der Service Worker liefert
   Wiederkehrern die precachte `index.html` mit dem ALTEN JS; eine neu
   hinzugekommene Route landet dann im 404 der App, obwohl sie live ist. Routen
