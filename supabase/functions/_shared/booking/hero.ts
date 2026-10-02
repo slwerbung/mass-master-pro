@@ -22,6 +22,44 @@ import type { Geo } from "./types.ts";
 const HERO_V7 = "https://login.hero-software.de/api/external/v7/graphql";
 const HERO_V9 = "https://login.hero-software.de/api/external/v9/graphql";
 const ORS_GEOCODE = "https://api.openrouteservice.org/geocode/search";
+const TZ = "Europe/Berlin";
+
+/**
+ * Zeitpunkt -> HERO-Zeit.
+ *
+ * HERO rechnet NICHT mit Zeitzonen. Die API haengt an jede Zeit "+00:00",
+ * gemeint ist aber die Uhrzeit, die in HERO auf dem Bildschirm steht — also
+ * Ortszeit. Wer einen echten UTC-Zeitpunkt schickt, bekommt einen Termin, der
+ * im Sommer zwei Stunden zu frueh steht: im Test wurde 14:00 gebucht und HERO
+ * zeigte 12:00 (Event 6440204, Rueckfrage des Nutzers).
+ *
+ * Deshalb wird hier die BERLINER WANDUHRZEIT geschickt und mit "+00:00"
+ * beschriftet — dann steht in HERO genau das, was der Kunde gewaehlt hat.
+ * Kein luxon: `hero.ts` haengt auch in Functions ohne Import-Map (booking-admin).
+ */
+export function toHeroTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  });
+  const p: Record<string, string> = {};
+  for (const part of fmt.formatToParts(d)) p[part.type] = part.value;
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}+00:00`;
+}
+
+/**
+ * HERO-Zeit -> die Uhrzeit, die dort steht (ohne Zonenangabe).
+ *
+ * Gegenstueck zu `toHeroTime`: der Offset in der Antwort ist bedeutungslos,
+ * entscheidend sind die ersten 19 Zeichen. Wer sie als UTC liest, legt jeden
+ * HERO-Termin zwei Stunden zu spaet ab — dann blockiert ein Termin um 14 Uhr
+ * die Zeit um 16 Uhr, und 14 Uhr sieht frei aus (genau so passiert).
+ */
+export function heroWallClock(value: string): string {
+  return String(value || "").slice(0, 19);
+}
 
 export interface HeroAddress {
   street?: string | null;
@@ -69,6 +107,12 @@ export function formatAddress(a: HeroAddress | null | undefined): string {
  * Adress-Reihenfolge wie abgestimmt: Objektadresse des Projekts, sonst die
  * Adresse des Kunden. Findet sich beides nicht, bleibt address null — dann
  * muss der Kunde sie auf der Seite selbst eintragen.
+ *
+ * Die OBJEKTADRESSE haengt am `project_match` selbst. `project.address` ist
+ * etwas anderes: dort steht in der Praxis die Adresse des Kunden. Wir haben
+ * zuerst nur die gelesen — im Test stand deshalb die Kundenadresse im
+ * Kalender statt der Baustelle (WER-1760: Objekt „Torstraße 10", gezeigt
+ * wurde „Otto-Hahn-Straße 3").
  */
 export async function loadHeroContext(apiKey: string, heroProjectId: number): Promise<HeroContext | null> {
   const query = `
@@ -77,6 +121,7 @@ export async function loadHeroContext(apiKey: string, heroProjectId: number): Pr
         id
         project_nr
         name
+        address { street city zipcode }
         customer { id first_name last_name company_name email }
         project { id address { street city zipcode } }
       }
@@ -91,9 +136,11 @@ export async function loadHeroContext(apiKey: string, heroProjectId: number): Pr
     cust.company_name || [cust.first_name, cust.last_name].filter(Boolean).join(" ") || "",
   ).trim();
 
-  const projectAddress: HeroAddress | null = pm.project?.address
-    ? { street: pm.project.address.street, zipcode: pm.project.address.zipcode, city: pm.project.address.city }
-    : null;
+  const alsAdresse = (a: any): HeroAddress | null =>
+    a ? { street: a.street, zipcode: a.zipcode, city: a.city } : null;
+  // Objektadresse zuerst, dann die Adresse am Projektdatensatz.
+  const objektAddress = alsAdresse(pm.address);
+  const projectAddress = addressComplete(objektAddress) ? objektAddress : alsAdresse(pm.project?.address);
 
   let address = addressComplete(projectAddress) ? projectAddress : null;
   let addressSource: HeroContext["addressSource"] = address ? "project" : null;
@@ -183,7 +230,9 @@ export async function heroCreateAppointment(
     /** null = Termin ohne Projektbezug (Dauerlink eines Mitarbeiters). */
     heroProjectId: number | null;
     title: string;
-    startIso: string;      // mit Offset, z.B. 2026-09-10T09:45:00+02:00
+    /** Echter Zeitpunkt (mit Offset oder Z). Die Umrechnung auf HERO-Zeit
+     *  passiert hier, nicht beim Aufrufer — siehe `toHeroTime`. */
+    startIso: string;
     endIso: string;
     description?: string;
     categoryId?: number | null;
@@ -198,8 +247,9 @@ export async function heroCreateAppointment(
   }
   const input: Record<string, unknown> = {
     title: opts.title,
-    start: opts.startIso,
-    end: opts.endIso,
+    // HERO-Zeit, nicht UTC: sonst steht der Termin zwei Stunden zu frueh.
+    start: toHeroTime(opts.startIso),
+    end: toHeroTime(opts.endIso),
     category_id: opts.categoryId,
   };
   if (opts.heroProjectId) input.project_match_id = opts.heroProjectId;

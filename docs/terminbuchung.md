@@ -334,10 +334,28 @@ Der Lauf liest `calendar_events(start, end)` fuer die naechsten
   gar keine Termine anlegen. Der in der Deprecation genannte Nachfolger
   `Calendar_CreateCalendarEvent` ist in der externen API **nicht** vorhanden.
   Also weiter `create_calendar_event` benutzen.
-- **HERO liefert echte UTC-Zeiten** (`2026-09-24T07:00:00+00:00`), auch wenn
-  das Format wie eine naive Zeit aussieht. Gegenprobe: die Automation
-  „Weiter nach Aufmaß“ legt ihren Termin um 09:00 Berlin an, HERO gibt ihn
-  als `07:00+00:00` zurueck. Der Offset gilt also wortwoertlich.
+- **HERO rechnet NICHT mit Zeitzonen** (korrigiert am 02.10.2026). Jede Zeit
+  trägt „+00:00", gemeint ist aber die Uhrzeit, die in HERO auf dem Bildschirm
+  steht — Ortszeit.
+  Hier stand vorher das Gegenteil, mit einer Gegenprobe, die sich im Kreis
+  drehte: die Automation „Weiter nach Aufmaß" schickte 09:00 Berlin als
+  `07:00+00:00` (also als echte UTC-Zeit), HERO gab `07:00+00:00` zurück — und
+  genau **07:00 stand auch im Kalender**, zwei Stunden zu früh. Aufgefallen ist
+  es erst an einer Buchung mit echtem Gegenüber: der Kunde wählte 14:00, HERO
+  trug 12:00 ein (Event 6440204).
+  Folge für beide Richtungen:
+  - **Schreiben:** Berliner Wanduhrzeit, beschriftet mit „+00:00" —
+    `toHeroTime()` in `_shared/booking/hero.ts`. Gilt auch für
+    `_shared/automations.ts` (eigene Kopie in `toBerlinIso`).
+  - **Lesen:** nur die ersten 19 Zeichen zählen, gelesen als Europe/Berlin —
+    `heroWallClock()`. Vorher landete ein HERO-Termin um 14:00 als Sperre um
+    16:00; 14:00 blieb buchbar und wurde doppelt vergeben. Genau so passiert.
+  - Tests: `_shared/booking/hero.test.ts` (inkl. Winterzeit und Umstellnacht).
+- **Die Objektadresse hängt am `project_match`, nicht am `project`.** Wir haben
+  zuerst nur `project.address` gelesen — dort steht in der Praxis die
+  Kundenadresse, und genau die stand dann im Buchungskalender (WER-1760:
+  Objekt „Torstraße 10", angezeigt „Otto-Hahn-Straße 3"). Reihenfolge jetzt:
+  `project_match.address` → `project.address` → Adresse des Kunden.
 
 ## M5 — Mails (`supabase/functions/booking-mail`)
 Die Buchung verschickt nichts, sie legt `notification`-Zeilen ab. Der Worker

@@ -15,6 +15,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { DateTime } from "luxon";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
+import { heroWallClock, toHeroTime } from "../_shared/booking/hero.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -40,9 +41,23 @@ interface HeroEvent {
 }
 
 /**
+ * Eine HERO-Zeit in einen echten Zeitpunkt umrechnen.
+ *
+ * HERO haengt an jede Zeit "+00:00", gemeint ist aber die Uhrzeit, die dort auf
+ * dem Bildschirm steht (Ortszeit). Wer den Offset glaubt, legt jeden Termin
+ * zwei Stunden zu spaet ab: ein Termin um 14 Uhr blockierte bei uns 16 Uhr,
+ * und 14 Uhr war weiter buchbar — genau so im Test aufgefallen. Deshalb zaehlen
+ * nur die ersten 19 Zeichen, gelesen als Berliner Zeit.
+ */
+const heroZeit = (wert: string) =>
+  DateTime.fromISO(heroWallClock(wert), { zone: TZ });
+
+/**
  * Termine im Zeitraum. `start`/`end` sind DateTime-Argumente und brauchen eine
  * Zeitzone ("2026-09-24T00:00:00+02:00") — ohne Offset antwortet HERO mit
- * "Internal server error".
+ * "Internal server error". Uebergeben wird dieselbe Wanduhrzeit-Schreibweise
+ * wie beim Schreiben (`toHeroTime`), damit das Fenster zu den gespeicherten
+ * Zeiten passt.
  */
 async function loadEvents(apiKey: string, fromIso: string, toIso: string): Promise<HeroEvent[]> {
   const query = `
@@ -128,7 +143,7 @@ Deno.serve(async (req) => {
     const from = DateTime.now().setZone(TZ).startOf("day");
     const to = from.plus({ days });
 
-    const events = await loadEvents(apiKey, from.toISO()!, to.toISO()!);
+    const events = await loadEvents(apiKey, toHeroTime(from.toISO()!), toHeroTime(to.toISO()!));
 
     // Unsere eigenen Termine ausklammern: die blockieren bereits als
     // busy_block(source='booking'). Sonst steht derselbe Termin zweimal im Weg.
@@ -169,11 +184,11 @@ Deno.serve(async (req) => {
       const ref = String(ev.id);
       if (own.has(ref)) { skippedOwn++; continue; }
 
-      const startDt = DateTime.fromISO(ev.start, { zone: TZ });
+      const startDt = heroZeit(ev.start);
       if (!startDt.isValid) continue;
       // Ganztaegig oder ohne Ende: den ganzen Tag sperren. Lieber einen Tag zu
       // viel blockiert als einen Termin doppelt vergeben.
-      let endDt = ev.end ? DateTime.fromISO(ev.end, { zone: TZ }) : startDt.endOf("day");
+      let endDt = ev.end ? heroZeit(ev.end) : startDt.endOf("day");
       if (!endDt.isValid || endDt <= startDt) {
         endDt = ev.all_day ? startDt.endOf("day") : startDt.plus({ hours: 1 });
       }

@@ -46,6 +46,10 @@ function berlinOffset(d: Date): string {
   const m = s.match(/GMT([+-]\d{2}:\d{2})/);
   return m ? m[1] : "+01:00";
 }
+// HERO does not do time zones: it labels every time "+00:00" but means the
+// time shown on screen (Europe/Berlin). Sending the true offset puts the event
+// two hours early in summer — proven with the booking calendar (14:00 booked,
+// 12:00 in HERO). So: Berlin wall clock, labelled "+00:00".
 function toBerlinIso(instant: Date): string {
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit",
@@ -53,7 +57,7 @@ function toBerlinIso(instant: Date): string {
   });
   const p: Record<string, string> = {};
   for (const part of fmt.formatToParts(instant)) p[part.type] = part.value;
-  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}${berlinOffset(instant)}`;
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}+00:00`;
 }
 // base = "now" in Berlin + dayOffset days, at HH:MM, lasting durationMin.
 // When skipWeekends is set, a resulting Saturday/Sunday is pushed to the next

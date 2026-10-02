@@ -233,6 +233,17 @@ Kurze prägnante Messages auf Englisch:
   Beim Prüfen daran denken: Vercel antwortet dabei mit 200.
 - Bei HERO-Kalendereinträgen ist `category_id` PFLICHT (`project_match_id`
   dagegen optional). Ohne Kategorie entsteht kein Termin.
+- **HERO rechnet nicht mit Zeitzonen.** Jede Zeit trägt „+00:00", gemeint ist
+  aber die Uhrzeit, die in HERO auf dem Bildschirm steht (Ortszeit). Schreiben
+  nur über `toHeroTime()`, lesen nur über `heroWallClock()`
+  (`_shared/booking/hero.ts`, Tests in `hero.test.ts`). Wer den Offset glaubt,
+  trägt Termine zwei Stunden zu früh ein und liest HERO-Termine zwei Stunden zu
+  spät – beides live passiert (14:00 gebucht → 12:00 in HERO; Automationen für
+  „09:00" legten 07:00 an).
+- Die **Objektadresse** eines HERO-Projekts steht an `project_match.address`.
+  `project.address` ist etwas anderes – dort steht in der Praxis die
+  Kundenadresse. Reihenfolge: `project_match.address` → `project.address` →
+  Adresse des Kunden.
 - In Kundenmails steht **nie** „Captfix" und nie nur ein Mitarbeiter-Nachname.
   Branding ist der Firmenname aus `legal_info` (Fußzeile, Anzeigename des
   Absenders, ORGANIZER im .ics). Die Absenderadresse bleibt
