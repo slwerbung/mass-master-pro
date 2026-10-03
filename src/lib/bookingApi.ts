@@ -27,6 +27,12 @@ export interface AppointmentType {
 export interface BookingContext {
   /** null = Dauerlink eines Mitarbeiters, ohne Projektbezug. */
   project: { id: string; number: string; customerName: string; heroLinked: boolean } | null;
+  /**
+   * true = der Link nannte ein Projekt, das es nicht (mehr) gibt. Buchen geht
+   * trotzdem, aber Adresse und Kontakt sind leer — und der Kunde erfaehrt es,
+   * statt sich zu wundern.
+   */
+  projectMissing?: boolean;
   /** Wer eingeladen hat. Dieser Mitarbeiter bekommt den Termin. */
   staff: { name: string; slug: string } | null;
   /** Alle buchbaren Terminarten. Bei einer geht es direkt zum Kalender. */

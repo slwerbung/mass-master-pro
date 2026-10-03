@@ -390,6 +390,19 @@ export default function BookingPage() {
               </div>
             </div>
 
+            {/* Der Link nannte ein Projekt, das es nicht (mehr) gibt. Buchen
+                geht weiter, aber ohne Vorbelegung — und das soll man sehen,
+                sonst wundert sich der Kunde ueber leere Felder. */}
+            {ctx.projectMissing && (
+              <p className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/60 rounded-md p-2.5">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>
+                  Zu diesem Link konnten wir kein Projekt finden. Buchen können Sie trotzdem –
+                  bitte tragen Sie Adresse und Kontaktdaten selbst ein.
+                </span>
+              </p>
+            )}
+
             {/* Nur wer selbst gewaehlt hat, darf zurueck. Steht die Terminart
                 im Einladungslink, ist sie vorgegeben. */}
             {!artAusLink && ctx.appointments.length > 1 && (

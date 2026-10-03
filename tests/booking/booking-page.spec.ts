@@ -46,7 +46,10 @@ const kontextOhneProjekt = {
 };
 
 /** Faengt alle Aufrufe der Buchungs-API ab und merkt sich, was gesendet wurde. */
-async function stub(page: Page, opts: { onCreate?: (body: any) => any; arten?: any[] } = {}) {
+async function stub(
+  page: Page,
+  opts: { onCreate?: (body: any) => any; arten?: any[]; projektFehlt?: boolean } = {},
+) {
   const gesendet: any[] = [];
   await page.route("**/functions/v1/booking-api**", async (route) => {
     const req = route.request();
@@ -60,9 +63,13 @@ async function stub(page: Page, opts: { onCreate?: (body: any) => any; arten?: a
         // Ohne `project` ist es der Dauerlink eines Mitarbeiters.
         // `p` ist die HERO-Projektnummer: der Server loest sie auf, fuer die
         // Seite ist das Ergebnis dasselbe wie bei unserer UUID.
-        const basis = (url.searchParams.get("project") || url.searchParams.get("p"))
-          ? { ...kontext, staff: url.searchParams.get("staff") ? { name: "Langner", slug: "langner" } : null }
-          : kontextOhneProjekt;
+        // Projektnummer im Link, Projekt aber nicht auffindbar: der Server
+        // sperrt deswegen nicht aus, er sagt es nur.
+        const basis = opts.projektFehlt
+          ? { ...kontextOhneProjekt, projectMissing: true, staff: { name: "Langner", slug: "langner" } }
+          : (url.searchParams.get("project") || url.searchParams.get("p"))
+            ? { ...kontext, staff: url.searchParams.get("staff") ? { name: "Langner", slug: "langner" } : null }
+            : kontextOhneProjekt;
         return json(opts.arten ? { ...basis, appointments: opts.arten } : basis);
       }
       if (action === "availability") {
@@ -425,6 +432,26 @@ test.describe("Einladung eines Mitarbeiters", () => {
     const abfrage = gesendet.find((g) => g.action === "availability");
     expect(abfrage.staff).toBe("Langner");
     expect(abfrage.projectNr).toBe(null);
+  });
+
+  test("Projekt im Link gibt es nicht: sagt es und laesst trotzdem buchen", async ({ page }) => {
+    // Eine Projektnummer kann ins Leere zeigen (Projekt geloescht, Zahl
+    // vertippt). Vorher war das ein 404 und der Kunde kam gar nicht weiter.
+    const gesendet = await stub(page, { projektFehlt: true });
+    await page.goto("/termin/m/Langner/1790/aufmass_vor_ort");
+
+    await expect(page.getByText(/kein Projekt finden/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "09:00" })).toBeVisible();
+
+    await page.getByRole("button", { name: "09:00" }).click();
+    await page.getByLabel("Name *").fill("Erika Muster");
+    await page.getByLabel("E-Mail *").fill("erika@example.org");
+    await page.getByRole("button", { name: "Termin bestätigen" }).click();
+    await expect(page.getByText("Termin steht")).toBeVisible();
+
+    const buchung = gesendet.find((b) => b.action === "create");
+    expect(buchung.staff).toBe("Langner");
+    expect(buchung.projectNr).toBe("1790");
   });
 
   test("Projektlink mit Mitarbeiter: schickt beides mit", async ({ page }) => {

@@ -468,7 +468,20 @@ Deno.serve(async (req) => {
         }
 
         const ctx = await buildContext(db, s, ziel);
-        if ("error" in ctx) return json(ctx, 404);
+        if ("error" in ctx) {
+          // Projektnummer im Link, aber in HERO nicht (mehr) vorhanden —
+          // etwa weil das Projekt geloescht wurde. Ohne Mitarbeiter im Link
+          // bleibt es beim 404: dann ist der Link wirklich wertlos. Mit
+          // Mitarbeiter kann der Kunde trotzdem buchen und traegt Adresse und
+          // Kontakt selbst ein. `projectMissing` sagt es ihm auf der Seite,
+          // damit es nicht still passiert.
+          if (!slug) return json(ctx, 404);
+          return json({
+            project: null, projectMissing: true, staff: mitarbeiter,
+            appointments: arten, address: null,
+            contact: { name: "", email: null, phone: null },
+          });
+        }
 
         const addressText = formatAddress(ctx.address);
         const geo = addressText ? await geocode(addressText, routingKey(), geoCache(db)) : null;
@@ -525,8 +538,11 @@ Deno.serve(async (req) => {
           addressText = formatAddress({ street, zipcode: zip, city });
         } else if (hatProjekt(ziel)) {
           const ctx = await buildContext(db, s, ziel);
-          if ("error" in ctx) return json(ctx, 404);
-          addressText = formatAddress(ctx.address);
+          // Unbekanntes Projekt: wie ohne Projekt rechnen (siehe `context`),
+          // damit ein Link mit toter Projektnummer nicht in einen leeren
+          // Kalender fuehrt. Ohne Mitarbeiter bleibt es beim 404.
+          if ("error" in ctx && !slug) return json(ctx, 404);
+          addressText = "error" in ctx ? "" : formatAddress(ctx.address);
         } else {
           addressText = "";
         }
@@ -610,7 +626,10 @@ Deno.serve(async (req) => {
         if (!staffId) return json({ error: "Pflichtfelder fehlen" }, 400);
 
         const geladen = hatProjekt(ziel) ? await buildContext(db, s, ziel) : null;
-        if (geladen && "error" in geladen) return json(geladen, 404);
+        // Unbekanntes Projekt: buchen bleibt moeglich, der Termin haengt dann
+        // an keinem Projekt (so wie beim Dauerlink). Ohne Mitarbeiter im Link
+        // waere das kein sinnvoller Termin — dort bleibt es beim 404.
+        if (geladen && "error" in geladen && !eingeladenVon) return json(geladen, 404);
         const ctx = geladen && !("error" in geladen) ? geladen : null;
 
         // Adresse: Eingabe des Kunden schlaegt HERO. Ohne Projekt gibt es nur
