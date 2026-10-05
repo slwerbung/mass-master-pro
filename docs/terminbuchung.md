@@ -554,6 +554,24 @@ Mindest-Vorlaufzeit, Buchungsfenster, Tageslimits, Qualifikation, Zuweisung
 | `availability` Montage | 12 Slots (vorher 0 — Qualifikation war der Grund) |
 | `booking-invite` ohne Token | 401 |
 
+### Nachgewiesen gegen Produktion (05.10.2026, nach den Zeit-/Adressfixes)
+
+| Prüfung | Ergebnis |
+| --- | --- |
+| `context&p=1916&staff=Langner` | Adresse **Lange Straße 42** (Objektadresse, `source: project`, geocodiert) – vorher kam die Kundenadresse |
+| echte Buchung 6 Min nach dem Deploy | HERO-Event 6450972 steht **06.10. 13:30–15:00** (gebucht 13:30, kein Zwei-Stunden-Versatz), Beschreibung mit Objektadresse |
+| `context&p=99999&staff=Langner` | 200 mit `projectMissing: true` statt 404 |
+| `booking-hero-sync` nach M8 | `{ok:true, events:13, blocks:9, removed:1}`; HERO-Termin 14:00 sperrt jetzt 14:00 |
+| Deploy-Stand | `booking-api` v9, `booking-hero-sync` v3, `booking-invite` v4, `run-automations` v21, `send-notification` v21 – jeweils byte-genau gegen das Repo geprüft |
+
+Offen beim Deploy: `submit-vehicle-request` und `hero-dropbox-poll` tragen noch
+die alte `automations.ts`. Praktisch betroffen ist nur die Automation
+„Fahrzeug Weiterbearbeiten" (Trigger `vehicle_inquiry_submitted`, legt ihren
+Termin zwei Stunden zu früh an); an den Triggern von `hero-dropbox-poll`
+(`hero_customer_created`, `hero_project_created`) hängt keine
+Kalender-Automation. Ein `supabase functions deploy submit-vehicle-request`
+erledigt den Rest.
+
 ### Was der Betrieb noch beisteuern muss
 - OpenRouteService-Schlüssel als Supabase-Secret `ORS_API_KEY`, danach
   `booking_travel_mode` auf `routing` stellen.
