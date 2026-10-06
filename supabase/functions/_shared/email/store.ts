@@ -144,7 +144,7 @@ export function matchStore(sb: any): MatchStore {
 const ACT_COLUMNS =
   "id, account_id, thread_id, direction, current_folder, current_uid, from_addr, from_name, to_addrs, subject, category, confidence, " +
   "summary, extracted, hero_project_match_id, match_method, match_info, hero_logged_at, has_attachments, plan, status, attempts, " +
-  "message_id, refs, body_text, sent_at, draft_message_id, draft_text, draft_uid";
+  "message_id, refs, body_text, sent_at, draft_message_id, draft_text, draft_uid, beleg_state";
 
 export function actStore(sb: any): ActStore {
   return {
@@ -173,6 +173,9 @@ export function actStore(sb: any): ActStore {
       const { count } = await sb.from("email_suggestions").select("id", { count: "exact", head: true })
         .eq("message_id", messageId).eq("status", "offen");
       return (count ?? 0) > 0;
+    },
+    async setBelegState(id, state, vendor) {
+      must(await sb.from("email_messages").update({ beleg_state: state, beleg_vendor: vendor }).eq("id", id));
     },
     async hasOutgoingAfter(threadId, sentAt) {
       let q = sb.from("email_messages").select("id", { count: "exact", head: true }).eq("thread_id", threadId).eq("direction", "out");

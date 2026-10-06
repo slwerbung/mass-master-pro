@@ -15,6 +15,7 @@ export const SERVICES = [
 ] as const;
 export const SIGNALS = ["layout_freigegeben", "layout_korrektur", "angebot_angenommen", "druckdaten_geliefert", "mangel"] as const;
 export type Signal = (typeof SIGNALS)[number];
+export const BELEG_DELIVERY = ["anhang", "portal", "keine"] as const;
 export const ATTACHMENT_ROLES = ["logo", "foto", "fahrzeugbild", "skizze", "druckdaten", "rechnung", "sonstiges"] as const;
 
 // Kleine Modelle lassen Felder weg oder schreiben null; beides wird zu null.
@@ -36,6 +37,12 @@ export const UnderstandSchema = z.object({
     /** Vorschlag fuer den HERO-Projektnamen, z. B. „Fahrzeugbeschriftung VW Crafter". */
     project_name: str,
   }),
+  /** Buchungsrelevanter Beleg? Und wie kommt man an ihn heran (Anhang oder nur ueber ein Kundenportal)? */
+  beleg: z.object({
+    is_booking_document: z.boolean().catch(false),
+    delivery: z.enum(BELEG_DELIVERY).catch("keine"),
+    vendor: str,
+  }).catch({ is_booking_document: false, delivery: "keine", vendor: null }),
   /** Klares Signal fuer einen Statuswechsel in HERO – nur setzen, wenn es eindeutig in der Mail steht. */
   signal: z.enum(SIGNALS).nullish().transform((v) => v ?? null),
   dates: z.object({
@@ -63,7 +70,7 @@ const sNull = { type: ["string", "null"] };
 export const UNDERSTAND_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["category", "category_confidence", "contact", "request", "signal", "dates", "references", "attachments", "reply", "field_confidence"],
+  required: ["category", "category_confidence", "contact", "request", "beleg", "signal", "dates", "references", "attachments", "reply", "field_confidence"],
   properties: {
     category: { type: "string", enum: [...CATEGORIES] },
     category_confidence: { type: "number", minimum: 0, maximum: 1 },
@@ -82,6 +89,14 @@ export const UNDERSTAND_JSON_SCHEMA = {
         summary: { type: "string" },
         service: { type: ["string", "null"], enum: [...SERVICES, null] },
         dimensions: sNull, quantity: sNull, material: sNull, location: sNull, project_name: sNull,
+      },
+    },
+    beleg: {
+      type: "object", additionalProperties: false, required: ["is_booking_document", "delivery", "vendor"],
+      properties: {
+        is_booking_document: { type: "boolean" },
+        delivery: { type: "string", enum: [...BELEG_DELIVERY] },
+        vendor: sNull,
       },
     },
     signal: { type: ["string", "null"], enum: [...SIGNALS, null] },
@@ -206,6 +221,7 @@ export function buildSystemBlocks(opts: {
     "- reply.needed: true nur, wenn eine Antwort per Mail wirklich noetig ist. false, wenn die Reaktion ueber ein HERO-Dokument laeuft (Auftragsbestaetigung, Angebot, Rechnung, Layout) oder die Mail nur bestaetigt/informiert (Dank, reine Info).",
     "- project_numbers: nur echte Projektnummern wie WER-1234 oder TEX-56.",
     "- project_name: kurzer Projektname fuer HERO, z. B. „Fahrzeugbeschriftung VW Crafter“ – nur bei neuen Anfragen, sonst null.",
+    "- beleg: is_booking_document = true NUR bei buchungsrelevanten Belegen an uns (Eingangsrechnung, Gutschrift, Zahlungsavis, Kassenbon/Tankbeleg, Abrechnung), nicht bei Angeboten, Werbung oder Rechnungen, die WIR schreiben. delivery = „anhang“, wenn der Beleg als Datei (PDF/Bild) an der Mail haengt; „portal“, wenn die Mail nur auf einen Download im Kundenportal des Anbieters verweist (z. B. „Ihre Rechnung steht im Portal bereit“); sonst „keine“. vendor = Name des Rechnungsstellers oder null.",
     "- signal: nur setzen, wenn es EINDEUTIG in der Mail steht: layout_freigegeben („passt so, bitte umsetzen“), layout_korrektur (Aenderungswuensche am Layout), angebot_angenommen (Auftrag/Bestellung erteilt), druckdaten_geliefert (der Kunde schickt die angeforderten Druckdaten), mangel (Mangel/Beschwerde). Sonst null.",
   ].join("\n");
   const knowledge = `Firmenwissen:\n${opts.companyKnowledge.trim() || "(keine Angaben)"}`;

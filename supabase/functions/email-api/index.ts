@@ -22,7 +22,7 @@ const CONFIG_KEYS = [
 
 const MESSAGE_LIST_COLUMNS =
   "id, account_id, thread_id, direction, from_addr, from_name, subject, sent_at, status, category, confidence, summary, " +
-  "hero_project_match_id, match_method, has_attachments, draft_message_id, current_folder, error, hero_logged_at";
+  "hero_project_match_id, match_method, has_attachments, draft_message_id, current_folder, error, hero_logged_at, beleg_state, beleg_vendor";
 
 type Ctx = { sb: any; user: AdminUser; body: Record<string, any> };
 type Handler = (c: Ctx) => Promise<unknown>;
@@ -75,6 +75,7 @@ const handlers: Record<string, Handler> = {
     if (body.category) q = q.eq("category", body.category);
     if (body.status) q = q.eq("status", body.status);
     if (body.direction) q = q.eq("direction", body.direction);
+    if (["weiterleiten_offen", "weitergeleitet", "portal_offen", "portal_erledigt"].includes(body.belegState)) q = q.eq("beleg_state", body.belegState);
     if (body.hero === "mit") q = q.not("hero_project_match_id", "is", null);
     if (body.hero === "ohne") q = q.is("hero_project_match_id", null);
     if (body.from) q = q.gte("sent_at", String(body.from));
@@ -169,6 +170,14 @@ const handlers: Record<string, Handler> = {
       });
     }
     return { changed: feedback.length, learned };
+  },
+
+  /** Beleg-Stand von Hand setzen, z. B. „Im Portal abgeholt und verbucht“. */
+  async set_beleg_state({ sb, body }) {
+    const state = String(body.state || "");
+    if (!["weiterleiten_offen", "weitergeleitet", "portal_offen", "portal_erledigt"].includes(state)) throw new Error("Unbekannter Stand.");
+    must(await sb.from("email_messages").update({ beleg_state: state, ...(state === "weitergeleitet" ? { forwarded_at: new Date().toISOString() } : {}) }).eq("id", String(body.id || "")));
+    return { ok: true };
   },
 
   /** Mail noch einmal durch die Pipeline schicken. */
@@ -316,13 +325,18 @@ const handlers: Record<string, Handler> = {
       .select("id, subject, from_name, from_addr, sent_at, email_threads!inner(answered)")
       .eq("direction", "in").eq("category", "reklamation").eq("email_threads.answered", false)
       .order("sent_at", { ascending: true }).limit(20);
+    const { data: portal } = await sb.from("email_messages")
+      .select("id, subject, from_name, from_addr, sent_at, beleg_vendor").eq("beleg_state", "portal_offen")
+      .order("sent_at", { ascending: true }).limit(50);
     const lines: string[] = [];
+    if (portal?.length) lines.push(`${portal.length} Rechnung(en) im Portal abzuholen.`);
     if (open) lines.push(`${open} Vorschlag/Vorschläge warten auf dich.`);
     if (unanswered?.length) lines.push(`${unanswered.length} Kundenmail(s) seit über 2 Tagen unbeantwortet.`);
     if (claims?.length) lines.push(`${claims.length} offene Reklamation(en).`);
     return {
       openSuggestions: open ?? 0,
       unanswered: (unanswered || []).map((r: any) => ({ id: r.id, subject: r.subject, from: r.from_name || r.from_addr, sent_at: r.sent_at, category: r.category })),
+      portalOpen: (portal || []).map((r: any) => ({ id: r.id, subject: r.subject, from: r.beleg_vendor || r.from_name || r.from_addr, sent_at: r.sent_at })),
       claims: (claims || []).map((r: any) => ({ id: r.id, subject: r.subject, from: r.from_name || r.from_addr, sent_at: r.sent_at })),
       text: lines.length ? `Mail-Assistent: ${lines.join(" ")}` : "Mail-Assistent: nichts offen.",
     };

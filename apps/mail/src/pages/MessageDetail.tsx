@@ -107,6 +107,11 @@ export default function MessageDetail() {
     onSuccess: (r) => { toast.success(`Weiterleitungs-Entwurf an Lexoffice liegt im Entwürfe-Ordner (${r.files} Anhang/Anhänge) – bitte prüfen und senden.`); qc.invalidateQueries({ queryKey: ["message", id] }); },
     onError: (e) => toast.error(errorText(e)),
   });
+  const belegState = useMutation({
+    mutationFn: (state: string) => api("set_beleg_state", { id, state }),
+    onSuccess: () => { toast.success("Gespeichert"); qc.invalidateQueries({ queryKey: ["message", id] }); qc.invalidateQueries({ queryKey: ["messages"] }); qc.invalidateQueries({ queryKey: ["digest"] }); },
+    onError: (e) => toast.error(errorText(e)),
+  });
   const reprocess = useMutation({
     mutationFn: () => api("reprocess_message", { id }),
     onSuccess: () => { toast.success("Wird beim nächsten Lauf neu verarbeitet."); qc.invalidateQueries({ queryKey: ["message", id] }); },
@@ -167,6 +172,28 @@ export default function MessageDetail() {
           </div>
         </CardContent>
       </Card>
+
+      {m.beleg_state && (
+        <Card>
+          <CardHeader><CardTitle>Beleg</CardTitle></CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {m.beleg_state === "portal_offen" && (
+              <>
+                <p>Die Rechnung{m.beleg_vendor ? ` von ${m.beleg_vendor}` : ""} liegt nur im Kundenportal. Bitte dort herunterladen und verbuchen – die Mail liegt solange im Ordner „Belege abholen“.</p>
+                <Button size="sm" onClick={() => belegState.mutate("portal_erledigt")} disabled={belegState.isPending}>Abgeholt und verbucht</Button>
+              </>
+            )}
+            {m.beleg_state === "portal_erledigt" && <p>Portal-Rechnung abgeholt und verbucht. <Button variant="ghost" size="sm" onClick={() => belegState.mutate("portal_offen")}>Wieder öffnen</Button></p>}
+            {m.beleg_state === "weiterleiten_offen" && (
+              <>
+                <p>Beleg mit Anhang, zum Weiterleiten an Lexware vorgemerkt.</p>
+                <Button size="sm" variant="outline" onClick={() => belegState.mutate("weitergeleitet")} disabled={belegState.isPending}>Als weitergeleitet markieren</Button>
+              </>
+            )}
+            {m.beleg_state === "weitergeleitet" && <p>An Lexware weitergeleitet{m.forwarded_at ? ` am ${formatDateTime(m.forwarded_at)}` : ""}.</p>}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader><CardTitle>HERO-Zuordnung</CardTitle></CardHeader>

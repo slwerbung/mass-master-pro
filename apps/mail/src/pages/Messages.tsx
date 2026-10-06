@@ -19,7 +19,7 @@ export default function Messages() {
   const [page, setPage] = useState(0);
   const f = {
     q: sp.get("q") ?? "", accountId: sp.get("accountId") ?? "", category: sp.get("category") ?? "", status: sp.get("status") ?? "",
-    hero: sp.get("hero") ?? "", direction: sp.get("direction") ?? "", from: sp.get("from") ?? "", to: sp.get("to") ?? "",
+    hero: sp.get("hero") ?? "", belegState: sp.get("belegState") ?? "", direction: sp.get("direction") ?? "", from: sp.get("from") ?? "", to: sp.get("to") ?? "",
   };
   const set = (k: string, v: string) => {
     const n = new URLSearchParams(sp);
@@ -64,6 +64,13 @@ export default function Messages() {
           <option value="mit">Mit HERO-Bezug</option>
           <option value="ohne">Ohne HERO-Bezug</option>
         </Select>
+        <Select value={f.belegState} onChange={(e) => set("belegState", e.target.value)}>
+          <option value="">Belege: alle</option>
+          <option value="portal_offen">Im Portal abzuholen</option>
+          <option value="portal_erledigt">Portal: abgeholt</option>
+          <option value="weiterleiten_offen">Zum Weiterleiten vorgemerkt</option>
+          <option value="weitergeleitet">An Lexware weitergeleitet</option>
+        </Select>
         <Select value={f.direction} onChange={(e) => set("direction", e.target.value)}>
           <option value="">Eingehend und ausgehend</option>
           <option value="in">Eingehend</option>
@@ -83,6 +90,7 @@ export default function Messages() {
               <span className="font-medium">{m.from_name || m.from_addr}</span>
               <CategoryChip category={m.category} />
               {m.confidence != null && m.confidence < 0.7 && <Badge variant="warn">unsicher {pct(m.confidence)}</Badge>}
+              {m.beleg_state === "portal_offen" && <Badge variant="warn">Portal{m.beleg_vendor ? `: ${m.beleg_vendor}` : ""}</Badge>}
               {m.hero_project_match_id && <Badge variant="outline">HERO #{m.hero_project_match_id}</Badge>}
               {m.has_attachments && <Paperclip className="h-3.5 w-3.5 text-muted-foreground" aria-label="Anhänge" />}
               {m.draft_message_id && <PenLine className="h-3.5 w-3.5 text-muted-foreground" aria-label="Entwurf" />}

@@ -13,7 +13,7 @@ describe("planFolders", () => {
   });
   it("legt alle acht Zielordner an, wenn keiner existiert", () => {
     const p = planFolders([f("INBOX", "\\Inbox"), f("Sent", "\\Sent"), f("Drafts", "\\Drafts"), f("Trash", "\\Trash")], DEFAULT_FOLDER_NAMES);
-    expect(p.toCreate).toHaveLength(8);
+    expect(p.toCreate).toHaveLength(9);
     expect(p.toCreate).toContain("1 Kunden & Projekte");
     expect(p.map.folders!.aussortiert).toBe("9 Aussortiert");
   });

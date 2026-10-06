@@ -15,6 +15,7 @@ insert into public.email_config (key, value) values
     "verwaltung": "5 Verwaltung",
     "newsletter": "6 Newsletter & Infos",
     "system": "7 System",
+    "belegabholung": "8 Belege abholen (Portal)",
     "aussortiert": "9 Aussortiert"
   }'::jsonb),
   ('gewerke', '[

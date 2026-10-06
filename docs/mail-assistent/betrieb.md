@@ -48,6 +48,17 @@ in `email_messages.plan`.
    Vergleichs-Anbieter (z. B. Haiku) für „Verstehen“ eintragen – Abweichungen zeigt die Mail-Detailansicht.
 9. **Scharf schalten:** Schattenmodus aus. Bereits berechnete Mails werden **nicht** rückwirkend verschoben/protokolliert (nur neue).
 
+## Belege: Lexware und Portal-Rechnungen
+
+* Das Modell markiert pro Mail `beleg.is_booking_document` und `beleg.delivery` (`anhang` / `portal` / `keine`).
+* **Rechnung nur im Kundenportal (z. B. Aral):** die Mail wandert in den Ordner **„8 Belege abholen (Portal)“**, `beleg_state = portal_offen`
+  und sie erscheint auf der Startseite („Rechnungen im Portal abzuholen“) sowie im Filter *Belege* in „Alle Mails“. Nach dem Herunterladen
+  in der Mail-Detailansicht „Abgeholt und verbucht“ drücken.
+* **Mittelfristig Browser-Automatisierung:** `email_messages` mit `beleg_state = 'portal_offen'` (plus `beleg_vendor`) ist die fertige Warteschlange –
+  ein Browser-Use-Lauf müsste sie nur abarbeiten, die Rechnung ins Lexware laden und den Stand auf `portal_erledigt` setzen.
+* **Beleg mit Anhang:** wird als `weiterleiten_offen` vorgemerkt und normal nach „3 Belege“ sortiert. Die **automatische Weiterleitung an Lexware
+  (echter Versand) ist noch nicht eingebaut** – siehe Rückfrage im Chat; bis dahin gibt es den Weiterleitungs-*Entwurf* per Knopf.
+
 ## Autopilot-Stufen und Schattenmodus
 
 *Aus / Vorschlag / Automatisch* je Aktion und Postfach. „Automatisch“ gilt nur bei Konfidenz ≥ 0,7 oder sicherer Zuordnung

@@ -50,6 +50,7 @@ export interface ActMessage {
   draft_message_id?: string | null;
   draft_text?: string | null;
   draft_uid?: number | null;
+  beleg_state?: string | null;
 }
 
 export interface ActImap {
@@ -80,6 +81,8 @@ export interface ActStore {
   /** Gibt es im Thread eine ausgehende Mail NACH diesem Zeitpunkt (= schon beantwortet)? */
   hasOutgoingAfter(threadId: string, sentAt: string | null): Promise<boolean>;
   loadAttachments(messageId: string): Promise<import("./attachments.ts").AttachmentRow[]>;
+  /** Beleg-Stand an der Mail festhalten (Portal-Abholung / Weiterleitung offen). */
+  setBelegState(id: string, state: "weiterleiten_offen" | "portal_offen", vendor: string | null): Promise<void>;
 }
 
 export interface ActContext {
@@ -126,6 +129,7 @@ export function logbookText(m: Pick<ActMessage, "direction" | "from_name" | "fro
 
 function folderTarget(m: ActMessage, ctx: ActContext): { key: FolderKey; rule: "folders" | "discard" } | { skip: string } | null {
   if (m.direction !== "in" || !m.category) return null;
+  if (m.extracted?.beleg?.is_booking_document === true && m.extracted.beleg.delivery === "portal") return { key: "belegabholung", rule: "folders" };
   const key = CATEGORY_FOLDER_KEY[m.category] as FolderKey | null;
   if (!key) return null; // bleibt im Posteingang (Arbeitsliste)
   const reply = m.extracted?.reply?.needed === true;
@@ -151,6 +155,20 @@ export async function actOn(m: ActMessage, ctx: ActContext, deps: ActDeps): Prom
   const dec = (a: Parameters<typeof decide>[0], confidence: number | null, c?: boolean) =>
     decide(a, { autopilot: ctx.autopilot, shadowMode: ctx.shadowMode, confidence, certain: c });
   const note = (action: string, decision: Decision, done: boolean, detail?: string) => plan.push({ action, decision, done, detail });
+
+  // ---------------------------------------------------------------- Belege
+  // Der Stand ist nur eine Markierung in der Datenbank (Liste „Im Portal abzuholen“ bzw. „Weiterleiten offen“) –
+  // er aendert nichts im Postfach und gilt deshalb auch im Schattenmodus.
+  const beleg = m.extracted?.beleg;
+  if (m.direction === "in" && beleg?.is_booking_document === true && !m.beleg_state) {
+    const state = beleg.delivery === "portal" ? "portal_offen" : beleg.delivery === "anhang" && m.has_attachments ? "weiterleiten_offen" : null;
+    if (state) {
+      await deps.store.setBelegState(m.id, state, beleg.vendor ?? null);
+      note("beleg", "auto", true, state === "portal_offen"
+        ? `Rechnung liegt im Portal${beleg.vendor ? ` von ${beleg.vendor}` : ""} – im Ordner „Belege abholen“, Liste „Im Portal abzuholen“`
+        : "Beleg mit Anhang – zum Weiterleiten vorgemerkt");
+    }
+  }
 
   // ---------------------------------------------------------------- Vorschlaege
   const projectId = m.hero_project_match_id;

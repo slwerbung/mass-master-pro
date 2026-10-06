@@ -20,6 +20,8 @@ export interface MessageRow {
   current_folder: string | null;
   error: string | null;
   hero_logged_at: string | null;
+  beleg_state: "weiterleiten_offen" | "weitergeleitet" | "portal_offen" | "portal_erledigt" | null;
+  beleg_vendor: string | null;
 }
 
 export interface Account {

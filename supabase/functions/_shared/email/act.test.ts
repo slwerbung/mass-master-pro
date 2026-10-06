@@ -31,6 +31,7 @@ function mk(o: { openAfter?: boolean; earlier?: ActMessage[]; step?: number | nu
     createSuggestion: async (id, type, payload) => { const k = `${id}:${type}`; if (open.has(k)) return false; open.add(k); log.suggestions.push({ type, payload }); return true; },
     hasOpenSuggestions: async () => open.size > 0 || !!o.openAfter,
     unansweredIncoming: async () => o.earlier ?? [],
+    setBelegState: async (id, st, v) => { (log as any).beleg = [id, st, v]; },
     hasOutgoingAfter: async () => false,
     loadAttachments: async () => [],
   };
@@ -249,5 +250,37 @@ describe("actPending", () => {
     expect(s).toMatchObject({ processed: 1, errors: 1, moved: 1 });
     expect(t.log.saved[0]).toEqual(["B", expect.objectContaining({ status: "fehler", attempts: 3, error: "IMAP weg" })]);
     expect(t.log.saved[1][1]).toMatchObject({ status: "erledigt", current_folder: "6 News" });
+  });
+});
+
+describe("Belege und Portal-Rechnungen", () => {
+  const portal = (o: Partial<ActMessage> = {}) => msg({ category: "beleg", extracted: { beleg: { is_booking_document: true, delivery: "portal", vendor: "Aral" }, reply: { needed: false } }, ...o });
+  it("Rechnung nur im Portal: Ordner „Belege abholen“ statt „Belege“, Stand portal_offen", async () => {
+    const t = mk();
+    const r = await actOn(portal(), ctx({ folders: { ...folders, belegabholung: "8 Belege abholen", belege: "3 Belege" } }), t.deps);
+    expect(t.log.moves).toEqual([[INBOX, 100, "8 Belege abholen"]]);
+    expect((t.log as any).beleg).toEqual(["M1", "portal_offen", "Aral"]);
+    expect(r.plan.find((p) => p.action === "beleg")?.detail).toMatch(/Portal von Aral/);
+  });
+  it("auch wenn das Modell die Mail als Lieferant einstuft", async () => {
+    const t = mk();
+    await actOn(portal({ category: "lieferant" }), ctx({ folders: { ...folders, belegabholung: "8 Belege abholen" } }), t.deps);
+    expect(t.log.moves).toEqual([[INBOX, 100, "8 Belege abholen"]]);
+  });
+  it("Beleg mit Anhang: nur vorgemerkt und normal nach Ordner 3; Stand wird nicht ueberschrieben", async () => {
+    const t = mk();
+    const m = msg({ category: "beleg", has_attachments: true, extracted: { beleg: { is_booking_document: true, delivery: "anhang", vendor: "Lieferant" } } });
+    await actOn(m, ctx(), t.deps);
+    expect((t.log as any).beleg[1]).toBe("weiterleiten_offen");
+    expect(t.log.moves).toEqual([[INBOX, 100, "3 Belege"]]);
+    const t2 = mk();
+    await actOn({ ...m, beleg_state: "portal_erledigt" }, ctx(), t2.deps);
+    expect((t2.log as any).beleg).toBeUndefined();
+  });
+  it("kein Beleg-Stand ohne Beleg oder bei ausgehenden Mails", async () => {
+    const t = mk();
+    await actOn(msg({ category: "beleg", extracted: { beleg: { is_booking_document: false, delivery: "portal" } } }), ctx(), t.deps);
+    await actOn(portal({ direction: "out" }), ctx(), t.deps);
+    expect((t.log as any).beleg).toBeUndefined();
   });
 });

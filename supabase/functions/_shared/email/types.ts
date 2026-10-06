@@ -101,9 +101,9 @@ export const AUTOPILOT_DEFAULTS: Autopilot = {
 export const CONFIDENCE_AUTO_MIN = 0.7;
 
 export type FolderKey =
-  | "kunden" | "lieferanten" | "belege" | "ausschreibungen" | "verwaltung" | "newsletter" | "system" | "aussortiert";
+  | "kunden" | "lieferanten" | "belege" | "ausschreibungen" | "verwaltung" | "newsletter" | "system" | "belegabholung" | "aussortiert";
 export const FOLDER_KEYS: FolderKey[] = [
-  "kunden", "lieferanten", "belege", "ausschreibungen", "verwaltung", "newsletter", "system", "aussortiert",
+  "kunden", "lieferanten", "belege", "ausschreibungen", "verwaltung", "newsletter", "system", "belegabholung", "aussortiert",
 ];
 export type FolderNames = Record<FolderKey, string>;
 
@@ -115,6 +115,7 @@ export const DEFAULT_FOLDER_NAMES: FolderNames = {
   verwaltung: "5 Verwaltung",
   newsletter: "6 Newsletter & Infos",
   system: "7 System",
+  belegabholung: "8 Belege abholen (Portal)",
   aussortiert: "9 Aussortiert",
 };
 

@@ -236,12 +236,12 @@ function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
   );
 }
 
-interface Digest { text: string; openSuggestions: number; unanswered: { id: string; subject: string; from: string; sent_at: string | null }[]; claims: { id: string; subject: string; from: string; sent_at: string | null }[] }
+interface Digest { text: string; openSuggestions: number; portalOpen: { id: string; subject: string; from: string; sent_at: string | null }[]; unanswered: { id: string; subject: string; from: string; sent_at: string | null }[]; claims: { id: string; subject: string; from: string; sent_at: string | null }[] }
 
 function DigestCard() {
   const q = useQuery({ queryKey: ["digest"], queryFn: () => api<Digest>("digest"), refetchInterval: 300_000 });
   const d = q.data;
-  if (!d || (!d.unanswered.length && !d.claims.length)) return null;
+  if (!d || (!d.unanswered.length && !d.claims.length && !d.portalOpen.length)) return null;
   const list = (title: string, rows: Digest["claims"], tone: "danger" | "warn") => rows.length > 0 && (
     <div className="space-y-1">
       <div className="flex items-center gap-2 text-sm font-medium"><Badge variant={tone}>{rows.length}</Badge> {title}</div>
@@ -256,6 +256,7 @@ function DigestCard() {
     <Card>
       <CardHeader><CardTitle>Übersicht</CardTitle></CardHeader>
       <CardContent className="space-y-3">
+        {list("Rechnungen im Portal abzuholen", d.portalOpen, "warn")}
         {list("Offene Reklamationen", d.claims, "danger")}
         {list("Kundenmails seit über 2 Tagen unbeantwortet", d.unanswered, "warn")}
       </CardContent>
