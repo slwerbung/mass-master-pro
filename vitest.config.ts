@@ -4,7 +4,11 @@ import { defineConfig } from "vitest/config";
 // Playwright e2e suite (`npm test`). Run with `npm run test:unit`.
 export default defineConfig({
   test: {
-    include: ["supabase/functions/_shared/booking/**/*.test.ts"],
+    include: [
+      "supabase/functions/_shared/booking/**/*.test.ts",
+      "supabase/functions/_shared/email/**/*.test.ts",
+      "supabase/functions/email-*/**/*.test.ts",
+    ],
     environment: "node",
   },
 });

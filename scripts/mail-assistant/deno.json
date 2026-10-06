@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "imapflow": "npm:imapflow@1.0.172",
+    "mailparser": "npm:mailparser@3.7.1",
+    "nodemailer/lib/mail-composer": "npm:nodemailer@6.9.16/lib/mail-composer/index.js"
+  }
+}
