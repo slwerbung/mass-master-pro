@@ -7,7 +7,7 @@ import {
   buildUnderstandRequest, classifyByRules, UnderstandSchema,
   type FeedbackExample, type RuleRow, type Understanding,
 } from "./classify.ts";
-import { LimitWaitError, runShadow, runTask, type LlmDeps } from "./llm.ts";
+import { BudgetExceededError, LimitWaitError, runShadow, runTask, type LlmDeps } from "./llm.ts";
 import type { Category, Direction, MessageStatus } from "./types.ts";
 
 export const UNDERSTAND_BATCH = 20;
@@ -60,7 +60,7 @@ export interface UnderstandContext {
 }
 
 export interface UnderstandSummary {
-  processed: number; errors: number; waiting: boolean;
+  processed: number; errors: number; waiting: boolean; budget?: boolean;
   tokensIn: number; tokensOut: number; neurons: number; costUsd: number;
 }
 
@@ -127,6 +127,17 @@ export async function understandPending(
         }
       }
     } catch (e) {
+      if (e instanceof BudgetExceededError) {
+        // Ohne KI weiter: die Mail bleibt unklassifiziert im Posteingang, kann aber ueber Thread oder
+        // Projektnummer noch zugeordnet und protokolliert werden.
+        await store.saveUnderstanding(m.id, {
+          status: "klassifiziert", category: null, confidence: null, summary: m.subject.slice(0, 200) || null,
+          extracted: { _meta: { source: "budget" } }, tokens_in: 0, tokens_out: 0, attempts: m.attempts, error: null,
+        });
+        sum.processed++;
+        sum.budget = true;
+        continue;
+      }
       if (e instanceof LimitWaitError) {
         // Kein Fehlversuch: die Mail bleibt unveraendert liegen und kommt nach Mitternacht dran.
         sum.waiting = true;

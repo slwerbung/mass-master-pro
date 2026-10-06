@@ -4,11 +4,17 @@ import { decide } from "./autopilot.ts";
 import { matchConfidence, type ActContext, type ActDeps, type ActMessage, type PlanEntry } from "./act.ts";
 import { buildUploadItems, type DocTypes } from "./attachments.ts";
 import { generateDraft, shouldDraft, LimitWaitError, type DraftDeps, type DraftMsg } from "./draft.ts";
+import { BudgetExceededError } from "./llm.ts";
+import { shouldPrepareOffer } from "./offer.ts";
 
 export interface ExtraConfig {
   docTypes: DocTypes;
   /** `canWrite`: Entwuerfe-Ordner bekannt und IMAP verfuegbar. */
   draft: { deps: DraftDeps; canWrite: boolean } | null;
+  /** Angebotsvorbereitung (null = HERO/KI nicht verfuegbar). */
+  /** Lexoffice-Belegadresse gesetzt? Dann kann ein Weiterleitungs-Entwurf entstehen. */
+  forward?: { address: string; run(messageId: string): Promise<{ files: number }> } | null;
+  offer?: { suggest(messageId: string, projectId: number, projectNr: string | null): Promise<unknown> } | null;
 }
 
 function toDraftMsg(m: ActMessage): DraftMsg & { draft_uid: number | null } {
@@ -42,12 +48,47 @@ export function buildExtra(cfg: ExtraConfig): NonNullable<ActContext["extra"]> {
                 : d === "shadow" ? "Würde einen Entwurf ins Postfach legen (hier nur angezeigt)" : "Entwurf in der Mail-App – noch nicht im Postfach",
             });
           } catch (e) {
-            if (e instanceof LimitWaitError) plan.push({ action: "draft", decision: "skip", done: false, detail: "KI-Kontingent erschöpft – Entwurf bitte in der Mail-App erzeugen" });
+            if (e instanceof BudgetExceededError) plan.push({ action: "draft", decision: "skip", done: false, detail: "KI-Monatsbudget erreicht – kein Entwurf" });
+            else if (e instanceof LimitWaitError) plan.push({ action: "draft", decision: "skip", done: false, detail: "KI-Kontingent erschöpft – Entwurf bitte in der Mail-App erzeugen" });
             else plan.push({ action: "draft", decision: "skip", done: false, detail: `Entwurf fehlgeschlagen: ${String((e as Error).message).slice(0, 150)}` });
           }
         }
       } else {
         plan.push({ action: "draft", decision: "skip", done: false, detail: `Kein Entwurf: ${sd.reason}` });
+      }
+    }
+
+    // ---------------------------------------------------------------- Beleg -> Lexoffice (nur als ENTWURF)
+    if (m.direction === "in" && m.category === "beleg" && m.has_attachments && cfg.forward?.address) {
+      const already = m.plan.some((p) => p.action === "forward_beleg" && p.done);
+      const d = decide("forward_beleg", { autopilot: ctx.autopilot, shadowMode: ctx.shadowMode, confidence: m.confidence, certain: false });
+      if (already || d === "skip") { /* Stufe Aus (Standard) oder schon erledigt */ }
+      else if (d === "shadow") plan.push({ action: "forward_beleg", decision: d, done: false, detail: "Würde einen Weiterleitungs-Entwurf an Lexoffice ablegen" });
+      else if (d === "suggest") plan.push({ action: "forward_beleg", decision: d, done: false, detail: "Weiterleitungs-Entwurf per Knopf in der Mail-Ansicht" });
+      else {
+        try {
+          const r = await cfg.forward.run(m.id);
+          plan.push({ action: "forward_beleg", decision: d, done: true, detail: `Entwurf an Lexoffice im Postfach (${r.files} Anhang/Anhänge) – bitte prüfen und senden` });
+        } catch (e) {
+          plan.push({ action: "forward_beleg", decision: "skip", done: false, detail: `Weiterleitung nicht möglich: ${String((e as Error).message).slice(0, 120)}` });
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------- Angebot vorbereiten
+    if (m.hero_project_match_id && shouldPrepareOffer(m) && cfg.offer) {
+      const d = decide("prepare_offer", { autopilot: ctx.autopilot, shadowMode: ctx.shadowMode, confidence: m.confidence, certain });
+      if (d === "shadow") {
+        plan.push({ action: "prepare_offer", decision: d, done: false, detail: "Würde eine Angebotsvorbereitung vorschlagen" });
+      } else if (d !== "skip") {
+        // Das Anlegen in HERO bleibt immer ein Klick – hier entsteht nur der Vorschlag.
+        try {
+          const r = await cfg.offer.suggest(m.id, m.hero_project_match_id, m.match_info?.projectNr ?? null);
+          plan.push({ action: "prepare_offer", decision: "suggest", done: !!r, detail: r ? "Vorschlag: Angebot vorbereiten" : "Kein Vorschlag (schon offen oder nicht nötig)" });
+        } catch (e) {
+          const msg = e instanceof BudgetExceededError ? "KI-Monatsbudget erreicht" : String((e as Error).message).slice(0, 120);
+          plan.push({ action: "prepare_offer", decision: "skip", done: false, detail: `Angebotsvorbereitung nicht möglich: ${msg}` });
+        }
       }
     }
 

@@ -11,7 +11,7 @@
 //   * ein Test-Entwurf wird in den Entwuerfe-Ordner geschrieben (nicht geloescht —
 //     bitte von Hand entfernen).
 // Das Skript sendet nie und loescht nie. Das Ergebnis (JSON auf stdout) gehoert
-// in docs/mail-assistant/phase0.md.
+// in docs/mail-assistent/phase0.md.
 
 import { simpleParser } from "mailparser";
 import MailComposer from "nodemailer/lib/mail-composer";

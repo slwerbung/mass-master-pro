@@ -3,6 +3,7 @@
 //   { action: "generate", messageId, hint?, write? }   Entwurf (neu) erzeugen; `write`: ins Postfach legen
 //   { action: "save", messageId, text, subject?, write? }  bearbeiteten Text speichern (ersetzt den Postfach-Entwurf)
 //   { action: "write", messageId }                      gespeicherten Entwurf ins Postfach legen
+//   { action: "forward_beleg", messageId }             Weiterleitungs-ENTWURF an die Lexoffice-Belegadresse (mit Anhaengen)
 //
 // Der Entwurf wird NIE gesendet, nur im Entwuerfe-Ordner abgelegt. Ein ueberholter Entwurf
 // wandert in den Papierkorb (kein Loeschen).
@@ -15,6 +16,7 @@ import { imapDraftWriter } from "../_shared/email/draftMime.ts";
 import { projectDraftContext, loadHeroKey } from "../_shared/email/hero.ts";
 import { LazyImap } from "../_shared/email/lazyImap.ts";
 import { draftStore } from "../_shared/email/store.ts";
+import { makeForwarder } from "../_shared/email/forwardWiring.ts";
 
 const COMPANY_NAME = "SL WERBUNG";
 
@@ -25,19 +27,30 @@ Deno.serve(async (req) => {
   if (!(await requireAdmin(req, sb))) return fail("Nicht angemeldet oder keine Admin-Rolle.", { code: "unauthorized" });
 
   const body = await readJson(req);
-  if (!["generate", "save", "write"].includes(body.action)) return fail("Unbekannte Aktion.");
+  if (!["generate", "save", "write", "forward_beleg"].includes(body.action)) return fail("Unbekannte Aktion.");
 
   let imap: LazyImap | null = null;
   try {
     const { data: m } = await sb.from("email_messages")
-      .select("id, account_id, thread_id, direction, from_addr, from_name, subject, message_id, refs, sent_at, body_text, category, summary, extracted, hero_project_match_id, draft_message_id, draft_text, draft_subject, draft_uid")
+      .select("id, account_id, thread_id, direction, from_addr, from_name, subject, message_id, refs, sent_at, body_text, category, summary, extracted, hero_project_match_id, draft_message_id, draft_text, draft_subject, draft_uid, plan")
       .eq("id", String(body.messageId || "")).maybeSingle();
     if (!m) return fail("Mail nicht gefunden.");
     if (m.direction !== "in") return fail("Für ausgehende Mails gibt es keinen Entwurf.");
+    if (body.action === "forward_beleg" && m.category !== "beleg") return fail("Nur Belege (Kategorie „Beleg / Rechnung“) lassen sich an Lexoffice weiterleiten.");
     const { data: acc } = await sb.from("email_accounts").select("*").eq("id", m.account_id).maybeSingle();
     if (!acc) return fail("Postfach nicht gefunden.");
 
     const fm = acc.folder_map || {};
+
+    if (body.action === "forward_beleg") {
+      const lex = await getConfig<{ address?: string }>(sb, "lexoffice", {});
+      imap = new LazyImap({ host: acc.imap_host, port: acc.imap_port, user: acc.username, pass: await accountPassword(acc) });
+      const r = await makeForwarder(sb, acc, String(lex?.address || ""), imap, COMPANY_NAME).run(m.id);
+      const plan = Array.isArray((m as any).plan) ? (m as any).plan : [];
+      await sb.from("email_messages").update({ plan: [...plan, { action: "forward_beleg", decision: "suggest", done: true, detail: `Entwurf an Lexoffice im Postfach (${r.files} Anhang/Anhänge) – bitte prüfen und senden` }] }).eq("id", m.id);
+      return ok({ forwarded: true, files: r.files });
+    }
+
     const wantWrite = body.action === "write" || body.write === true;
     if (wantWrite && !fm.drafts) return fail("Für dieses Postfach ist kein Entwürfe-Ordner bekannt (Einstellungen → Postfächer → „Ordner anlegen & speichern“).");
 

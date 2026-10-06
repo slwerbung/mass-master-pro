@@ -155,6 +155,42 @@ function UploadCard({ s }: { s: Suggestion }) {
   );
 }
 
+interface OfferPos { serviceId: number | null; serviceName: string | null; description: string; quantity: number | null; unit: string | null; note: string | null }
+
+function OfferCard({ s }: { s: Suggestion }) {
+  const decide = useDecide(s);
+  const [kind, setKind] = useState<"angebot" | "vor_ort">(s.payload.kind);
+  const [positions, setPositions] = useState<OfferPos[]>(s.payload.positions ?? []);
+  const upd = (i: number, p: Partial<OfferPos>) => setPositions(positions.map((x, j) => (j === i ? { ...x, ...p } : x)));
+  const missing = (s.payload.missing ?? []) as string[];
+  return (
+    <Card>
+      <Header s={s} />
+      <CardContent className="space-y-3">
+        <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>: {s.payload.summary}</p>
+        <div className="flex flex-wrap gap-4 text-sm">
+          <label className="flex items-center gap-2"><input type="radio" checked={kind === "angebot"} onChange={() => setKind("angebot")} /> Angebot vorbereiten</label>
+          <label className="flex items-center gap-2"><input type="radio" checked={kind === "vor_ort"} onChange={() => setKind("vor_ort")} /> Stattdessen Vor-Ort-Termin</label>
+        </div>
+        {kind === "vor_ort" && <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-900">Für ein Angebot fehlen Angaben: {missing.join(", ") || "Maße"}.</p>}
+        {kind === "angebot" && (
+          <div className="space-y-2">
+            {positions.map((p, i) => (
+              <div key={i} className="grid gap-2 rounded-md border p-2 sm:grid-cols-[1fr_6rem_6rem]">
+                <div className="text-sm">{p.serviceName ? <b>{p.serviceName}</b> : <Badge variant="warn">keine Leistung zugeordnet</Badge>}<div className="text-xs text-muted-foreground">{p.description}</div></div>
+                <Input type="number" min={0} step="any" aria-label="Menge" value={p.quantity ?? ""} onChange={(e) => upd(i, { quantity: e.target.value === "" ? null : Number(e.target.value) })} />
+                <Input aria-label="Einheit" value={p.unit ?? ""} onChange={(e) => upd(i, { unit: e.target.value || null })} />
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">HERO kann Positionen nicht per Schnittstelle einfügen: die Liste kommt ins Logbuch, du übernimmst sie im Angebot und prüfst die Preise.</p>
+          </div>
+        )}
+        <Buttons busy={decide.isPending} acceptLabel={kind === "angebot" ? "Angebot vorbereiten" : "Vor-Ort-Termin anstoßen"} onAccept={() => decide.mutate({ decision: "accept", edits: { kind, positions } })} onReject={() => decide.mutate({ decision: "reject" })} />
+      </CardContent>
+    </Card>
+  );
+}
+
 function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
   const decide = useDecide(s);
   const p = s.payload;
@@ -200,6 +236,33 @@ function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
   );
 }
 
+interface Digest { text: string; openSuggestions: number; unanswered: { id: string; subject: string; from: string; sent_at: string | null }[]; claims: { id: string; subject: string; from: string; sent_at: string | null }[] }
+
+function DigestCard() {
+  const q = useQuery({ queryKey: ["digest"], queryFn: () => api<Digest>("digest"), refetchInterval: 300_000 });
+  const d = q.data;
+  if (!d || (!d.unanswered.length && !d.claims.length)) return null;
+  const list = (title: string, rows: Digest["claims"], tone: "danger" | "warn") => rows.length > 0 && (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2 text-sm font-medium"><Badge variant={tone}>{rows.length}</Badge> {title}</div>
+      {rows.slice(0, 5).map((r) => (
+        <Link key={r.id} to={`/mails/${r.id}`} className="block truncate text-sm hover:underline">
+          {r.from} – {r.subject || "(ohne Betreff)"} <span className="text-xs text-muted-foreground">({formatDateTime(r.sent_at)})</span>
+        </Link>
+      ))}
+    </div>
+  );
+  return (
+    <Card>
+      <CardHeader><CardTitle>Übersicht</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        {list("Offene Reklamationen", d.claims, "danger")}
+        {list("Kundenmails seit über 2 Tagen unbeantwortet", d.unanswered, "warn")}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Decide() {
   const q = useQuery({ queryKey: ["suggestions"], queryFn: () => api<Suggestion[]>("list_suggestions", { status: "offen" }), refetchInterval: 60_000 });
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api<{ gewerke: Gewerk[] | null }>("get_config") });
@@ -211,6 +274,7 @@ export default function Decide() {
         {q.isFetching && <Spinner />}
       </div>
       <ErrorBox error={q.error} />
+      <DigestCard />
       {q.data && !q.data.length && <Card><CardContent className="p-6 text-sm text-muted-foreground">Keine offenen Vorschläge. 🎉</CardContent></Card>}
       <div className="space-y-4">
         {q.data?.map((s) => {
@@ -220,6 +284,7 @@ export default function Decide() {
             case "change_step": return <StepCard key={s.id} s={s} />;
             case "create_project": return <ProjectCard key={s.id} s={s} gewerke={gewerke} />;
             case "upload_attachments": return <UploadCard key={s.id} s={s} />;
+            case "prepare_offer": return <OfferCard key={s.id} s={s} />;
             default: return <GenericCard key={s.id} s={s} />;
           }
         })}

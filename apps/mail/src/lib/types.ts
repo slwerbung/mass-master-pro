@@ -46,6 +46,7 @@ export interface Overview {
   neuronsToday: number;
   costMonthUsd: number;
   budgetUsd: number | null;
+  budgetExceeded: boolean;
 }
 
 export interface Run {

@@ -12,7 +12,16 @@ import { getConfig } from "../_shared/email/config.ts";
 import * as H from "../_shared/email/hero.ts";
 import { actionStore } from "../_shared/email/store.ts";
 import { storageDownloader } from "../_shared/email/uploader.ts";
+import { buildLlmDeps } from "../_shared/email/config.ts";
+import { offerSuggester } from "../_shared/email/offerWiring.ts";
 import type { Gewerk } from "../_shared/email/gewerke.ts";
+
+/** Angebotsvorbereitung nach der Zuordnung – nur wenn HERO aktiv ist; die KI-Schicht wird dafuer erst jetzt aufgebaut. */
+async function offersFor(sb: any, key: string | null) {
+  if (!key) return undefined;
+  const s = offerSuggester(sb, await buildLlmDeps(sb), key);
+  return { suggest: async (messageId: string, projectId: number, projectNr: string) => { await s.suggest(messageId, projectId, projectNr); } };
+}
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -36,6 +45,7 @@ Deno.serve(async (req) => {
         createContact: (c: H.NewContact, src: string) => H.createContact(key, c, src),
         contactsByEmail: (e: string) => H.contactsByEmail(key, e),
         createProject: (p: H.NewProject) => H.createProject(key, p),
+        createOffer: (id: number, dt: number) => H.createEmptyDocument(key, id, dt),
         uploadDocument: (id: number, f: { bytes: Uint8Array; filename: string; mime: string }, dt: number) => H.uploadDocument(key, id, f, dt),
       }
       : null;
@@ -59,7 +69,7 @@ Deno.serve(async (req) => {
     }
     const data = await decideSuggestion(
       { suggestionId, decision: body.decision, edits: body.action === "assign" ? { projectId: Number(body.projectId) } : body.edits },
-      { hero, store: actionStore(sb), files: { download: storageDownloader(sb) }, config: { documentTypeIds: Object.values(heroCfg.document_types ?? {}).map(Number).filter((n) => Number.isFinite(n) && n > 0), stepIds, projectTypeId: heroCfg.project_type_id ?? null, startStepId: heroCfg.start_step_id ?? null, gewerke } },
+      { hero, store: actionStore(sb), files: { download: storageDownloader(sb) }, offers: await offersFor(sb, key), config: { steps: heroCfg.steps ?? {}, offerTypeId: heroCfg.offer_document_type_id ?? null, documentTypeIds: Object.values(heroCfg.document_types ?? {}).map(Number).filter((n) => Number.isFinite(n) && n > 0), stepIds, projectTypeId: heroCfg.project_type_id ?? null, startStepId: heroCfg.start_step_id ?? null, gewerke } },
     );
     return ok(data);
   } catch (e) {

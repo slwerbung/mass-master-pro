@@ -11,6 +11,7 @@ import { encryptionKey, getConfig, setConfig } from "../_shared/email/config.ts"
 import { normalizeAutopilot } from "../_shared/email/autopilot.ts";
 import { AI_TASKS, CATEGORIES } from "../_shared/email/types.ts";
 import * as H from "../_shared/email/hero.ts";
+import { learnRule } from "../_shared/email/learn.ts";
 import { mapDocumentTypes, mapSteps } from "../_shared/email/heroReload.ts";
 
 // Nur diese Schluessel darf die Oberflaeche in email_config schreiben – der
@@ -62,6 +63,7 @@ const handlers: Record<string, Handler> = {
       neuronsToday: (today || []).reduce((n: number, r: any) => n + Number(r.neurons || 0), 0),
       costMonthUsd: Math.round(cost * 10000) / 10000,
       budgetUsd: budget?.monthly_usd ?? null,
+      budgetExceeded: budget?.monthly_usd != null && Number(budget.monthly_usd) > 0 && cost >= Number(budget.monthly_usd),
     };
   },
 
@@ -148,7 +150,25 @@ const handlers: Record<string, Handler> = {
     if (!Object.keys(patch).length) return { changed: 0 };
     must(await sb.from("email_messages").update(patch).eq("id", id));
     must(await sb.from("email_feedback").insert(feedback.map((f) => ({ ...f, message_id: id, from_addr: msg.from_addr }))));
-    return { changed: feedback.length };
+    // Zweimal dieselbe Kategorie-Korrektur fuer einen Absender -> gelernte Regel.
+    let learned = null;
+    if (feedback.some((f) => f.field === "category")) {
+      learned = await learnRule(msg.from_addr, {
+        async recentCategoryFeedback(addr, n) {
+          const { data } = await sb.from("email_feedback").select("new_value, created_at").eq("field", "category").eq("from_addr", addr)
+            .order("created_at", { ascending: false }).limit(n);
+          return data || [];
+        },
+        async existingRule(pattern) {
+          const { data } = await sb.from("email_rules").select("source, category").eq("pattern", pattern).maybeSingle();
+          return data ?? null;
+        },
+        async saveRule(pattern, category) {
+          must(await sb.from("email_rules").upsert({ pattern, category, source: "gelernt", protect: false }, { onConflict: "pattern" }));
+        },
+      });
+    }
+    return { changed: feedback.length, learned };
   },
 
   /** Mail noch einmal durch die Pipeline schicken. */
@@ -281,6 +301,31 @@ const handlers: Record<string, Handler> = {
       }
     }
     return (data || []).map((r: any) => ({ ...r, message: r.email_messages, email_messages: undefined, attachments: atts[r.email_messages.id] || [] }));
+  },
+
+  /** Kurzuebersicht (fuer die Startseite und die optionale 7-Uhr-Push-Meldung). */
+  async digest({ sb }) {
+    const twoDays = new Date(Date.now() - 2 * 86400_000).toISOString();
+    const { count: open } = await sb.from("email_suggestions").select("id", { count: "exact", head: true }).eq("status", "offen");
+    const customerCats = ["anfrage_neu", "projekt_kommunikation", "layout_freigabe", "auftrag", "reklamation"];
+    const { data: unanswered } = await sb.from("email_messages")
+      .select("id, subject, from_name, from_addr, sent_at, category, email_threads!inner(answered)")
+      .eq("direction", "in").in("category", customerCats).eq("email_threads.answered", false).lt("sent_at", twoDays)
+      .order("sent_at", { ascending: true }).limit(20);
+    const { data: claims } = await sb.from("email_messages")
+      .select("id, subject, from_name, from_addr, sent_at, email_threads!inner(answered)")
+      .eq("direction", "in").eq("category", "reklamation").eq("email_threads.answered", false)
+      .order("sent_at", { ascending: true }).limit(20);
+    const lines: string[] = [];
+    if (open) lines.push(`${open} Vorschlag/Vorschläge warten auf dich.`);
+    if (unanswered?.length) lines.push(`${unanswered.length} Kundenmail(s) seit über 2 Tagen unbeantwortet.`);
+    if (claims?.length) lines.push(`${claims.length} offene Reklamation(en).`);
+    return {
+      openSuggestions: open ?? 0,
+      unanswered: (unanswered || []).map((r: any) => ({ id: r.id, subject: r.subject, from: r.from_name || r.from_addr, sent_at: r.sent_at, category: r.category })),
+      claims: (claims || []).map((r: any) => ({ id: r.id, subject: r.subject, from: r.from_name || r.from_addr, sent_at: r.sent_at })),
+      text: lines.length ? `Mail-Assistent: ${lines.join(" ")}` : "Mail-Assistent: nichts offen.",
+    };
   },
 
   // ------------------------------------------------------------------ HERO (lesend)

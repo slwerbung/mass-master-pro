@@ -14,6 +14,8 @@ import { buildExtra } from "../_shared/email/extras.ts";
 import { imapDraftWriter } from "../_shared/email/draftMime.ts";
 import { projectDraftContext } from "../_shared/email/hero.ts";
 import { directUploader } from "../_shared/email/uploader.ts";
+import { offerSuggester } from "../_shared/email/offerWiring.ts";
+import { makeForwarder } from "../_shared/email/forwardWiring.ts";
 import { loadHeroKey } from "../_shared/email/hero.ts";
 import { LazyImap } from "../_shared/email/lazyImap.ts";
 import { matchPending } from "../_shared/email/matchStage.ts";
@@ -64,11 +66,14 @@ async function processOne(sb: any, id: string) {
     // Phase 3: Antwortentwuerfe und Anhaenge. Der Entwurf wird nur ins Postfach geschrieben, wenn der
     // Entwuerfe-Ordner bekannt ist; sonst bleibt er in der Mail-App.
     const replyRules = await getConfig<string>(sb, "reply_rules", "");
+    const lexoffice = await getConfig<{ address?: string }>(sb, "lexoffice", {});
     const writer = fm.drafts
       ? imapDraftWriter(() => lazy.raw(), { drafts: fm.drafts, trash: fm.trash ?? null, fromName: COMPANY_NAME, fromAddress: acc.address })
       : null;
     actCtx.extra = buildExtra({
       docTypes: heroCfg.document_types ?? {},
+      offer: heroKey ? offerSuggester(sb, llm, heroKey) : null,
+      forward: lexoffice?.address ? makeForwarder(sb, acc, String(lexoffice.address), lazy, COMPANY_NAME) : null,
       draft: {
         canWrite: !!writer,
         deps: {

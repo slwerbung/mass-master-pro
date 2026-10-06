@@ -92,13 +92,19 @@ export default function MessageDetail() {
   useEffect(() => { setDraft({}); }, [id, m?.extracted]);
 
   const correct = useMutation({
-    mutationFn: (body: Record<string, unknown>) => api("correct_message", { id, ...body }),
-    onSuccess: () => { toast.success("Korrektur gespeichert – der Assistent lernt daraus."); qc.invalidateQueries({ queryKey: ["message", id] }); qc.invalidateQueries({ queryKey: ["messages"] }); },
+    mutationFn: (body: Record<string, unknown>) => api<{ changed: number; learned: { pattern: string; category: string } | null }>("correct_message", { id, ...body }),
+    onSuccess: (r) => {
+      toast.success(r.learned ? `Gelernt: Mails von ${r.learned.pattern} sind künftig „${r.learned.category}“ (Regel angelegt).` : "Korrektur gespeichert – der Assistent lernt daraus."); qc.invalidateQueries({ queryKey: ["message", id] }); qc.invalidateQueries({ queryKey: ["messages"] }); },
     onError: (e) => toast.error(errorText(e)),
   });
   const assign = useMutation({
     mutationFn: (projectId: number) => invokeFn("email-action", { action: "assign", messageId: id, projectId }),
     onSuccess: () => { toast.success("Zugeordnet und ins Logbuch geschrieben."); qc.invalidateQueries({ queryKey: ["message", id] }); qc.invalidateQueries({ queryKey: ["messages"] }); qc.invalidateQueries({ queryKey: ["overview"] }); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  const forward = useMutation({
+    mutationFn: () => invokeFn<{ files: number }>("email-draft", { action: "forward_beleg", messageId: id }),
+    onSuccess: (r) => { toast.success(`Weiterleitungs-Entwurf an Lexoffice liegt im Entwürfe-Ordner (${r.files} Anhang/Anhänge) – bitte prüfen und senden.`); qc.invalidateQueries({ queryKey: ["message", id] }); },
     onError: (e) => toast.error(errorText(e)),
   });
   const reprocess = useMutation({
@@ -153,7 +159,12 @@ export default function MessageDetail() {
             </Select>
           </div>
           {ex.reply && <p className="text-xs text-muted-foreground">Antwort nötig: <b>{ex.reply.needed ? "ja" : "nein"}</b> – {ex.reply.reason}</p>}
-          <Button variant="outline" size="sm" onClick={() => reprocess.mutate()} disabled={reprocess.isPending}><RefreshCw className="h-3 w-3" /> Neu verarbeiten</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => reprocess.mutate()} disabled={reprocess.isPending}><RefreshCw className="h-3 w-3" /> Neu verarbeiten</Button>
+            {m.category === "beleg" && m.has_attachments && (
+              <Button variant="outline" size="sm" onClick={() => forward.mutate()} disabled={forward.isPending}>Entwurf an Lexoffice</Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 

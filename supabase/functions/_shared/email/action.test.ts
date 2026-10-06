@@ -12,8 +12,8 @@ function row(o: Partial<SuggestionRow> & { payload?: any } = {}): SuggestionRow 
   };
 }
 
-function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; open?: number; claim?: boolean } = {}) {
-  const log: any = { uploaded: [], upsug: [], docs: [], claimed: [], finished: [], assigned: [], logged: [], feedback: [], status: [], logbook: [], steps: [], contacts: [], projects: [], dropped: [] };
+function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; open?: number; claim?: boolean; offerFail?: boolean } = {}) {
+  const log: any = { offers: [], offerSuggest: [], uploaded: [], upsug: [], docs: [], claimed: [], finished: [], assigned: [], logged: [], feedback: [], status: [], logbook: [], steps: [], contacts: [], projects: [], dropped: [] };
   const store: ActionStore = {
     getSuggestion: async () => s,
     claim: async (id) => (log.claimed.push(id), o.claim !== false),
@@ -35,10 +35,11 @@ function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; 
     createContact: async (c, src) => (log.contacts.push([c, src]), 900),
     contactsByEmail: async () => [{ id: 900, customerId: 901, name: "Max", email: "kunde@x.de", isContactPerson: true }],
     createProject: async (p) => (log.projects.push(p), { id: 555, nr: "WER-555" }),
+    createOffer: async (pid, dt) => { if (o.offerFail) throw new Error("create_document passt nicht"); log.offers.push([pid, dt]); return { id: 88 }; },
     uploadDocument: async (pid, f, dt) => { log.docs.push([pid, f.filename, dt]); if (f.filename === "bad.pdf") throw new Error("HERO 422"); return { uploadId: `u-${f.filename}` }; },
     ...(o.hero ?? {}),
   };
-  const deps: ActionDeps = { hero, store, files: { download: async () => new Uint8Array([1]) }, config: { stepIds: [10, 11, 13], documentTypeIds: [100, 200], projectTypeId: 181, startStepId: 2825, gewerke: [{ short: "WER", name: "W", measure_id: 6619, default: true }] } };
+  const deps: ActionDeps = { hero, store, files: { download: async () => new Uint8Array([1]) }, offers: { suggest: async (m, p, nr) => { log.offerSuggest.push([m, p, nr]); } }, config: { stepIds: [10, 11, 13], documentTypeIds: [100, 200], steps: { angebot: 266511, vor_ort: 266510 }, offerTypeId: 171300, projectTypeId: 181, startStepId: 2825, gewerke: [{ short: "WER", name: "W", measure_id: 6619, default: true }] } };
   return { deps, log };
 }
 
@@ -226,5 +227,50 @@ describe("upload_attachments", () => {
     const t = setup(row());
     await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
     expect(t.log.upsug).toEqual([["M1", 5, "WER-5"]]);
+  });
+});
+
+describe("prepare_offer", () => {
+  const pos = [{ serviceId: 11, serviceName: "Fahrzeugbeschriftung", description: "Sprinter", quantity: 1, unit: "Stk", note: null }];
+  const s = (kind: string) => row({ type: "prepare_offer", payload: { kind, projectId: 5, projectNr: "WER-5", summary: "S", missing: ["Maße"], positions: pos } });
+  it("Angebot: Positionsliste ins Logbuch, Schritt Angeboterstellung, leeres Angebot", async () => {
+    const t = setup(s("angebot"));
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(r).toMatchObject({ status: "angenommen", kind: "angebot", stepId: 266511, documentId: 88 });
+    expect(t.log.logbook[0][1]).toContain("📄 Angebotsvorbereitung");
+    expect(t.log.steps).toEqual([[5, 266511]]);
+    expect(t.log.offers).toEqual([[5, 171300]]);
+  });
+  it("Vor-Ort-Termin: kein Dokument, Schritt Vor-Ort-Termin, Logbuch nennt das Fehlende", async () => {
+    const t = setup(s("vor_ort"));
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(r).toMatchObject({ kind: "vor_ort", stepId: 266510, documentId: null });
+    expect(t.log.logbook[0][1]).toContain("Vor-Ort-Termin nötig");
+    expect(t.log.offers).toEqual([]);
+  });
+  it("create_document scheitert: nur Hinweis – Logbuch und Schritt bleiben (die Liste ist das Ergebnis)", async () => {
+    const t = setup(s("angebot"), { offerFail: true });
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(r.status).toBe("angenommen");
+    expect(r.warnings[0]).toMatch(/von Hand/);
+    expect(t.log.steps).toEqual([[5, 266511]]);
+  });
+  it("Schritt bleibt, wenn das Projekt schon dort steht; Projekt muss existieren", async () => {
+    const t = setup(s("angebot"), { hero: { projectById: async (id) => ({ id, nr: "WER-5", name: "P", stepId: 266511, stepName: "x", customerId: 7, customerName: "K" }) } });
+    await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(t.log.steps).toEqual([]);
+    const t2 = setup(s("angebot"), { hero: { projectById: async () => null } });
+    await expect(decideSuggestion({ suggestionId: "S1", decision: "accept" }, t2.deps)).rejects.toThrow(/gibt es in HERO nicht/);
+    expect(t2.log.logbook).toEqual([]);
+  });
+  it("bearbeitete Positionen aus der Mail-App gelten; Art laesst sich umstellen", async () => {
+    const t = setup(s("angebot"));
+    await decideSuggestion({ suggestionId: "S1", decision: "accept", edits: { positions: [{ ...pos[0], quantity: 3 }], kind: "vor_ort" } }, t.deps);
+    expect(t.log.steps).toEqual([[5, 266510]]);
+  });
+  it("nach dem Zuordnen wird eine Angebotsvorbereitung vorgeschlagen", async () => {
+    const t = setup(row());
+    await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(t.log.offerSuggest).toEqual([["M1", 5, "WER-5"]]);
   });
 });

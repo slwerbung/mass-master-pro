@@ -42,6 +42,16 @@ async function providerFrom(row: any | undefined | null): Promise<Provider | nul
   };
 }
 
+/** Kosten dieses Monats (UTC) in US-Dollar: Anthropic direkt + Cloudflare-Neurons ueber dem Gratis-Kontingent nicht abgezogen (konservativ). */
+export async function monthCostUsd(sb: any, prices?: Record<string, any>): Promise<number> {
+  const start = new Date(); start.setUTCDate(1); start.setUTCHours(0, 0, 0, 0);
+  const { data } = await sb.from("email_ai_calls").select("cost_usd, neurons").gte("created_at", start.toISOString());
+  const p = prices ?? (await getConfig<Record<string, any>>(sb, "llm_prices", {}));
+  const neurons = (data || []).reduce((n: number, r: any) => n + Number(r.neurons || 0), 0);
+  const usd = (data || []).reduce((n: number, r: any) => n + Number(r.cost_usd || 0), 0);
+  return usd + (neurons / 1000) * Number(p?._neuron_usd_per_1000 ?? 0.011);
+}
+
 /** Verdrahtet die KI-Schicht mit der Datenbank: Einstellungen, Tageskontingent, Protokoll. */
 export async function buildLlmDeps(sb: any): Promise<LlmDeps> {
   const [{ data: provRows }, { data: setRows }] = await Promise.all([
@@ -54,8 +64,16 @@ export async function buildLlmDeps(sb: any): Promise<LlmDeps> {
   const settings = new Map<string, any>((setRows || []).map((r: any) => [r.task, r]));
 
   let usedToday: number | null = null;
+  const budget = await getConfig<{ monthly_usd?: number | null }>(sb, "budget", {});
+  const limit = budget?.monthly_usd != null ? Number(budget.monthly_usd) : null;
+  let spent: number | null = null;
   return {
     prices,
+    async budgetExceeded(): Promise<boolean> {
+      if (limit == null || limit <= 0) return false;
+      if (spent == null) spent = await monthCostUsd(sb, prices);
+      return spent >= limit;
+    },
     async getSetting(task: AiTask): Promise<TaskSetting | null> {
       const s = settings.get(task);
       if (!s) return null;
@@ -76,6 +94,7 @@ export async function buildLlmDeps(sb: any): Promise<LlmDeps> {
     },
     async logCall(c: CallLog): Promise<void> {
       if (c.providerType === "cloudflare" && usedToday != null) usedToday += c.neurons;
+      if (spent != null) spent += c.costUsd + (c.neurons / 1000) * Number(prices?._neuron_usd_per_1000 ?? 0.011);
       await sb.from("email_ai_calls").insert({
         message_id: c.messageId ?? null, task: c.task, provider_id: c.providerId, provider_type: c.providerType,
         model: c.model, tokens_in: c.usage.tokensIn, tokens_out: c.usage.tokensOut, neurons: c.neurons,

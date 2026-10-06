@@ -3,7 +3,7 @@
 // ohne Bezug gibt es nichts zu protokollieren).
 
 import { z } from "zod";
-import { LimitWaitError, runTask, type LlmDeps, type LlmRequest } from "./llm.ts";
+import { BudgetExceededError, LimitWaitError, runTask, type LlmDeps, type LlmRequest } from "./llm.ts";
 import { buildPickRequest, matchMessage, PickSchema, type MatchDeps, type MatchInput, type MatchOutcome } from "./match.ts";
 import type { HeroProject } from "./hero.ts";
 import { MAX_ATTEMPTS } from "./understand.ts";
@@ -118,8 +118,13 @@ export async function matchPending(
         prefixes: ctx.prefixes,
         ownAddresses: ctx.ownAddresses,
         pick: async (cands, mi) => {
-          const r = await runTask("pick_project", buildPickRequest(cands, mi), PickSchema, llm, { messageId: m.id });
-          return { projectId: r.data.project_id, confidence: r.data.confidence, reason: r.data.reason };
+          try {
+            const r = await runTask("pick_project", buildPickRequest(cands, mi), PickSchema, llm, { messageId: m.id });
+            return { projectId: r.data.project_id, confidence: r.data.confidence, reason: r.data.reason };
+          } catch (e) {
+            if (e instanceof BudgetExceededError) return null; // ohne KI keine Auswahl: der Mensch entscheidet
+            throw e;
+          }
         },
       };
       const out: MatchOutcome = await matchMessage(input, deps);

@@ -48,7 +48,20 @@ export default function Layout({ children }: { children: ReactNode }) {
           </Button>
         </div>
       </nav>
-      <main className="min-w-0 flex-1 p-4 md:p-6">{children}</main>
+      <main className="min-w-0 flex-1 p-4 md:p-6">
+        {overview.data?.budgetExceeded && (
+          <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            Das KI-Monatsbudget ({overview.data.budgetUsd} $) ist erreicht. Es laufen nur noch Regeln und das Logbuch über Thread und Projektnummer – neue Mails bleiben unklassifiziert im Posteingang.
+            Das Budget lässt sich unter Einstellungen → Firma &amp; HERO anheben.
+          </div>
+        )}
+        {overview.data && overview.data.neuronsToday >= 10000 && (
+          <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            Das kostenlose Cloudflare-Tageskontingent (10.000 Neurons) ist aufgebraucht – der Rest des Tages läuft über den Ausweich-Anbieter bzw. wartet bis Mitternacht (UTC), je nach Einstellung.
+          </div>
+        )}
+        {children}
+      </main>
     </div>
   );
 }

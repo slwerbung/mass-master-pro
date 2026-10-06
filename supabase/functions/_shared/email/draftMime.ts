@@ -76,3 +76,18 @@ export function imapDraftWriter(
     },
   };
 }
+
+
+/** Weiterleitungs-Entwurf mit Anhaengen (siehe forward.ts – gesendet wird nie). */
+export async function buildForwardMime(h: {
+  from: { name: string; address: string }; to: string; subject: string; text: string;
+  files: { filename: string; mime: string; bytes: Uint8Array }[]; messageId: string;
+}): Promise<Uint8Array> {
+  const mc = new MailComposer({
+    from: { name: h.from.name, address: h.from.address },
+    to: h.to, subject: h.subject, text: h.text, date: new Date(), messageId: h.messageId,
+    attachments: h.files.map((f) => ({ filename: f.filename, content: f.bytes as unknown as Uint8Array, contentType: f.mime })),
+    headers: { "X-Mail-Assistent": "Entwurf" },
+  } as any);
+  return (await mc.compile().build()) as Uint8Array;
+}

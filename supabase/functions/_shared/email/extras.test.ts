@@ -102,3 +102,65 @@ describe("Anhaenge", () => {
     expect(t.log.suggestions).toEqual([]);
   });
 });
+
+describe("Angebot vorbereiten", () => {
+  const mm = m({ hero_project_match_id: 5, category: "anfrage_neu", match_info: { certain: true, knownContact: true, reason: "", projectNr: "WER-5" }, match_method: "nummer" });
+  it("nur Neuanfragen mit Projekt; legt einen Vorschlag an", async () => {
+    const calls: any[] = [];
+    const offer = { suggest: async (...a: any[]) => { calls.push(a); return { kind: "angebot" }; } };
+    const t = setup(); const plan: PlanEntry[] = [];
+    const ex = buildExtra({ docTypes: {}, draft: null, offer });
+    await ex(mm, ctx(), t.deps, plan);
+    expect(calls).toEqual([["M1", 5, "WER-5"]]);
+    expect(plan.find((p) => p.action === "prepare_offer")).toMatchObject({ decision: "suggest", done: true });
+    await ex(m({ hero_project_match_id: 5, category: "projekt_kommunikation" }), ctx(), t.deps, []);
+    await ex(m({ category: "anfrage_neu" }), ctx(), t.deps, []);
+    expect(calls).toHaveLength(1);
+  });
+  it("Stufe Aus: nichts; Schattenmodus + Automatisch: nur geplant; Budget/Fehler stoeren nicht", async () => {
+    const calls: any[] = [];
+    const offer = { suggest: async (...a: any[]) => { calls.push(a); return null; } };
+    const t = setup();
+    await buildExtra({ docTypes: {}, draft: null, offer })(mm, ctx(false, { prepare_offer: "off" }), t.deps, []);
+    expect(calls).toEqual([]);
+    const plan: PlanEntry[] = [];
+    await buildExtra({ docTypes: {}, draft: null, offer })(mm, ctx(true, { prepare_offer: "auto" }), t.deps, plan);
+    expect(plan[0]).toMatchObject({ decision: "shadow", done: false });
+    expect(calls).toEqual([]);
+    const plan2: PlanEntry[] = [];
+    await buildExtra({ docTypes: {}, draft: null, offer: { suggest: async () => { throw new Error("HERO kaputt"); } } })(mm, ctx(), t.deps, plan2);
+    expect(plan2[0].detail).toMatch(/nicht möglich: HERO kaputt/);
+  });
+});
+
+describe("Beleg an Lexoffice", () => {
+  const beleg = m({ category: "beleg", has_attachments: true, extracted: {} });
+  const fwd = (calls: string[] = []) => ({ address: "belege@lexoffice.example", run: async (id: string) => { calls.push(id); return { files: 2 }; } });
+  it("Standard (Aus): nichts", async () => {
+    const calls: string[] = []; const plan: PlanEntry[] = [];
+    await buildExtra({ docTypes: {}, draft: null, forward: fwd(calls) })(beleg, ctx(), setup().deps, plan);
+    expect(calls).toEqual([]); expect(plan).toEqual([]);
+  });
+  it("Automatisch: Entwurf, nicht im Schattenmodus; Vorschlag nur als Hinweis", async () => {
+    const calls: string[] = []; const plan: PlanEntry[] = [];
+    await buildExtra({ docTypes: {}, draft: null, forward: fwd(calls) })(beleg, ctx(false, { forward_beleg: "auto" }), setup().deps, plan);
+    expect(calls).toEqual(["M1"]);
+    expect(plan[0]).toMatchObject({ action: "forward_beleg", done: true });
+    const c2: string[] = []; const p2: PlanEntry[] = [];
+    await buildExtra({ docTypes: {}, draft: null, forward: fwd(c2) })(beleg, ctx(true, { forward_beleg: "auto" }), setup().deps, p2);
+    await buildExtra({ docTypes: {}, draft: null, forward: fwd(c2) })(beleg, ctx(false, { forward_beleg: "suggest" }), setup().deps, p2);
+    expect(c2).toEqual([]);
+    expect(p2.map((p) => p.decision)).toEqual(["shadow", "suggest"]);
+  });
+  it("ohne Adresse, ohne Anhang, falsche Kategorie oder schon erledigt: nichts; Fehler stoeren nicht", async () => {
+    const calls: string[] = [];
+    const run = async (mm: ActMessage, f: any) => { const plan: PlanEntry[] = []; await buildExtra({ docTypes: {}, draft: null, forward: f })(mm, ctx(false, { forward_beleg: "auto" }), setup().deps, plan); return plan; };
+    expect(await run(beleg, { address: "", run: async () => ({ files: 1 }) })).toEqual([]);
+    expect(await run({ ...beleg, has_attachments: false }, fwd(calls))).toEqual([]);
+    expect(await run({ ...beleg, category: "lieferant" }, fwd(calls))).toEqual([]);
+    expect(await run({ ...beleg, plan: [{ action: "forward_beleg", decision: "auto", done: true }] }, fwd(calls))).toEqual([]);
+    expect(calls).toEqual([]);
+    const p = await run(beleg, { address: "a@b.de", run: async () => { throw new Error("kein Anhang"); } });
+    expect(p[0].detail).toMatch(/nicht möglich: kein Anhang/);
+  });
+});

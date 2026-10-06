@@ -105,3 +105,16 @@ describe("understandPending", () => {
     expect(t2.shadows[0][2].error).toMatch(/500/);
   });
 });
+
+describe("Monatsbudget erreicht", () => {
+  it("Mail bleibt unklassifiziert, geht aber weiter zur Zuordnung (Thread/Nummer brauchen keine KI); Regeln laufen weiter", async () => {
+    const t = setup([pm({ id: "M1" }), pm({ id: "M2", from_addr: "ci@vercel.com", subject: "Deploy" })], [cfOk()]);
+    t.llm.budgetExceeded = async () => true;
+    const s = await understandPending("A", t.store, t.ctx, t.llm);
+    expect(s).toMatchObject({ processed: 2, errors: 0, budget: true });
+    expect(t.saved.M1).toMatchObject({ status: "klassifiziert", category: null, summary: "Anfrage" });
+    expect((t.saved.M1.extracted as any)._meta.source).toBe("budget");
+    expect(t.saved.M2).toMatchObject({ category: "system" }); // Regel braucht kein Modell
+    expect(t.calls).toHaveLength(0);
+  });
+});

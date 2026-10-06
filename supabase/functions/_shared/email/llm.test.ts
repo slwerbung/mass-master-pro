@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { callProvider, computeCost, LimitWaitError, runShadow, runTask, type CallLog, type LlmDeps, type LlmRequest, type Provider, type TaskSetting } from "./llm.ts";
+import { BudgetExceededError, callProvider, computeCost, LimitWaitError, runShadow, runTask, type CallLog, type LlmDeps, type LlmRequest, type Provider, type TaskSetting } from "./llm.ts";
 
 const schema = z.object({ category: z.enum(["a", "b"]), n: z.number() });
 const req: LlmRequest = {
@@ -152,5 +152,20 @@ describe("runShadow", () => {
   it("liefert das Ergebnis des zweiten Modells", async () => {
     const { d } = deps(setting({ shadow: an, shadowModel: "haiku" }), [() => anReply({ category: "b", n: 5 })]);
     expect((await runShadow("understand", req, schema, d))?.data).toEqual({ category: "b", n: 5 });
+  });
+});
+
+describe("Monatsbudget", () => {
+  it("runTask ruft bei erreichtem Budget gar nicht erst an", async () => {
+    const { d, seen } = deps(setting(), [() => cfReply({ category: "a", n: 1 })]);
+    d.budgetExceeded = async () => true;
+    await expect(runTask("understand", req, schema, d)).rejects.toBeInstanceOf(BudgetExceededError);
+    expect(seen).toHaveLength(0);
+    expect(await runShadow("understand", req, schema, { ...d, getSetting: async () => setting({ shadow: an, shadowModel: "haiku" }) })).toBeNull();
+  });
+  it("Budget nicht erreicht: normal", async () => {
+    const { d } = deps(setting(), [() => cfReply({ category: "a", n: 1 })]);
+    d.budgetExceeded = async () => false;
+    expect((await runTask("understand", req, schema, d)).data.n).toBe(1);
   });
 });

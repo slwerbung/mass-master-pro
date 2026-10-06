@@ -296,3 +296,53 @@ export async function projectDraftContext(
 
   return { projectNr: p.nr, projectName: p.name, stepName: p.stepName, offers, nextAppointment };
 }
+
+/** HERO-Leistungen (supply_services) fuer die Angebotsvorbereitung. Blaettert in 50er-Schritten. */
+export async function listServices(apiKey: string, fetchImpl: F = fetch): Promise<{ id: number; name: string }[]> {
+  const out: { id: number; name: string }[] = [];
+  for (let offset = 0; offset < 500; offset += 50) {
+    const data = await heroGraphql(apiKey, `query($o: Int) { supply_services(first: 50, offset: $o) { id name } }`, { o: offset }, fetchImpl);
+    const rows: any[] = data?.supply_services || [];
+    for (const r of rows) if (r?.id != null && r?.name) out.push({ id: Number(r.id), name: String(r.name) });
+    if (rows.length < 50) break;
+  }
+  return out;
+}
+
+/** Aus den Feldern des HERO-Eingabetyps das Eingabeobjekt fuer `create_document` bauen (null, wenn es nicht passt). */
+export function buildDocumentInput(inputFields: string[], projectMatchId: number, documentTypeId: number): Record<string, unknown> | null {
+  const has = (f: string) => inputFields.includes(f);
+  if (!has("document_type_id")) return null;
+  const input: Record<string, unknown> = { document_type_id: documentTypeId };
+  if (has("project_match_id")) input.project_match_id = projectMatchId;
+  else if (has("target") && has("target_id")) { input.target = "project_match"; input.target_id = projectMatchId; }
+  else return null;
+  return input;
+}
+
+const unwrap = (t: any): string | null => (t?.name ? String(t.name) : t?.ofType ? unwrap(t.ofType) : null);
+
+/**
+ * Leeres Angebot am Projekt anlegen. Die Form von `create_document` ist im Repo nirgends belegt –
+ * deshalb liest die Funktion den Eingabetyp per Introspection und baut das Objekt daraus. Passt nichts,
+ * wirft sie mit einer klaren Meldung (der Aufrufer behandelt das als Hinweis, nicht als Abbruch).
+ */
+export async function createEmptyDocument(apiKey: string, projectMatchId: number, documentTypeId: number, fetchImpl: F = fetch): Promise<{ id: number | null }> {
+  const meta = await heroGraphql(
+    apiKey,
+    `query { __type(name: "Mutation") { fields { name args { name type { name kind ofType { name kind ofType { name kind } } } } } } }`,
+    {}, fetchImpl,
+  );
+  const f = (meta?.__type?.fields || []).find((x: any) => x.name === "create_document");
+  if (!f) throw new HeroError("HERO kennt create_document nicht");
+  const inputArg = (f.args || []).find((a: any) => a.name === "input");
+  const typeName = inputArg ? unwrap(inputArg.type) : null;
+  if (!typeName) throw new HeroError("create_document hat kein Argument „input“");
+  const t = await heroGraphql(apiKey, `query($n: String!) { __type(name: $n) { inputFields { name } } }`, { n: typeName }, fetchImpl);
+  const fields: string[] = (t?.__type?.inputFields || []).map((x: any) => x.name);
+  const input = buildDocumentInput(fields, projectMatchId, documentTypeId);
+  if (!input) throw new HeroError(`create_document-Eingabe passt nicht (Felder: ${fields.join(", ") || "keine"})`);
+  const data = await heroGraphql(apiKey, `mutation($input: ${typeName}!) { create_document(input: $input) { id } }`, { input }, fetchImpl);
+  const id = Number(data?.create_document?.id);
+  return { id: Number.isFinite(id) && id > 0 ? id : null };
+}

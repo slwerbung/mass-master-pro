@@ -24,7 +24,7 @@ eine Vercel-Node-Function um, der Rest bleibt unverändert.
 | Schlagwort setzen, in zweiter Verbindung lesen, wieder entfernen | ja (Mock) |
 | Entwurf per `APPEND` in den Entwürfe-Ordner | ja (Mock) |
 | Kein SMTP, kein `messageDelete` im Code | per Test abgesichert (`imap.test.ts`) |
-| `upload_document`-Ablauf | schon produktiv im Repo (`hero-upload-proxy`): 1. `POST /app/v8/FileUploads/upload` (multipart, Header `x-auth-token`), 2. UUID aus `data.uuid`, 3. `upload_document(document:{document_type_id}, file_upload_uuid, target: project_match, target_id)`. Die „Dateiordner"-IDs aus dem Konzept (243132 …) sind demnach **`document_type_id`s** und werden so verwendet. |
+| `upload_document`-Ablauf | schon produktiv im Repo (`hero-upload-proxy`): 1. `POST /app/v8/FileUploads/upload` (multipart, Header `x-auth-token`), 2. UUID aus `data.uuid`, 3. `upload_document(document:{document_type_id}, file_upload_uuid, target: project_match, target_id)`. **Korrektur:** die „Dateiordner“-IDs aus dem Konzept (243132 …) sind HERO-*Ordner* (`file_upload_folders`), keine Dokumenttypen. Verwendet werden die Dokumenttypen Plan/Layout 338164, Aufmaßdokument 279269, Druckdaten 428979 (HERO-Skill, Stand 23.09.2026); per Knopf „aus HERO neu laden“ aktualisierbar. |
 | `add_logbook_entry`, `create_contact(findExisting)`, `create_project_match` | schon produktiv im Repo (`hero-integration`, `submit-vehicle-request`); `_shared/email/hero.ts` übernimmt die dort bewährten Aufrufe |
 
 Der Mock-Server war `hoodiecrow-imap` (reiner IMAP-Server in Node). Er beweist
@@ -53,10 +53,12 @@ Alles mit Silas’ Zugangsdaten, nichts davon verändert Postfach-Inhalte ohne `
    angezeigt statt im Postfach gesetzt (`autopilot.keywords` auf „aus").
    Das Skript legt einen Test-Entwurf an; bitte von Hand entfernen.
 3. **`create_document` für ein leeres Angebot.** Im Repo nirgends benutzt, daher
-   ungeprüft. `email-api` bietet dafür die Admin-Aktion `hero_probe`, die nur
-   **liest** (Introspection von `create_document`-Argumenten, `document_types`,
-   `supply_services`). Geschrieben wird erst in Phase 4 und nur an einem
-   Testprojekt nach Freigabe.
+   ungeprüft. `email-api` bietet dafür die Admin-Aktion `hero_probe`
+   (`{"action":"hero_probe","mutation":"create_document"}`), die nur **liest**
+   (Argumente per Introspection, Anzahl `supply_services`). `hero.ts › createEmptyDocument`
+   baut die Eingabe selbst aus dem Eingabetyp; geschrieben wird erst bei Klick in Phase 4
+   und nur an einem Testprojekt nach Freigabe. Laut HERO-Skill kann die API Dokumente nur leer anlegen
+   (keine Positionen).
 4. **Cloudflare JSON-Modus mit Llama 3.3 70B an fünf echten Mails.** Braucht den
    Cloudflare-Schlüssel (Mail-App → Einstellungen → KI-Anbieter). Die Mail-App
    hat dafür den Schattenmodus mit Parallelvergleich zweier Modelle; fünf Mails

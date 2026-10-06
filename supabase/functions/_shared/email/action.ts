@@ -10,6 +10,8 @@ import type { Gewerk } from "./gewerke.ts";
 import type { MatchInfo } from "./matchStage.ts";
 import { stepLabel } from "./steps.ts";
 import type { UploadItem } from "./attachments.ts";
+import { offerLogText, type OfferPayload } from "./offer.ts";
+import type { StepIds } from "./steps.ts";
 
 export interface SuggestionRow {
   id: string;
@@ -49,6 +51,8 @@ export interface ActionHero {
   createContact(c: NewContact, source: string): Promise<number>;
   contactsByEmail(email: string): Promise<HeroContact[]>;
   createProject(p: NewProject): Promise<{ id: number; nr: string }>;
+  /** Leeres Angebot am Projekt anlegen (HERO kann nur leer). */
+  createOffer(projectId: number, documentTypeId: number): Promise<{ id: number | null }>;
   uploadDocument(projectId: number, file: { bytes: Uint8Array; filename: string; mime: string }, documentTypeId: number): Promise<{ uploadId: string }>;
 }
 
@@ -60,6 +64,8 @@ export interface ActionConfig {
   gewerke: Gewerk[];
   /** Erlaubte HERO-Dokumenttypen fuer Anhaenge (Whitelist aus email_config.hero.document_types). */
   documentTypeIds: number[];
+  steps: StepIds;
+  offerTypeId: number | null;
 }
 
 export interface ActionDeps {
@@ -67,6 +73,8 @@ export interface ActionDeps {
   store: ActionStore;
   config: ActionConfig;
   files?: { download(path: string): Promise<Uint8Array> };
+  /** Nach einer Zuordnung eine Angebotsvorbereitung vorschlagen (nur Neuanfragen; best effort). */
+  offers?: { suggest(messageId: string, projectId: number, projectNr: string): Promise<void> };
 }
 
 export class ActionError extends Error {}
@@ -101,12 +109,14 @@ async function assignAndLog(
   });
   if (s.message.hero_logged_at) {
     await store.suggestUploads(s.message.id, project.id, project.nr).catch(() => {});
+    await deps.offers?.suggest(s.message.id, project.id, project.nr).catch(() => {});
     return { logged: false };
   }
   try {
     await hero!.addLogbook(project.id, text);
     await store.markLogged(s.message.id);
     await store.suggestUploads(s.message.id, project.id, project.nr).catch(() => {});
+    await deps.offers?.suggest(s.message.id, project.id, project.nr).catch(() => {});
     return { logged: true };
   } catch (e) {
     warnings.push(`Logbuch-Eintrag fehlgeschlagen: ${(e as Error).message}`);
@@ -173,6 +183,10 @@ export async function decideSuggestion(input: DecideInput, deps: ActionDeps): Pr
 
       case "upload_attachments":
         result = await uploadAttachments(s, p, deps, warnings);
+        break;
+
+      case "prepare_offer":
+        result = await prepareOffer(p as OfferPayload, deps, warnings);
         break;
 
       default:
@@ -254,4 +268,32 @@ async function uploadAttachments(s: SuggestionRow, p: any, deps: ActionDeps, war
   if (!uploaded) throw new ActionError(`Kein Anhang hochgeladen. ${failed.join(" | ")}`);
   if (failed.length) warnings.push(`Nicht hochgeladen: ${failed.join(" | ")}`);
   return { projectId, uploaded, failed: failed.length };
+}
+
+async function prepareOffer(p: OfferPayload, deps: ActionDeps, warnings: string[]): Promise<Record<string, unknown>> {
+  const { hero, config } = deps;
+  const projectId = Number(need(p.projectId, "Projekt fehlt."));
+  const kind = p.kind === "vor_ort" ? "vor_ort" : "angebot";
+  const stepId = need(kind === "vor_ort" ? config.steps.vor_ort : config.steps.angebot, `Schritt „${kind === "vor_ort" ? "Vor-Ort-Termin" : "Angeboterstellung"}“ ist nicht konfiguriert (Einstellungen → HERO-IDs).`);
+  const project = need(await hero!.projectById(projectId), `Projekt ${projectId} gibt es in HERO nicht.`);
+
+  // 1. Die Positionsliste ist das eigentliche Ergebnis: sie steht im Logbuch, auch wenn spaeter etwas scheitert.
+  await hero!.addLogbook(projectId, offerLogText({ ...p, kind, projectId }));
+
+  // 2. Schritt wechseln (gleicher Schritt = nichts zu tun)
+  if (project.stepId !== stepId) await hero!.setStep(projectId, stepId);
+
+  // 3. Leeres Angebot – nur beim Angebot, und nur Hinweis, wenn HERO es nicht anlegen laesst
+  let documentId: number | null = null;
+  if (kind === "angebot") {
+    if (!config.offerTypeId) warnings.push("Dokumenttyp „Angebot“ ist nicht konfiguriert – bitte das Angebot in HERO von Hand anlegen.");
+    else {
+      try {
+        documentId = (await hero!.createOffer(projectId, config.offerTypeId)).id;
+      } catch (e) {
+        warnings.push(`Leeres Angebot konnte nicht angelegt werden (bitte in HERO von Hand): ${(e as Error).message}`.slice(0, 300));
+      }
+    }
+  }
+  return { kind, projectId, stepId, documentId, positions: p.positions?.length ?? 0 };
 }

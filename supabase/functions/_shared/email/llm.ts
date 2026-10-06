@@ -82,6 +82,8 @@ export interface LlmDeps {
   prices: Record<string, any>;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** true, wenn das Monatsbudget (Admin-Bereich) aufgebraucht ist. */
+  budgetExceeded?(): Promise<boolean>;
 }
 
 /** Kontingent erschoepft und `on_limit = warten`: die Mail bleibt liegen, ohne Fehlversuch. */
@@ -89,6 +91,14 @@ export class LimitWaitError extends Error {
   constructor() {
     super("KI-Tageskontingent erschoepft – Mail wartet bis Mitternacht (UTC).");
     this.name = "LimitWaitError";
+  }
+}
+
+/** Monatsbudget erreicht: es laufen nur noch Regeln und Logbuch ueber Thread/Projektnummer. */
+export class BudgetExceededError extends Error {
+  constructor() {
+    super("KI-Monatsbudget erreicht – es laufen nur noch Regeln und das Logbuch über Thread und Projektnummer.");
+    this.name = "BudgetExceededError";
   }
 }
 
@@ -259,6 +269,7 @@ async function attempt<T>(
 export async function runTask<T>(
   task: AiTask, req: LlmRequest, schema: ZodType<T, any, any>, deps: LlmDeps, opts: { messageId?: string | null } = {},
 ): Promise<TaskResult<T>> {
+  if (await deps.budgetExceeded?.()) throw new BudgetExceededError();
   const s = await deps.getSetting(task);
   if (!s || !s.provider) throw new LlmError(`Fuer die Aufgabe „${task}“ ist kein KI-Anbieter eingestellt`);
 
@@ -298,6 +309,7 @@ export async function runTask<T>(
 export async function runShadow<T>(
   task: AiTask, req: LlmRequest, schema: ZodType<T, any, any>, deps: LlmDeps, opts: { messageId?: string | null } = {},
 ): Promise<{ providerName: string; model: string; data?: T; error?: string } | null> {
+  if (await deps.budgetExceeded?.()) return null;
   const s = await deps.getSetting(task);
   if (!s || !s.shadow || !s.shadowModel) return null;
   try {
