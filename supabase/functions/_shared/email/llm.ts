@@ -227,7 +227,7 @@ export interface TaskResult<T> {
 }
 
 async function attempt<T>(
-  task: AiTask, provider: Provider, model: string, req: LlmRequest, schema: ZodType<T>,
+  task: AiTask, provider: Provider, model: string, req: LlmRequest, schema: ZodType<T, any, any>,
   deps: LlmDeps, messageId: string | null | undefined, fallback: boolean,
 ): Promise<TaskResult<T>> {
   let usage: Usage = { tokensIn: 0, tokensOut: 0, cachedIn: 0 };
@@ -257,7 +257,7 @@ async function attempt<T>(
 }
 
 export async function runTask<T>(
-  task: AiTask, req: LlmRequest, schema: ZodType<T>, deps: LlmDeps, opts: { messageId?: string | null } = {},
+  task: AiTask, req: LlmRequest, schema: ZodType<T, any, any>, deps: LlmDeps, opts: { messageId?: string | null } = {},
 ): Promise<TaskResult<T>> {
   const s = await deps.getSetting(task);
   if (!s || !s.provider) throw new LlmError(`Fuer die Aufgabe „${task}“ ist kein KI-Anbieter eingestellt`);
@@ -296,7 +296,7 @@ export async function runTask<T>(
 
 /** Zweiter Anbieter fuer den Parallelvergleich im Schattenmodus. Wirft nie. */
 export async function runShadow<T>(
-  task: AiTask, req: LlmRequest, schema: ZodType<T>, deps: LlmDeps, opts: { messageId?: string | null } = {},
+  task: AiTask, req: LlmRequest, schema: ZodType<T, any, any>, deps: LlmDeps, opts: { messageId?: string | null } = {},
 ): Promise<{ providerName: string; model: string; data?: T; error?: string } | null> {
   const s = await deps.getSetting(task);
   if (!s || !s.shadow || !s.shadowModel) return null;

@@ -46,7 +46,7 @@ export async function decryptSecret(stored: string, secret: string | undefined):
   const parts = String(stored || "").split(":");
   if (parts.length !== 3 || parts[0] !== "v1") throw new Error("Unbekanntes Format des verschluesselten Werts");
   try {
-    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(parts[1]) }, key, fromB64(parts[2]));
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(parts[1]) as BufferSource }, key, fromB64(parts[2]) as BufferSource);
     return dec.decode(pt);
   } catch {
     // Falscher Schluessel oder veraenderter Wert — nie Details nach aussen geben.

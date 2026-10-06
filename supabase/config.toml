@@ -35,3 +35,21 @@ verify_jwt = false
 
 [functions.probo-catalog]
 verify_jwt = false
+
+[functions.email-account-test]
+verify_jwt = false
+
+[functions.email-sync]
+verify_jwt = false
+
+[functions.email-process]
+verify_jwt = false
+
+[functions.email-action]
+verify_jwt = false
+
+[functions.email-draft]
+verify_jwt = false
+
+[functions.email-api]
+verify_jwt = false
