@@ -1,6 +1,10 @@
 -- KI-Mail-Assistent: Startbelegung (Seed). Alles hier ist im Admin-Bereich der
 -- Mail-App aenderbar; die HERO-IDs lassen sich per Knopf aus HERO neu laden.
 -- Idempotent: bestehende Werte werden nicht ueberschrieben.
+--
+-- HERO-Dokumenttypen (upload_document braucht eine document_type_id, KEINE Ordner-ID): Plan / Layout 338164,
+-- Aufmassdokument 279269, Druckdaten 428979 (Stand 23.09.2026 laut HERO-Introspection). Fahrzeugdaten und
+-- Allgemein haben keinen eigenen Typ und nutzen „Plan / Layout"; bitte im Admin-Bereich pruefen.
 
 insert into public.email_config (key, value) values
   ('folders', '{
@@ -23,12 +27,13 @@ insert into public.email_config (key, value) values
     "start_step_id": 2825,
     "steps": {
       "angebot": 266511, "vor_ort": 266510, "detailgespraech": 266647, "projektplanung": 266512,
-      "visualisierung": 266370, "materialbestellung": 266740, "produktionsdaten": 266371, "reklamation": 2835
+      "visualisierung": 266370, "materialbestellung": 266740, "produktionsdaten": 266371, "reklamation": 2835,
+      "warten_auftrag": 266648, "warten_layout": 266649, "warten_ware": 266741
     },
     "excluded_steps": [2834, 2836, 2837],
     "offer_document_type_id": 171300,
     "document_types": {
-      "layouts": 243132, "aufmasse": 278366, "druckdaten": 417092, "fahrzeugdaten": 576006, "allgemein": 178903
+      "layouts": 338164, "aufmasse": 279269, "druckdaten": 428979, "fahrzeugdaten": 338164, "allgemein": 338164
     }
   }'::jsonb),
   ('company_knowledge', to_jsonb('SL WERBUNG, Winnenden. Leistungen: Fahrzeugbeschriftung, Schilder, Leitsysteme, Folierung, Digitaldruck, Textildruck, Splitterschutz, Montage. Typischer Ablauf: Anfrage, Angebot, Auftragsbestaetigung, Layout und Freigabe, Produktion, Montage, Rechnung.'::text)),

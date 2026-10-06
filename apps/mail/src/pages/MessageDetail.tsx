@@ -3,7 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowLeft, Download, RefreshCw } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, invokeFn } from "@/lib/api";
+import { ProjectSearch } from "@/components/ProjectSearch";
 import { CATEGORIES, CATEGORY_LABELS, type Category } from "@/lib/shared";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Input, Select, Spinner } from "@/components/ui";
 import { CategoryChip } from "@/components/CategoryChip";
@@ -11,6 +12,7 @@ import { errorText, formatDateTime, pct } from "@/lib/utils";
 
 /* Der Inhalt von `extracted` ist ein freies JSON aus dem Modell. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+interface PlanEntry { action: string; decision: string; done: boolean; detail?: string }
 interface Detail {
   message: any;
   thread: { id: string; direction: string; from_addr: string; from_name: string; subject: string; sent_at: string | null; summary: string | null; category: Category | null; body_text: string | null }[];
@@ -46,6 +48,11 @@ export default function MessageDetail() {
   const correct = useMutation({
     mutationFn: (body: Record<string, unknown>) => api("correct_message", { id, ...body }),
     onSuccess: () => { toast.success("Korrektur gespeichert – der Assistent lernt daraus."); qc.invalidateQueries({ queryKey: ["message", id] }); qc.invalidateQueries({ queryKey: ["messages"] }); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  const assign = useMutation({
+    mutationFn: (projectId: number) => invokeFn("email-action", { action: "assign", messageId: id, projectId }),
+    onSuccess: () => { toast.success("Zugeordnet und ins Logbuch geschrieben."); qc.invalidateQueries({ queryKey: ["message", id] }); qc.invalidateQueries({ queryKey: ["messages"] }); qc.invalidateQueries({ queryKey: ["overview"] }); },
     onError: (e) => toast.error(errorText(e)),
   });
   const reprocess = useMutation({
@@ -101,6 +108,45 @@ export default function MessageDetail() {
           </div>
           {ex.reply && <p className="text-xs text-muted-foreground">Antwort nötig: <b>{ex.reply.needed ? "ja" : "nein"}</b> – {ex.reply.reason}</p>}
           <Button variant="outline" size="sm" onClick={() => reprocess.mutate()} disabled={reprocess.isPending}><RefreshCw className="h-3 w-3" /> Neu verarbeiten</Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>HERO-Zuordnung</CardTitle></CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {m.hero_project_match_id ? (
+            <p>
+              Projekt <b>{m.match_info?.projectNr ?? `#${m.hero_project_match_id}`}</b>{m.match_info?.projectName ? ` · ${m.match_info.projectName}` : ""}
+              {m.match_method ? ` – ${m.match_method}${m.match_info?.certain ? " (sicher)" : " (vermutet)"}` : ""}
+              {m.hero_logged_at ? ` · im Logbuch seit ${formatDateTime(m.hero_logged_at)}` : " · noch nicht im Logbuch"}
+            </p>
+          ) : (
+            <p className="text-muted-foreground">Kein Projekt zugeordnet{m.match_info?.reason ? ` (${m.match_info.reason})` : ""}.</p>
+          )}
+          <details>
+            <summary className="cursor-pointer text-xs text-muted-foreground">Projekt ändern / zuordnen</summary>
+            <div className="mt-2 space-y-2">
+              <ProjectSearch selectedId={m.hero_project_match_id} onPick={(p) => { if (confirm(`Mail dem Projekt ${p.nr} zuordnen und ins HERO-Logbuch schreiben?`)) assign.mutate(p.id); }} />
+              <p className="text-xs text-muted-foreground">Die Zuordnung wird als Korrektur gespeichert. Ein bereits geschriebener Logbuch-Eintrag bleibt am alten Projekt stehen (manuell in HERO prüfen).</p>
+            </div>
+          </details>
+          {d.suggestions.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {d.suggestions.map((sg) => <Badge key={sg.id} variant={sg.status === "offen" ? "warn" : "secondary"}>{sg.type}: {sg.status}</Badge>)}
+              <Link className="text-xs underline" to="/">Zu entscheiden</Link>
+            </div>
+          )}
+          {Array.isArray(m.plan) && m.plan.length > 0 && (
+            <div className="space-y-1">
+              <h4 className="text-xs font-medium text-muted-foreground">{m.plan.some((p: PlanEntry) => p.decision === "shadow") ? "Geplant (Schattenmodus – nichts wurde verändert)" : "Was der Assistent getan hat"}</h4>
+              {(m.plan as PlanEntry[]).map((p, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-2 text-xs">
+                  <Badge variant={p.done ? "good" : p.decision === "shadow" ? "warn" : "secondary"}>{p.action}</Badge>
+                  <span>{p.detail ?? p.decision}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

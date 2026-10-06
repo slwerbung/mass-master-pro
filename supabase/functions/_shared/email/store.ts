@@ -4,6 +4,9 @@ import type { FeedbackExample, RuleRow } from "./classify.ts";
 import type { MessageInsert, SyncStore } from "./sync.ts";
 import type { PendingMessage, UnderstandStore } from "./understand.ts";
 import { MAX_ATTEMPTS } from "./understand.ts";
+import type { ActionStore, SuggestionRow } from "./action.ts";
+import type { MatchMessageRow, MatchSave, MatchStore } from "./matchStage.ts";
+import type { ActMessage, ActStore } from "./act.ts";
 
 const BUCKET = "email-attachments";
 
@@ -107,4 +110,127 @@ export async function claimAccount(sb: any, id: string, minutes = 4): Promise<an
 
 export async function releaseAccount(sb: any, id: string, patch: Record<string, unknown> = {}): Promise<void> {
   await sb.from("email_accounts").update({ locked_until: null, ...patch }).eq("id", id);
+}
+
+// ---------------------------------------------------------------------------
+// Zuordnen und Handeln (Phase 2)
+// ---------------------------------------------------------------------------
+
+export function matchStore(sb: any): MatchStore {
+  return {
+    async loadForMatch(accountId, limit): Promise<MatchMessageRow[]> {
+      const { data } = await sb.from("email_messages")
+        .select("id, account_id, thread_id, direction, from_addr, to_addrs, cc_addrs, subject, body_text, summary, attempts")
+        .eq("account_id", accountId).eq("status", "klassifiziert")
+        .order("sent_at", { ascending: true, nullsFirst: false }).limit(limit);
+      return (data || []) as MatchMessageRow[];
+    },
+    async saveMatch(id, patch: MatchSave) {
+      must(await sb.from("email_messages").update(patch).eq("id", id));
+    },
+    async setThreadProject(threadId, projectId) {
+      must(await sb.from("email_threads").update({ hero_project_match_id: projectId }).eq("id", threadId));
+      // Fruehere Mails des Threads ohne Zuordnung ziehen mit.
+      await sb.from("email_messages").update({ hero_project_match_id: projectId, match_method: "thread" })
+        .eq("thread_id", threadId).is("hero_project_match_id", null);
+    },
+  };
+}
+
+const ACT_COLUMNS =
+  "id, account_id, thread_id, direction, current_folder, current_uid, from_addr, from_name, to_addrs, subject, category, confidence, " +
+  "summary, extracted, hero_project_match_id, match_method, match_info, hero_logged_at, has_attachments, plan, status, attempts";
+
+export function actStore(sb: any): ActStore {
+  return {
+    async loadActable(accountId, limit): Promise<ActMessage[]> {
+      const { data } = await sb.from("email_messages").select(ACT_COLUMNS)
+        .eq("account_id", accountId).in("status", ["zugeordnet", "ohne_bezug"])
+        .order("sent_at", { ascending: true, nullsFirst: false }).limit(limit);
+      return (data || []) as ActMessage[];
+    },
+    async save(id, patch) {
+      must(await sb.from("email_messages").update({ ...patch, processed_at: new Date().toISOString() }).eq("id", id));
+    },
+    async progress(id, patch) {
+      must(await sb.from("email_messages").update(patch).eq("id", id));
+    },
+    async createSuggestion(messageId, type, payload) {
+      // Der partielle Unique-Index (message_id, type) where offen verhindert Dubletten.
+      const { error } = await sb.from("email_suggestions").insert({ message_id: messageId, type, payload });
+      if (error) {
+        if (String(error.code) === "23505") return false;
+        throw new Error(error.message);
+      }
+      return true;
+    },
+    async hasOpenSuggestions(messageId) {
+      const { count } = await sb.from("email_suggestions").select("id", { count: "exact", head: true })
+        .eq("message_id", messageId).eq("status", "offen");
+      return (count ?? 0) > 0;
+    },
+    async unansweredIncoming(threadId): Promise<ActMessage[]> {
+      const { data } = await sb.from("email_messages").select(ACT_COLUMNS)
+        .eq("thread_id", threadId).eq("direction", "in").not("hero_project_match_id", "is", null);
+      return (data || []) as ActMessage[];
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Vorschlaege ausfuehren (email-action)
+// ---------------------------------------------------------------------------
+
+export function actionStore(sb: any): ActionStore {
+  return {
+    async getSuggestion(id): Promise<SuggestionRow | null> {
+      const { data } = await sb.from("email_suggestions")
+        .select("id, message_id, type, payload, status, email_messages!inner(id, account_id, thread_id, direction, from_addr, from_name, to_addrs, subject, summary, has_attachments, hero_project_match_id, hero_logged_at, match_info, email_accounts(label, address))")
+        .eq("id", id).maybeSingle();
+      if (!data) return null;
+      const m = data.email_messages;
+      return {
+        id: data.id, message_id: data.message_id, type: data.type, payload: data.payload, status: data.status,
+        message: { ...m, account_label: m.email_accounts?.label || m.email_accounts?.address || "", email_accounts: undefined },
+      };
+    },
+    async claim(id) {
+      const { data } = await sb.from("email_suggestions")
+        .update({ status: "angenommen", decided_at: new Date().toISOString() })
+        .eq("id", id).in("status", ["offen", "fehlgeschlagen"]).select("id");
+      return !!data?.length;
+    },
+    async finish(id, status, result) {
+      must(await sb.from("email_suggestions").update({ status, result, decided_at: new Date().toISOString() }).eq("id", id));
+    },
+    async assignProject(messageId, threadId, projectId, info) {
+      const { data: cur } = await sb.from("email_messages").select("match_info").eq("id", messageId).maybeSingle();
+      must(await sb.from("email_messages").update({
+        hero_project_match_id: projectId, match_method: "manuell", match_info: { ...(cur?.match_info ?? {}), ...info },
+      }).eq("id", messageId));
+      if (threadId) {
+        must(await sb.from("email_threads").update({ hero_project_match_id: projectId }).eq("id", threadId));
+        await sb.from("email_messages").update({ hero_project_match_id: projectId, match_method: "thread" })
+          .eq("thread_id", threadId).is("hero_project_match_id", null);
+      }
+    },
+    async markLogged(messageId) {
+      must(await sb.from("email_messages").update({ hero_logged_at: new Date().toISOString() }).eq("id", messageId));
+    },
+    async openCount(messageId) {
+      const { count } = await sb.from("email_suggestions").select("id", { count: "exact", head: true })
+        .eq("message_id", messageId).eq("status", "offen");
+      return count ?? 0;
+    },
+    async setMessageStatus(messageId, status) {
+      must(await sb.from("email_messages").update({ status }).eq("id", messageId));
+    },
+    async addFeedback(messageId, field, oldValue, newValue) {
+      const { data } = await sb.from("email_messages").select("from_addr").eq("id", messageId).maybeSingle();
+      await sb.from("email_feedback").insert({ message_id: messageId, field, old_value: oldValue, new_value: newValue, from_addr: data?.from_addr ?? null });
+    },
+    async dropContactCache(email) {
+      await sb.from("hero_contact_cache").delete().eq("email", email.toLowerCase());
+    },
+  };
 }

@@ -10,6 +10,8 @@ import { encryptSecret } from "../_shared/email/crypto.ts";
 import { encryptionKey, getConfig, setConfig } from "../_shared/email/config.ts";
 import { normalizeAutopilot } from "../_shared/email/autopilot.ts";
 import { AI_TASKS, CATEGORIES } from "../_shared/email/types.ts";
+import * as H from "../_shared/email/hero.ts";
+import { mapDocumentTypes, mapSteps } from "../_shared/email/heroReload.ts";
 
 // Nur diese Schluessel darf die Oberflaeche in email_config schreiben – der
 // Admin-Zugang ist kein Generalschluessel fuer die Tabelle.
@@ -256,6 +258,73 @@ const handlers: Record<string, Handler> = {
     if (row.model !== undefined && !row.model) throw new Error("Modell darf nicht leer sein.");
     must(await sb.from("email_ai_settings").upsert(row, { onConflict: "task" }));
     return { ok: true };
+  },
+
+  // ------------------------------------------------------------------ Vorschlaege (Zu entscheiden)
+  async list_suggestions({ sb, body }) {
+    const status = ["offen", "angenommen", "abgelehnt", "fehlgeschlagen"].includes(body.status) ? body.status : "offen";
+    const { data, error } = await sb.from("email_suggestions")
+      .select("id, type, payload, status, result, created_at, decided_at, email_messages!inner(id, subject, from_addr, from_name, summary, category, confidence, sent_at, direction, hero_project_match_id, match_info, has_attachments, extracted)")
+      .eq("status", status).order("created_at", { ascending: false }).limit(100);
+    if (error) throw new Error(error.message);
+    const ids = [...new Set((data || []).map((r: any) => r.email_messages.id))];
+    const atts: Record<string, any[]> = {};
+    if (ids.length) {
+      const { data: a } = await sb.from("email_attachments").select("id, message_id, filename, mime, size, role, storage_path, is_ignored").in("message_id", ids);
+      for (const x of a || []) {
+        let url: string | null = null;
+        if (x.storage_path && /^image\//.test(x.mime)) {
+          const { data: sg } = await sb.storage.from("email-attachments").createSignedUrl(x.storage_path, 600);
+          url = sg?.signedUrl ?? null;
+        }
+        (atts[x.message_id] ||= []).push({ id: x.id, filename: x.filename, mime: x.mime, size: x.size, role: x.role, is_ignored: x.is_ignored, url });
+      }
+    }
+    return (data || []).map((r: any) => ({ ...r, message: r.email_messages, email_messages: undefined, attachments: atts[r.email_messages.id] || [] }));
+  },
+
+  // ------------------------------------------------------------------ HERO (lesend)
+  async search_projects({ sb, body }) {
+    const key = await H.loadHeroKey(sb);
+    if (!key) throw new Error("HERO ist nicht aktiviert.");
+    const term = String(body.q || "").trim();
+    if (term.length < 2) return [];
+    return await H.searchProjects(key, term);
+  },
+
+  /** Pipeline-Schritte und Dokumenttypen anhand ihrer Namen aus HERO neu zuordnen. */
+  async hero_reload({ sb }) {
+    const key = await H.loadHeroKey(sb);
+    if (!key) throw new Error("HERO ist nicht aktiviert.");
+    const cfg = (await getConfig<any>(sb, "hero", {})) ?? {};
+    const data = await H.heroGraphql(key, "query { project_types { id name project_status_steps { id name } } document_types { id name } }");
+    const types: any[] = data?.project_types || [];
+    const type = types.find((t) => Number(t.id) === Number(cfg.project_type_id)) ?? types.find((t) => /^projekt$/i.test(String(t.name).trim()));
+    if (!type) throw new Error("Projekttyp in HERO nicht gefunden – bitte die Projekttyp-ID prüfen.");
+    const steps = mapSteps(type.project_status_steps || []);
+    const docs = mapDocumentTypes(data?.document_types || []);
+    const next = {
+      ...cfg,
+      project_type_id: Number(type.id),
+      steps: { ...(cfg.steps ?? {}), ...steps.steps },
+      excluded_steps: steps.excluded.length ? steps.excluded : cfg.excluded_steps ?? [],
+      document_types: { ...(cfg.document_types ?? {}), ...docs.found },
+      offer_document_type_id: docs.offerTypeId ?? cfg.offer_document_type_id,
+    };
+    await setConfig(sb, "hero", next);
+    return { hero: next, missing: steps.missing, docTypesFound: Object.keys(docs.found) };
+  },
+
+  /** Nur lesen: Argumente einer HERO-Mutation per Introspection (z. B. create_document). */
+  async hero_probe({ sb, body }) {
+    const key = await H.loadHeroKey(sb);
+    if (!key) throw new Error("HERO ist nicht aktiviert.");
+    const name = String(body.mutation || "create_document");
+    if (!/^[a-z_]{3,60}$/.test(name)) throw new Error("Ungültiger Name.");
+    const data = await H.heroGraphql(key, "query { __type(name: \"Mutation\") { fields { name args { name type { name kind ofType { name kind } } } } } }");
+    const f = (data?.__type?.fields || []).find((x: any) => x.name === name);
+    const services = await H.heroGraphql(key, "query { supply_services { id } }").then((d) => (d?.supply_services || []).length).catch(() => null);
+    return { mutation: name, found: !!f, args: f?.args ?? null, supplyServices: services };
   },
 
   // ------------------------------------------------------------------ Protokoll

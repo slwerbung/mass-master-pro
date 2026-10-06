@@ -4,7 +4,8 @@ import { buildSystemBlocks, buildUnderstandRequest, buildUserPrompt, classifyByR
 const sample = {
   category: "anfrage_neu", category_confidence: 0.92,
   contact: { salutation: "Herr", first_name: "Max", last_name: "Muster", company: "Muster GmbH", email: "m@muster.de", phone: null, street: null, zip: "71332", city: "Waiblingen", formality: "sie" },
-  request: { summary: "Möchte Sprinter beschriften.", service: "Fahrzeugbeschriftung", dimensions: null, quantity: "1", material: null, location: "Waiblingen" },
+  request: { summary: "Möchte Sprinter beschriften.", service: "Fahrzeugbeschriftung", dimensions: null, quantity: "1", material: null, location: "Waiblingen", project_name: "Fahrzeugbeschriftung Sprinter" },
+  signal: null,
   dates: { wish_date: null, deadline: "2026-11-01", urgency: "normal" },
   references: { project_numbers: [], offer_numbers: [], earlier_orders: null },
   attachments: [{ filename: "logo.png", role: "logo" }],

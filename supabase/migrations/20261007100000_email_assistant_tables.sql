@@ -244,21 +244,10 @@ create table if not exists public.email_config (
   updated_at timestamptz not null default now()
 );
 
--- Offene HERO-Projekte, alle 10 Minuten von email-process aufgefrischt.
-create table if not exists public.hero_open_cache (
-  hero_project_match_id integer primary key,
-  project_nr text,
-  name text,
-  step_id integer,
-  step_name text,
-  customer_id integer,
-  customer_name text,
-  emails text[] not null default '{}',
-  last_log text,
-  updated_at timestamptz not null default now()
-);
+-- (Die Tabelle `hero_open_cache` gibt es schon im Projekt – sie gehoert CaptFix/HERO-Skills und wird
+-- hier bewusst NICHT angefasst. Der Assistent fragt HERO fuer die Zuordnung gezielt live ab.)
 
--- Kontakte je E-Mail-Adresse, 24 Stunden gueltig.
+-- Kontakte je E-Mail-Adresse, 24 Stunden gueltig (HERO-Abfrage sparen).
 create table if not exists public.hero_contact_cache (
   email text primary key,
   contacts jsonb not null default '[]'::jsonb,
@@ -274,7 +263,7 @@ begin
   foreach t in array array[
     'email_accounts', 'email_threads', 'email_messages', 'email_attachments', 'email_suggestions',
     'email_rules', 'email_runs', 'email_feedback', 'email_ai_providers', 'email_ai_settings',
-    'email_ai_calls', 'email_ai_shadow', 'email_config', 'hero_open_cache', 'hero_contact_cache'
+    'email_ai_calls', 'email_ai_shadow', 'email_config', 'hero_contact_cache'
   ] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('revoke all on public.%I from anon, authenticated', t);

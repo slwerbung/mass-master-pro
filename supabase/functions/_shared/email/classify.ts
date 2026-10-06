@@ -13,6 +13,8 @@ export const SERVICES = [
   "Fahrzeugbeschriftung", "Schilder", "Leitsystem", "Folierung", "Digitaldruck", "Textildruck",
   "Splitterschutz", "Montage", "Sonstiges",
 ] as const;
+export const SIGNALS = ["layout_freigegeben", "layout_korrektur", "angebot_angenommen", "druckdaten_geliefert", "mangel"] as const;
+export type Signal = (typeof SIGNALS)[number];
 export const ATTACHMENT_ROLES = ["logo", "foto", "fahrzeugbild", "skizze", "druckdaten", "rechnung", "sonstiges"] as const;
 
 // Kleine Modelle lassen Felder weg oder schreiben null; beides wird zu null.
@@ -31,7 +33,11 @@ export const UnderstandSchema = z.object({
     summary: z.string().min(1),
     service: z.enum(SERVICES).nullish().transform((v) => v ?? null),
     dimensions: str, quantity: str, material: str, location: str,
+    /** Vorschlag fuer den HERO-Projektnamen, z. B. „Fahrzeugbeschriftung VW Crafter". */
+    project_name: str,
   }),
+  /** Klares Signal fuer einen Statuswechsel in HERO – nur setzen, wenn es eindeutig in der Mail steht. */
+  signal: z.enum(SIGNALS).nullish().transform((v) => v ?? null),
   dates: z.object({
     wish_date: str, deadline: str,
     urgency: z.enum(["niedrig", "normal", "hoch"]).catch("normal"),
@@ -57,7 +63,7 @@ const sNull = { type: ["string", "null"] };
 export const UNDERSTAND_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["category", "category_confidence", "contact", "request", "dates", "references", "attachments", "reply", "field_confidence"],
+  required: ["category", "category_confidence", "contact", "request", "signal", "dates", "references", "attachments", "reply", "field_confidence"],
   properties: {
     category: { type: "string", enum: [...CATEGORIES] },
     category_confidence: { type: "number", minimum: 0, maximum: 1 },
@@ -71,13 +77,14 @@ export const UNDERSTAND_JSON_SCHEMA = {
     },
     request: {
       type: "object", additionalProperties: false,
-      required: ["summary", "service", "dimensions", "quantity", "material", "location"],
+      required: ["summary", "service", "dimensions", "quantity", "material", "location", "project_name"],
       properties: {
         summary: { type: "string" },
         service: { type: ["string", "null"], enum: [...SERVICES, null] },
-        dimensions: sNull, quantity: sNull, material: sNull, location: sNull,
+        dimensions: sNull, quantity: sNull, material: sNull, location: sNull, project_name: sNull,
       },
     },
+    signal: { type: ["string", "null"], enum: [...SIGNALS, null] },
     dates: {
       type: "object", additionalProperties: false, required: ["wish_date", "deadline", "urgency"],
       properties: { wish_date: sNull, deadline: sNull, urgency: { type: "string", enum: ["niedrig", "normal", "hoch"] } },
@@ -198,6 +205,8 @@ export function buildSystemBlocks(opts: {
     "- attachments: Rolle je Anhang anhand von Dateiname und Typ (Logo, Foto vor Ort, Fahrzeugbild, Skizze/Masse, Druckdaten, Rechnung, sonstiges).",
     "- reply.needed: true nur, wenn eine Antwort per Mail wirklich noetig ist. false, wenn die Reaktion ueber ein HERO-Dokument laeuft (Auftragsbestaetigung, Angebot, Rechnung, Layout) oder die Mail nur bestaetigt/informiert (Dank, reine Info).",
     "- project_numbers: nur echte Projektnummern wie WER-1234 oder TEX-56.",
+    "- project_name: kurzer Projektname fuer HERO, z. B. „Fahrzeugbeschriftung VW Crafter“ – nur bei neuen Anfragen, sonst null.",
+    "- signal: nur setzen, wenn es EINDEUTIG in der Mail steht: layout_freigegeben („passt so, bitte umsetzen“), layout_korrektur (Aenderungswuensche am Layout), angebot_angenommen (Auftrag/Bestellung erteilt), druckdaten_geliefert (der Kunde schickt die angeforderten Druckdaten), mangel (Mangel/Beschwerde). Sonst null.",
   ].join("\n");
   const knowledge = `Firmenwissen:\n${opts.companyKnowledge.trim() || "(keine Angaben)"}`;
   let learn = "";

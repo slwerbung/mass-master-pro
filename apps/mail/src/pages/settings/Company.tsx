@@ -20,6 +20,7 @@ interface Config {
 const STEP_LABELS: Record<string, string> = {
   angebot: "Angeboterstellung", vor_ort: "Vor-Ort-Termin", detailgespraech: "Detailgespräch", projektplanung: "Projektplanung",
   visualisierung: "Visualisierung / Layout", materialbestellung: "Materialbestellung", produktionsdaten: "Produktionsdaten", reklamation: "Reklamation",
+  warten_auftrag: "Warten auf Auftrag", warten_layout: "Warten auf Layoutfreigabe", warten_ware: "Warten auf Ware / Daten",
 };
 const DOC_LABELS: Record<string, string> = { layouts: "Layouts / Pläne", aufmasse: "Aufmaße", druckdaten: "Druckdaten", fahrzeugdaten: "Fahrzeugdaten", allgemein: "Allgemein" };
 
@@ -50,6 +51,14 @@ export default function Company() {
     onError: (e) => toast.error(errorText(e)),
   });
   const saveKey = (key: keyof Config) => () => save.mutate({ key, value: c?.[key] });
+  const reload = useMutation({
+    mutationFn: () => api<{ missing: string[] }>("hero_reload"),
+    onSuccess: (r) => {
+      toast.success(r.missing.length ? `Neu geladen. Nicht gefunden: ${r.missing.join(", ")}` : "Aus HERO neu geladen");
+      qc.invalidateQueries({ queryKey: ["config"] });
+    },
+    onError: (e) => toast.error(errorText(e)),
+  });
 
   if (q.isLoading || !c) return <Spinner />;
   const set = <K extends keyof Config>(k: K, v: Config[K]) => setC({ ...c, [k]: v });
@@ -108,6 +117,10 @@ export default function Company() {
 
       {hero && (
         <Section title="HERO-IDs" onSave={saveKey("hero")} saving={save.isPending}>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="outline" size="sm" onClick={() => reload.mutate()} disabled={reload.isPending}>Pipeline-Schritte &amp; Dokumenttypen aus HERO neu laden</Button>
+            <span className="text-xs text-muted-foreground">Ordnet per Name zu und überschreibt die Felder unten (nach dem Laden bitte kurz prüfen).</span>
+          </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Projekttyp (PROJEKT)"><Input type="number" value={hero.project_type_id} onChange={(e) => set("hero", { ...hero, project_type_id: num(e.target.value) })} /></Field>
             <Field label="Startschritt (📬 Anfragen)"><Input type="number" value={hero.start_step_id} onChange={(e) => set("hero", { ...hero, start_step_id: num(e.target.value) })} /></Field>
