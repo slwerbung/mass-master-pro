@@ -13,7 +13,7 @@ function row(o: Partial<SuggestionRow> & { payload?: any } = {}): SuggestionRow 
 }
 
 function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; open?: number; claim?: boolean } = {}) {
-  const log: any = { claimed: [], finished: [], assigned: [], logged: [], feedback: [], status: [], logbook: [], steps: [], contacts: [], projects: [], dropped: [] };
+  const log: any = { uploaded: [], upsug: [], docs: [], claimed: [], finished: [], assigned: [], logged: [], feedback: [], status: [], logbook: [], steps: [], contacts: [], projects: [], dropped: [] };
   const store: ActionStore = {
     getSuggestion: async () => s,
     claim: async (id) => (log.claimed.push(id), o.claim !== false),
@@ -24,6 +24,9 @@ function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; 
     setMessageStatus: async (m, st) => { log.status.push([m, st]); },
     addFeedback: async (m, f, a, b) => { log.feedback.push([m, f, a, b]); },
     dropContactCache: async (e) => { log.dropped.push(e); },
+    attachmentFiles: async (_m, ids) => ids.map((id) => ({ id, filename: `${id}.pdf`, mime: "application/pdf", storage_path: `p/${id}` })),
+    markUploaded: async (id, up) => { log.uploaded.push([id, up]); },
+    suggestUploads: async (m, p, nr) => { log.upsug.push([m, p, nr]); },
   };
   const hero: ActionHero | null = o.hero === null ? null : {
     addLogbook: async (id, t) => { log.logbook.push([id, t]); },
@@ -32,9 +35,10 @@ function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; 
     createContact: async (c, src) => (log.contacts.push([c, src]), 900),
     contactsByEmail: async () => [{ id: 900, customerId: 901, name: "Max", email: "kunde@x.de", isContactPerson: true }],
     createProject: async (p) => (log.projects.push(p), { id: 555, nr: "WER-555" }),
+    uploadDocument: async (pid, f, dt) => { log.docs.push([pid, f.filename, dt]); if (f.filename === "bad.pdf") throw new Error("HERO 422"); return { uploadId: `u-${f.filename}` }; },
     ...(o.hero ?? {}),
   };
-  const deps: ActionDeps = { hero, store, config: { stepIds: [10, 11, 13], projectTypeId: 181, startStepId: 2825, gewerke: [{ short: "WER", name: "W", measure_id: 6619, default: true }] } };
+  const deps: ActionDeps = { hero, store, files: { download: async () => new Uint8Array([1]) }, config: { stepIds: [10, 11, 13], documentTypeIds: [100, 200], projectTypeId: 181, startStepId: 2825, gewerke: [{ short: "WER", name: "W", measure_id: 6619, default: true }] } };
   return { deps, log };
 }
 
@@ -97,7 +101,7 @@ describe("Schutz", () => {
   });
   it("unbekannter Vorschlag und unbekannte Art", async () => {
     await expect(decideSuggestion({ suggestionId: "x", decision: "accept" }, setup(null).deps)).rejects.toThrow(/nicht gefunden/);
-    const t = setup(row({ type: "prepare_offer" }));
+    const t = setup(row({ type: "unbekannt" }));
     await expect(decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps)).rejects.toThrow(/noch nicht unterstützt/);
     expect(t.log.finished[0][1]).toBe("fehlgeschlagen");
   });
@@ -182,5 +186,45 @@ describe("create_project", () => {
     expect(r.projectId).toBe(555);
     expect(r.warnings[0]).toMatch(/Logbuch/);
     expect(t.log.finished[0][1]).toBe("angenommen");
+  });
+});
+
+describe("upload_attachments", () => {
+  const items = [
+    { attachmentId: "a1", filename: "a1.pdf", mime: "application/pdf", size: 1, role: "logo", docKey: "layouts", documentTypeId: 100, selected: true },
+    { attachmentId: "a2", filename: "a2.pdf", mime: "application/pdf", size: 1, role: "foto", docKey: "aufmasse", documentTypeId: 200, selected: true },
+  ];
+  const s = (its = items) => row({ type: "upload_attachments", payload: { projectId: 5, items: its } });
+  it("laedt alle gewaehlten Anhaenge hoch und merkt sich die HERO-Upload-ID", async () => {
+    const t = setup(s());
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(r).toMatchObject({ status: "angenommen", uploaded: 2, failed: 0 });
+    expect(t.log.docs).toEqual([[5, "a1.pdf", 100], [5, "a2.pdf", 200]]);
+    expect(t.log.uploaded).toEqual([["a1", "u-a1.pdf"], ["a2", "u-a2.pdf"]]);
+  });
+  it("abgewaehlte Anhaenge bleiben draussen", async () => {
+    const t = setup(s());
+    await decideSuggestion({ suggestionId: "S1", decision: "accept", edits: { items: [{ ...items[0], selected: false }, items[1]] } }, t.deps);
+    expect(t.log.docs.map((d: any) => d[1])).toEqual(["a2.pdf"]);
+  });
+  it("freie Dokumenttyp-IDs werden abgelehnt", async () => {
+    const t = setup(s());
+    await expect(decideSuggestion({ suggestionId: "S1", decision: "accept", edits: { items: [{ ...items[0], documentTypeId: 999 }] } }, t.deps)).rejects.toThrow(/nicht freigegeben/);
+    expect(t.log.docs).toEqual([]);
+  });
+  it("Teilfehler sind Warnungen, nur wenn ALLES scheitert ist der Vorschlag fehlgeschlagen", async () => {
+    const part = setup(s([items[0], { ...items[1], attachmentId: "bad" } as any]));
+    part.deps.store.attachmentFiles = async (_m, ids) => ids.map((id) => ({ id, filename: id === "bad" ? "bad.pdf" : "ok.pdf", mime: "x", storage_path: "p" }));
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, part.deps);
+    expect(r.uploaded).toBe(1);
+    expect(r.warnings[0]).toMatch(/HERO 422/);
+    const all = setup(s([{ ...items[0], attachmentId: "bad" } as any]));
+    all.deps.store.attachmentFiles = async (_m, ids) => ids.map((id) => ({ id, filename: "bad.pdf", mime: "x", storage_path: "p" }));
+    await expect(decideSuggestion({ suggestionId: "S1", decision: "accept" }, all.deps)).rejects.toThrow(/Kein Anhang hochgeladen/);
+  });
+  it("nach dem Zuordnen wird ein Upload-Vorschlag angelegt", async () => {
+    const t = setup(row());
+    await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(t.log.upsug).toEqual([["M1", 5, "WER-5"]]);
   });
 });

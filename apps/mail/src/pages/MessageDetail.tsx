@@ -2,11 +2,11 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Download, RefreshCw } from "lucide-react";
+import { ArrowLeft, Download, RefreshCw, PenLine } from "lucide-react";
 import { api, invokeFn } from "@/lib/api";
 import { ProjectSearch } from "@/components/ProjectSearch";
 import { CATEGORIES, CATEGORY_LABELS, type Category } from "@/lib/shared";
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Input, Select, Spinner } from "@/components/ui";
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { CategoryChip } from "@/components/CategoryChip";
 import { errorText, formatDateTime, pct } from "@/lib/utils";
 
@@ -35,6 +35,52 @@ const FIELDS: { group: string; key: string; label: string }[] = [
   { group: "request", key: "location", label: "Einsatzort" },
   { group: "dates", key: "wish_date", label: "Wunschtermin" }, { group: "dates", key: "deadline", label: "Deadline" },
 ];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function DraftCard({ m, onChanged }: { m: any; onChanged: () => void }) {
+  const [text, setText] = useState<string>(m.draft_text ?? "");
+  const [hint, setHint] = useState("");
+  useEffect(() => { setText(m.draft_text ?? ""); }, [m.id, m.draft_text]);
+  const run = useMutation({
+    mutationFn: (p: Record<string, unknown>) => invokeFn<{ written: boolean; text: string }>("email-draft", { messageId: m.id, ...p }),
+    onSuccess: (r, p) => {
+      toast.success(r.written ? "Entwurf liegt im Entwürfe-Ordner (nicht gesendet)." : p.action === "generate" ? "Entwurf erzeugt." : "Gespeichert.");
+      onChanged();
+    },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  const placeholders = (text.match(/\[\[[^\]]+\]\]/g) ?? []).length;
+  const hasDraft = !!m.draft_text;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><PenLine className="h-4 w-4" /> Antwortentwurf
+          {m.draft_written_at && <Badge variant="good">im Postfach</Badge>}
+          {hasDraft && !m.draft_written_at && <Badge variant="warn">nur hier – noch nicht im Postfach</Badge>}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {hasDraft ? (
+          <>
+            <Textarea rows={12} value={text} onChange={(e) => setText(e.target.value)} className="font-sans" />
+            {placeholders > 0 && <p className="text-xs text-amber-800">{placeholders} Platzhalter in [[ ]] müssen noch ausgefüllt werden.</p>}
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">Kein Entwurf. Der Assistent schreibt nur einen, wenn eine Antwort per Mail wirklich nötig ist – du kannst jederzeit einen anstoßen.</p>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {hasDraft && <Button size="sm" onClick={() => run.mutate({ action: "save", text, write: true })} disabled={run.isPending}>{m.draft_written_at ? "Speichern & im Postfach ersetzen" : "In Postfach legen"}</Button>}
+          {hasDraft && text !== (m.draft_text ?? "") && <Button size="sm" variant="outline" onClick={() => run.mutate({ action: "save", text })} disabled={run.isPending}>Nur speichern</Button>}
+          <Input className="w-64" placeholder="Hinweis, z. B. „kürzer“" value={hint} onChange={(e) => setHint(e.target.value)} />
+          <Button size="sm" variant="outline" onClick={() => run.mutate({ action: "generate", hint: hint || undefined, write: !!m.draft_written_at })} disabled={run.isPending}>
+            {run.isPending ? <Spinner /> : <RefreshCw className="h-3 w-3" />} {hasDraft ? "Neu erzeugen" : "Entwurf erzeugen"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">Es wird nichts versendet: der Entwurf liegt im Ordner „Entwürfe“ und wird in Thunderbird geprüft und gesendet.</p>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function MessageDetail() {
   const { id = "" } = useParams();
@@ -149,6 +195,8 @@ export default function MessageDetail() {
           )}
         </CardContent>
       </Card>
+
+      {m.direction === "in" && <DraftCard m={m} onChanged={() => qc.invalidateQueries({ queryKey: ["message", id] })} />}
 
       {ex.contact && (
         <Card>

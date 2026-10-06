@@ -11,6 +11,7 @@ import { fail, ok, preflight, readJson, requireAdmin } from "../_shared/email/ht
 import { getConfig } from "../_shared/email/config.ts";
 import * as H from "../_shared/email/hero.ts";
 import { actionStore } from "../_shared/email/store.ts";
+import { storageDownloader } from "../_shared/email/uploader.ts";
 import type { Gewerk } from "../_shared/email/gewerke.ts";
 
 Deno.serve(async (req) => {
@@ -35,6 +36,7 @@ Deno.serve(async (req) => {
         createContact: (c: H.NewContact, src: string) => H.createContact(key, c, src),
         contactsByEmail: (e: string) => H.contactsByEmail(key, e),
         createProject: (p: H.NewProject) => H.createProject(key, p),
+        uploadDocument: (id: number, f: { bytes: Uint8Array; filename: string; mime: string }, dt: number) => H.uploadDocument(key, id, f, dt),
       }
       : null;
     const stepIds = Object.values(heroCfg.steps ?? {}).map(Number).filter((n) => Number.isFinite(n) && n > 0);
@@ -57,7 +59,7 @@ Deno.serve(async (req) => {
     }
     const data = await decideSuggestion(
       { suggestionId, decision: body.decision, edits: body.action === "assign" ? { projectId: Number(body.projectId) } : body.edits },
-      { hero, store: actionStore(sb), config: { stepIds, projectTypeId: heroCfg.project_type_id ?? null, startStepId: heroCfg.start_step_id ?? null, gewerke } },
+      { hero, store: actionStore(sb), files: { download: storageDownloader(sb) }, config: { documentTypeIds: Object.values(heroCfg.document_types ?? {}).map(Number).filter((n) => Number.isFinite(n) && n > 0), stepIds, projectTypeId: heroCfg.project_type_id ?? null, startStepId: heroCfg.start_step_id ?? null, gewerke } },
     );
     return ok(data);
   } catch (e) {

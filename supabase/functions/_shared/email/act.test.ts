@@ -31,6 +31,8 @@ function mk(o: { openAfter?: boolean; earlier?: ActMessage[]; step?: number | nu
     createSuggestion: async (id, type, payload) => { const k = `${id}:${type}`; if (open.has(k)) return false; open.add(k); log.suggestions.push({ type, payload }); return true; },
     hasOpenSuggestions: async () => open.size > 0 || !!o.openAfter,
     unansweredIncoming: async () => o.earlier ?? [],
+    hasOutgoingAfter: async () => false,
+    loadAttachments: async () => [],
   };
   const deps: ActDeps = {
     store,

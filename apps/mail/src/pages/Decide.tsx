@@ -126,6 +126,35 @@ function StepCard({ s }: { s: Suggestion }) {
   );
 }
 
+function UploadCard({ s }: { s: Suggestion }) {
+  const decide = useDecide(s);
+  const [items, setItems] = useState<{ attachmentId: string; filename: string; mime: string; size: number; role: string; docKey: string; documentTypeId: number; selected: boolean }[]>(s.payload.items ?? []);
+  const cfg = useQuery({ queryKey: ["config"], queryFn: () => api<{ hero: { document_types: Record<string, number> } | null }>("get_config") });
+  const types = cfg.data?.hero?.document_types ?? {};
+  const labels: Record<string, string> = { layouts: "Layouts / Pläne", aufmasse: "Aufmaße", druckdaten: "Druckdaten", fahrzeugdaten: "Fahrzeugdaten", allgemein: "Allgemein" };
+  const upd = (i: number, p: Partial<(typeof items)[number]>) => setItems(items.map((x, j) => (j === i ? { ...x, ...p } : x)));
+  const thumbs = new Map(s.attachments.map((a) => [a.id, a.url]));
+  return (
+    <Card>
+      <Header s={s} />
+      <CardContent className="space-y-3">
+        <p className="text-sm">Ans Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b> hochladen:</p>
+        {items.map((it, i) => (
+          <div key={it.attachmentId} className="flex flex-wrap items-center gap-3 rounded-md border p-2 text-sm">
+            <input type="checkbox" checked={it.selected} onChange={(e) => upd(i, { selected: e.target.checked })} aria-label={`${it.filename} hochladen`} />
+            {thumbs.get(it.attachmentId) && <img src={thumbs.get(it.attachmentId)!} alt="" className="h-10 w-10 rounded border object-cover" />}
+            <span className="min-w-0 flex-1 truncate">{it.filename} <span className="text-xs text-muted-foreground">({Math.round(it.size / 1024)} KB · {it.role})</span></span>
+            <Select className="w-44" value={it.docKey} onChange={(e) => upd(i, { docKey: e.target.value, documentTypeId: types[e.target.value] ?? it.documentTypeId })}>
+              {Object.keys(labels).map((k) => <option key={k} value={k} disabled={!types[k]}>{labels[k]}</option>)}
+            </Select>
+          </div>
+        ))}
+        <Buttons busy={decide.isPending} disabled={!items.some((i) => i.selected)} acceptLabel="Hochladen" onAccept={() => decide.mutate({ decision: "accept", edits: { items } })} onReject={() => decide.mutate({ decision: "reject" })} />
+      </CardContent>
+    </Card>
+  );
+}
+
 function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
   const decide = useDecide(s);
   const p = s.payload;
@@ -190,6 +219,7 @@ export default function Decide() {
             case "log_entry": return <LogCard key={s.id} s={s} />;
             case "change_step": return <StepCard key={s.id} s={s} />;
             case "create_project": return <ProjectCard key={s.id} s={s} gewerke={gewerke} />;
+            case "upload_attachments": return <UploadCard key={s.id} s={s} />;
             default: return <GenericCard key={s.id} s={s} />;
           }
         })}

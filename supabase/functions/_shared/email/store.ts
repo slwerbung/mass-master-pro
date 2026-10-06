@@ -7,6 +7,10 @@ import { MAX_ATTEMPTS } from "./understand.ts";
 import type { ActionStore, SuggestionRow } from "./action.ts";
 import type { MatchMessageRow, MatchSave, MatchStore } from "./matchStage.ts";
 import type { ActMessage, ActStore } from "./act.ts";
+import type { DraftStore, DraftThreadMail } from "./draft.ts";
+import { buildUploadItems } from "./attachments.ts";
+import { getConfig } from "./config.ts";
+
 
 const BUCKET = "email-attachments";
 
@@ -139,7 +143,8 @@ export function matchStore(sb: any): MatchStore {
 
 const ACT_COLUMNS =
   "id, account_id, thread_id, direction, current_folder, current_uid, from_addr, from_name, to_addrs, subject, category, confidence, " +
-  "summary, extracted, hero_project_match_id, match_method, match_info, hero_logged_at, has_attachments, plan, status, attempts";
+  "summary, extracted, hero_project_match_id, match_method, match_info, hero_logged_at, has_attachments, plan, status, attempts, " +
+  "message_id, refs, body_text, sent_at, draft_message_id, draft_text, draft_uid";
 
 export function actStore(sb: any): ActStore {
   return {
@@ -169,6 +174,16 @@ export function actStore(sb: any): ActStore {
         .eq("message_id", messageId).eq("status", "offen");
       return (count ?? 0) > 0;
     },
+    async hasOutgoingAfter(threadId, sentAt) {
+      let q = sb.from("email_messages").select("id", { count: "exact", head: true }).eq("thread_id", threadId).eq("direction", "out");
+      if (sentAt) q = q.gt("sent_at", sentAt);
+      const { count } = await q;
+      return (count ?? 0) > 0;
+    },
+    async loadAttachments(messageId) {
+      const { data } = await sb.from("email_attachments").select("id, filename, mime, size, role, storage_path, is_ignored, hero_uploaded_at").eq("message_id", messageId);
+      return data || [];
+    },
     async unansweredIncoming(threadId): Promise<ActMessage[]> {
       const { data } = await sb.from("email_messages").select(ACT_COLUMNS)
         .eq("thread_id", threadId).eq("direction", "in").not("hero_project_match_id", "is", null);
@@ -183,6 +198,7 @@ export function actStore(sb: any): ActStore {
 
 export function actionStore(sb: any): ActionStore {
   return {
+    ...actionStoreExtras(sb),
     async getSuggestion(id): Promise<SuggestionRow | null> {
       const { data } = await sb.from("email_suggestions")
         .select("id, message_id, type, payload, status, email_messages!inner(id, account_id, thread_id, direction, from_addr, from_name, to_addrs, subject, summary, has_attachments, hero_project_match_id, hero_logged_at, match_info, email_accounts(label, address))")
@@ -231,6 +247,47 @@ export function actionStore(sb: any): ActionStore {
     },
     async dropContactCache(email) {
       await sb.from("hero_contact_cache").delete().eq("email", email.toLowerCase());
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Entwuerfe und Anhaenge (Phase 3)
+// ---------------------------------------------------------------------------
+
+export function draftStore(sb: any): DraftStore {
+  return {
+    async loadThread(threadId, n): Promise<DraftThreadMail[]> {
+      const { data } = await sb.from("email_messages").select("direction, from_addr, from_name, sent_at, body_text")
+        .eq("thread_id", threadId).order("sent_at", { ascending: false, nullsFirst: false }).limit(n);
+      return (data || []).reverse().map((r: any) => ({
+        direction: r.direction, from: r.from_name || r.from_addr, sentAt: r.sent_at, body: r.body_text ?? "",
+      }));
+    },
+    async save(messageId, patch) {
+      must(await sb.from("email_messages").update(patch).eq("id", messageId));
+    },
+  };
+}
+
+
+export function actionStoreExtras(sb: any): Pick<ActionStore, "attachmentFiles" | "markUploaded" | "suggestUploads"> {
+  return {
+    async attachmentFiles(messageId, ids) {
+      const { data } = await sb.from("email_attachments").select("id, filename, mime, storage_path")
+        .eq("message_id", messageId).in("id", ids).not("storage_path", "is", null);
+      return data || [];
+    },
+    async markUploaded(attachmentId, uploadId) {
+      must(await sb.from("email_attachments").update({ hero_file_upload_id: uploadId, hero_uploaded_at: new Date().toISOString() }).eq("id", attachmentId));
+    },
+    async suggestUploads(messageId, projectId, projectNr) {
+      const hero = await getConfig<any>(sb, "hero", {});
+      const { data } = await sb.from("email_attachments").select("id, filename, mime, size, role, storage_path, is_ignored, hero_uploaded_at").eq("message_id", messageId);
+      const items = buildUploadItems(data || [], hero.document_types ?? {});
+      if (!items.length) return;
+      // Der Unique-Index (message_id, type) where offen verhindert Dubletten.
+      await sb.from("email_suggestions").insert({ message_id: messageId, type: "upload_attachments", payload: { projectId, projectNr, items } });
     },
   };
 }

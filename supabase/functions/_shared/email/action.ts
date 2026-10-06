@@ -9,6 +9,7 @@ import type { HeroContact, HeroProject, NewContact, NewProject } from "./hero.ts
 import type { Gewerk } from "./gewerke.ts";
 import type { MatchInfo } from "./matchStage.ts";
 import { stepLabel } from "./steps.ts";
+import type { UploadItem } from "./attachments.ts";
 
 export interface SuggestionRow {
   id: string;
@@ -34,6 +35,11 @@ export interface ActionStore {
   setMessageStatus(messageId: string, status: "erledigt" | "wartet"): Promise<void>;
   addFeedback(messageId: string, field: string, oldValue: string | null, newValue: string | null): Promise<void>;
   dropContactCache(email: string): Promise<void>;
+  /** Speicherpfade der angefragten Anhaenge dieser Mail (nur eigene, nur gespeicherte). */
+  attachmentFiles(messageId: string, ids: string[]): Promise<{ id: string; filename: string; mime: string; storage_path: string }[]>;
+  markUploaded(attachmentId: string, uploadId: string): Promise<void>;
+  /** Nach einer Zuordnung: Upload-Vorschlag fuer die Anhaenge anlegen (falls es welche gibt). */
+  suggestUploads(messageId: string, projectId: number, projectNr: string): Promise<void>;
 }
 
 export interface ActionHero {
@@ -43,6 +49,7 @@ export interface ActionHero {
   createContact(c: NewContact, source: string): Promise<number>;
   contactsByEmail(email: string): Promise<HeroContact[]>;
   createProject(p: NewProject): Promise<{ id: number; nr: string }>;
+  uploadDocument(projectId: number, file: { bytes: Uint8Array; filename: string; mime: string }, documentTypeId: number): Promise<{ uploadId: string }>;
 }
 
 export interface ActionConfig {
@@ -51,9 +58,16 @@ export interface ActionConfig {
   projectTypeId: number | null;
   startStepId: number | null;
   gewerke: Gewerk[];
+  /** Erlaubte HERO-Dokumenttypen fuer Anhaenge (Whitelist aus email_config.hero.document_types). */
+  documentTypeIds: number[];
 }
 
-export interface ActionDeps { hero: ActionHero | null; store: ActionStore; config: ActionConfig }
+export interface ActionDeps {
+  hero: ActionHero | null;
+  store: ActionStore;
+  config: ActionConfig;
+  files?: { download(path: string): Promise<Uint8Array> };
+}
 
 export class ActionError extends Error {}
 
@@ -85,10 +99,14 @@ async function assignAndLog(
   await store.assignProject(s.message.id, s.message.thread_id, project.id, {
     certain: true, reason: "Manuell bestätigt", projectNr: project.nr, projectName: project.name, stepId: project.stepId,
   });
-  if (s.message.hero_logged_at) return { logged: false };
+  if (s.message.hero_logged_at) {
+    await store.suggestUploads(s.message.id, project.id, project.nr).catch(() => {});
+    return { logged: false };
+  }
   try {
     await hero!.addLogbook(project.id, text);
     await store.markLogged(s.message.id);
+    await store.suggestUploads(s.message.id, project.id, project.nr).catch(() => {});
     return { logged: true };
   } catch (e) {
     warnings.push(`Logbuch-Eintrag fehlgeschlagen: ${(e as Error).message}`);
@@ -153,6 +171,10 @@ export async function decideSuggestion(input: DecideInput, deps: ActionDeps): Pr
         result = await createProject(s, p, deps, warnings);
         break;
 
+      case "upload_attachments":
+        result = await uploadAttachments(s, p, deps, warnings);
+        break;
+
       default:
         throw new ActionError(`Vorschlagsart „${s.type}“ wird noch nicht unterstützt.`);
     }
@@ -199,4 +221,37 @@ async function createProject(s: SuggestionRow, p: any, deps: ActionDeps, warning
     warnings.push(`Nacharbeiten fehlgeschlagen: ${(e as Error).message}`);
   }
   return { contactId, customerId, projectId: proj.id, projectNr: proj.nr };
+}
+
+async function uploadAttachments(s: SuggestionRow, p: any, deps: ActionDeps, warnings: string[]): Promise<Record<string, unknown>> {
+  const projectId = Number(need(p.projectId, "Projekt fehlt."));
+  const items = ((p.items ?? []) as UploadItem[]).filter((i) => i.selected !== false);
+  if (!items.length) throw new ActionError("Keine Anhänge ausgewählt.");
+  if (!deps.files) throw new ActionError("Kein Dateizugriff konfiguriert.");
+  for (const i of items) {
+    // Nur freigegebene Dokumenttypen – nie eine frei gelieferte ID.
+    if (!deps.config.documentTypeIds.includes(Number(i.documentTypeId))) {
+      throw new ActionError(`Dokumenttyp ${i.documentTypeId} ist nicht freigegeben (Einstellungen → HERO-IDs).`);
+    }
+  }
+  // Pfade kommen aus der Datenbank, nie aus dem Client.
+  const files = await deps.store.attachmentFiles(s.message_id, items.map((i) => i.attachmentId));
+  const byId = new Map(files.map((f) => [f.id, f]));
+  let uploaded = 0;
+  const failed: string[] = [];
+  for (const i of items) {
+    const f = byId.get(i.attachmentId);
+    if (!f) { failed.push(`${i.filename}: nicht gefunden`); continue; }
+    try {
+      const bytes = await deps.files.download(f.storage_path);
+      const r = await deps.hero!.uploadDocument(projectId, { bytes, filename: f.filename, mime: f.mime }, Number(i.documentTypeId));
+      await deps.store.markUploaded(f.id, r.uploadId);
+      uploaded++;
+    } catch (e) {
+      failed.push(`${i.filename}: ${(e as Error).message}`.slice(0, 160));
+    }
+  }
+  if (!uploaded) throw new ActionError(`Kein Anhang hochgeladen. ${failed.join(" | ")}`);
+  if (failed.length) warnings.push(`Nicht hochgeladen: ${failed.join(" | ")}`);
+  return { projectId, uploaded, failed: failed.length };
 }

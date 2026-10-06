@@ -10,15 +10,21 @@ import { accountPassword, buildLlmDeps, getConfig } from "../_shared/email/confi
 import { normalizeAutopilot } from "../_shared/email/autopilot.ts";
 import { actPending, type ActContext } from "../_shared/email/act.ts";
 import { actHero, matchHero } from "../_shared/email/heroAdapters.ts";
+import { buildExtra } from "../_shared/email/extras.ts";
+import { imapDraftWriter } from "../_shared/email/draftMime.ts";
+import { projectDraftContext } from "../_shared/email/hero.ts";
+import { directUploader } from "../_shared/email/uploader.ts";
 import { loadHeroKey } from "../_shared/email/hero.ts";
 import { LazyImap } from "../_shared/email/lazyImap.ts";
 import { matchPending } from "../_shared/email/matchStage.ts";
 import {
-  actStore, claimAccount, loadExamples, loadRules, matchStore, recordRun, releaseAccount, understandStore,
+  actStore, claimAccount, draftStore, loadExamples, loadRules, matchStore, recordRun, releaseAccount, understandStore,
 } from "../_shared/email/store.ts";
 import { understandPending } from "../_shared/email/understand.ts";
 import type { Gewerk } from "../_shared/email/gewerke.ts";
 import type { StepIds } from "../_shared/email/steps.ts";
+
+const COMPANY_NAME = "SL WERBUNG";
 
 async function processOne(sb: any, id: string) {
   const acc = await claimAccount(sb, id);
@@ -52,9 +58,28 @@ async function processOne(sb: any, id: string) {
       inbox: fm.inbox || "INBOX", folders: fm.folders || {}, steps: (heroCfg.steps ?? {}) as StepIds,
       gewerke, accountLabel: acc.label || acc.address,
     };
-    imap = new LazyImap({ host: acc.imap_host, port: acc.imap_port, user: acc.username, pass: await accountPassword(acc) });
+    const lazy = new LazyImap({ host: acc.imap_host, port: acc.imap_port, user: acc.username, pass: await accountPassword(acc) });
+    imap = lazy;
+
+    // Phase 3: Antwortentwuerfe und Anhaenge. Der Entwurf wird nur ins Postfach geschrieben, wenn der
+    // Entwuerfe-Ordner bekannt ist; sonst bleibt er in der Mail-App.
+    const replyRules = await getConfig<string>(sb, "reply_rules", "");
+    const writer = fm.drafts
+      ? imapDraftWriter(() => lazy.raw(), { drafts: fm.drafts, trash: fm.trash ?? null, fromName: COMPANY_NAME, fromAddress: acc.address })
+      : null;
+    actCtx.extra = buildExtra({
+      docTypes: heroCfg.document_types ?? {},
+      draft: {
+        canWrite: !!writer,
+        deps: {
+          llm, store: draftStore(sb), writer, knowledge, replyRules, signature: acc.signature || "",
+          heroContext: heroKey ? (pid) => projectDraftContext(heroKey, pid) : null,
+        },
+      },
+    });
     const a = await actPending(id, actCtx, {
-      imap, hero: heroKey ? actHero(heroKey) : null, store: actStore(sb),
+      imap: lazy, hero: heroKey ? actHero(heroKey) : null, store: actStore(sb),
+      uploader: heroKey ? directUploader(sb, heroKey) : null,
     });
 
     await releaseAccount(sb, id);

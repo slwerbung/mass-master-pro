@@ -253,3 +253,46 @@ export async function uploadDocument(
   );
   return { uploadId: String(data?.upload_document?.id ?? uuid) };
 }
+
+/**
+ * Kontext fuer Antwortentwuerfe: Dokumente (Angebote mit Nummer und Betrag) und naechster Termin.
+ * Jede Teilabfrage ist fuer sich abgesichert – fehlt eine, wird der Entwurf trotzdem geschrieben.
+ * (Das Logbuch fliesst nicht ein: die Feldnamen von `project_histories` sind nirgends in diesem Repo belegt.)
+ */
+export async function projectDraftContext(
+  apiKey: string, projectId: number, fetchImpl: F = fetch, now: Date = new Date(),
+): Promise<{ projectNr: string; projectName: string; stepName: string | null; offers: { nr: string; type: string; status: string; value: number | null }[]; nextAppointment: { title: string; start: string } | null } | null> {
+  const p = await projectById(apiKey, projectId, fetchImpl);
+  if (!p) return null;
+
+  let offers: { nr: string; type: string; status: string; value: number | null }[] = [];
+  try {
+    const d = await heroGraphql(
+      apiKey,
+      `query($ids: [Int]) { customer_documents(project_match_ids: $ids) { nr value status_name document_type { name } } }`,
+      { ids: [projectId] }, fetchImpl,
+    );
+    offers = (d?.customer_documents || []).slice(0, 8).map((x: any) => ({
+      nr: String(x.nr ?? ""), type: String(x.document_type?.name ?? "Dokument"), status: String(x.status_name ?? ""),
+      value: x.value != null && Number.isFinite(Number(x.value)) ? Number(x.value) : null,
+    }));
+  } catch { /* ohne Dokumentliste weiter */ }
+
+  let nextAppointment: { title: string; start: string } | null = null;
+  try {
+    const end = new Date(now.getTime() + 90 * 86400_000);
+    const d = await heroGraphql(
+      apiKey,
+      `query($s: DateTime, $e: DateTime, $p: Int) { calendar_events(start: $s, end: $e, project_match_id: $p) { title start end } }`,
+      { s: now.toISOString(), e: end.toISOString(), p: projectId }, fetchImpl,
+    );
+    // HERO-Zeit ist Ortszeit mit beliebiger Zonenangabe: nur die ersten 19 Zeichen zaehlen.
+    const events = (d?.calendar_events || [])
+      .map((x: any) => ({ title: String(x.title || "Termin"), start: String(x.start || "").slice(0, 19).replace("T", " ") }))
+      .filter((x: { start: string }) => x.start)
+      .sort((a: { start: string }, b: { start: string }) => a.start.localeCompare(b.start));
+    nextAppointment = events[0] ?? null;
+  } catch { /* ohne Termin weiter */ }
+
+  return { projectNr: p.nr, projectName: p.name, stepName: p.stepName, offers, nextAppointment };
+}

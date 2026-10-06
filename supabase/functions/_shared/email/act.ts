@@ -42,6 +42,14 @@ export interface ActMessage {
   plan: PlanEntry[];
   status: MessageStatus;
   attempts: number;
+  // Fuer Entwuerfe (Phase 3)
+  message_id?: string;
+  refs?: string[];
+  body_text?: string | null;
+  sent_at?: string | null;
+  draft_message_id?: string | null;
+  draft_text?: string | null;
+  draft_uid?: number | null;
 }
 
 export interface ActImap {
@@ -69,6 +77,9 @@ export interface ActStore {
   hasOpenSuggestions(messageId: string): Promise<boolean>;
   /** Eingehende Mails des Threads, die noch im Posteingang liegen und ein HERO-Projekt haben. */
   unansweredIncoming(threadId: string): Promise<ActMessage[]>;
+  /** Gibt es im Thread eine ausgehende Mail NACH diesem Zeitpunkt (= schon beantwortet)? */
+  hasOutgoingAfter(threadId: string, sentAt: string | null): Promise<boolean>;
+  loadAttachments(messageId: string): Promise<import("./attachments.ts").AttachmentRow[]>;
 }
 
 export interface ActContext {
@@ -86,6 +97,8 @@ export interface ActContext {
 }
 
 export interface ActDeps {
+  /** Hochladen ans HERO-Projekt (nur fuer die Stufe „Automatisch" bei Anhaengen). */
+  uploader?: { upload(projectId: number, items: import("./attachments.ts").UploadItem[], messageId: string): Promise<{ uploaded: number; failed: string[] }> } | null;
   imap: ActImap | null;
   hero: ActHero | null;
   store: ActStore;
