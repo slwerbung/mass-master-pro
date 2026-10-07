@@ -1,0 +1,124 @@
+// Phase 3: Entwurf und Anhaenge als Erweiterung der Stufe „Handeln" (siehe act.ts, `extra`).
+
+import { decide } from "./autopilot.ts";
+import { matchConfidence, type ActContext, type ActDeps, type ActMessage, type PlanEntry } from "./act.ts";
+import { buildUploadItems, type DocTypes } from "./attachments.ts";
+import { generateDraft, shouldDraft, LimitWaitError, type DraftDeps, type DraftMsg } from "./draft.ts";
+import { BudgetExceededError } from "./llm.ts";
+import { shouldPrepareOffer } from "./offer.ts";
+
+export interface ExtraConfig {
+  docTypes: DocTypes;
+  /** `canWrite`: Entwuerfe-Ordner bekannt und IMAP verfuegbar. */
+  draft: { deps: DraftDeps; canWrite: boolean } | null;
+  /** Angebotsvorbereitung (null = HERO/KI nicht verfuegbar). */
+  /** Lexware-Belegadresse gesetzt? Dann werden Belege automatisch weitergeleitet. */
+  forward?: { address: string; run(messageId: string, mode: "send" | "draft"): Promise<{ files: number; how: "gesendet" | "entwurf"; fallbackReason?: string }> } | null;
+  offer?: { suggest(messageId: string, projectId: number, projectNr: string | null): Promise<unknown> } | null;
+}
+
+function toDraftMsg(m: ActMessage): DraftMsg & { draft_uid: number | null } {
+  return {
+    id: m.id, account_id: m.account_id, thread_id: m.thread_id, direction: m.direction, from_addr: m.from_addr, from_name: m.from_name,
+    subject: m.subject, message_id: m.message_id ?? "", refs: m.refs ?? [], sent_at: m.sent_at ?? null, body_text: m.body_text ?? null,
+    category: m.category, summary: m.summary, extracted: m.extracted, hero_project_match_id: m.hero_project_match_id,
+    draft_message_id: m.draft_message_id ?? null, draft_text: m.draft_text ?? null, draft_uid: m.draft_uid ?? null,
+  };
+}
+
+export function buildExtra(cfg: ExtraConfig): NonNullable<ActContext["extra"]> {
+  return async (m: ActMessage, ctx: ActContext, deps: ActDeps, plan: PlanEntry[]) => {
+    const certain = m.match_info?.certain === true;
+
+    // ---------------------------------------------------------------- Antwortentwurf
+    if (cfg.draft && m.direction === "in" && !m.draft_text) {
+      const answered = m.thread_id ? await deps.store.hasOutgoingAfter(m.thread_id, m.sent_at ?? null) : false;
+      const sd = shouldDraft(m, { threadAnsweredAfter: answered });
+      if (sd.draft) {
+        const d = decide("draft", { autopilot: ctx.autopilot, shadowMode: ctx.shadowMode, confidence: m.confidence, certain: false });
+        if (d !== "skip") {
+          // Auto + nicht Schattenmodus: ins Postfach legen. Sonst nur berechnen und in der Mail-App zeigen.
+          const write = d === "auto" && cfg.draft.canWrite;
+          try {
+            const r = await generateDraft(toDraftMsg(m), cfg.draft.deps, { write });
+            plan.push({
+              action: "draft", decision: d, done: r.written,
+              detail: r.written
+                ? `Entwurf im Postfach (${r.placeholders.length} Platzhalter)`
+                : d === "shadow" ? "Würde einen Entwurf ins Postfach legen (hier nur angezeigt)" : "Entwurf in der Mail-App – noch nicht im Postfach",
+            });
+          } catch (e) {
+            if (e instanceof BudgetExceededError) plan.push({ action: "draft", decision: "skip", done: false, detail: "KI-Monatsbudget erreicht – kein Entwurf" });
+            else if (e instanceof LimitWaitError) plan.push({ action: "draft", decision: "skip", done: false, detail: "KI-Kontingent erschöpft – Entwurf bitte in der Mail-App erzeugen" });
+            else plan.push({ action: "draft", decision: "skip", done: false, detail: `Entwurf fehlgeschlagen: ${String((e as Error).message).slice(0, 150)}` });
+          }
+        }
+      } else {
+        plan.push({ action: "draft", decision: "skip", done: false, detail: `Kein Entwurf: ${sd.reason}` });
+      }
+    }
+
+    // ---------------------------------------------------------------- Beleg -> Lexware (echter Versand, siehe lexwareSend.ts)
+    // Alle buchungsrelevanten Belege MIT Anhang. Rechnungen nur im Portal gehen nicht (sie landen im Abhol-Ordner).
+    const bel = m.extracted?.beleg;
+    const isBeleg = m.category === "beleg" || bel?.is_booking_document === true;
+    const fromSelf = !!cfg.forward?.address && m.from_addr.toLowerCase() === cfg.forward.address.toLowerCase();
+    if (m.direction === "in" && isBeleg && m.has_attachments && bel?.delivery !== "portal" && cfg.forward?.address && !fromSelf) {
+      const already = m.forwarded_at != null || m.beleg_state === "weitergeleitet" || m.plan.some((p) => p.action === "forward_beleg" && p.done);
+      const d = decide("forward_beleg", { autopilot: ctx.autopilot, shadowMode: ctx.shadowMode, confidence: m.confidence, certain: false });
+      if (already || d === "skip") { /* Stufe Aus oder schon erledigt */ }
+      else if (d === "shadow") plan.push({ action: "forward_beleg", decision: d, done: false, detail: "Würde den Beleg automatisch an Lexware senden" });
+      else if (d === "suggest") plan.push({ action: "forward_beleg", decision: d, done: false, detail: "Unsicher – Weiterleitung per Knopf in der Mail-Ansicht" });
+      else {
+        try {
+          const r = await cfg.forward.run(m.id, "send");
+          plan.push({
+            action: "forward_beleg", decision: d, done: true,
+            detail: r.how === "gesendet"
+              ? `An Lexware gesendet (${r.files} Anhang/Anhänge)`
+              : `Senden nicht möglich (${r.fallbackReason ?? "?"}) – Entwurf an Lexware liegt im Postfach, bitte selbst senden`,
+          });
+        } catch (e) {
+          plan.push({ action: "forward_beleg", decision: "skip", done: false, detail: `Weiterleitung nicht möglich: ${String((e as Error).message).slice(0, 120)}` });
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------- Angebot vorbereiten
+    if (m.hero_project_match_id && shouldPrepareOffer(m) && cfg.offer) {
+      const d = decide("prepare_offer", { autopilot: ctx.autopilot, shadowMode: ctx.shadowMode, confidence: m.confidence, certain });
+      if (d === "shadow") {
+        plan.push({ action: "prepare_offer", decision: d, done: false, detail: "Würde eine Angebotsvorbereitung vorschlagen" });
+      } else if (d !== "skip") {
+        // Das Anlegen in HERO bleibt immer ein Klick – hier entsteht nur der Vorschlag.
+        try {
+          const r = await cfg.offer.suggest(m.id, m.hero_project_match_id, m.match_info?.projectNr ?? null);
+          plan.push({ action: "prepare_offer", decision: "suggest", done: !!r, detail: r ? "Vorschlag: Angebot vorbereiten" : "Kein Vorschlag (schon offen oder nicht nötig)" });
+        } catch (e) {
+          const msg = e instanceof BudgetExceededError ? "KI-Monatsbudget erreicht" : String((e as Error).message).slice(0, 120);
+          plan.push({ action: "prepare_offer", decision: "skip", done: false, detail: `Angebotsvorbereitung nicht möglich: ${msg}` });
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------- Anhaenge ans Projekt
+    if (m.hero_project_match_id && m.has_attachments) {
+      const d = decide("attachments", { autopilot: ctx.autopilot, shadowMode: ctx.shadowMode, confidence: matchConfidence(m.match_method, certain), certain });
+      if (d !== "skip") {
+        const items = buildUploadItems(await deps.store.loadAttachments(m.id), cfg.docTypes);
+        if (items.length) {
+          const projectId = m.hero_project_match_id;
+          if (d === "auto" && deps.uploader) {
+            const r = await deps.uploader.upload(projectId, items, m.id);
+            plan.push({ action: "attachments", decision: d, done: r.uploaded > 0, detail: `${r.uploaded} von ${items.length} hochgeladen${r.failed.length ? `, Fehler: ${r.failed.join("; ")}` : ""}` });
+          } else if (d === "shadow") {
+            plan.push({ action: "attachments", decision: d, done: false, detail: `Würde ${items.length} Anhang/Anhänge ans Projekt hochladen` });
+          } else {
+            const created = await deps.store.createSuggestion(m.id, "upload_attachments", { projectId, projectNr: m.match_info?.projectNr ?? null, items });
+            plan.push({ action: "attachments", decision: "suggest", done: created, detail: `Vorschlag: ${items.length} Anhang/Anhänge` });
+          }
+        }
+      }
+    }
+  };
+}

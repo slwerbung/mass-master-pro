@@ -13,7 +13,8 @@
     "test": "playwright test",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run",
+    "sync-shared": "node -e \"const fs=require('fs');const s=fs.readFileSync('supabase/functions/_shared/email/types.ts','utf8');fs.writeFileSync('apps/mail/src/lib/shared.ts','// KOPIE von supabase/functions/_shared/email/types.ts – nicht von Hand aendern.\\n// \\`npm run sync-shared\\` im Repo-Root aktualisiert sie; ein Test prueft, dass beide gleich sind.\\n'+s)\""
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
