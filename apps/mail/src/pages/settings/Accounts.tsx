@@ -21,6 +21,7 @@ function AccountCard({ account }: { account: Account }) {
   const [a, setA] = useState<Account>(account);
   const [password, setPassword] = useState("");
   const [test, setTest] = useState<TestResult | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
   const set = <K extends keyof Account>(k: K, v: Account[K]) => setA({ ...a, [k]: v });
 
   const save = useMutation({
@@ -34,8 +35,9 @@ function AccountCard({ account }: { account: Account }) {
   });
   const run = useMutation({
     mutationFn: (setup: boolean) => invokeFn<TestResult>("email-account-test", { accountId: a.id, ...(password ? { password } : {}), setup }),
+    onMutate: () => setRunError(null),
     onSuccess: (r, setup) => { setTest(r); toast.success(setup ? "Ordner angelegt und gespeichert" : "Verbindung ok"); qc.invalidateQueries({ queryKey: ["accounts"] }); },
-    onError: (e) => { setTest(null); toast.error(errorText(e)); },
+    onError: (e) => { setTest(null); setRunError(errorText(e)); toast.error(errorText(e)); },
   });
   const sync = useMutation({
     mutationFn: () => invokeFn<{ fetched?: number; stored?: number; error?: string; skipped?: string }[]>("email-sync", { accountId: a.id }),
@@ -105,6 +107,7 @@ function AccountCard({ account }: { account: Account }) {
           <Button variant="outline" onClick={() => sync.mutate()} disabled={sync.isPending}>Jetzt abrufen</Button>
         </div>
 
+        {runError && <ErrorBox error={`Verbindungstest fehlgeschlagen: ${runError}`} />}
         {test && (
           <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-sm">
             <div>Verbindung ok · {test.runtime} · Login nach {test.connectMs} ms, gesamt {test.totalMs} ms</div>
