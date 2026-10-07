@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AccountRow, type MessageInsert, type SyncDeps, type SyncStore, syncAccount } from "./sync.ts";
+import { type AccountRow, type MessageInsert, type SyncDeps, type SyncStore, SYNC_LIMIT, syncAccount } from "./sync.ts";
 import type { ParsedMail } from "./parse.ts";
 
 const acc = (over: Partial<AccountRow> = {}): AccountRow => ({
@@ -64,20 +64,24 @@ describe("syncAccount", () => {
     expect(r).toMatchObject({ fetched: 3, stored: 3, errors: 0 });
     expect(log.msgs.map((m) => [m.folder, m.direction, m.uid])).toEqual([["INBOX", "in", 11], ["INBOX", "in", 12], ["Sent", "out", 6]]);
     expect(log.msgs.every((m) => m.status === "neu")).toBe(true);
+    // Fortschritt wird nach jeder Mail gesichert, am Ende je Ordner noch einmal.
     expect(log.cursors).toEqual([
+      { id: "A1", inbox_uidvalidity: "7", inbox_last_uid: 11 },
       { id: "A1", inbox_uidvalidity: "7", inbox_last_uid: 12 },
+      { id: "A1", inbox_uidvalidity: "7", inbox_last_uid: 12 },
+      { id: "A1", sent_uidvalidity: "9", sent_last_uid: 6 },
       { id: "A1", sent_uidvalidity: "9", sent_last_uid: 6 },
     ]);
   });
 
-  it("begrenzt auf 50 Mails je Lauf ueber beide Ordner und meldet 'more'", async () => {
+  it("begrenzt auf SYNC_LIMIT Mails je Lauf ueber beide Ordner und meldet 'more'", async () => {
     const uids = Array.from({ length: 60 }, (_, i) => 11 + i);
     const { deps, log } = fake({}, { INBOX: { uids }, Sent: { uids: [6], validity: "9" } });
     const r = await syncAccount(acc(), deps);
-    expect(r.fetched).toBe(50);
+    expect(r.fetched).toBe(SYNC_LIMIT);
     expect(r.more).toBe(true);
     expect(log.fetchCalls).toHaveLength(1);
-    expect(log.cursors[0].inbox_last_uid).toBe(60);
+    expect(log.cursors.at(-1)?.inbox_last_uid).toBe(10 + SYNC_LIMIT);
   });
 
   it("verknuepft Antworten ueber References mit dem Thread; Gesendetes markiert ihn als beantwortet", async () => {
