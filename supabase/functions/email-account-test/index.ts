@@ -41,7 +41,10 @@ Deno.serve(async (req) => {
     }
 
     const out: Record<string, unknown> = { runtime: `Deno ${Deno.version.deno}` };
-    await withImap(creds, async (client) => {
+    let step = "Verbindung";
+    const deadline = new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`Zeitlimit (90 s) im Schritt „${step}“`)), 90_000));
+    await Promise.race([deadline, withImap(creds, async (client) => {
+      step = "Ordnerliste";
       out.connectMs = Math.round(performance.now() - t0);
       const folders = await listFolders(client);
       const delim = ((await client.list()) as any[])[0]?.delimiter || "/";
@@ -58,8 +61,9 @@ Deno.serve(async (req) => {
       }
 
       // Probeabruf: nur lesen, nichts speichern.
+      step = "Probeabruf";
       const t1 = performance.now();
-      const res = await fetchNew(client, plan.map.inbox || "INBOX", { lastUid: null, uidValidity: null, limit: 50, backfill: 50 });
+      const res = await fetchNew(client, plan.map.inbox || "INBOX", { lastUid: null, uidValidity: null, limit: 5, backfill: 5 });
       let parsed = 0, failed = 0, withAttachments = 0;
       for (const m of res.messages) {
         try {
@@ -74,7 +78,7 @@ Deno.serve(async (req) => {
         exists: res.state.exists, uidValidity: res.state.uidValidity, fetched: res.messages.length,
         parsed, parseFailed: failed, withAttachments, ms: Math.round(performance.now() - t1),
       };
-    });
+    })]);
     out.totalMs = Math.round(performance.now() - t0);
 
     await sb.from("email_runs").insert({
