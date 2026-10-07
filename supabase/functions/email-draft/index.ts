@@ -3,7 +3,7 @@
 //   { action: "generate", messageId, hint?, write? }   Entwurf (neu) erzeugen; `write`: ins Postfach legen
 //   { action: "save", messageId, text, subject?, write? }  bearbeiteten Text speichern (ersetzt den Postfach-Entwurf)
 //   { action: "write", messageId }                      gespeicherten Entwurf ins Postfach legen
-//   { action: "forward_beleg", messageId }             Weiterleitungs-ENTWURF an die Lexoffice-Belegadresse (mit Anhaengen)
+//   { action: "forward_beleg", messageId, send? }     Beleg an die Lexware-Belegadresse: send=true sendet (nur dorthin), sonst Entwurf
 //
 // Der Entwurf wird NIE gesendet, nur im Entwuerfe-Ordner abgelegt. Ein ueberholter Entwurf
 // wandert in den Papierkorb (kein Loeschen).
@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
       .eq("id", String(body.messageId || "")).maybeSingle();
     if (!m) return fail("Mail nicht gefunden.");
     if (m.direction !== "in") return fail("Für ausgehende Mails gibt es keinen Entwurf.");
-    if (body.action === "forward_beleg" && m.category !== "beleg") return fail("Nur Belege (Kategorie „Beleg / Rechnung“) lassen sich an Lexoffice weiterleiten.");
+    if (body.action === "forward_beleg" && m.category !== "beleg" && !(m.extracted as any)?.beleg?.is_booking_document) return fail("Nur Belege lassen sich an Lexware weiterleiten.");
     const { data: acc } = await sb.from("email_accounts").select("*").eq("id", m.account_id).maybeSingle();
     if (!acc) return fail("Postfach nicht gefunden.");
 
@@ -45,10 +45,13 @@ Deno.serve(async (req) => {
     if (body.action === "forward_beleg") {
       const lex = await getConfig<{ address?: string }>(sb, "lexoffice", {});
       imap = new LazyImap({ host: acc.imap_host, port: acc.imap_port, user: acc.username, pass: await accountPassword(acc) });
-      const r = await makeForwarder(sb, acc, String(lex?.address || ""), imap, COMPANY_NAME).run(m.id);
+      const r = await makeForwarder(sb, acc, String(lex?.address || ""), imap, COMPANY_NAME, await accountPassword(acc)).run(m.id, body.send === true ? "send" : "draft");
       const plan = Array.isArray((m as any).plan) ? (m as any).plan : [];
-      await sb.from("email_messages").update({ plan: [...plan, { action: "forward_beleg", decision: "suggest", done: true, detail: `Entwurf an Lexoffice im Postfach (${r.files} Anhang/Anhänge) – bitte prüfen und senden` }] }).eq("id", m.id);
-      return ok({ forwarded: true, files: r.files });
+      const detail = r.how === "gesendet"
+        ? `An Lexware gesendet (${r.files} Anhang/Anhänge)`
+        : `Entwurf an Lexware im Postfach (${r.files} Anhang/Anhänge)${r.fallbackReason ? ` – Senden nicht möglich: ${r.fallbackReason}` : ""} – bitte selbst senden`;
+      await sb.from("email_messages").update({ plan: [...plan, { action: "forward_beleg", decision: "suggest", done: true, detail }] }).eq("id", m.id);
+      return ok({ forwarded: true, files: r.files, how: r.how, fallbackReason: r.fallbackReason ?? null });
     }
 
     const wantWrite = body.action === "write" || body.write === true;

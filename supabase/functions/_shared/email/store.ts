@@ -144,7 +144,7 @@ export function matchStore(sb: any): MatchStore {
 const ACT_COLUMNS =
   "id, account_id, thread_id, direction, current_folder, current_uid, from_addr, from_name, to_addrs, subject, category, confidence, " +
   "summary, extracted, hero_project_match_id, match_method, match_info, hero_logged_at, has_attachments, plan, status, attempts, " +
-  "message_id, refs, body_text, sent_at, draft_message_id, draft_text, draft_uid, beleg_state";
+  "message_id, refs, body_text, sent_at, draft_message_id, draft_text, draft_uid, beleg_state, forwarded_at";
 
 export function actStore(sb: any): ActStore {
   return {

@@ -133,34 +133,54 @@ describe("Angebot vorbereiten", () => {
   });
 });
 
-describe("Beleg an Lexoffice", () => {
-  const beleg = m({ category: "beleg", has_attachments: true, extracted: {} });
-  const fwd = (calls: string[] = []) => ({ address: "belege@lexoffice.example", run: async (id: string) => { calls.push(id); return { files: 2 }; } });
-  it("Standard (Aus): nichts", async () => {
-    const calls: string[] = []; const plan: PlanEntry[] = [];
-    await buildExtra({ docTypes: {}, draft: null, forward: fwd(calls) })(beleg, ctx(), setup().deps, plan);
-    expect(calls).toEqual([]); expect(plan).toEqual([]);
+describe("Beleg an Lexware (automatischer Versand)", () => {
+  const beleg = m({ category: "beleg", has_attachments: true, extracted: { beleg: { is_booking_document: true, delivery: "anhang", vendor: "Lieferant" } } });
+  const fwd = (calls: any[] = [], how: "gesendet" | "entwurf" = "gesendet") => ({
+    address: "belege@lexware.example",
+    run: async (id: string, mode: string) => { calls.push([id, mode]); return { files: 2, how, ...(how === "entwurf" ? { fallbackReason: "ETIMEDOUT" } : {}) }; },
   });
-  it("Automatisch: Entwurf, nicht im Schattenmodus; Vorschlag nur als Hinweis", async () => {
-    const calls: string[] = []; const plan: PlanEntry[] = [];
-    await buildExtra({ docTypes: {}, draft: null, forward: fwd(calls) })(beleg, ctx(false, { forward_beleg: "auto" }), setup().deps, plan);
-    expect(calls).toEqual(["M1"]);
-    expect(plan[0]).toMatchObject({ action: "forward_beleg", done: true });
-    const c2: string[] = []; const p2: PlanEntry[] = [];
-    await buildExtra({ docTypes: {}, draft: null, forward: fwd(c2) })(beleg, ctx(true, { forward_beleg: "auto" }), setup().deps, p2);
-    await buildExtra({ docTypes: {}, draft: null, forward: fwd(c2) })(beleg, ctx(false, { forward_beleg: "suggest" }), setup().deps, p2);
-    expect(c2).toEqual([]);
-    expect(p2.map((p) => p.decision)).toEqual(["shadow", "suggest"]);
+  const run = async (mm: ActMessage, f: any, c = ctx()) => { const plan: PlanEntry[] = []; await buildExtra({ docTypes: {}, draft: null, forward: f })(mm, c, setup().deps, plan); return plan; };
+
+  it("Standard (Automatisch): sendet, Plan nennt es", async () => {
+    const calls: any[] = [];
+    const plan = await run(beleg, fwd(calls));
+    expect(calls).toEqual([["M1", "send"]]);
+    expect(plan[0]).toMatchObject({ action: "forward_beleg", decision: "auto", done: true });
+    expect(plan[0].detail).toMatch(/An Lexware gesendet/);
   });
-  it("ohne Adresse, ohne Anhang, falsche Kategorie oder schon erledigt: nichts; Fehler stoeren nicht", async () => {
-    const calls: string[] = [];
-    const run = async (mm: ActMessage, f: any) => { const plan: PlanEntry[] = []; await buildExtra({ docTypes: {}, draft: null, forward: f })(mm, ctx(false, { forward_beleg: "auto" }), setup().deps, plan); return plan; };
-    expect(await run(beleg, { address: "", run: async () => ({ files: 1 }) })).toEqual([]);
-    expect(await run({ ...beleg, has_attachments: false }, fwd(calls))).toEqual([]);
-    expect(await run({ ...beleg, category: "lieferant" }, fwd(calls))).toEqual([]);
-    expect(await run({ ...beleg, plan: [{ action: "forward_beleg", decision: "auto", done: true }] }, fwd(calls))).toEqual([]);
+  it("auch wenn nur das Modell „buchungsrelevanter Beleg“ sagt (andere Kategorie)", async () => {
+    const calls: any[] = [];
+    await run({ ...beleg, category: "lieferant" }, fwd(calls));
+    expect(calls).toHaveLength(1);
+  });
+  it("Senden scheitert -> Entwurf: der Plan sagt es deutlich", async () => {
+    const plan = await run(beleg, fwd([], "entwurf"));
+    expect(plan[0].detail).toMatch(/Senden nicht möglich \(ETIMEDOUT\) – Entwurf/);
+  });
+  it("Schattenmodus, unsichere Konfidenz und Stufe Aus: nie senden", async () => {
+    const calls: any[] = [];
+    expect((await run(beleg, fwd(calls), ctx(true)))[0].decision).toBe("shadow");
+    expect((await run({ ...beleg, confidence: 0.4 }, fwd(calls)))[0].decision).toBe("suggest");
+    expect(await run(beleg, fwd(calls), ctx(false, { forward_beleg: "off" }))).toEqual([]);
     expect(calls).toEqual([]);
-    const p = await run(beleg, { address: "a@b.de", run: async () => { throw new Error("kein Anhang"); } });
-    expect(p[0].detail).toMatch(/nicht möglich: kein Anhang/);
+  });
+  it("nie: Portal-Rechnung, ohne Anhang, ohne Adresse, vom Lexware-Absender selbst, ausgehend, schon weitergeleitet", async () => {
+    const calls: any[] = [];
+    const portal = { ...beleg, extracted: { beleg: { is_booking_document: true, delivery: "portal" } } };
+    for (const mm of [portal, { ...beleg, has_attachments: false }, { ...beleg, from_addr: "Belege@Lexware.example" }, { ...beleg, direction: "out" as const },
+      { ...beleg, forwarded_at: "2026-10-06" }, { ...beleg, beleg_state: "weitergeleitet" }, { ...beleg, plan: [{ action: "forward_beleg", decision: "auto", done: true }] }]) {
+      expect(await run(mm as ActMessage, fwd(calls))).toEqual([]);
+    }
+    expect(await run(beleg, { address: "", run: async () => ({ files: 1, how: "gesendet" }) })).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+  it("kein Beleg (normale Mail oder Modell sagt nein) -> nichts", async () => {
+    const calls: any[] = [];
+    await run(m({ category: "projekt_kommunikation", has_attachments: true, extracted: { beleg: { is_booking_document: false, delivery: "keine" } } }), fwd(calls));
+    expect(calls).toEqual([]);
+  });
+  it("Fehler beim Weiterleiten stoeren die Mail nicht", async () => {
+    const plan = await run(beleg, { address: "a@b.de", run: async () => { throw new Error("kein Beleg-Anhang"); } });
+    expect(plan[0].detail).toMatch(/nicht möglich: kein Beleg-Anhang/);
   });
 });

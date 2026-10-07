@@ -79,7 +79,7 @@ export const AUTOPILOT_LABELS: Record<AutopilotAction, string> = {
   create_project: "Kontakt + Projekt anlegen",
   prepare_offer: "Angebot vorbereiten",
   status_change: "Statuswechsel",
-  forward_beleg: "Beleg an Lexoffice weiterleiten",
+  forward_beleg: "Belege an Lexware senden (echter Versand, nur an die Belegadresse)",
 };
 
 /** Standardstufen laut Konzept (Abschnitt „Autopilot-Stufen"). */
@@ -95,7 +95,7 @@ export const AUTOPILOT_DEFAULTS: Autopilot = {
   create_project: "suggest",
   prepare_offer: "suggest",
   status_change: "suggest",
-  forward_beleg: "off",
+  forward_beleg: "auto",
 };
 
 export const CONFIDENCE_AUTO_MIN = 0.7;

@@ -166,8 +166,11 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
   `hero_open_cache` gehört CaptFix und wird vom Assistenten nicht benutzt.
 - Regeln vor KI; das Modell liefert nur Felder (Zod-Schema), Aktionen entscheidet der Code (`autopilot.ts`). Schattenmodus =
   keine Automatik im Postfach/HERO, nur `plan`. Vorschläge ändern nichts, bis jemand klickt.
-- **Kein Versand, kein Löschen:** kein SMTP/Resend, kein `messageDelete`/`\Deleted`/expunge im Mail-Assistenten-Code
-  (`_shared/email/imap.test.ts` prüft den Quelltext). Antworten und Lexoffice-Weiterleitung sind ENTWÜRFE im Ordner „Entwürfe“.
+- **Kein Versand, kein Löschen – eine Ausnahme:** Antworten an Kunden sind nur ENTWÜRFE im Ordner „Entwürfe“; kein Resend, kein
+  `messageDelete`/`\Deleted`/expunge. Einzige Ausnahme (ausdrücklich freigegeben): Belege gehen automatisch per SMTP (Port 465) an die
+  Lexware-Belegadresse, ausschließlich über `_shared/email/lexwareSend.ts` (prüft den Empfänger; `imap.test.ts` prüft den Quelltext).
+- Rechnungen nur im Kundenportal (z. B. Aral): Ordner „8 Belege abholen (Portal)“, `email_messages.beleg_state = 'portal_offen'` ist die
+  Warteschlange für eine spätere Browser-Automatisierung.
 - `apps/mail/src/lib/shared.ts` ist eine Kopie von `_shared/email/types.ts` (`npm run sync-shared`; ein Test prüft die Gleichheit).
 - Tests: `npm run test:unit` (vitest) + `deno test` für `draftMime.deno_test.ts`; Typprüfung der Functions mit
   `deno check --config supabase/functions/<fn>/deno.json supabase/functions/<fn>/index.ts`, der App mit `npm run typecheck` in `apps/mail`.
@@ -206,7 +209,7 @@ Kurze prägnante Messages auf Englisch:
 - `sec: beschreibung` (Security-Fixes)
 
 ## Was vermeiden
-- Im Mail-Assistenten nie etwas senden oder löschen (siehe oben), nie `email_*`-Tabellen für anon/authenticated freigeben,
+- Im Mail-Assistenten nie etwas senden (außer Belege an die Lexware-Adresse über `lexwareSend.ts`) oder löschen, nie `email_*`-Tabellen für anon/authenticated freigeben,
   nie IMAP-Passwörter oder KI-Schlüssel im Klartext speichern/loggen/zurückgeben (`EMAIL_ENCRYPTION_KEY`, AES-GCM).
 - Keine HERO-„Dateiordner“-IDs als `document_type_id` verwenden (Ordner ≠ Dokumenttyp, siehe `phase0.md`).
 - Niemals Signing-Secret-Fallback im Code (kein `|| "fallback"`)

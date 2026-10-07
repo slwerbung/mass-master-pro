@@ -6,7 +6,7 @@ const base = { autopilot: AUTOPILOT_DEFAULTS, shadowMode: false, confidence: 0.9
 
 describe("Autopilot", () => {
   it("Aus bleibt aus, auch bei bester Konfidenz", () => {
-    expect(decide("forward_beleg", { ...base })).toBe("skip");
+    expect(decide("forward_beleg", { ...base, autopilot: { ...AUTOPILOT_DEFAULTS, forward_beleg: "off" } })).toBe("skip");
   });
   it("Automatisch nur ab Konfidenz 0,7 — darunter Vorschlag", () => {
     expect(decide("move_folders", { ...base, confidence: 0.7 })).toBe("auto");
@@ -22,7 +22,8 @@ describe("Autopilot", () => {
   it("Schattenmodus: Automatik rechnet nur, Vorschlaege bleiben Vorschlaege", () => {
     expect(decide("move_folders", { ...base, shadowMode: true })).toBe("shadow");
     expect(decide("create_project", { ...base, shadowMode: true })).toBe("suggest");
-    expect(decide("forward_beleg", { ...base, shadowMode: true })).toBe("skip");
+    expect(decide("forward_beleg", { ...base, shadowMode: true })).toBe("shadow");
+    expect(decide("forward_beleg", { ...base, shadowMode: true, autopilot: { ...AUTOPILOT_DEFAULTS, forward_beleg: "off" } })).toBe("skip");
   });
   it("normalisiert gespeicherte Stufen und verwirft Muell", () => {
     const a = normalizeAutopilot({ draft: "off", move_folders: "banane", log_assumed: "auto" });

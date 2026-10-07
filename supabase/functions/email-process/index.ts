@@ -73,7 +73,7 @@ async function processOne(sb: any, id: string) {
     actCtx.extra = buildExtra({
       docTypes: heroCfg.document_types ?? {},
       offer: heroKey ? offerSuggester(sb, llm, heroKey) : null,
-      forward: lexoffice?.address ? makeForwarder(sb, acc, String(lexoffice.address), lazy, COMPANY_NAME) : null,
+      forward: lexoffice?.address ? makeForwarder(sb, acc, String(lexoffice.address), lazy, COMPANY_NAME, await accountPassword(acc)) : null,
       draft: {
         canWrite: !!writer,
         deps: {

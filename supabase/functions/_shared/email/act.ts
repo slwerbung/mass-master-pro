@@ -51,6 +51,7 @@ export interface ActMessage {
   draft_text?: string | null;
   draft_uid?: number | null;
   beleg_state?: string | null;
+  forwarded_at?: string | null;
 }
 
 export interface ActImap {

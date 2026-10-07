@@ -1,5 +1,5 @@
 // Absicherung der harten Regel „Kein Versand, kein Loeschen": der Quelltext des
-// gesamten Mail-Assistenten darf weder SMTP noch IMAP-Loeschen enthalten.
+// gesamten Mail-Assistenten darf kein IMAP-Loeschen und – bis auf lexwareSend.ts (Belege an Lexware) – keinen Versand enthalten.
 
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -28,7 +28,6 @@ describe("Kein Versand, kein Loeschen", () => {
     ["messageDelete", /messageDelete/],
     ["\\Deleted-Flag", /\\Deleted/],
     ["expunge", /expunge/i],
-    ["SMTP-Versand (sendMail/createTransport)", /sendMail\s*\(|createTransport\s*\(/],
     ["Mail-Versand ueber Resend", /api\.resend\.com/],
     ["nodemailer-Transport", /nodemailer\/lib\/(smtp|mailer)/],
   ] as const) {
@@ -37,4 +36,18 @@ describe("Kein Versand, kein Loeschen", () => {
       expect(hits).toEqual([]);
     });
   }
+
+  // EINZIGE Ausnahme (ausdruecklich freigegeben): Belege automatisch an die Lexware-Belegadresse.
+  // Gesendet wird ausschliesslich in lexwareSend.ts; kein anderer Code darf einen Transport anlegen.
+  it("sendet nur in lexwareSend.ts (sendMail/createTransport)", () => {
+    const hits = sources.filter((f) => /sendMail\s*\(|createTransport\s*\(/.test(readFileSync(f, "utf8")));
+    expect(hits.map((f) => f.split("/").pop())).toEqual(["lexwareSend.ts"]);
+  });
+  it("lexwareSend.ts prueft den Empfaenger vor jedem Versand und hat genau einen Sendeaufruf", () => {
+    const f = sources.find((x) => x.endsWith("lexwareSend.ts"))!;
+    const src = readFileSync(f, "utf8");
+    expect(src.match(/sendMail\s*\(/g)).toHaveLength(1);
+    expect(src.indexOf("assertAllowedRecipient(to, allowedAddress)")).toBeGreaterThan(-1);
+    expect(src.indexOf("assertAllowedRecipient(to, allowedAddress)")).toBeLessThan(src.indexOf("createTransport"));
+  });
 });

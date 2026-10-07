@@ -58,7 +58,7 @@ values
    '{
      "move_folders": "auto", "move_discard": "auto", "move_answered": "auto", "keywords": "auto",
      "log_certain": "auto", "log_assumed": "suggest", "attachments": "suggest", "draft": "auto",
-     "create_project": "suggest", "prepare_offer": "suggest", "status_change": "suggest", "forward_beleg": "off"
+     "create_project": "suggest", "prepare_offer": "suggest", "status_change": "suggest", "forward_beleg": "auto"
    }'::jsonb,
    '{}'::jsonb)
 on conflict (address) do nothing;

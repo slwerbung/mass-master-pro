@@ -30,6 +30,8 @@ export interface Account {
   address: string;
   imap_host: string;
   imap_port: number;
+  smtp_host: string | null;
+  smtp_port: number;
   username: string;
   has_password: boolean;
   folder_map: { inbox?: string; sent?: string; drafts?: string; trash?: string; folders?: Record<string, string> };

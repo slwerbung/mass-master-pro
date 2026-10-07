@@ -25,7 +25,7 @@ function AccountCard({ account }: { account: Account }) {
 
   const save = useMutation({
     mutationFn: () => api("save_account", {
-      id: a.id, label: a.label, address: a.address, imap_host: a.imap_host, imap_port: a.imap_port, username: a.username,
+      id: a.id, label: a.label, address: a.address, imap_host: a.imap_host, imap_port: a.imap_port, smtp_host: a.smtp_host ?? "", smtp_port: a.smtp_port, username: a.username,
       signature: a.signature, backfill: a.backfill, shadow_mode: a.shadow_mode, enabled: a.enabled, autopilot: a.autopilot,
       ...(password ? { password } : {}),
     }),
@@ -67,6 +67,10 @@ function AccountCard({ account }: { account: Account }) {
           <Field label="Benutzername"><Input value={a.username} onChange={(e) => set("username", e.target.value)} /></Field>
           <Field label="IMAP-Server"><Input value={a.imap_host} onChange={(e) => set("imap_host", e.target.value)} /></Field>
           <Field label="Port"><Input type="number" value={a.imap_port} onChange={(e) => set("imap_port", Number(e.target.value))} /></Field>
+          <Field label="SMTP-Server (nur für Lexware)" hint="Nur für die automatische Weiterleitung von Belegen an die Lexware-Belegadresse – sonst sendet der Assistent nie. Port 465.">
+            <Input value={a.smtp_host ?? ""} onChange={(e) => set("smtp_host", e.target.value)} placeholder="smtp.ionos.de" />
+          </Field>
+          <Field label="SMTP-Port"><Input type="number" value={a.smtp_port} onChange={(e) => set("smtp_port", Number(e.target.value))} /></Field>
           <Field label="Passwort" hint={a.has_password ? "Leer lassen, um das gespeicherte zu behalten." : "Wird verschlüsselt gespeichert."}>
             <Input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </Field>

@@ -189,17 +189,18 @@ const handlers: Record<string, Handler> = {
   // ------------------------------------------------------------------ Postfaecher
   async list_accounts({ sb }) {
     const { data } = await sb.from("email_accounts")
-      .select("id, label, address, imap_host, imap_port, username, password_enc, folder_map, signature, autopilot, shadow_mode, enabled, backfill, last_sync_at, last_error, locked_until")
+      .select("id, label, address, imap_host, imap_port, smtp_host, smtp_port, username, password_enc, folder_map, signature, autopilot, shadow_mode, enabled, backfill, last_sync_at, last_error, locked_until")
       .order("created_at");
     return (data || []).map((a: any) => ({ ...a, password_enc: undefined, has_password: !!a.password_enc, autopilot: normalizeAutopilot(a.autopilot) }));
   },
 
   async save_account({ sb, body }) {
     const row: Record<string, unknown> = {};
-    for (const k of ["label", "address", "imap_host", "username", "signature"] as const) {
+    for (const k of ["label", "address", "imap_host", "smtp_host", "username", "signature"] as const) {
       if (body[k] !== undefined) row[k] = String(body[k]).trim();
     }
     if (body.imap_port !== undefined) row.imap_port = Math.min(Math.max(parseInt(body.imap_port, 10) || 993, 1), 65535);
+    if (body.smtp_port !== undefined) row.smtp_port = Math.min(Math.max(parseInt(body.smtp_port, 10) || 465, 1), 65535);
     if (body.backfill !== undefined) row.backfill = Math.min(Math.max(parseInt(body.backfill, 10) || 0, 0), 500);
     if (body.shadow_mode !== undefined) row.shadow_mode = !!body.shadow_mode;
     if (body.enabled !== undefined) row.enabled = !!body.enabled;

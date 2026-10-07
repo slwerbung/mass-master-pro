@@ -144,8 +144,8 @@ export default function Company() {
         </Section>
       )}
 
-      <Section title="Lexoffice" onSave={saveKey("lexoffice")} saving={save.isPending}>
-        <Field label="Belegadresse" hint="Eingangsrechnungen werden hierhin weitergeleitet, sobald „Beleg an Lexoffice weiterleiten“ im Postfach auf Vorschlag/Automatisch steht.">
+      <Section title="Lexware Office" onSave={saveKey("lexoffice")} saving={save.isPending}>
+        <Field label="Belegadresse" hint="Hierhin sendet der Assistent Belege mit Anhang automatisch (nur hierhin, nie an Kunden). info@ muss bei Lexware als Absender hinterlegt sein. Steuerung: Autopilot „Belege an Lexware senden“.">
           <Input type="email" value={c.lexoffice?.address ?? ""} onChange={(e) => set("lexoffice", { address: e.target.value })} />
         </Field>
       </Section>

@@ -56,8 +56,15 @@ in `email_messages.plan`.
   in der Mail-Detailansicht „Abgeholt und verbucht“ drücken.
 * **Mittelfristig Browser-Automatisierung:** `email_messages` mit `beleg_state = 'portal_offen'` (plus `beleg_vendor`) ist die fertige Warteschlange –
   ein Browser-Use-Lauf müsste sie nur abarbeiten, die Rechnung ins Lexware laden und den Stand auf `portal_erledigt` setzen.
-* **Beleg mit Anhang:** wird als `weiterleiten_offen` vorgemerkt und normal nach „3 Belege“ sortiert. Die **automatische Weiterleitung an Lexware
-  (echter Versand) ist noch nicht eingebaut** – siehe Rückfrage im Chat; bis dahin gibt es den Weiterleitungs-*Entwurf* per Knopf.
+* **Beleg mit Anhang → automatisch an Lexware (echter Versand, einzige Ausnahme von „Kein Versand“).** Bei jeder eingehenden Mail, die das Modell als
+  buchungsrelevanten Beleg mit Beleg-Datei (PDF/Bild/XML) erkennt, sendet der Assistent die Datei(en) an die Lexware-Belegadresse
+  (Einstellungen → Firma & HERO) – **nur dorthin, nie an Kunden**, höchstens einmal je Mail (`forwarded_at`), nicht im Schattenmodus, nur ab
+  Konfidenz 0,7, nicht bei Portal-Rechnungen und nicht bei Mails vom Lexware-Absender selbst. Gesendet wird ausschließlich in
+  `_shared/email/lexwareSend.ts` (prüft den Empfänger vor jedem Versand; ein Test sichert, dass sonst nirgends gesendet wird).
+  Scheitert das Senden, liegt stattdessen ein Weiterleitungs-**Entwurf** im Postfach (der Plan der Mail sagt es). Steuerung: Autopilot
+  „Belege an Lexware senden“ (Standard *Automatisch*, *Aus* schaltet ab). Manuell: Knöpfe „An Lexware senden“ / „Nur Entwurf“ in der Mail-Ansicht.
+  **Voraussetzungen:** Lexware-Belegadresse eintragen, SMTP-Server im Postfach (`smtp.ionos.de`, Port 465 – 25/587 sind aus Supabase gesperrt,
+  Benutzer/Passwort wie IMAP) und `info@slwerbung.de` bei Lexware als Absender hinterlegt. Beim ersten Mal mit einem Test-Beleg prüfen.
 
 ## Autopilot-Stufen und Schattenmodus
 
@@ -67,9 +74,8 @@ kein Logbuch, kein Entwurf im Postfach); **Vorschläge** entstehen trotzdem, den
 
 ## Abweichungen vom Konzept (bewusst)
 
-* **Lexoffice-Weiterleitung = Entwurf.** Das Konzept verbietet jeden Versand („Nichts wird versendet“) und verlangt zugleich eine Weiterleitung.
-  Gelöst so: der Assistent legt einen fertigen Weiterleitungs-**Entwurf** (An: Belegadresse, Anhänge dran) in „Entwürfe“; Senden bleibt in
-  Thunderbird bei einem Menschen. Ein Test (`imap.test.ts`) stellt sicher, dass der Code weder SMTP noch Resend noch IMAP-Löschen enthält.
+* **Lexware-Weiterleitung sendet wirklich** (auf deinen Wunsch, einzige Ausnahme von „Nichts wird versendet“): nur an die Belegadresse, siehe „Belege“.
+  Antworten an Kunden bleiben Entwürfe. `imap.test.ts` stellt sicher, dass nur `lexwareSend.ts` sendet und kein Code Resend oder IMAP-Löschen nutzt.
 * **Dokumenttypen statt Ordner-IDs.** Die „Dateiordner“-IDs aus dem Konzept (243132 …) sind HERO-*Ordner*; `upload_document` verlangt eine
   `document_type_id`. Seed: Plan/Layout 338164, Aufmaßdokument 279269, Druckdaten 428979 (Fahrzeugdaten und Allgemein nutzen mangels eigenen Typs
   Plan/Layout – bitte prüfen).

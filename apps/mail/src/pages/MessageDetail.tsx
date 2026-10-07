@@ -103,8 +103,10 @@ export default function MessageDetail() {
     onError: (e) => toast.error(errorText(e)),
   });
   const forward = useMutation({
-    mutationFn: () => invokeFn<{ files: number }>("email-draft", { action: "forward_beleg", messageId: id }),
-    onSuccess: (r) => { toast.success(`Weiterleitungs-Entwurf an Lexoffice liegt im Entwürfe-Ordner (${r.files} Anhang/Anhänge) – bitte prüfen und senden.`); qc.invalidateQueries({ queryKey: ["message", id] }); },
+    mutationFn: (send: boolean) => invokeFn<{ files: number; how: "gesendet" | "entwurf"; fallbackReason: string | null }>("email-draft", { action: "forward_beleg", messageId: id, send }),
+    onSuccess: (r) => {
+      if (r.how === "gesendet") toast.success(`An Lexware gesendet (${r.files} Anhang/Anhänge).`);
+      else toast.warning(`Entwurf an Lexware liegt im Entwürfe-Ordner${r.fallbackReason ? ` (Senden nicht möglich: ${r.fallbackReason})` : ""} – bitte selbst senden.`); qc.invalidateQueries({ queryKey: ["message", id] }); },
     onError: (e) => toast.error(errorText(e)),
   });
   const belegState = useMutation({
@@ -166,8 +168,11 @@ export default function MessageDetail() {
           {ex.reply && <p className="text-xs text-muted-foreground">Antwort nötig: <b>{ex.reply.needed ? "ja" : "nein"}</b> – {ex.reply.reason}</p>}
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => reprocess.mutate()} disabled={reprocess.isPending}><RefreshCw className="h-3 w-3" /> Neu verarbeiten</Button>
-            {m.category === "beleg" && m.has_attachments && (
-              <Button variant="outline" size="sm" onClick={() => forward.mutate()} disabled={forward.isPending}>Entwurf an Lexoffice</Button>
+            {(m.category === "beleg" || m.extracted?.beleg?.is_booking_document) && m.has_attachments && !m.forwarded_at && (
+              <>
+                <Button variant="outline" size="sm" onClick={() => { if (confirm("Beleg jetzt an die Lexware-Belegadresse senden?")) forward.mutate(true); }} disabled={forward.isPending}>An Lexware senden</Button>
+                <Button variant="ghost" size="sm" onClick={() => forward.mutate(false)} disabled={forward.isPending}>Nur Entwurf</Button>
+              </>
             )}
           </div>
         </CardContent>
@@ -186,7 +191,7 @@ export default function MessageDetail() {
             {m.beleg_state === "portal_erledigt" && <p>Portal-Rechnung abgeholt und verbucht. <Button variant="ghost" size="sm" onClick={() => belegState.mutate("portal_offen")}>Wieder öffnen</Button></p>}
             {m.beleg_state === "weiterleiten_offen" && (
               <>
-                <p>Beleg mit Anhang, zum Weiterleiten an Lexware vorgemerkt.</p>
+                <p>Beleg mit Anhang, noch nicht an Lexware weitergeleitet (automatisch bei neuen Mails, sobald Belegadresse und SMTP-Server hinterlegt sind).</p>
                 <Button size="sm" variant="outline" onClick={() => belegState.mutate("weitergeleitet")} disabled={belegState.isPending}>Als weitergeleitet markieren</Button>
               </>
             )}
