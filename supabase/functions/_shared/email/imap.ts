@@ -34,6 +34,9 @@ export interface RawMessage {
   source: Uint8Array;
 }
 
+const FETCH_CHUNK = 3;
+const MAX_BATCH_BYTES = 20 * 1024 * 1024;
+
 export function makeClient(c: ImapCreds): ImapFlow {
   return new ImapFlow({
     host: c.host,
@@ -139,12 +142,24 @@ export async function fetchNew(
     const take = found.slice(0, opts.limit);
     if (!take.length) return { state, baseline, messages: [], more: false };
 
-    const fetched = await client.fetchAll(take.join(","), { uid: true, flags: true, source: true }, { uid: true });
-    const messages: RawMessage[] = fetched
-      .filter((m: any) => m.source)
-      .map((m: any) => ({ uid: Number(m.uid), flags: [...(m.flags ?? [])], source: m.source as Uint8Array }))
-      .sort((a: RawMessage, b: RawMessage) => a.uid - b.uid);
-    return { state, baseline, messages, more: found.length > take.length };
+    // In kleinen Paketen holen und bei MAX_BATCH_BYTES abbrechen: 50 Mails mit grossen
+    // Anhaengen auf einmal sprengen den Speicher der Edge Runtime (HTTP 546). Der Rest
+    // bleibt fuer den naechsten Lauf liegen (`more`).
+    const messages: RawMessage[] = [];
+    let bytes = 0;
+    for (let i = 0; i < take.length; i += FETCH_CHUNK) {
+      const chunk = take.slice(i, i + FETCH_CHUNK);
+      const fetched = await client.fetchAll(chunk.join(","), { uid: true, flags: true, source: true }, { uid: true });
+      for (const m of fetched as any[]) {
+        if (!m.source) continue;
+        bytes += (m.source as Uint8Array).byteLength;
+        messages.push({ uid: Number(m.uid), flags: [...(m.flags ?? [])], source: m.source as Uint8Array });
+      }
+      if (bytes >= MAX_BATCH_BYTES) break;
+    }
+    messages.sort((a, b) => a.uid - b.uid);
+    const lastTaken = messages.length ? messages[messages.length - 1].uid : 0;
+    return { state, baseline, messages, more: found.some((u) => u > lastTaken) };
   } finally {
     lock.release();
   }
