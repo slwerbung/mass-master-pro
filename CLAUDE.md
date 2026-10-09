@@ -265,6 +265,12 @@ Kurze prägnante Messages auf Englisch:
   trägt Termine zwei Stunden zu früh ein und liest HERO-Termine zwei Stunden zu
   spät – beides live passiert (14:00 gebucht → 12:00 in HERO; Automationen für
   „09:00" legten 07:00 an).
+- Beim Deploy einer Edge Function über das Supabase-MCP-Werkzeug **immer
+  `verify_jwt: false` mitgeben**. Der Standard ist `true`; weggelassen schaltet
+  das Gateway eine JWT-Prüfung davor und jeder Aufruf ohne
+  `Authorization`-Header wird abgewiesen, bevor die Function läuft – damit
+  stirbt jeder pg_cron-Job (schickt nur `x-poll-secret`), live passiert bei
+  `booking-hero-sync`. Alle Functions hier prüfen selbst.
 - Urlaub steht in HERO **nicht** in `calendar_events`, sondern in `absences`
   (Personalverwaltung). Wer nur Termine liest, bietet Urlaubstage als frei an
   (genau so passiert). Dort ist `end` der **letzte** Urlaubstag, nicht der Tag
