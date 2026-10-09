@@ -144,8 +144,9 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
   Feiertage: Import pro Bundesland aus öffentlicher Quelle, danach bearbeitbar.
   Schreibt nur Whitelist-Schlüssel/-Spalten – der Admin-Token darf kein
   Generalschlüssel für `app_config` sein
-- `booking-hero-sync` – liest HERO-Termine in `busy_block(source='hero')`,
-  damit sie Slots blockieren. pg_cron alle 10 Min (`x-poll-secret`)
+- `booking-hero-sync` – liest HERO-Termine **und Abwesenheiten (Urlaub)** in
+  `busy_block(source='hero')`, damit sie Slots blockieren. pg_cron alle 10 Min
+  (`x-poll-secret`)
 - `booking-mail` – Outbox-Worker fuer die Terminmails via Resend (Bestaetigung
   mit .ics, interne Benachrichtigung, Erinnerung, Absage). pg_cron alle 5 Min
 - `booking-invite` – Terminlink + Einladungsmail, verlangt einen
@@ -264,6 +265,11 @@ Kurze prägnante Messages auf Englisch:
   trägt Termine zwei Stunden zu früh ein und liest HERO-Termine zwei Stunden zu
   spät – beides live passiert (14:00 gebucht → 12:00 in HERO; Automationen für
   „09:00" legten 07:00 an).
+- Urlaub steht in HERO **nicht** in `calendar_events`, sondern in `absences`
+  (Personalverwaltung). Wer nur Termine liest, bietet Urlaubstage als frei an
+  (genau so passiert). Dort ist `end` der **letzte** Urlaubstag, nicht der Tag
+  danach – Spanne nur über `absenceSpan()` (`_shared/booking/absence.ts`),
+  sonst bleibt der letzte Urlaubstag buchbar.
 - Die **Objektadresse** eines HERO-Projekts steht an `project_match.address`.
   `project.address` ist etwas anderes – dort steht in der Praxis die
   Kundenadresse. Reihenfolge: `project_match.address` → `project.address` →

@@ -5,6 +5,13 @@
 // von Hand mit einem Admin-Token. HERO hat fuer uns keine Webhooks
 // freigeschaltet, deshalb Polling.
 //
+// Gelesen werden ZWEI Quellen:
+//   * `calendar_events` — die Termine der Plantafel.
+//   * `absences` — Urlaub, Krankheit und andere Abwesenheiten. Die stehen in
+//     HERO in der Personalverwaltung und tauchen in `calendar_events` NICHT
+//     auf. Wer nur Termine liest, bietet Urlaubstage als frei an — genau so
+//     im Test aufgefallen (Urlaub eingetragen, Tage trotzdem buchbar).
+//
 // Zwei Dinge, die hier leicht schiefgehen und deshalb ausdruecklich geloest
 // sind:
 //   * Unsere EIGENEN Buchungen stehen nach dem Schreiben auch in HERO. Sie
@@ -16,6 +23,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { DateTime } from "luxon";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import { heroWallClock, toHeroTime } from "../_shared/booking/hero.ts";
+import { ABSENCE_REF, ABSENCE_STATUSES, absenceSpan } from "../_shared/booking/absence.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +46,17 @@ interface HeroEvent {
   deleted: boolean | null;
   category: { id: number; name: string | null } | null;
   partners: { id: number }[] | null;
+}
+
+interface HeroAbsence {
+  id: number;
+  partner_id: number | null;
+  /** Reines Datum, z.B. "2026-10-12". */
+  start: string;
+  /** LETZTER Tag der Abwesenheit (HERO zaehlt 12.–16.10. als 5 Tage). */
+  end: string | null;
+  type: string | null;
+  status: string | null;
 }
 
 /**
@@ -87,6 +106,44 @@ async function loadEvents(apiKey: string, fromIso: string, toIso: string): Promi
     throw new Error(data.errors[0]?.message || "HERO GraphQL-Fehler");
   }
   return (data.data?.calendar_events ?? []) as HeroEvent[];
+}
+
+/**
+ * Abwesenheiten im Zeitraum. `start`/`end` sind hier `Date`-Argumente, also
+ * reine Datumswerte ohne Uhrzeit — mit Offset antwortet HERO mit einem Fehler.
+ * `show_all_partners` ist Pflicht: ohne das sieht der API-Zugang nur die
+ * Abwesenheiten eines einzigen Mitarbeiters.
+ *
+ * HERO filtert nach UEBERSCHNEIDUNG, nicht nach Beginn (geprueft: Abfrage
+ * 14.–15.10. liefert den Urlaub vom 12.–16.10.). Ein laufender Urlaub taucht
+ * also auch dann auf, wenn er vor dem Fenster angefangen hat — das Fenster
+ * muss deshalb nicht in die Vergangenheit verlaengert werden.
+ */
+async function loadAbsences(apiKey: string, fromDate: string, toDate: string): Promise<HeroAbsence[]> {
+  const query = `
+    query Absences($start: Date, $end: Date, $statuses: [Employees_AbsenceStatusEnum]) {
+      absences(start: $start, end: $end, show_all_partners: true, statuses: $statuses) {
+        id
+        partner_id
+        start
+        end
+        type
+        status
+      }
+    }
+  `;
+  const resp = await fetch(HERO_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ query, variables: { start: fromDate, end: toDate, statuses: ABSENCE_STATUSES } }),
+  });
+  const text = await resp.text();
+  if (!resp.ok) throw new Error(`HERO HTTP ${resp.status}: ${text.slice(0, 200)}`);
+  const data = JSON.parse(text);
+  if (data.errors?.length && !data.data?.absences) {
+    throw new Error(data.errors[0]?.message || "HERO GraphQL-Fehler");
+  }
+  return (data.data?.absences ?? []) as HeroAbsence[];
 }
 
 Deno.serve(async (req) => {
@@ -144,6 +201,17 @@ Deno.serve(async (req) => {
     const to = from.plus({ days });
 
     const events = await loadEvents(apiKey, toHeroTime(from.toISO()!), toHeroTime(to.toISO()!));
+    // Abwesenheiten sind eine eigene Quelle (siehe Kopf der Datei). Faellt sie
+    // aus, bleibt der Termin-Abgleich trotzdem gueltig — dann wird nur nichts
+    // Neues gesperrt, statt dass der ganze Lauf scheitert.
+    let absences: HeroAbsence[] = [];
+    let absenceError: string | null = null;
+    try {
+      absences = await loadAbsences(apiKey, from.toFormat("yyyy-MM-dd"), to.toFormat("yyyy-MM-dd"));
+    } catch (e) {
+      absenceError = (e as Error)?.message || String(e);
+      console.error("[booking-hero-sync] Abwesenheiten nicht ladbar:", absenceError);
+    }
 
     // Unsere eigenen Termine ausklammern: die blockieren bereits als
     // busy_block(source='booking'). Sonst steht derselbe Termin zweimal im Weg.
@@ -211,6 +279,33 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Abwesenheiten sperren ──
+    // Ganze Tage; die Spanne rechnet `absenceSpan` (HERO nennt als `end` den
+    // letzten Urlaubstag, nicht den Tag danach).
+    let absenceBlocks = 0;
+    for (const ab of absences) {
+      const staffId = staffByPartner.get(Number(ab.partner_id));
+      if (!staffId) continue;
+      const span = absenceSpan(ab.start, ab.end);
+      if (!span) continue;
+      const ref = `${ABSENCE_REF}${ab.id}`;
+      const key = `${ref}|${staffId}`;
+      if (wanted.has(key)) continue;
+      wanted.add(key);
+      absenceBlocks++;
+      rows.push({
+        staff_id: staffId,
+        starts_at: span.startsAt,
+        ends_at: span.endsAt,
+        source: "hero",
+        source_ref: ref,
+        // Ohne Kategorie sperrt der Block immer (so gedacht: Urlaub ist nicht
+        // im Adminmenue abwaehlbar).
+        category_key: null,
+        geo_lat: null, geo_lng: null,
+      });
+    }
+
     if (rows.length > 0) {
       const { error } = await db.from("busy_block")
         .upsert(rows, { onConflict: "source,source_ref,staff_id" });
@@ -233,10 +328,16 @@ Deno.serve(async (req) => {
       ok: true,
       window: { from: from.toISO(), to: to.toISO(), days },
       events: events.length,
+      absences: absences.length,
       blocks: rows.length,
+      absenceBlocks,
       removed: stale.length,
       skippedOwn,
       newCategories: newCats.map((c) => c.key),
+      // Nur gesetzt, wenn HERO die Abwesenheiten nicht hergegeben hat. Dann
+      // sind die Termine zwar gesperrt, der Urlaub aber nicht — das soll im
+      // Cron-Protokoll sichtbar sein und nicht als Erfolg durchgehen.
+      ...(absenceError ? { absenceError } : {}),
     });
   } catch (e: any) {
     // Fehler als 200 mit Fehlertext: supabase.functions.invoke verschluckt
