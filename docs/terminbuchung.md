@@ -601,6 +601,28 @@ Mindest-Vorlaufzeit, Buchungsfenster, Tageslimits, Qualifikation, Zuweisung
 | `booking-hero-sync` nach M8 | `{ok:true, events:13, blocks:9, removed:1}`; HERO-Termin 14:00 sperrt jetzt 14:00 |
 | Deploy-Stand | `booking-api` v9, `booking-hero-sync` v3, `booking-invite` v4, `run-automations` v21, `send-notification` v21 – jeweils byte-genau gegen das Repo geprüft |
 
+### Nachgewiesen gegen Produktion (09.10.2026, Urlaub)
+
+| Prüfung | Ergebnis |
+| --- | --- |
+| `booking-hero-sync` nach dem Urlaubs-Fix | `{ok:true, events:23, absences:2, blocks:21, absenceBlocks:2, removed:0}` |
+| `busy_block` mit `source_ref like 'abs-%'` | Layer 12.10. 00:00 – 16.10. 23:59:59 und 19.10. 00:00 – 23.10. 23:59:59 (Ortszeit), `category_key = null` |
+| `availability&staff=Layer&from=2026-10-12&to=2026-10-24` | **keine** freie Zeit (vorher wurde der ganze Urlaub angeboten) |
+| `availability&staff=Layer&from=2026-10-16&to=2026-10-17` | keine freie Zeit – der **letzte** Urlaubstag ist mit gesperrt |
+| `availability&staff=Layer&from=2026-10-26&to=2026-10-31` | Slots wie gewohnt – gesperrt ist nur der Urlaub |
+| Deploy-Stand | `booking-hero-sync` v7, byte-genau gegen das Repo geprüft |
+
+**Falle beim Deploy über das MCP-Werkzeug:** `deploy_edge_function` hat einen
+Parameter `verify_jwt`, und sein Standardwert ist **true**. Wer ihn weglässt,
+schaltet die Gateway-Prüfung ein — ab dann weist das Gateway jeden Aufruf ohne
+`Authorization`-Header ab, bevor die Function überhaupt läuft. Genau das traf
+pg_cron (schickt nur `x-poll-secret`): `booking-hero-sync` v6 antwortete
+`UNAUTHORIZED_NO_AUTH_HEADER`, der Lauf um 06:50 fiel aus. v7 trägt wieder
+`verify_jwt: false` (dasselbe Code-Bundle, gleicher `ezbr_sha256`). Also bei
+jedem Deploy dieser Functions `verify_jwt: false` mitgeben — sie prüfen selbst
+(Poll-Secret bzw. HMAC-Token), siehe `config.toml`. Zum Nachsehen taugt die
+Antwort des Deploys selbst (`verify_jwt`) oder `list_edge_functions`.
+
 Offen beim Deploy: `submit-vehicle-request` und `hero-dropbox-poll` tragen noch
 die alte `automations.ts`. Praktisch betroffen ist nur die Automation
 „Fahrzeug Weiterbearbeiten" (Trigger `vehicle_inquiry_submitted`, legt ihren
