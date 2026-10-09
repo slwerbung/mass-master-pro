@@ -23,7 +23,8 @@ hält Stand + bewusste Abweichungen fest.
 - **Echtes Routing:** ✅ im Code (OpenRouteService). Wartet nur noch auf den
   Schlüssel im Supabase-Secret `ORS_API_KEY` und `booking_travel_mode=routing`.
 - **HERO-Leserichtung:** ✅ `booking-hero-sync` deployt, pg_cron alle 10 Minuten,
-  live gegen Produktion geprüft (12 Termine im Fenster → 10 Blocks).
+  live gegen Produktion geprüft (12 Termine im Fenster → 10 Blocks). Liest
+  Termine **und** Abwesenheiten (Urlaub).
 - **Mail-Outbox:** ✅ `booking-mail` deployt, pg_cron alle 5 Minuten.
 - **Oberflaechen:** ✅ öffentliche Buchungsseite `/termin/:projectId`,
   Absage-/Umbuchungsseiten, Admin-Reiter „Termine“, Terminleiste auf der
@@ -309,9 +310,13 @@ HERO hat fuer uns **keine Webhooks** freigeschaltet, also pollt pg_cron alle
 10 Minuten (`booking-hero-sync`, Header `x-poll-secret`; ein Admin-Token geht
 auch, fuer den Knopf „Jetzt abgleichen“).
 
-Der Lauf liest `calendar_events(start, end)` fuer die naechsten
-`booking_hero_sync_days` (60) Tage und schreibt daraus
-`busy_block(source='hero', source_ref=<HERO-Event-ID>)`.
+Der Lauf liest **zwei** Quellen fuer die naechsten `booking_hero_sync_days`
+(60) Tage und schreibt daraus `busy_block(source='hero')`:
+
+| Quelle | `source_ref` | Was |
+| --- | --- | --- |
+| `calendar_events(start, end)` | `<HERO-Event-ID>` | Termine der Plantafel |
+| `absences(start, end)` | `abs-<Abwesenheits-ID>` | Urlaub, Krankheit |
 
 - **Zuordnung:** HERO-„Partner“ → `employees.hero_partner_id` → `staff`.
   Ohne Zuordnung passiert nichts (und der Lauf sagt das auch).
@@ -326,6 +331,38 @@ Der Lauf liest `calendar_events(start, end)` fuer die naechsten
   `blocks_availability = true`. Im Adminmenue laesst sich dann einzeln sagen,
   was wirklich blockiert („Büro“ ja, „Schule“ vielleicht nicht). Neue
   Kategorien blockieren erst einmal — das ist die sichere Richtung.
+- **Abwesenheiten sperren ohne Kategorie** (`category_key = null`). Das
+  blockiert in `buildComputeInput` immer und ist im Adminmenue absichtlich
+  nicht abwaehlbar: Urlaub ist keine Terminart, ueber die man diskutiert.
+
+### Urlaub (nachgezogen am 09.10.2026)
+Aufgefallen im Test des Nutzers: ein in HERO eingetragener Urlaub blockierte
+nichts, die Tage wurden weiter als frei angeboten. Grund: Abwesenheiten stehen
+in HERO in der **Personalverwaltung** und tauchen in `calendar_events`
+ueberhaupt nicht auf — wer nur Termine liest, sieht sie nie. Konkret lagen fuer
+Silas Layer der 12.–16.10. und der 19.–23.10. als `vacation`/`approved` in HERO
+und waren bei uns komplett unbekannt.
+
+Was dabei wichtig ist:
+- **`end` ist der LETZTE Urlaubstag**, nicht der erste Tag danach (HERO zaehlt
+  12.–16.10. als 5 Tage). Wer das Datum als Ende nimmt, laesst den letzten
+  Urlaubstag buchbar. Die Spanne rechnet deshalb `absenceSpan()` in
+  `_shared/booking/absence.ts`, mit Tests (inkl. Umstellnacht = 25 Stunden).
+- **`show_all_partners: true` ist Pflicht**, sonst sieht der API-Zugang nur die
+  Abwesenheiten eines einzigen Mitarbeiters.
+- **`start`/`end` sind `Date`-Argumente**, also reine Datumswerte. Mit Offset
+  antwortet HERO mit einem Fehler.
+- **HERO filtert nach Ueberschneidung, nicht nach Beginn** (geprueft: Abfrage
+  14.–15.10. liefert den Urlaub 12.–16.10.). Ein laufender Urlaub taucht also
+  auch auf, wenn er vor dem Fenster angefangen hat.
+- **Gesperrt wird bei `approved` und `submitted`.** Ein beantragter Urlaub
+  sperrt mit: einen Termin in den Antrag zu legen macht mehr Arbeit als eine
+  Zeit zu viel zu sperren. Wird er abgelehnt, raeumt der Abgleich die Sperre
+  von selbst wieder weg.
+- **Faellt die Abwesenheitsabfrage aus, laeuft der Termin-Abgleich weiter** und
+  die Antwort traegt `absenceError`. Sonst wuerde ein Fehler in der neuen
+  Quelle die alte mitreissen.
+- Halbe Tage (`start_budget`/`end_budget`) sperren absichtlich den ganzen Tag.
 
 ### Zwei Stolperfallen, die hier Zeit gekostet haben
 - **`create_calendar_event` ist deprecated — und funktioniert trotzdem.**
