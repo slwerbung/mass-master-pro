@@ -12,7 +12,9 @@ import { isIgnorableAttachment, normalizeSubject, safeFilename } from "./mail.ts
 import type { ParsedMail } from "./parse.ts";
 import type { Direction, FolderMap } from "./types.ts";
 
-export const SYNC_LIMIT = 50;
+export const SYNC_LIMIT = 15;
+/** Nach dieser Zeit hoert ein Lauf auf; der Rest folgt im naechsten (Edge-Limit: 150 s). */
+export const SYNC_BUDGET_MS = 100_000;
 export const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
 
 export interface AccountRow {
@@ -107,7 +109,9 @@ export async function syncAccount(acc: AccountRow, d: SyncDeps, limit = SYNC_LIM
     let cursor = (validity != null && validity !== res.state.uidValidity) ? null : lastUid;
     if (cursor == null && !res.messages.length) cursor = res.baseline;
 
+    const t0 = Date.now();
     for (const raw of res.messages) {
+      if (Date.now() - t0 > SYNC_BUDGET_MS) { sum.more = true; break; }
       try {
         const r = await storeOne(acc, p.folder, p.direction, raw, res.state.uidValidity, d);
         if (r === "stored") sum.stored++; else sum.duplicates++;
@@ -117,6 +121,10 @@ export async function syncAccount(acc: AccountRow, d: SyncDeps, limit = SYNC_LIM
         sum.notes.push(`UID ${raw.uid} in ${p.folder}: ${(e as Error).message}`.slice(0, 200));
       }
       cursor = Math.max(cursor ?? 0, raw.uid);
+      // Fortschritt sofort sichern: bricht der Lauf ab, geht nichts verloren.
+      await d.store.saveCursor(acc.id, p.key === "inbox"
+        ? { inbox_uidvalidity: res.state.uidValidity, inbox_last_uid: cursor }
+        : { sent_uidvalidity: res.state.uidValidity, sent_last_uid: cursor });
     }
     const patch = p.key === "inbox"
       ? { inbox_uidvalidity: res.state.uidValidity, ...(cursor != null ? { inbox_last_uid: cursor } : {}) }
