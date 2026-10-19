@@ -37,7 +37,7 @@ export interface RawMessage {
 const FETCH_CHUNK = 3;
 const MAX_BATCH_BYTES = 20 * 1024 * 1024;
 /** Groessere Einzelmails werden nur mit Kopfzeilen geholt. */
-const MAX_FULL_MAIL_BYTES = 8 * 1024 * 1024;
+const MAX_FULL_MAIL_BYTES = 2 * 1024 * 1024;
 
 export function makeClient(c: ImapCreds): ImapFlow {
   return new ImapFlow({
@@ -151,6 +151,7 @@ export async function fetchNew(
     // 30-MB-Mail den ganzen Lauf.
     const sizeRows = (await client.fetchAll(take.join(","), { uid: true, size: true }, { uid: true })) as any[];
     const sizeOf = new Map<number, number>(sizeRows.map((r) => [Number(r.uid), Number(r.size ?? 0)]));
+    console.log(`[imap] ${folder}: Groessen ${take.map((u) => `${u}:${Math.round((sizeOf.get(u) ?? 0) / 1024)}KB`).join(" ")}`);
     const messages: RawMessage[] = [];
     let bytes = 0;
     for (let i = 0; i < take.length; i += FETCH_CHUNK) {
@@ -158,6 +159,7 @@ export async function fetchNew(
       const small = chunk.filter((u) => (sizeOf.get(u) ?? 0) <= MAX_FULL_MAIL_BYTES);
       const big = chunk.filter((u) => (sizeOf.get(u) ?? 0) > MAX_FULL_MAIL_BYTES);
       const t0 = Date.now();
+      console.log(`[imap] ${folder}: hole UIDs ${chunk.join(",")}`);
       if (small.length) {
         const fetched = await client.fetchAll(small.join(","), { uid: true, flags: true, source: true }, { uid: true });
         for (const m of fetched as any[]) {
