@@ -36,6 +36,8 @@ export interface RawMessage {
 
 const FETCH_CHUNK = 3;
 const MAX_BATCH_BYTES = 20 * 1024 * 1024;
+/** Groessere Einzelmails werden nur mit Kopfzeilen geholt. */
+const MAX_FULL_MAIL_BYTES = 8 * 1024 * 1024;
 
 export function makeClient(c: ImapCreds): ImapFlow {
   return new ImapFlow({
@@ -144,17 +146,31 @@ export async function fetchNew(
 
     // In kleinen Paketen holen und bei MAX_BATCH_BYTES abbrechen: 50 Mails mit grossen
     // Anhaengen auf einmal sprengen den Speicher der Edge Runtime (HTTP 546). Der Rest
-    // bleibt fuer den naechsten Lauf liegen (`more`).
+    // bleibt fuer den naechsten Lauf liegen (`more`). Sehr grosse Einzelmails werden nur
+    // mit Kopfzeilen geholt (Absender, Betreff, Datum), sonst blockiert eine einzige
+    // 30-MB-Mail den ganzen Lauf.
+    const sizeRows = (await client.fetchAll(take.join(","), { uid: true, size: true }, { uid: true })) as any[];
+    const sizeOf = new Map<number, number>(sizeRows.map((r) => [Number(r.uid), Number(r.size ?? 0)]));
     const messages: RawMessage[] = [];
     let bytes = 0;
     for (let i = 0; i < take.length; i += FETCH_CHUNK) {
       const chunk = take.slice(i, i + FETCH_CHUNK);
-      const fetched = await client.fetchAll(chunk.join(","), { uid: true, flags: true, source: true }, { uid: true });
-      for (const m of fetched as any[]) {
-        if (!m.source) continue;
-        bytes += (m.source as Uint8Array).byteLength;
-        messages.push({ uid: Number(m.uid), flags: [...(m.flags ?? [])], source: m.source as Uint8Array });
+      const small = chunk.filter((u) => (sizeOf.get(u) ?? 0) <= MAX_FULL_MAIL_BYTES);
+      const big = chunk.filter((u) => (sizeOf.get(u) ?? 0) > MAX_FULL_MAIL_BYTES);
+      const t0 = Date.now();
+      if (small.length) {
+        const fetched = await client.fetchAll(small.join(","), { uid: true, flags: true, source: true }, { uid: true });
+        for (const m of fetched as any[]) {
+          if (!m.source) continue;
+          bytes += (m.source as Uint8Array).byteLength;
+          messages.push({ uid: Number(m.uid), flags: [...(m.flags ?? [])], source: m.source as Uint8Array });
+        }
       }
+      for (const u of big) {
+        const m: any = await client.fetchOne(String(u), { uid: true, flags: true, headers: true }, { uid: true });
+        if (m?.headers) messages.push({ uid: Number(m.uid), flags: [...(m.flags ?? [])], source: m.headers as Uint8Array });
+      }
+      console.log(`[imap] ${folder}: UIDs ${chunk.join(",")} (${chunk.map((u) => Math.round((sizeOf.get(u) ?? 0) / 1024) + "KB").join(",")}) in ${Date.now() - t0} ms`);
       if (bytes >= MAX_BATCH_BYTES) break;
     }
     messages.sort((a, b) => a.uid - b.uid);
