@@ -4,10 +4,11 @@
 
 import { z } from "zod";
 import { BudgetExceededError, LimitWaitError, runTask, type LlmDeps, type LlmRequest } from "./llm.ts";
-import { buildPickRequest, matchMessage, PickSchema, type MatchDeps, type MatchInput, type MatchOutcome } from "./match.ts";
+import { buildPickRequest, counterpart, matchMessage, PickSchema, type MatchDeps, type MatchInput, type MatchOutcome } from "./match.ts";
 import type { HeroProject } from "./hero.ts";
 import { MAX_ATTEMPTS } from "./understand.ts";
 import type { MatchMethod, MessageStatus } from "./types.ts";
+import { guidanceBlock, splitKnowledge, type KnowledgeEntry } from "./knowledge.ts";
 
 export interface MatchMessageRow {
   id: string;
@@ -21,6 +22,7 @@ export interface MatchMessageRow {
   body_text: string | null;
   summary: string | null;
   attempts: number;
+  correction_note?: string | null;
 }
 
 export interface MatchInfo {
@@ -62,6 +64,8 @@ export interface MatchHero {
 export interface MatchContext {
   prefixes: string[];
   ownAddresses: string[];
+  /** Wissensdatei, neueste zuerst. */
+  knowledge?: KnowledgeEntry[];
 }
 
 export const SummarySchema = z.object({ summary: z.string().min(1) });
@@ -110,6 +114,10 @@ export async function matchPending(
         direction: m.direction, threadId: m.thread_id, from: m.from_addr, to: m.to_addrs, cc: m.cc_addrs,
         subject: m.subject, body: m.body_text ?? "", summary: m.summary,
       };
+      const kn = splitKnowledge(ctx.knowledge ?? [], counterpart(input, ctx.ownAddresses));
+      input.guidance = guidanceBlock({ sender: kn.sender, note: m.correction_note });
+      input.knowledge = kn.general;
+      input.correction = m.correction_note ?? null;
       const deps: MatchDeps = {
         threadProject: hero.threadProject,
         projectByNumber: hero.projectByNumber,

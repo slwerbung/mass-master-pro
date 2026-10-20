@@ -164,6 +164,8 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
   (Import-Map für `npm:`), gemeinsamer Code in `_shared/email/`. Antworten immer HTTP 200 mit `{ ok, data | error }`.
 - Tabellen `email_*` sind **nur für service_role** (RLS an, keine Policy, kein Grant) – nie vom Frontend/Anon-Key lesen.
   `hero_open_cache` gehört CaptFix und wird vom Assistenten nicht benutzt.
+- Freitext-Korrekturen („Falsch? Erklären“) und Wissensdatei `email_knowledge` (`_shared/email/knowledge.ts`): fließen in Verstehen
+  und Projektwahl ein; eine Korrektur hat Vorrang vor Absenderregeln, eine Projektnummer darin ordnet sicher zu (`betrieb.md`).
 - Regeln vor KI; das Modell liefert nur Felder (Zod-Schema), Aktionen entscheidet der Code (`autopilot.ts`). Schattenmodus =
   keine Automatik im Postfach/HERO, nur `plan`. Vorschläge ändern nichts, bis jemand klickt.
 - **Kein Versand, kein Löschen – eine Ausnahme:** Antworten an Kunden sind nur ENTWÜRFE im Ordner „Entwürfe“; kein Resend, kein

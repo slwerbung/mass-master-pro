@@ -66,6 +66,23 @@ in `email_messages.plan`.
   **Voraussetzungen:** Lexware-Belegadresse eintragen, SMTP-Server im Postfach (`smtp.ionos.de`, Port 465 – 25/587 sind aus Supabase gesperrt,
   Benutzer/Passwort wie IMAP) und `info@slwerbung.de` bei Lexware als Absender hinterlegt. Beim ersten Mal mit einem Test-Beleg prüfen.
 
+## Korrigieren und Wissensdatei
+
+Ist ein Ergebnis falsch, schreibt man dem Assistenten in Freitext, was richtig wäre: Knopf „Falsch? Der KI sagen, was richtig ist“
+in der Mail-Ansicht bzw. „Falsch? Erklären“ an jedem Vorschlag (`email-api` Aktion `teach`). Dabei passiert:
+
+- Der Hinweis landet an der Mail (`email_messages.correction_note`), offene Vorschläge der Mail werden verworfen, die Mail läuft
+  sofort neu durch (die App ruft `email-process` für das Postfach auf; ist es gerade gesperrt, beim nächsten Cron-Lauf).
+- Beim erneuten Verstehen hat der Hinweis Vorrang – auch vor Absenderregeln (die Regel könnte der Grund für den Fehler sein).
+  Nennt der Hinweis eine Projektnummer („gehört zu WER-1820“), wird die Mail diesem Projekt **sicher** zugeordnet
+  (`match_method = manuell`, geht Thread und Betreff vor).
+- Auf Wunsch entsteht ein Eintrag in der **Wissensdatei** (`email_knowledge`, Einstellungen → Wissen): für den Absender, die ganze Domain
+  (nicht bei Freemail-Domains) oder alle Mails. Allgemeines Wissen steht im gecachten Systemteil des Prompts, Wissen zum Absender vor
+  der Mail (`_shared/email/knowledge.ts`, Grenzen: 40 allgemeine + 15 Absender-Einträge, 6000 Zeichen). Es wirkt beim Verstehen und bei
+  der Projektwahl; gibt es Absender-Wissen oder eine Korrektur, fragt die Projektwahl das Modell auch bei nur einem offenen Projekt.
+- Einträge lassen sich in den Einstellungen bearbeiten, ausschalten und löschen; dort kann man auch von Hand Wissen anlegen.
+  Feste „Absender → Kategorie“-Zuordnungen ohne KI bleiben Absenderregeln.
+
 ## Autopilot-Stufen und Schattenmodus
 
 *Aus / Vorschlag / Automatisch* je Aktion und Postfach. „Automatisch“ gilt nur bei Konfidenz ≥ 0,7 oder sicherer Zuordnung

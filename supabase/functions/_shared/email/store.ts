@@ -10,6 +10,7 @@ import type { ActMessage, ActStore } from "./act.ts";
 import type { DraftStore, DraftThreadMail } from "./draft.ts";
 import { buildUploadItems } from "./attachments.ts";
 import { getConfig } from "./config.ts";
+import type { KnowledgeEntry } from "./knowledge.ts";
 
 
 const BUCKET = "email-attachments";
@@ -62,7 +63,7 @@ export function understandStore(sb: any): UnderstandStore {
   return {
     async loadPending(accountId, limit): Promise<PendingMessage[]> {
       const { data } = await sb.from("email_messages")
-        .select("id, account_id, direction, from_addr, from_name, to_addrs, subject, sent_at, body_text, headers, attempts, status")
+        .select("id, account_id, direction, from_addr, from_name, to_addrs, subject, sent_at, body_text, headers, attempts, status, correction_note")
         .eq("account_id", accountId).in("status", ["neu", "fehler"]).lt("attempts", MAX_ATTEMPTS)
         .order("sent_at", { ascending: true, nullsFirst: false }).limit(limit);
       return (data || []) as PendingMessage[];
@@ -99,6 +100,13 @@ export async function loadExamples(sb: any, n = 20): Promise<FeedbackExample[]> 
   return (data || []).map((r: any) => ({ field: r.field, old_value: r.old_value, new_value: r.new_value, from: r.from_addr ?? undefined }));
 }
 
+/** Aktive Eintraege der Wissensdatei, neueste zuerst (knowledge.ts begrenzt, was in den Prompt kommt). */
+export async function loadKnowledge(sb: any): Promise<KnowledgeEntry[]> {
+  const { data } = await sb.from("email_knowledge").select("id, text, from_pattern").eq("active", true)
+    .order("created_at", { ascending: false }).limit(300);
+  return data || [];
+}
+
 export async function recordRun(sb: any, row: Record<string, unknown>): Promise<void> {
   await sb.from("email_runs").insert({ finished_at: new Date().toISOString(), ...row });
 }
@@ -124,7 +132,7 @@ export function matchStore(sb: any): MatchStore {
   return {
     async loadForMatch(accountId, limit): Promise<MatchMessageRow[]> {
       const { data } = await sb.from("email_messages")
-        .select("id, account_id, thread_id, direction, from_addr, to_addrs, cc_addrs, subject, body_text, summary, attempts")
+        .select("id, account_id, thread_id, direction, from_addr, to_addrs, cc_addrs, subject, body_text, summary, attempts, correction_note")
         .eq("account_id", accountId).eq("status", "klassifiziert")
         .order("sent_at", { ascending: true, nullsFirst: false }).limit(limit);
       return (data || []) as MatchMessageRow[];

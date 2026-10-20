@@ -9,6 +9,7 @@ import {
 } from "./classify.ts";
 import { BudgetExceededError, LimitWaitError, runShadow, runTask, type LlmDeps } from "./llm.ts";
 import type { Category, Direction, MessageStatus } from "./types.ts";
+import { guidanceBlock, splitKnowledge, type KnowledgeEntry } from "./knowledge.ts";
 
 export const UNDERSTAND_BATCH = 20;
 export const MAX_ATTEMPTS = 3;
@@ -26,6 +27,8 @@ export interface PendingMessage {
   headers: Record<string, unknown>;
   attempts: number;
   status: MessageStatus;
+  /** Freitext-Korrektur eines Mitarbeiters zu genau dieser Mail (Mail-App „Was wäre richtig?"). */
+  correction_note?: string | null;
 }
 
 export interface AttachmentInfo { id: string; filename: string; mime: string; size: number }
@@ -55,6 +58,8 @@ export interface UnderstandContext {
   companyKnowledge: string;
   rules: RuleRow[];
   examples: FeedbackExample[];
+  /** Wissensdatei, neueste zuerst (allgemein und je Absender). */
+  knowledge?: KnowledgeEntry[];
   /** Im Schattenmodus laeuft der Vergleichs-Anbieter parallel mit. */
   shadowMode: boolean;
 }
@@ -82,7 +87,10 @@ export async function understandPending(
         continue;
       }
 
-      const hit = classifyByRules({ from: m.from_addr, headers: m.headers }, ctx.rules);
+      // Hat ein Mensch die Mail korrigiert, entscheidet das Modell mit seinem Hinweis – eine
+      // Absenderregel koennte genau der Grund fuer das falsche Ergebnis gewesen sein.
+      const note = m.correction_note?.trim() || null;
+      const hit = note ? null : classifyByRules({ from: m.from_addr, headers: m.headers }, ctx.rules);
       if (hit) {
         await store.saveUnderstanding(m.id, {
           status: "klassifiziert", category: hit.category, confidence: 1,
@@ -95,13 +103,15 @@ export async function understandPending(
       }
 
       const attachments = await store.loadAttachments(m.id);
+      const kn = splitKnowledge(ctx.knowledge ?? [], m.from_addr);
       const req = buildUnderstandRequest(
-        { companyKnowledge: ctx.companyKnowledge, examples: ctx.examples },
+        { companyKnowledge: ctx.companyKnowledge, examples: ctx.examples, knowledge: kn.general },
         {
           from: m.from_addr, fromName: m.from_name, to: m.to_addrs, subject: m.subject, sentAt: m.sent_at,
           attachments: attachments.map((a) => ({ filename: a.filename, mime: a.mime, size: a.size })),
           body: m.body_text ?? "",
         },
+        guidanceBlock({ sender: kn.sender, note }),
       );
       const r = await runTask("understand", req, UnderstandSchema, llm, { messageId: m.id });
       const u: Understanding = r.data;

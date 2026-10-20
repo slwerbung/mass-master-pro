@@ -8,6 +8,7 @@ import { z } from "zod";
 import { CATEGORIES, CATEGORY_LABELS, type Category } from "./types.ts";
 import { isNoReply, matchesPattern } from "./mail.ts";
 import type { LlmRequest } from "./llm.ts";
+import { generalKnowledgeBlock } from "./knowledge.ts";
 
 export const SERVICES = [
   "Fahrzeugbeschriftung", "Schilder", "Leitsystem", "Folierung", "Digitaldruck", "Textildruck",
@@ -201,6 +202,8 @@ export interface FeedbackExample { field: string; old_value: string | null; new_
 export function buildSystemBlocks(opts: {
   companyKnowledge: string;
   examples?: FeedbackExample[];
+  /** Allgemeine Eintraege der Wissensdatei (knowledge.ts). */
+  knowledge?: string[];
 }): LlmRequest["system"] {
   const cats = CATEGORIES.map((c) => `- ${c} (${CATEGORY_LABELS[c]}): ${CATEGORY_HELP[c]}`).join("\n");
   const head = [
@@ -235,7 +238,7 @@ export function buildSystemBlocks(opts: {
         .join("\n");
   }
   // Alles Feste vorn und gecacht; nur die Mail selbst wechselt.
-  return [{ text: `${head}\n\n${knowledge}${learn}`, cache: true }];
+  return [{ text: `${head}\n\n${knowledge}${generalKnowledgeBlock(opts.knowledge ?? [])}${learn}`, cache: true }];
 }
 
 export interface MailForPrompt {
@@ -267,11 +270,13 @@ export function buildUserPrompt(m: MailForPrompt): string {
 }
 
 export function buildUnderstandRequest(
-  opts: { companyKnowledge: string; examples?: FeedbackExample[] }, mail: MailForPrompt,
+  opts: { companyKnowledge: string; examples?: FeedbackExample[]; knowledge?: string[] }, mail: MailForPrompt,
+  /** Wissen zum Absender und Korrektur zu dieser Mail (knowledge.ts `guidanceBlock`), steht vor der Mail. */
+  guidance = "",
 ): LlmRequest {
   return {
     system: buildSystemBlocks(opts),
-    user: buildUserPrompt(mail),
+    user: `${guidance}${buildUserPrompt(mail)}`,
     schemaName: "mail_verstehen",
     jsonSchema: UNDERSTAND_JSON_SCHEMA as unknown as Record<string, unknown>,
     maxTokens: 1200,

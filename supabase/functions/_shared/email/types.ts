@@ -100,6 +100,17 @@ export const AUTOPILOT_DEFAULTS: Autopilot = {
 
 export const CONFIDENCE_AUTO_MIN = 0.7;
 
+/** Wissensdatei: wohin ein beigebrachter Satz gilt. */
+export type KnowledgeScope = "keine" | "absender" | "domain" | "alle";
+
+/** Freemail-Domains: dort gibt es kein „Wissen fuer die ganze Domain" (knowledge.ts). */
+export const FREEMAIL_DOMAINS = [
+  "gmail.com", "googlemail.com", "gmx.de", "gmx.net", "gmx.at", "gmx.ch", "web.de", "t-online.de", "outlook.com", "outlook.de",
+  "hotmail.com", "hotmail.de", "live.com", "live.de", "yahoo.com", "yahoo.de", "icloud.com", "me.com", "aol.com", "aol.de",
+  "freenet.de", "posteo.de", "mailbox.org", "arcor.de", "online.de", "proton.me", "protonmail.com",
+];
+
+
 export type FolderKey =
   | "kunden" | "lieferanten" | "belege" | "ausschreibungen" | "verwaltung" | "newsletter" | "system" | "belegabholung" | "aussortiert";
 export const FOLDER_KEYS: FolderKey[] = [

@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Download, RefreshCw, PenLine } from "lucide-react";
+import { ArrowLeft, Download, GraduationCap, RefreshCw, PenLine } from "lucide-react";
 import { api, invokeFn } from "@/lib/api";
 import { ProjectSearch } from "@/components/ProjectSearch";
+import { TeachBox } from "@/components/TeachBox";
 import { CATEGORIES, CATEGORY_LABELS, type Category } from "@/lib/shared";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { CategoryChip } from "@/components/CategoryChip";
@@ -20,6 +21,8 @@ interface Detail {
   shadow: { id: string; task: string; provider_name: string; model: string; result: any; error: string | null }[];
   suggestions: { id: string; type: string; status: string }[];
   calls: { task: string; provider_type: string; model: string; tokens_in: number; tokens_out: number; neurons: number; cost_usd: number; ok: boolean; fallback: boolean; error: string | null }[];
+  /** fehlt bei einer aelteren email-api */
+  knowledge?: { sender: { id: string; text: string; from_pattern: string; source: string }[]; general: number };
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -87,9 +90,11 @@ export default function MessageDetail() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["message", id], queryFn: () => api<Detail>("get_message", { id }) });
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [teach, setTeach] = useState(false);
   const m = q.data?.message;
 
   useEffect(() => { setDraft({}); }, [id, m?.extracted]);
+  useEffect(() => { setTeach(false); }, [id]);
 
   const correct = useMutation({
     mutationFn: (body: Record<string, unknown>) => api<{ changed: number; learned: { pattern: string; category: string } | null }>("correct_message", { id, ...body }),
@@ -124,6 +129,7 @@ export default function MessageDetail() {
   if (q.error) return <ErrorBox error={q.error} />;
   if (!m || !q.data) return null;
   const d = q.data;
+  const senderKnowledge = d.knowledge?.sender ?? [];
   const ex = m.extracted || {};
   const meta = ex._meta || {};
 
@@ -167,6 +173,7 @@ export default function MessageDetail() {
           </div>
           {ex.reply && <p className="text-xs text-muted-foreground">Antwort nötig: <b>{ex.reply.needed ? "ja" : "nein"}</b> – {ex.reply.reason}</p>}
           <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant={teach ? "secondary" : "default"} onClick={() => setTeach(!teach)}><GraduationCap className="h-3 w-3" /> Falsch? Der KI sagen, was richtig ist</Button>
             <Button variant="outline" size="sm" onClick={() => reprocess.mutate()} disabled={reprocess.isPending}><RefreshCw className="h-3 w-3" /> Neu verarbeiten</Button>
             {(m.category === "beleg" || m.extracted?.beleg?.is_booking_document) && m.has_attachments && !m.forwarded_at && (
               <>
@@ -175,6 +182,21 @@ export default function MessageDetail() {
               </>
             )}
           </div>
+          {teach && <TeachBox messageId={m.id} fromAddr={m.from_addr} onCancel={() => setTeach(false)} onDone={() => setTeach(false)} />}
+          {(m.correction_note || senderKnowledge.length > 0) && (
+            <div className="space-y-1 rounded-md bg-muted/60 p-3 text-xs">
+              {m.correction_note && <p><b>Deine Korrektur zu dieser Mail:</b> {m.correction_note}</p>}
+              {senderKnowledge.length > 0 && (
+                <>
+                  <p className="font-medium">Wissen zu diesem Absender:</p>
+                  <ul className="list-disc space-y-0.5 pl-4">
+                    {senderKnowledge.map((k) => <li key={k.id}>{k.text} <span className="text-muted-foreground">({k.from_pattern})</span></li>)}
+                  </ul>
+                </>
+              )}
+              <Link className="underline" to="/einstellungen/wissen">Wissensdatei öffnen{d.knowledge?.general ? ` (${d.knowledge.general} allgemeine Einträge)` : ""}</Link>
+            </div>
+          )}
         </CardContent>
       </Card>
 
