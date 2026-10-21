@@ -23,6 +23,7 @@ export interface MessageRow {
   beleg_state: "weiterleiten_offen" | "weitergeleitet" | "portal_offen" | "portal_erledigt" | null;
   beleg_vendor: string | null;
   correction_note: string | null;
+  trashed_at: string | null;
 }
 
 export interface Account {

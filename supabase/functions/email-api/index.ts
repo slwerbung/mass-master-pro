@@ -24,7 +24,7 @@ const CONFIG_KEYS = [
 
 const MESSAGE_LIST_COLUMNS =
   "id, account_id, thread_id, direction, from_addr, from_name, subject, sent_at, status, category, confidence, summary, " +
-  "hero_project_match_id, match_method, has_attachments, draft_message_id, current_folder, error, hero_logged_at, beleg_state, beleg_vendor, correction_note";
+  "hero_project_match_id, match_method, has_attachments, draft_message_id, current_folder, error, hero_logged_at, beleg_state, beleg_vendor, correction_note, trashed_at";
 
 const BELEG_STATES = ["weiterleiten_offen", "weitergeleitet", "portal_offen", "portal_erledigt"];
 
@@ -40,6 +40,9 @@ const VIEWS: Record<string, (q: any) => any> = {
 
 /** Filter der Mail-Liste; `skipCategory` fuer die Zaehler je Kategorie. */
 function applyMessageFilters(q: any, body: Record<string, any>, opts: { skipCategory?: boolean } = {}) {
+  // Papierkorb: eigene Ansicht, sonst immer ausgeblendet.
+  if (body.view === "papierkorb") q = q.not("trashed_at", "is", null);
+  else q = q.is("trashed_at", null);
   const view = VIEWS[String(body.view || "")];
   if (view) q = view(q);
   if (body.accountId) q = q.eq("account_id", body.accountId);
@@ -152,7 +155,7 @@ const handlers: Record<string, Handler> = {
       sender: (kn || []).filter((k: any) => k.from_pattern && matchesPattern(msg.from_addr, k.from_pattern)),
       general: (kn || []).filter((k: any) => !k.from_pattern).length,
     };
-    return { message: msg, thread: thread || [], attachments, shadow: shadow || [], suggestions: suggestions || [], calls: calls || [], knowledge };
+    return { message: { ...msg, body_html: undefined }, thread: thread || [], attachments, shadow: shadow || [], suggestions: suggestions || [], calls: calls || [], knowledge };
   },
 
   /** Korrektur eines Menschen: wird gespeichert und fliesst als Beispiel in kuenftige Laeufe. */
@@ -224,6 +227,28 @@ const handlers: Record<string, Handler> = {
   async reprocess_message({ sb, body }) {
     must(await sb.from("email_messages").update({ status: "neu", attempts: 0, error: null }).eq("id", String(body.id || "")));
     return { ok: true };
+  },
+
+  /** Mehrfachauswahl in der Liste: Kategorie setzen (wie einzeln korrigiert, mit Lernen) oder neu verarbeiten. */
+  async bulk_messages({ sb, user, body }) {
+    const ids: string[] = (Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 200);
+    if (!ids.length) throw new Error("Keine Mails ausgewählt.");
+    if (body.op === "reprocess") {
+      must(await sb.from("email_messages").update({ status: "neu", attempts: 0, error: null }).in("id", ids).is("trashed_at", null));
+      return { changed: ids.length };
+    }
+    if (body.op === "category") {
+      if (!(CATEGORIES as readonly string[]).includes(body.category)) throw new Error("Unbekannte Kategorie.");
+      let changed = 0;
+      const learned: string[] = [];
+      for (const id of ids) {
+        const r = await handlers.correct_message({ sb, user, body: { id, category: body.category } }) as { changed: number; learned?: { pattern: string } | null };
+        changed += r.changed ? 1 : 0;
+        if (r.learned) learned.push(r.learned.pattern);
+      }
+      return { changed, learned };
+    }
+    throw new Error("Unbekannte Aktion.");
   },
 
   /**
@@ -428,14 +453,14 @@ const handlers: Record<string, Handler> = {
     const customerCats = ["anfrage_neu", "projekt_kommunikation", "layout_freigabe", "auftrag", "reklamation"];
     const { data: unanswered } = await sb.from("email_messages")
       .select("id, subject, from_name, from_addr, sent_at, category, email_threads!inner(answered)")
-      .eq("direction", "in").in("category", customerCats).eq("email_threads.answered", false).lt("sent_at", twoDays)
+      .eq("direction", "in").in("category", customerCats).eq("email_threads.answered", false).lt("sent_at", twoDays).is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(20);
     const { data: claims } = await sb.from("email_messages")
       .select("id, subject, from_name, from_addr, sent_at, email_threads!inner(answered)")
-      .eq("direction", "in").eq("category", "reklamation").eq("email_threads.answered", false)
+      .eq("direction", "in").eq("category", "reklamation").eq("email_threads.answered", false).is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(20);
     const { data: portal } = await sb.from("email_messages")
-      .select("id, subject, from_name, from_addr, sent_at, beleg_vendor").eq("beleg_state", "portal_offen")
+      .select("id, subject, from_name, from_addr, sent_at, beleg_vendor").eq("beleg_state", "portal_offen").is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(50);
     const lines: string[] = [];
     if (portal?.length) lines.push(`${portal.length} Rechnung(en) im Portal abzuholen.`);

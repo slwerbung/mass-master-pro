@@ -229,3 +229,14 @@ export async function findUidByMessageId(client: ImapFlow, folder: string, messa
     lock.release();
   }
 }
+
+/** Rohquelltext einer Mail (fuer die HTML-Ansicht). null, wenn es die UID im Ordner nicht (mehr) gibt. */
+export async function fetchSource(client: ImapFlow, folder: string, uid: number): Promise<Uint8Array | null> {
+  const lock = await client.getMailboxLock(folder, { readOnly: true });
+  try {
+    const msg: any = await client.fetchOne(String(uid), { source: true }, { uid: true });
+    return msg?.source ? new Uint8Array(msg.source) : null;
+  } finally {
+    lock.release();
+  }
+}

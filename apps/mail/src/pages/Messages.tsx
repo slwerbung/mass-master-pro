@@ -1,13 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { GraduationCap, Mail, Paperclip, PenLine, Search, Send, SlidersHorizontal, X } from "lucide-react";
-import { api } from "@/lib/api";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import {
+  Calendar, GraduationCap, Inbox, Mail, Paperclip, PenLine, RefreshCw, Search, Send, Tag, Trash2, Undo2, X,
+} from "lucide-react";
+import { api, invokeFn } from "@/lib/api";
 import type { Account, MessageRow } from "@/lib/types";
 import { CATEGORIES, CATEGORY_LABELS, type Category } from "@/lib/shared";
-import { Badge, Button, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
+import { Badge, Button, ErrorBox, Input, Spinner } from "@/components/ui";
 import { CategoryChip } from "@/components/CategoryChip";
-import { cn, formatDateTime, pct } from "@/lib/utils";
+import { FilterMenu } from "@/components/FilterMenu";
+import { cn, errorText, formatDateTime, pct } from "@/lib/utils";
 
 const PAGE = 50;
 const STATUS_LABELS: Record<string, string> = {
@@ -26,21 +30,21 @@ const VIEWS: { key: string; label: string; hint: string }[] = [
   { key: "belege", label: "Belege", hint: "Rechnungen, Gutschriften, Zahlungsavis" },
   { key: "korrigiert", label: "Korrigiert", hint: "Mails mit einer Korrektur von dir" },
   { key: "fehler", label: "Fehler", hint: "Verarbeitung fehlgeschlagen" },
+  { key: "papierkorb", label: "Papierkorb", hint: "In den Papierkorb des Postfachs verschoben" },
 ];
 
 const PERIODS: { key: string; label: string; days?: number }[] = [
-  { key: "", label: "Gesamter Zeitraum" }, { key: "heute", label: "Heute", days: 0 }, { key: "7", label: "Letzte 7 Tage", days: 7 },
-  { key: "30", label: "Letzte 30 Tage", days: 30 }, { key: "90", label: "Letzte 90 Tage", days: 90 }, { key: "eigen", label: "Eigener Zeitraum …" },
+  { key: "heute", label: "Heute", days: 0 }, { key: "7", label: "Letzte 7 Tage", days: 7 },
+  { key: "30", label: "Letzte 30 Tage", days: 30 }, { key: "90", label: "Letzte 90 Tage", days: 90 }, { key: "eigen", label: "Eigener Zeitraum" },
 ];
 
 const isoDay = (d: Date) => d.toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" });
 
-/** Filter, die im Panel „Weitere Filter" stehen (Ansicht, Kategorie und Suche liegen sichtbar oben). */
-const PANEL_KEYS = ["accountId", "status", "hero", "direction", "belegState", "attachments", "zeit"] as const;
-
 export default function Messages() {
+  const qc = useQueryClient();
   const [sp, setSp] = useSearchParams();
   const [page, setPage] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const g = (k: string) => sp.get(k) ?? "";
   const f = {
     q: g("q"), view: g("view"), category: g("category"), accountId: g("accountId"), status: g("status"), hero: g("hero"),
@@ -64,9 +68,6 @@ export default function Messages() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qText]);
 
-  const panelCount = PANEL_KEYS.filter((k) => f[k]).length;
-  const [panel, setPanel] = useState(panelCount > 0);
-
   // Zeitraum: Voreinstellung -> von/bis
   const period = PERIODS.find((p) => p.key === f.zeit);
   const range = (() => {
@@ -76,6 +77,9 @@ export default function Messages() {
     return { from: isoDay(d), to: "" };
   })();
   const query = { ...f, from: range.from, to: range.to, zeit: undefined };
+  const queryKey = JSON.stringify(query);
+  // Auswahl gilt fuer die aktuelle Liste: bei anderen Filtern oder Seiten neu anfangen.
+  useEffect(() => { setSelected(new Set()); }, [queryKey, page]);
 
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("list_accounts") });
   const list = useQuery({
@@ -91,183 +95,199 @@ export default function Messages() {
     staleTime: 30_000,
   });
   const total = list.data?.total ?? 0;
+  const rows = list.data?.messages ?? [];
   const counts = facets.data?.categories ?? {};
   const accountLabel = new Map((accounts.data ?? []).map((a) => [a.id, a.label]));
   const multiAccount = (accounts.data?.length ?? 0) > 1;
-
-  // Aktive Filter als entfernbare Kaertchen
-  const pills: { label: string; clear: Record<string, string> }[] = [];
-  if (f.q) pills.push({ label: `„${f.q}“`, clear: { q: "" } });
-  if (f.category) pills.push({ label: CATEGORY_LABELS[f.category as Category] ?? f.category, clear: { category: "" } });
-  if (f.accountId) pills.push({ label: `Postfach: ${accountLabel.get(f.accountId) ?? "?"}`, clear: { accountId: "" } });
-  if (f.status) pills.push({ label: `Status: ${STATUS_LABELS[f.status] ?? f.status}`, clear: { status: "" } });
-  if (f.hero) pills.push({ label: f.hero === "mit" ? "Mit HERO-Projekt" : "Ohne HERO-Projekt", clear: { hero: "" } });
-  if (f.direction) pills.push({ label: f.direction === "in" ? "Eingehend" : "Ausgehend", clear: { direction: "" } });
-  if (f.belegState) pills.push({ label: BELEG_LABELS[f.belegState] ?? f.belegState, clear: { belegState: "" } });
-  if (f.attachments) pills.push({ label: "Mit Anhang", clear: { attachments: "" } });
-  if (f.zeit) {
-    const label = f.zeit === "eigen" ? `${f.from || "…"} bis ${f.to || "heute"}` : period?.label ?? f.zeit;
-    pills.push({ label, clear: { zeit: "", from: "", to: "" } });
-  }
+  const inTrash = f.view === "papierkorb";
+  const activeFilters = ["q", "category", "accountId", "status", "hero", "direction", "belegState", "attachments", "zeit"].filter((k) => f[k as keyof typeof f]).length;
   const resetAll = () => { setSp(new URLSearchParams(f.view ? { view: f.view } : {}), { replace: true }); setQText(""); setPage(0); };
+
+  // ---------------------------------------------------------------- Auswahl und Sammelaktionen
+  const allOnPage = rows.length > 0 && rows.every((m) => selected.has(m.id));
+  const someOnPage = rows.some((m) => selected.has(m.id));
+  const toggle = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleAll = () => setSelected(allOnPage ? new Set() : new Set(rows.map((m) => m.id)));
+  const ids = useMemo(() => [...selected], [selected]);
+  const refresh = () => { ["messages", "overview", "suggestions", "digest"].forEach((k) => qc.invalidateQueries({ queryKey: [k] })); setSelected(new Set()); };
+
+  const mailbox = useMutation({
+    mutationFn: (action: "trash" | "restore") => invokeFn<{ moved: number; notInMailbox: number; errors: string[] }>("email-mailbox", { action, ids }),
+    onSuccess: (r, action) => {
+      const n = r.moved + r.notInMailbox;
+      if (n) toast.success(action === "trash" ? `${n} Mail(s) in den Papierkorb verschoben.` : `${n} Mail(s) wiederhergestellt.`);
+      if (r.notInMailbox) toast(`${r.notInMailbox} davon waren im Postfach schon nicht mehr da – nur in der App ${action === "trash" ? "ausgeblendet" : "wieder eingeblendet"}.`);
+      r.errors.forEach((e) => toast.error(e));
+      refresh();
+    },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  const bulk = useMutation({
+    mutationFn: (p: { op: "category"; category: Category } | { op: "reprocess" }) => api<{ changed: number; learned?: string[] }>("bulk_messages", { ids, ...p }),
+    onSuccess: (r, p) => {
+      toast.success(p.op === "reprocess" ? `${r.changed} Mail(s) werden neu verarbeitet.` : `Kategorie bei ${r.changed} Mail(s) geändert – der Assistent lernt daraus.`);
+      if (r.learned?.length) toast(`Neue Absenderregel(n): ${r.learned.join(", ")}`);
+      refresh();
+    },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  const busy = mailbox.isPending || bulk.isPending;
 
   return (
     <div className="space-y-4">
       <div className="flex items-baseline gap-3">
-        <h1 className="text-xl font-semibold">Alle Mails</h1>
+        <h1 className="text-xl font-semibold">{inTrash ? "Papierkorb" : "Alle Mails"}</h1>
         {list.data && <span className="text-sm text-muted-foreground">{total.toLocaleString("de-DE")} Treffer</span>}
         {list.isFetching && <Spinner />}
       </div>
 
-      {/* Ansichten */}
-      <div className="-mx-1 overflow-x-auto px-1">
-        <div className="inline-flex gap-1 rounded-lg border bg-muted/40 p-1">
+      {/* Ansichten als Reiter */}
+      <div className="-mx-1 overflow-x-auto border-b px-1">
+        <div className="flex gap-1">
           {VIEWS.map((v) => (
             <button
               key={v.key} type="button" title={v.hint} onClick={() => set("view", v.key)}
-              className={cn("whitespace-nowrap rounded-md px-3 py-1.5 text-sm", f.view === v.key ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")}
-            >{v.label}</button>
+              className={cn(
+                "-mb-px inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors",
+                f.view === v.key ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+                v.key === "papierkorb" && "ml-auto",
+              )}
+            >
+              {v.key === "papierkorb" && <Trash2 className="h-3.5 w-3.5" />}{v.label}
+            </button>
           ))}
         </div>
       </div>
 
-      {/* Suche + weitere Filter */}
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input className="pl-8 pr-8" placeholder="Suchen in Betreff, Absender, Zusammenfassung" value={qText} onChange={(e) => setQText(e.target.value)} />
+      {/* Suche und Filter in einer Leiste */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative w-full sm:w-72">
+          <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
+          <Input className="h-8 rounded-full pl-8 pr-8" placeholder="Suchen …" value={qText} onChange={(e) => setQText(e.target.value)} />
           {qText && (
-            <button type="button" aria-label="Suche leeren" className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground" onClick={() => { setQText(""); set("q", ""); }}>
+            <button type="button" aria-label="Suche leeren" className="absolute right-2.5 top-2 text-muted-foreground hover:text-foreground" onClick={() => { setQText(""); set("q", ""); }}>
               <X className="h-4 w-4" />
             </button>
           )}
         </div>
-        <Button variant={panel ? "secondary" : "outline"} onClick={() => setPanel(!panel)} aria-expanded={panel}>
-          <SlidersHorizontal className="h-4 w-4" /> Filter{panelCount ? <Badge className="ml-1">{panelCount}</Badge> : null}
-        </Button>
-      </div>
-
-      {panel && (
-        <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-4">
-          {multiAccount && (
-            <Field label="Postfach">
-              <Select value={f.accountId} onChange={(e) => set("accountId", e.target.value)}>
-                <option value="">Alle Postfächer</option>
-                {accounts.data?.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-              </Select>
-            </Field>
-          )}
-          <Field label="Zeitraum">
-            <Select value={f.zeit} onChange={(e) => update({ zeit: e.target.value, ...(e.target.value !== "eigen" ? { from: "", to: "" } : {}) })}>
-              {PERIODS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-            </Select>
-          </Field>
-          {f.zeit === "eigen" && (
-            <Field label="Von – bis">
-              <div className="flex gap-2">
-                <Input type="date" aria-label="Von" value={f.from} onChange={(e) => set("from", e.target.value)} />
-                <Input type="date" aria-label="Bis" value={f.to} onChange={(e) => set("to", e.target.value)} />
+        <FilterMenu
+          label="Kategorie" icon={<Tag className="h-3.5 w-3.5" />} value={f.category} onChange={(v) => set("category", v)}
+          options={CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABELS[c], count: counts[c] ?? 0 })).filter((o) => o.count || o.value === f.category)}
+        />
+        <FilterMenu
+          label="Zeitraum" icon={<Calendar className="h-3.5 w-3.5" />}
+          value={f.zeit === "eigen" ? (f.from || f.to ? `${f.from || "…"} – ${f.to || "heute"}` : "Eigener Zeitraum") : period?.label ?? ""}
+          onChange={() => update({ zeit: "", from: "", to: "" })}
+        >
+          {(close) => (
+            <div className="space-y-1">
+              {PERIODS.filter((p) => p.key !== "eigen").map((p) => (
+                <button key={p.key} type="button" onClick={() => { update({ zeit: p.key, from: "", to: "" }); close(); }}
+                  className={cn("block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent", f.zeit === p.key && "font-medium")}>{p.label}</button>
+              ))}
+              <div className="space-y-1 border-t px-2 pb-1 pt-2">
+                <div className="text-xs text-muted-foreground">Eigener Zeitraum</div>
+                <div className="flex gap-1">
+                  <Input type="date" aria-label="Von" className="h-8" value={f.from} onChange={(e) => update({ zeit: "eigen", from: e.target.value })} />
+                  <Input type="date" aria-label="Bis" className="h-8" value={f.to} onChange={(e) => update({ zeit: "eigen", to: e.target.value })} />
+                </div>
               </div>
-            </Field>
+            </div>
           )}
-          <Field label="Status">
-            <Select value={f.status} onChange={(e) => set("status", e.target.value)}>
-              <option value="">Alle</option>
-              {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </Select>
-          </Field>
-          <Field label="HERO-Projekt">
-            <Select value={f.hero} onChange={(e) => set("hero", e.target.value)}>
-              <option value="">Egal</option>
-              <option value="mit">Zugeordnet</option>
-              <option value="ohne">Nicht zugeordnet</option>
-            </Select>
-          </Field>
-          <Field label="Richtung">
-            <Select value={f.direction} onChange={(e) => set("direction", e.target.value)}>
-              <option value="">Ein- und ausgehend</option>
-              <option value="in">Eingehend</option>
-              <option value="out">Ausgehend</option>
-            </Select>
-          </Field>
-          <Field label="Belege">
-            <Select value={f.belegState} onChange={(e) => set("belegState", e.target.value)}>
-              <option value="">Alle</option>
-              {Object.entries(BELEG_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </Select>
-          </Field>
-          <Field label="Anhänge">
-            <Select value={f.attachments} onChange={(e) => set("attachments", e.target.value)}>
-              <option value="">Egal</option>
-              <option value="ja">Nur mit Anhang</option>
-            </Select>
-          </Field>
-        </div>
-      )}
-
-      {/* Kategorien mit Anzahl unter den uebrigen Filtern */}
-      <div className="flex flex-wrap gap-1.5">
-        {CATEGORIES.filter((c) => counts[c] || f.category === c).map((c) => {
-          const on = f.category === c;
-          return (
-            <button
-              key={c} type="button" onClick={() => set("category", on ? "" : c)}
-              className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs", on ? "border-primary bg-primary text-primary-foreground" : "bg-background hover:bg-accent")}
-            >
-              {CATEGORY_LABELS[c]}
-              <span className={cn("tabular-nums", on ? "opacity-80" : "text-muted-foreground")}>{counts[c] ?? 0}</span>
-            </button>
-          );
-        })}
-        {facets.data && !CATEGORIES.some((c) => counts[c]) && !f.category && <span className="text-xs text-muted-foreground">Keine Kategorien in dieser Auswahl.</span>}
+        </FilterMenu>
+        {multiAccount && (
+          <FilterMenu label="Postfach" icon={<Inbox className="h-3.5 w-3.5" />} value={f.accountId} onChange={(v) => set("accountId", v)}
+            options={(accounts.data ?? []).map((a) => ({ value: a.id, label: a.label }))} />
+        )}
+        <FilterMenu label="Status" value={f.status} onChange={(v) => set("status", v)} options={Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label }))} />
+        <FilterMenu label="HERO" value={f.hero} onChange={(v) => set("hero", v)} options={[{ value: "mit", label: "Mit Projekt" }, { value: "ohne", label: "Ohne Projekt" }]} />
+        <FilterMenu label="Richtung" value={f.direction} onChange={(v) => set("direction", v)} options={[{ value: "in", label: "Eingehend" }, { value: "out", label: "Ausgehend" }]} />
+        <FilterMenu label="Belege" value={f.belegState} onChange={(v) => set("belegState", v)} options={Object.entries(BELEG_LABELS).map(([value, label]) => ({ value, label }))} />
+        <button
+          type="button" onClick={() => set("attachments", f.attachments ? "" : "ja")}
+          className={cn("inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-sm", f.attachments ? "border-primary/40 bg-primary/10 font-medium text-primary" : "bg-background hover:bg-accent")}
+        >
+          <Paperclip className="h-3.5 w-3.5" /> Mit Anhang
+        </button>
+        {activeFilters > 0 && <button type="button" className="text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={resetAll}>Zurücksetzen</button>}
       </div>
-
-      {pills.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          {pills.map((p) => (
-            <span key={p.label} className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-1">
-              {p.label}
-              <button type="button" aria-label={`${p.label} entfernen`} onClick={() => { update(p.clear); if ("q" in p.clear) setQText(""); }} className="text-muted-foreground hover:text-foreground">
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-          <button type="button" className="ml-1 text-muted-foreground underline hover:text-foreground" onClick={resetAll}>Alle zurücksetzen</button>
-        </div>
-      )}
 
       <ErrorBox error={list.error} />
 
-      <div className={cn("divide-y rounded-lg border bg-card transition-opacity", list.isPlaceholderData && "opacity-60")}>
-        {list.data?.messages.map((m) => (
-          <Link key={m.id} to={`/mails/${m.id}`} className="flex flex-col gap-1 p-3 hover:bg-accent/50">
-            <div className="flex flex-wrap items-center gap-2">
-              {m.direction === "out" ? <Send className="h-4 w-4 text-muted-foreground" aria-label="Ausgehend" /> : <Mail className="h-4 w-4 text-muted-foreground" aria-label="Eingehend" />}
-              <span className="font-medium">{m.from_name || m.from_addr}</span>
-              <CategoryChip category={m.category} />
-              {m.confidence != null && m.confidence < 0.7 && <Badge variant="warn">unsicher {pct(m.confidence)}</Badge>}
-              {m.beleg_state === "portal_offen" && <Badge variant="warn">Portal{m.beleg_vendor ? `: ${m.beleg_vendor}` : ""}</Badge>}
-              {m.hero_project_match_id && <Badge variant="outline">HERO #{m.hero_project_match_id}</Badge>}
-              {m.has_attachments && <Paperclip className="h-3.5 w-3.5 text-muted-foreground" aria-label="Anhänge" />}
-              {m.draft_message_id && <PenLine className="h-3.5 w-3.5 text-muted-foreground" aria-label="Entwurf" />}
-              {m.correction_note && <GraduationCap className="h-3.5 w-3.5 text-amber-700" aria-label="Von dir korrigiert" />}
-              {m.status === "fehler" && <Badge variant="danger">Fehler</Badge>}
-              {m.status === "wartet" && <Badge variant="warn">Freigabe offen</Badge>}
-              <span className="ml-auto text-xs text-muted-foreground">
-                {multiAccount && accountLabel.get(m.account_id) ? `${accountLabel.get(m.account_id)} · ` : ""}{formatDateTime(m.sent_at)}
-              </span>
+      <div className={cn("rounded-lg border bg-card transition-opacity", list.isPlaceholderData && "opacity-60")}>
+        {/* Kopfzeile: alle auswählen bzw. Sammelaktionen */}
+        <div className={cn("sticky top-0 z-20 flex min-h-11 flex-wrap items-center gap-2 rounded-t-lg border-b px-3 py-1.5 text-sm", someOnPage ? "bg-primary/5" : "bg-muted/40")}>
+          <input
+            type="checkbox" className="h-4 w-4" aria-label="Alle auf dieser Seite auswählen" checked={allOnPage}
+            ref={(el) => { if (el) el.indeterminate = someOnPage && !allOnPage; }} onChange={toggleAll} disabled={!rows.length}
+          />
+          {selected.size ? (
+            <>
+              <span className="font-medium">{selected.size} ausgewählt</span>
+              <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                {!inTrash && (
+                  <>
+                    <FilterMenu align="right" label="Kategorie setzen" icon={<Tag className="h-3.5 w-3.5" />} value="" onChange={(v) => v && bulk.mutate({ op: "category", category: v as Category })}
+                      options={CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABELS[c] }))} />
+                    <Button size="sm" variant="outline" className="rounded-full" disabled={busy} onClick={() => bulk.mutate({ op: "reprocess" })}>
+                      <RefreshCw className="h-3.5 w-3.5" /> Neu verarbeiten
+                    </Button>
+                    <Button size="sm" variant="outline" className="rounded-full border-red-200 text-red-700 hover:bg-red-50" disabled={busy}
+                      onClick={() => { if (confirm(`${selected.size} Mail(s) in den Papierkorb des Postfachs verschieben?`)) mailbox.mutate("trash"); }}>
+                      {mailbox.isPending ? <Spinner /> : <Trash2 className="h-3.5 w-3.5" />} Löschen
+                    </Button>
+                  </>
+                )}
+                {inTrash && (
+                  <Button size="sm" variant="outline" className="rounded-full" disabled={busy} onClick={() => mailbox.mutate("restore")}>
+                    {mailbox.isPending ? <Spinner /> : <Undo2 className="h-3.5 w-3.5" />} Wiederherstellen
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" className="rounded-full" onClick={() => setSelected(new Set())}>Auswahl aufheben</Button>
+              </div>
+            </>
+          ) : (
+            <span className="text-muted-foreground">{rows.length ? "Auswählen für Sammelaktionen" : ""}</span>
+          )}
+        </div>
+
+        <div className="divide-y">
+          {rows.map((m) => {
+            const on = selected.has(m.id);
+            return (
+              <div key={m.id} className={cn("group flex items-start gap-3 px-3 py-2.5 hover:bg-accent/40", on && "bg-primary/5")}>
+                <input type="checkbox" className="mt-1 h-4 w-4 shrink-0" checked={on} onChange={() => toggle(m.id)} aria-label={`${m.subject || "Mail"} auswählen`} />
+                <Link to={`/mails/${m.id}`} className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {m.direction === "out" ? <Send className="h-4 w-4 text-muted-foreground" aria-label="Ausgehend" /> : <Mail className="h-4 w-4 text-muted-foreground" aria-label="Eingehend" />}
+                    <span className="font-medium">{m.from_name || m.from_addr}</span>
+                    <CategoryChip category={m.category} />
+                    {m.confidence != null && m.confidence < 0.7 && <Badge variant="warn">unsicher {pct(m.confidence)}</Badge>}
+                    {m.beleg_state === "portal_offen" && <Badge variant="warn">Portal{m.beleg_vendor ? `: ${m.beleg_vendor}` : ""}</Badge>}
+                    {m.hero_project_match_id && <Badge variant="outline">HERO #{m.hero_project_match_id}</Badge>}
+                    {m.has_attachments && <Paperclip className="h-3.5 w-3.5 text-muted-foreground" aria-label="Anhänge" />}
+                    {m.draft_message_id && <PenLine className="h-3.5 w-3.5 text-muted-foreground" aria-label="Entwurf" />}
+                    {m.correction_note && <GraduationCap className="h-3.5 w-3.5 text-amber-700" aria-label="Von dir korrigiert" />}
+                    {m.status === "fehler" && <Badge variant="danger">Fehler</Badge>}
+                    {m.status === "wartet" && <Badge variant="warn">Freigabe offen</Badge>}
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {multiAccount && accountLabel.get(m.account_id) ? `${accountLabel.get(m.account_id)} · ` : ""}{formatDateTime(m.sent_at)}
+                    </span>
+                  </div>
+                  <div className="truncate text-sm">{m.subject || "(ohne Betreff)"}</div>
+                  {m.summary && <div className="truncate text-xs text-muted-foreground">{m.summary}</div>}
+                </Link>
+              </div>
+            );
+          })}
+          {list.data && !rows.length && (
+            <div className="space-y-2 p-8 text-center text-sm text-muted-foreground">
+              <p>{inTrash ? "Der Papierkorb ist leer." : "Keine Mails gefunden."}</p>
+              {activeFilters > 0 && <Button variant="outline" size="sm" onClick={resetAll}>Filter zurücksetzen</Button>}
             </div>
-            <div className="truncate text-sm">{m.subject || "(ohne Betreff)"}</div>
-            {m.summary && <div className="truncate text-xs text-muted-foreground">{m.summary}</div>}
-          </Link>
-        ))}
-        {list.data && !list.data.messages.length && (
-          <div className="space-y-2 p-6 text-sm text-muted-foreground">
-            <p>Keine Mails gefunden.</p>
-            {(pills.length > 0 || f.view) && <Button variant="outline" size="sm" onClick={() => { setSp(new URLSearchParams(), { replace: true }); setQText(""); setPage(0); }}>Filter zurücksetzen</Button>}
-          </div>
-        )}
-        {list.isLoading && <div className="p-6"><Spinner /></div>}
+          )}
+          {list.isLoading && <div className="p-6"><Spinner /></div>}
+        </div>
       </div>
 
       {total > 0 && (

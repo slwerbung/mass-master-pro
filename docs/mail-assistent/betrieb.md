@@ -107,6 +107,19 @@ Preise aus den Stammdaten) und schlägt danach ebenfalls „Prüfen & versenden�
 **Live noch zu prüfen** (aus der Entwicklungsumgebung nicht ohne echten Schreibzugriff möglich): erste AB anlegen und ansehen; ersten Versand
 an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorlage mit ersetzten Platzhaltern und PDF an?
 
+## Mail-Liste und Mail-Ansicht
+
+- **Filterleiste:** Ansichten als Reiter (inkl. **Papierkorb**), Suche und Filter als Pillen mit Ausklappmenü (Kategorie mit Anzahl,
+  Zeitraum mit Voreinstellungen oder eigenem Zeitraum, Postfach, Status, HERO, Richtung, Belege, Anhang).
+- **Mehrfachauswahl:** Häkchen je Mail bzw. „alle auf dieser Seite“; Sammelaktionen *Kategorie setzen* (wie einzeln korrigiert, mit Lernen),
+  *Neu verarbeiten*, **Löschen** = in den Papierkorb des Postfachs verschieben (`email-mailbox`, IMAP MOVE; offene Vorschläge werden verworfen).
+  Im Papierkorb: *Wiederherstellen* (zurück in den Posteingang). Endgültig gelöscht wird nie – das macht man in Thunderbird.
+  Voraussetzung: der Papierkorb-Ordner ist am Postfach bekannt („Ordner anlegen & speichern“).
+- **Mail-Ansicht:** die Mail als HTML aus dem Postfach (beim ersten Öffnen per IMAP geholt, danach zwischengespeichert), im abgeschotteten
+  Rahmen ohne Skripte; externe Bilder (Tracking) erst per Klick. Ist die Mail nicht mehr im Postfach, wird der gespeicherte Text gezeigt.
+  Hintergrundinfos (Antwortentwurf, Beleg, HERO-Zuordnung, Plan, Korrektur & Wissen, Erkannte Daten, Verlauf, Parallelvergleich,
+  KI-Aufrufe) sind eingeklappt; zugeklappt zeigt jede Zeile eine Kurzinfo. Der Browser merkt sich, welche Bereiche offen sind.
+
 ## Referenzwissen
 
 Einstellungen → **Referenzwissen** (`email_reference_docs`): längere Dokumente (Skill-Dateien, HERO-Doku) je KI-Aufgabe – Angebote,

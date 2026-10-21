@@ -160,7 +160,8 @@ Antworten/Projekte/Angebote vor. Eigene Oberfläche: `apps/mail/` (eigenes Verce
 Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-assistent/betrieb.md`.
 - Edge Functions: `email-sync` (IMAP holen, pg_cron 5 Min), `email-process` (Verstehen → Zuordnen → Handeln),
   `email-action` (Klick auf einen Vorschlag: einzige Stelle mit schreibenden HERO-Aufrufen), `email-draft` (Antwortentwürfe,
-  Lexoffice-Entwurf), `email-account-test`, `email-api` (einzige Schnittstelle der Mail-App). Jede hat ein eigenes `deno.json`
+  Lexoffice-Entwurf), `email-account-test`, `email-api` (einzige Schnittstelle der Mail-App für Daten), `email-mailbox` (IMAP aus der
+  Mail-App: HTML-Ansicht `body`, `trash`/`restore`). Jede hat ein eigenes `deno.json`
   (Import-Map für `npm:`), gemeinsamer Code in `_shared/email/`. Antworten immer HTTP 200 mit `{ ok, data | error }`.
 - Tabellen `email_*` sind **nur für service_role** (RLS an, keine Policy, kein Grant) – nie vom Frontend/Anon-Key lesen.
   `hero_open_cache` gehört CaptFix und wird vom Assistenten nicht benutzt.
@@ -168,6 +169,10 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
   und Projektwahl ein; eine Korrektur hat Vorrang vor Absenderregeln, eine Projektnummer darin ordnet sicher zu (`betrieb.md`).
 - Regeln vor KI; das Modell liefert nur Felder (Zod-Schema), Aktionen entscheidet der Code (`autopilot.ts`). Schattenmodus =
   keine Automatik im Postfach/HERO, nur `plan`. Vorschläge ändern nichts, bis jemand klickt.
+- **„Löschen“ in der Mail-App = in den Papierkorb des Postfachs VERSCHIEBEN** (IMAP MOVE, `email-mailbox` `trash`, `trashed_at`),
+  wiederherstellbar. Endgültig gelöscht wird nie.
+- HTML-Ansicht: `email-mailbox` `body` holt die Mail per IMAP, bettet `cid:`-Bilder ein (`mailHtml.ts`) und speichert in `body_html`
+  (Aufbewahrungsfrist wie `body_text`). Angezeigt nur im iframe mit `sandbox` ohne Skripte und CSP; externe Bilder erst per Klick.
 - **Kein Versand, kein Löschen – zwei Ausnahmen:** Antworten an Kunden sind nur ENTWÜRFE im Ordner „Entwürfe“; kein Resend, kein
   `messageDelete`/`\Deleted`/expunge. Ausnahmen (ausdrücklich freigegeben): (1) Belege gehen automatisch per SMTP (Port 465) an die
   Lexware-Belegadresse, ausschließlich über `_shared/email/lexwareSend.ts` (prüft den Empfänger). (2) Ein in HERO geprüftes und

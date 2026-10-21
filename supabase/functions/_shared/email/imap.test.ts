@@ -1,4 +1,4 @@
-// Absicherung der harten Regel „Kein Versand, kein Loeschen": der Quelltext des
+// Absicherung der harten Regel „Kein Versand, kein Loeschen" („Loeschen" in der Mail-App = Verschieben in den Papierkorb): der Quelltext des
 // gesamten Mail-Assistenten darf kein IMAP-Loeschen und – bis auf lexwareSend.ts (Belege an Lexware) und den
 // Dokumentversand ueber HERO nach Klick (hero.ts sendDocumentMail, nur aus action.ts sendDocument) – keinen Versand enthalten.
 
