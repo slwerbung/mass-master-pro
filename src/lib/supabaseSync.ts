@@ -181,10 +181,14 @@ async function removeStoragePaths(paths: (string | null | undefined)[]) {
 
 // ─── Sync: location images ────────────────────────────────────────────────────
 
-async function syncImageVariant(locationId: string, imageType: "annotated" | "original", imageData: string): Promise<void> {
+async function syncImageVariant(locationId: string, imageType: "annotated" | "original", imageData: string, onServer: boolean): Promise<void> {
   if (!imageData) return;
   const cacheKey = `loc_${locationId}_${imageType}`;
-  if (await isImageSynced(cacheKey, imageData)) return;
+  // The hash cache only knows what THIS device once uploaded. If the server
+  // has lost the image since then, a cache hit alone would never re-upload it
+  // (WER-1893: 16 locations without images on the server, the photos only on
+  // the phone that took them). So skip only when the server has it, too.
+  if (onServer && await isImageSynced(cacheKey, imageData)) return;
   const path = getLocationImagePath(locationId, imageType);
   // Annotated images carry dimension labels / drawn-on text and need
   // to stay sharp - no compression. Originals are reference photos and
@@ -207,23 +211,21 @@ async function syncImageVariant(locationId: string, imageType: "annotated" | "or
   await markImageSynced(cacheKey, imageData);
 }
 
+// Never deletes: a location without a local image is not a request to remove
+// the server's image. A device whose download failed (pathToBase64 -> null)
+// has exactly that state, and its next sync used to wipe the images for
+// everyone. Location images go away only together with their location
+// (removeDeletedLocationsFromSupabase / deleteProjectFromSupabase).
 async function syncLocationImages(locationId: string, annotatedImage?: string, originalImage?: string): Promise<void> {
-  const desiredTypes = new Set<string>();
-  if (annotatedImage) desiredTypes.add('annotated');
-  if (originalImage)  desiredTypes.add('original');
+  if (!annotatedImage && !originalImage) return;
+  const { data: existingRows, error } = await supabase.from('location_images').select('image_type').eq('location_id', locationId);
+  if (error) return;
+  const onServer = new Set((existingRows || []).map((row) => row.image_type));
 
   await Promise.all([
-    annotatedImage ? syncImageVariant(locationId, "annotated", annotatedImage) : Promise.resolve(),
-    originalImage  ? syncImageVariant(locationId, "original",  originalImage)  : Promise.resolve(),
+    annotatedImage ? syncImageVariant(locationId, "annotated", annotatedImage, onServer.has("annotated")) : Promise.resolve(),
+    originalImage  ? syncImageVariant(locationId, "original",  originalImage,  onServer.has("original"))  : Promise.resolve(),
   ]);
-
-  const { data: existingRows } = await supabase.from('location_images').select('image_type, storage_path').eq('location_id', locationId);
-  const rowsToDelete = (existingRows || []).filter((row) => !desiredTypes.has(row.image_type));
-  if (rowsToDelete.length) {
-    await removeStoragePaths(rowsToDelete.map((row) => row.storage_path));
-    await supabase.from('location_images').delete().eq('location_id', locationId).in('image_type', rowsToDelete.map((row) => row.image_type));
-    rowsToDelete.forEach(row => invalidateImageCache(`loc_${locationId}_${row.image_type}`));
-  }
 }
 
 // ─── Sync: detail images ──────────────────────────────────────────────────────
