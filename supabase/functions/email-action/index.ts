@@ -45,8 +45,12 @@ Deno.serve(async (req) => {
         createContact: (c: H.NewContact, src: string) => H.createContact(key, c, src),
         contactsByEmail: (e: string) => H.contactsByEmail(key, e),
         createProject: (p: H.NewProject) => H.createProject(key, p),
-        createOffer: (id: number, dt: number) => H.createEmptyDocument(key, id, dt),
         uploadDocument: (id: number, f: { bytes: Uint8Array; filename: string; mime: string }, dt: number) => H.uploadDocument(key, id, f, dt),
+        createDocument: (id: number, dt: number, actions: Record<string, unknown>[]) => H.createDocument(key, id, dt, actions),
+        documentById: (id: number) => H.documentById(key, id),
+        emailTemplates: (kind: H.DocumentKind) => H.emailTemplates(key, H.DOCUMENT_MAIL_CONTEXT[kind]),
+        sendDocumentMail: (m: Parameters<typeof H.sendDocumentMail>[1]) => H.sendDocumentMail(key, m),
+        setDocumentSent: (id: number) => H.setDocumentStatus(key, id, "SENT"),
       }
       : null;
     const stepIds = Object.values(heroCfg.steps ?? {}).map(Number).filter((n) => Number.isFinite(n) && n > 0);
@@ -69,7 +73,7 @@ Deno.serve(async (req) => {
     }
     const data = await decideSuggestion(
       { suggestionId, decision: body.decision, edits: body.action === "assign" ? { projectId: Number(body.projectId) } : body.edits },
-      { hero, store: actionStore(sb), files: { download: storageDownloader(sb) }, offers: await offersFor(sb, key), config: { steps: heroCfg.steps ?? {}, offerTypeId: heroCfg.offer_document_type_id ?? null, documentTypeIds: Object.values(heroCfg.document_types ?? {}).map(Number).filter((n) => Number.isFinite(n) && n > 0), stepIds, projectTypeId: heroCfg.project_type_id ?? null, startStepId: heroCfg.start_step_id ?? null, gewerke } },
+      { hero, store: actionStore(sb), files: { download: storageDownloader(sb) }, offers: await offersFor(sb, key), config: { steps: heroCfg.steps ?? {}, offerTypeId: heroCfg.offer_document_type_id ?? null, confirmationTypeId: heroCfg.confirmation_document_type_id ?? null, documentTypeIds: Object.values(heroCfg.document_types ?? {}).map(Number).filter((n) => Number.isFinite(n) && n > 0), stepIds, projectTypeId: heroCfg.project_type_id ?? null, startStepId: heroCfg.start_step_id ?? null, gewerke } },
     );
     return ok(data);
   } catch (e) {

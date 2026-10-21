@@ -1,5 +1,6 @@
-// Absicherung der harten Regel „Kein Versand, kein Loeschen": der Quelltext des
-// gesamten Mail-Assistenten darf kein IMAP-Loeschen und – bis auf lexwareSend.ts (Belege an Lexware) – keinen Versand enthalten.
+// Absicherung der harten Regel „Kein Versand, kein Loeschen" („Loeschen" in der Mail-App = Verschieben in den Papierkorb): der Quelltext des
+// gesamten Mail-Assistenten darf kein IMAP-Loeschen und – bis auf lexwareSend.ts (Belege an Lexware) und den
+// Dokumentversand ueber HERO nach Klick (hero.ts sendDocumentMail, nur aus action.ts sendDocument) – keinen Versand enthalten.
 
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -49,5 +50,24 @@ describe("Kein Versand, kein Loeschen", () => {
     expect(src.match(/sendMail\s*\(/g)).toHaveLength(1);
     expect(src.indexOf("assertAllowedRecipient(to, allowedAddress)")).toBeGreaterThan(-1);
     expect(src.indexOf("assertAllowedRecipient(to, allowedAddress)")).toBeLessThan(src.indexOf("createTransport"));
+  });
+
+  // ZWEITE Ausnahme (ausdruecklich freigegeben, Okt. 2026): geprueftes Angebot / geprueft AB per Klick ueber HERO
+  // an den Kunden. Die HERO-Mutation steht nur in hero.ts; aufgerufen wird sie nur in action.ts `sendDocument`.
+  it("HERO-send_mail nur in hero.ts, Aufruf nur aus action.ts (sendDocument)", () => {
+    const mut = sources.filter((f) => /send_mail\s*\(/.test(readFileSync(f, "utf8")));
+    expect(mut.map((f) => f.split("/").pop())).toEqual(["hero.ts"]);
+    const callers = sources.filter((f) => /\.sendDocumentMail\s*\(/.test(readFileSync(f, "utf8")));
+    // email-action/index.ts reicht die Funktion nur durch (Verdrahtung), aufgerufen wird sie in action.ts.
+    expect(callers.map((f) => f.split("/").slice(-2).join("/")).sort()).toEqual(["email-action/index.ts", "email/action.ts"]);
+    const wiring = readFileSync(callers.find((f) => f.endsWith("email-action/index.ts"))!, "utf8");
+    expect(wiring.match(/\.sendDocumentMail\s*\(/g)).toHaveLength(1);
+    callers.splice(callers.findIndex((f) => f.endsWith("email-action/index.ts")), 1);
+    const src = readFileSync(callers[0], "utf8");
+    expect(src.match(/\.sendDocumentMail\s*\(/g)).toHaveLength(1);
+    const i = src.indexOf(".sendDocumentMail(");
+    expect(src.lastIndexOf("async function sendDocument(", i)).toBeGreaterThan(-1);
+    // Vor dem Versand: PDF/Status geprueft und Vorlage aus HERO
+    expect(src.lastIndexOf("NotReadyError(`${doc.nr", i)).toBeGreaterThan(src.lastIndexOf("async function sendDocument(", i));
   });
 });

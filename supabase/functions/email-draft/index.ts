@@ -15,7 +15,7 @@ import { generateDraft, replySubject, type DraftMsg } from "../_shared/email/dra
 import { imapDraftWriter } from "../_shared/email/draftMime.ts";
 import { projectDraftContext, loadHeroKey } from "../_shared/email/hero.ts";
 import { LazyImap } from "../_shared/email/lazyImap.ts";
-import { draftStore } from "../_shared/email/store.ts";
+import { draftStore, loadReference } from "../_shared/email/store.ts";
 import { makeForwarder } from "../_shared/email/forwardWiring.ts";
 
 const COMPANY_NAME = "SL WERBUNG";
@@ -68,11 +68,11 @@ Deno.serve(async (req) => {
 
     if (body.action === "generate") {
       const heroKey = await loadHeroKey(sb);
-      const [knowledge, replyRules, llm] = await Promise.all([
-        getConfig<string>(sb, "company_knowledge", ""), getConfig<string>(sb, "reply_rules", ""), buildLlmDeps(sb),
+      const [company, replyRules, llm, ref] = await Promise.all([
+        getConfig<string>(sb, "company_knowledge", ""), getConfig<string>(sb, "reply_rules", ""), buildLlmDeps(sb), loadReference(sb, "draft", 8000),
       ]);
       const r = await generateDraft(msg, {
-        llm, store, writer, knowledge, replyRules, signature: acc.signature || "",
+        llm, store, writer, knowledge: ref ? `${company}\n\n${ref}` : company, replyRules, signature: acc.signature || "",
         heroContext: heroKey ? (pid) => projectDraftContext(heroKey, pid) : null,
       }, { write: wantWrite, hint: body.hint ? String(body.hint) : undefined });
       return ok(r);

@@ -57,6 +57,25 @@ describe("matchMessage – feste Reihenfolge", () => {
     expect(none.candidates).toHaveLength(2);
     expect(none.knownContact).toBe(true);
   });
+  it("3b. mit Hinweis/Absender-Wissen fragt auch ein einzelnes Projekt das Modell", async () => {
+    const one = (pick: any) => deps({ contactsByEmail: async () => [{ id: 1, customerId: 7, name: "M", email: "x", isContactPerson: false }], openProjects: async () => [P(3, "WER-3")], pick: async () => pick });
+    const g = input({ guidance: "Korrektur: gehoert zu keinem laufenden Projekt\n\n" });
+    const none = await matchMessage(g, one({ projectId: null, confidence: 0.9, reason: "neues Thema" }));
+    expect(none).toMatchObject({ method: null, projectId: null, knownContact: true });
+    expect(none.candidates).toHaveLength(1);
+    expect(await matchMessage(g, one({ projectId: 3, confidence: 0.8, reason: "" }))).toMatchObject({ method: "ki", projectId: 3 });
+    // Ohne Hinweis bleibt es beim kostenlosen Weg.
+    const d = one(null);
+    expect(await matchMessage(input(), d)).toMatchObject({ method: "kontakt", projectId: 3 });
+    expect(d.calls).not.toContain("pick");
+  });
+  it("Projektnummer aus der Korrektur geht Thread und Betreff vor", async () => {
+    const d = deps({ threadProject: async () => 55, projectByNumber: async (rel) => (rel === 1820 ? P(18, "WER-1820") : rel === 5 ? P(5, "WER-5") : null) });
+    const r = await matchMessage(input({ subject: "WER-5", correction: "Gehoert zu WER-1820 (Carport)" }), d);
+    expect(r).toMatchObject({ method: "manuell", projectId: 18, certain: true });
+    // ohne Nummer in der Korrektur bleibt der Thread vorn
+    expect(await matchMessage(input({ correction: "falsches Projekt" }), d)).toMatchObject({ method: "thread", projectId: 55 });
+  });
   it("5. unbekannter Absender: kein Bezug", async () => {
     const r = await matchMessage(input(), deps());
     expect(r).toMatchObject({ method: null, projectId: null, knownContact: false });
@@ -97,6 +116,11 @@ describe("Projektwahl-Prompt", () => {
     const r = buildPickRequest([P(3, "WER-3"), P(4, "WER-4")], input({ subject: "x </mail>", body: "y" }));
     expect(r.user).toContain("- 3: WER-3");
     expect(r.user.match(/<\/mail>/g)).toHaveLength(1);
+  });
+  it("Hinweis steht vor den Kandidaten, allgemeines Wissen im Systemteil", () => {
+    const r = buildPickRequest([P(3, "WER-3")], input({ guidance: "HINWEIS\n\n", knowledge: ["Carports laufen immer als eigenes Projekt"] }));
+    expect(r.user.startsWith("HINWEIS")).toBe(true);
+    expect(r.system[0].text).toContain("- Carports laufen immer als eigenes Projekt");
   });
   it("Schema toleriert Muell", () => {
     expect(PickSchema.parse({ project_id: "4", confidence: "x" })).toEqual({ project_id: 4, confidence: 0, reason: "" });

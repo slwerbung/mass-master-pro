@@ -9,10 +9,12 @@ import { fail, ok, preflight, readJson, requireAdmin, type AdminUser } from "../
 import { encryptSecret } from "../_shared/email/crypto.ts";
 import { encryptionKey, getConfig, setConfig } from "../_shared/email/config.ts";
 import { normalizeAutopilot } from "../_shared/email/autopilot.ts";
-import { AI_TASKS, CATEGORIES } from "../_shared/email/types.ts";
+import { AI_TASKS, CATEGORIES, INBOX_CATEGORIES } from "../_shared/email/types.ts";
 import * as H from "../_shared/email/hero.ts";
 import { learnRule } from "../_shared/email/learn.ts";
 import { mapDocumentTypes, mapSteps } from "../_shared/email/heroReload.ts";
+import { matchesPattern } from "../_shared/email/mail.ts";
+import { KNOWLEDGE_TEXT_MAX, normalizePattern, patternForScope, type KnowledgeScope } from "../_shared/email/knowledge.ts";
 
 // Nur diese Schluessel darf die Oberflaeche in email_config schreiben – der
 // Admin-Zugang ist kein Generalschluessel fuer die Tabelle.
@@ -22,7 +24,41 @@ const CONFIG_KEYS = [
 
 const MESSAGE_LIST_COLUMNS =
   "id, account_id, thread_id, direction, from_addr, from_name, subject, sent_at, status, category, confidence, summary, " +
-  "hero_project_match_id, match_method, has_attachments, draft_message_id, current_folder, error, hero_logged_at, beleg_state, beleg_vendor";
+  "hero_project_match_id, match_method, has_attachments, draft_message_id, current_folder, error, hero_logged_at, beleg_state, beleg_vendor, correction_note, trashed_at";
+
+const BELEG_STATES = ["weiterleiten_offen", "weitergeleitet", "portal_offen", "portal_erledigt"];
+
+/** Schnellansichten der Mail-Liste (Reiter oben); „alle" = keine Einschraenkung. */
+const VIEWS: Record<string, (q: any) => any> = {
+  kunden: (q) => q.eq("direction", "in").in("category", INBOX_CATEGORIES),
+  ohne_projekt: (q) => q.eq("direction", "in").in("category", INBOX_CATEGORIES).is("hero_project_match_id", null),
+  unsicher: (q) => q.eq("direction", "in").lt("confidence", 0.7),
+  belege: (q) => q.eq("category", "beleg"),
+  korrigiert: (q) => q.not("correction_note", "is", null),
+  fehler: (q) => q.eq("status", "fehler"),
+};
+
+/** Filter der Mail-Liste; `skipCategory` fuer die Zaehler je Kategorie. */
+function applyMessageFilters(q: any, body: Record<string, any>, opts: { skipCategory?: boolean } = {}) {
+  // Papierkorb: eigene Ansicht, sonst immer ausgeblendet.
+  if (body.view === "papierkorb") q = q.not("trashed_at", "is", null);
+  else q = q.is("trashed_at", null);
+  const view = VIEWS[String(body.view || "")];
+  if (view) q = view(q);
+  if (body.accountId) q = q.eq("account_id", body.accountId);
+  if (body.category && !opts.skipCategory) q = q.eq("category", body.category);
+  if (body.status) q = q.eq("status", body.status);
+  if (body.direction) q = q.eq("direction", body.direction);
+  if (BELEG_STATES.includes(body.belegState)) q = q.eq("beleg_state", body.belegState);
+  if (body.hero === "mit") q = q.not("hero_project_match_id", "is", null);
+  if (body.hero === "ohne") q = q.is("hero_project_match_id", null);
+  if (body.attachments === "ja") q = q.eq("has_attachments", true);
+  if (body.from) q = q.gte("sent_at", String(body.from));
+  if (body.to) q = q.lte("sent_at", String(body.to));
+  const s = likeSafe(String(body.q || ""));
+  if (s) q = q.or(`subject.ilike.%${s}%,from_addr.ilike.%${s}%,summary.ilike.%${s}%,from_name.ilike.%${s}%`);
+  return q;
+}
 
 type Ctx = { sb: any; user: AdminUser; body: Record<string, any> };
 type Handler = (c: Ctx) => Promise<unknown>;
@@ -70,21 +106,21 @@ const handlers: Record<string, Handler> = {
   async list_messages({ sb, body }) {
     const limit = Math.min(Math.max(Number(body.limit) || 50, 1), 200);
     const offset = Math.max(Number(body.offset) || 0, 0);
-    let q = sb.from("email_messages").select(MESSAGE_LIST_COLUMNS, { count: "exact" });
-    if (body.accountId) q = q.eq("account_id", body.accountId);
-    if (body.category) q = q.eq("category", body.category);
-    if (body.status) q = q.eq("status", body.status);
-    if (body.direction) q = q.eq("direction", body.direction);
-    if (["weiterleiten_offen", "weitergeleitet", "portal_offen", "portal_erledigt"].includes(body.belegState)) q = q.eq("beleg_state", body.belegState);
-    if (body.hero === "mit") q = q.not("hero_project_match_id", "is", null);
-    if (body.hero === "ohne") q = q.is("hero_project_match_id", null);
-    if (body.from) q = q.gte("sent_at", String(body.from));
-    if (body.to) q = q.lte("sent_at", String(body.to));
-    const s = likeSafe(String(body.q || ""));
-    if (s) q = q.or(`subject.ilike.%${s}%,from_addr.ilike.%${s}%,summary.ilike.%${s}%,from_name.ilike.%${s}%`);
+    const q = applyMessageFilters(sb.from("email_messages").select(MESSAGE_LIST_COLUMNS, { count: "exact" }), body);
     const { data, error, count } = await q.order("sent_at", { ascending: false, nullsFirst: false }).range(offset, offset + limit - 1);
     if (error) throw new Error(error.message);
     return { messages: data || [], total: count ?? 0 };
+  },
+
+  /** Anzahl je Kategorie unter den uebrigen Filtern (fuer die Kategorie-Chips). */
+  async message_facets({ sb, body }) {
+    const categories: Record<string, number> = {};
+    await Promise.all(CATEGORIES.map(async (c) => {
+      const q = applyMessageFilters(sb.from("email_messages").select("id", { count: "exact", head: true }), body, { skipCategory: true });
+      const { count } = await q.eq("category", c);
+      categories[c] = count ?? 0;
+    }));
+    return { categories };
   },
 
   async get_message({ sb, body }) {
@@ -112,7 +148,14 @@ const handlers: Record<string, Handler> = {
       }
       attachments.push({ ...a, storage_path: undefined, url });
     }
-    return { message: msg, thread: thread || [], attachments, shadow: shadow || [], suggestions: suggestions || [], calls: calls || [] };
+    // Wissen, das fuer diesen Absender gilt (allgemeine Eintraege nur als Anzahl).
+    const { data: kn } = await sb.from("email_knowledge").select("id, text, from_pattern, source, created_at").eq("active", true)
+      .order("created_at", { ascending: false }).limit(300);
+    const knowledge = {
+      sender: (kn || []).filter((k: any) => k.from_pattern && matchesPattern(msg.from_addr, k.from_pattern)),
+      general: (kn || []).filter((k: any) => !k.from_pattern).length,
+    };
+    return { message: { ...msg, body_html: undefined }, thread: thread || [], attachments, shadow: shadow || [], suggestions: suggestions || [], calls: calls || [], knowledge };
   },
 
   /** Korrektur eines Menschen: wird gespeichert und fliesst als Beispiel in kuenftige Laeufe. */
@@ -175,7 +218,7 @@ const handlers: Record<string, Handler> = {
   /** Beleg-Stand von Hand setzen, z. B. „Im Portal abgeholt und verbucht“. */
   async set_beleg_state({ sb, body }) {
     const state = String(body.state || "");
-    if (!["weiterleiten_offen", "weitergeleitet", "portal_offen", "portal_erledigt"].includes(state)) throw new Error("Unbekannter Stand.");
+    if (!BELEG_STATES.includes(state)) throw new Error("Unbekannter Stand.");
     must(await sb.from("email_messages").update({ beleg_state: state, ...(state === "weitergeleitet" ? { forwarded_at: new Date().toISOString() } : {}) }).eq("id", String(body.id || "")));
     return { ok: true };
   },
@@ -183,6 +226,96 @@ const handlers: Record<string, Handler> = {
   /** Mail noch einmal durch die Pipeline schicken. */
   async reprocess_message({ sb, body }) {
     must(await sb.from("email_messages").update({ status: "neu", attempts: 0, error: null }).eq("id", String(body.id || "")));
+    return { ok: true };
+  },
+
+  /** Mehrfachauswahl in der Liste: Kategorie setzen (wie einzeln korrigiert, mit Lernen) oder neu verarbeiten. */
+  async bulk_messages({ sb, user, body }) {
+    const ids: string[] = (Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 200);
+    if (!ids.length) throw new Error("Keine Mails ausgewählt.");
+    if (body.op === "reprocess") {
+      must(await sb.from("email_messages").update({ status: "neu", attempts: 0, error: null }).in("id", ids).is("trashed_at", null));
+      return { changed: ids.length };
+    }
+    if (body.op === "category") {
+      if (!(CATEGORIES as readonly string[]).includes(body.category)) throw new Error("Unbekannte Kategorie.");
+      let changed = 0;
+      const learned: string[] = [];
+      for (const id of ids) {
+        const r = await handlers.correct_message({ sb, user, body: { id, category: body.category } }) as { changed: number; learned?: { pattern: string } | null };
+        changed += r.changed ? 1 : 0;
+        if (r.learned) learned.push(r.learned.pattern);
+      }
+      return { changed, learned };
+    }
+    throw new Error("Unbekannte Aktion.");
+  },
+
+  /**
+   * „Das ist falsch – richtig waere …": Freitext zu genau dieser Mail. Offene Vorschlaege werden
+   * verworfen, die Mail laeuft mit dem Hinweis neu durch, und auf Wunsch entsteht ein Eintrag in
+   * der Wissensdatei (fuer den Absender, die Domain oder alle Mails).
+   */
+  async teach({ sb, body }) {
+    const id = String(body.id || "");
+    const note = String(body.text || "").trim();
+    if (note.length < 3) throw new Error("Bitte kurz beschreiben, was richtig wäre.");
+    if (note.length > KNOWLEDGE_TEXT_MAX) throw new Error(`Höchstens ${KNOWLEDGE_TEXT_MAX} Zeichen.`);
+    const scope = (["keine", "absender", "domain", "alle"].includes(body.remember) ? body.remember : "keine") as KnowledgeScope;
+    const { data: msg } = await sb.from("email_messages").select("id, account_id, from_addr, correction_note").eq("id", id).maybeSingle();
+    if (!msg) throw new Error("Mail nicht gefunden.");
+
+    let knowledgeId: string | null = null;
+    const pattern = patternForScope(scope, msg.from_addr);
+    if (pattern !== undefined) {
+      const text = String(body.knowledgeText || note).trim().slice(0, KNOWLEDGE_TEXT_MAX);
+      if (text.length < 3) throw new Error("Der Wissenseintrag ist leer.");
+      const k = must(await sb.from("email_knowledge").insert({ text, from_pattern: pattern, source: "korrektur", message_id: id }).select("id").single()) as any;
+      knowledgeId = k.id;
+    }
+
+    const now = new Date().toISOString();
+    const { data: open } = await sb.from("email_suggestions").update({ status: "abgelehnt", decided_at: now, result: { reason: "korrigiert" } })
+      .eq("message_id", id).eq("status", "offen").select("type");
+    must(await sb.from("email_feedback").insert([
+      { message_id: id, field: "hinweis", old_value: msg.correction_note, new_value: note, from_addr: msg.from_addr },
+      ...(open || []).map((r: any) => ({ message_id: id, field: `suggestion.${r.type}`, old_value: "vorgeschlagen", new_value: "abgelehnt", from_addr: msg.from_addr })),
+    ]));
+    must(await sb.from("email_messages").update({ correction_note: note, status: "neu", attempts: 0, error: null }).eq("id", id));
+    return { accountId: msg.account_id, knowledgeId, rejected: (open || []).length };
+  },
+
+  // ------------------------------------------------------------------ Wissensdatei
+  async list_knowledge({ sb }) {
+    const rows = must(await sb.from("email_knowledge").select("id, text, from_pattern, source, message_id, active, created_at, updated_at")
+      .order("created_at", { ascending: false }).limit(500)) as any[];
+    // Betreff der Ursprungsmail mitgeben, damit man sieht, woher ein Eintrag stammt.
+    const ids = [...new Set(rows.map((r) => r.message_id).filter(Boolean))];
+    const subjects: Record<string, string> = {};
+    if (ids.length) {
+      const { data } = await sb.from("email_messages").select("id, subject").in("id", ids);
+      for (const m of data || []) subjects[m.id] = m.subject;
+    }
+    return rows.map((r) => ({ ...r, message_subject: r.message_id ? subjects[r.message_id] ?? null : null }));
+  },
+  async save_knowledge({ sb, body }) {
+    const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.text !== undefined) {
+      const text = String(body.text).trim();
+      if (text.length < 3 || text.length > KNOWLEDGE_TEXT_MAX) throw new Error(`Text: 3 bis ${KNOWLEDGE_TEXT_MAX} Zeichen.`);
+      row.text = text;
+    }
+    if (body.from_pattern !== undefined) row.from_pattern = normalizePattern(body.from_pattern);
+    if (body.active !== undefined) row.active = !!body.active;
+    if (body.id) {
+      must(await sb.from("email_knowledge").update(row).eq("id", String(body.id)));
+      return { id: body.id };
+    }
+    if (!row.text) throw new Error("Text fehlt.");
+    return must(await sb.from("email_knowledge").insert({ ...row, source: "manuell" }).select("id").single());
+  },
+  async delete_knowledge({ sb, body }) {
+    must(await sb.from("email_knowledge").delete().eq("id", String(body.id || "")));
     return { ok: true };
   },
 
@@ -320,14 +453,14 @@ const handlers: Record<string, Handler> = {
     const customerCats = ["anfrage_neu", "projekt_kommunikation", "layout_freigabe", "auftrag", "reklamation"];
     const { data: unanswered } = await sb.from("email_messages")
       .select("id, subject, from_name, from_addr, sent_at, category, email_threads!inner(answered)")
-      .eq("direction", "in").in("category", customerCats).eq("email_threads.answered", false).lt("sent_at", twoDays)
+      .eq("direction", "in").in("category", customerCats).eq("email_threads.answered", false).lt("sent_at", twoDays).is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(20);
     const { data: claims } = await sb.from("email_messages")
       .select("id, subject, from_name, from_addr, sent_at, email_threads!inner(answered)")
-      .eq("direction", "in").eq("category", "reklamation").eq("email_threads.answered", false)
+      .eq("direction", "in").eq("category", "reklamation").eq("email_threads.answered", false).is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(20);
     const { data: portal } = await sb.from("email_messages")
-      .select("id, subject, from_name, from_addr, sent_at, beleg_vendor").eq("beleg_state", "portal_offen")
+      .select("id, subject, from_name, from_addr, sent_at, beleg_vendor").eq("beleg_state", "portal_offen").is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(50);
     const lines: string[] = [];
     if (portal?.length) lines.push(`${portal.length} Rechnung(en) im Portal abzuholen.`);
@@ -370,6 +503,7 @@ const handlers: Record<string, Handler> = {
       excluded_steps: steps.excluded.length ? steps.excluded : cfg.excluded_steps ?? [],
       document_types: { ...(cfg.document_types ?? {}), ...docs.found },
       offer_document_type_id: docs.offerTypeId ?? cfg.offer_document_type_id,
+      confirmation_document_type_id: docs.confirmationTypeId ?? cfg.confirmation_document_type_id,
     };
     await setConfig(sb, "hero", next);
     return { hero: next, missing: steps.missing, docTypesFound: Object.keys(docs.found) };
@@ -385,6 +519,54 @@ const handlers: Record<string, Handler> = {
     const f = (data?.__type?.fields || []).find((x: any) => x.name === name);
     const services = await H.heroGraphql(key, "query { supply_services { id } }").then((d) => (d?.supply_services || []).length).catch(() => null);
     return { mutation: name, found: !!f, args: f?.args ?? null, supplyServices: services };
+  },
+
+  /** Live-Stand eines HERO-Dokuments fuer die Karte „versenden": Status, PDF, passende Mailvorlagen. Nur lesend. */
+  async document_info({ sb, body }) {
+    const key = await H.loadHeroKey(sb);
+    if (!key) throw new Error("HERO ist nicht aktiviert.");
+    const kind: H.DocumentKind = body.kind === "offer" ? "offer" : "confirmation";
+    const doc = await H.documentById(key, Number(body.documentId));
+    if (!doc) throw new Error("Dokument nicht gefunden (in HERO gelöscht?).");
+    const templates = await H.emailTemplates(key, H.DOCUMENT_MAIL_CONTEXT[kind]);
+    return {
+      id: doc.id, nr: doc.nr, statusCode: doc.statusCode, statusName: doc.statusName, value: doc.value, projectNr: doc.projectNr,
+      hasPdf: !!doc.fileUuid && doc.statusCode >= 100, sent: doc.statusCode === 200,
+      templates, suggestedTemplateId: H.pickTemplate(templates, body.formality === "du" ? "du" : body.formality === "sie" ? "sie" : null)?.id ?? null,
+    };
+  },
+
+  // ------------------------------------------------------------------ Referenzwissen (Skill-Dateien, HERO-Doku)
+  async list_reference_docs({ sb }) {
+    return must(await sb.from("email_reference_docs").select("id, title, content, tasks, active, created_at, updated_at").order("created_at"));
+  },
+  async save_reference_doc({ sb, body }) {
+    const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.title !== undefined) {
+      const t = String(body.title).trim();
+      if (t.length < 2 || t.length > 200) throw new Error("Titel: 2 bis 200 Zeichen.");
+      row.title = t;
+    }
+    if (body.content !== undefined) {
+      const c = String(body.content);
+      if (c.length > 60000) throw new Error("Höchstens 60.000 Zeichen je Dokument – bitte aufteilen.");
+      row.content = c;
+    }
+    if (body.tasks !== undefined) {
+      const allowed = ["prepare_offer", "prepare_confirmation", "understand", "draft"];
+      row.tasks = (Array.isArray(body.tasks) ? body.tasks : []).map(String).filter((t: string) => allowed.includes(t));
+    }
+    if (body.active !== undefined) row.active = !!body.active;
+    if (body.id) {
+      must(await sb.from("email_reference_docs").update(row).eq("id", String(body.id)));
+      return { id: body.id };
+    }
+    if (!row.title) throw new Error("Titel fehlt.");
+    return must(await sb.from("email_reference_docs").insert(row).select("id").single());
+  },
+  async delete_reference_doc({ sb, body }) {
+    must(await sb.from("email_reference_docs").delete().eq("id", String(body.id || "")));
+    return { ok: true };
   },
 
   // ------------------------------------------------------------------ Protokoll

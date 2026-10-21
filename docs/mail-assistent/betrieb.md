@@ -66,6 +66,67 @@ in `email_messages.plan`.
   **Voraussetzungen:** Lexware-Belegadresse eintragen, SMTP-Server im Postfach (`smtp.ionos.de`, Port 465 – 25/587 sind aus Supabase gesperrt,
   Benutzer/Passwort wie IMAP) und `info@slwerbung.de` bei Lexware als Absender hinterlegt. Beim ersten Mal mit einem Test-Beleg prüfen.
 
+## Korrigieren und Wissensdatei
+
+Ist ein Ergebnis falsch, schreibt man dem Assistenten in Freitext, was richtig wäre: Knopf „Falsch? Der KI sagen, was richtig ist“
+in der Mail-Ansicht bzw. „Falsch? Erklären“ an jedem Vorschlag (`email-api` Aktion `teach`). Dabei passiert:
+
+- Der Hinweis landet an der Mail (`email_messages.correction_note`), offene Vorschläge der Mail werden verworfen, die Mail läuft
+  sofort neu durch (die App ruft `email-process` für das Postfach auf; ist es gerade gesperrt, beim nächsten Cron-Lauf).
+- Beim erneuten Verstehen hat der Hinweis Vorrang – auch vor Absenderregeln (die Regel könnte der Grund für den Fehler sein).
+  Nennt der Hinweis eine Projektnummer („gehört zu WER-1820“), wird die Mail diesem Projekt **sicher** zugeordnet
+  (`match_method = manuell`, geht Thread und Betreff vor).
+- Auf Wunsch entsteht ein Eintrag in der **Wissensdatei** (`email_knowledge`, Einstellungen → Wissen): für den Absender, die ganze Domain
+  (nicht bei Freemail-Domains) oder alle Mails. Allgemeines Wissen steht im gecachten Systemteil des Prompts, Wissen zum Absender vor
+  der Mail (`_shared/email/knowledge.ts`, Grenzen: 40 allgemeine + 15 Absender-Einträge, 6000 Zeichen). Es wirkt beim Verstehen und bei
+  der Projektwahl; gibt es Absender-Wissen oder eine Korrektur, fragt die Projektwahl das Modell auch bei nur einem offenen Projekt.
+- Einträge lassen sich in den Einstellungen bearbeiten, ausschalten und löschen; dort kann man auch von Hand Wissen anlegen.
+  Feste „Absender → Kategorie“-Zuordnungen ohne KI bleiben Absenderregeln.
+
+## Bestellung → Projekt + Auftragsbestätigung → Versand
+
+Kommt eine Bestellung (Kategorie „Auftrag“ oder Signal „Angebot angenommen“), entsteht der Vorschlag **„Bestellung → Auftragsbestätigung“**
+(`create_confirmation`, Autopilot-Aktion „Bestellung → Projekt + Auftragsbestätigung vorbereiten“, nie automatisch):
+
+1. **Vorlage suchen** (nur lesend): Kunde über das zugeordnete Projekt oder die Absenderadresse; davon die neuesten abgeschlossenen ABs
+   (höchstens 3) und das Angebot im Projekt (höchstens 2), jeweils mit Positionen aus `published_customer_document_draft.data`.
+2. **KI wählt** (Aufgabe `prepare_confirmation`, liest das Referenzwissen): welche Positionen bestellt sind und in welcher Menge.
+   Namen, Artikelnummern, Einheiten und Preise kommen unverändert aus HERO. Was keiner Vorlage entspricht, steht als „Offen“ im Vorschlag.
+3. **Klick „(Projekt +) AB-Entwurf in HERO anlegen“**: ggf. Kontakt + Projekt; dann `create_document` (Typ Auftragsbestätigung, `publish: false`)
+   mit Aktionen – Artikel als `add_product_position` (Preis der Vorlage, Menge neu), Leistungen gleicher Menge per `add_positions_from_document`
+   (Kalkulation bleibt), Leistungen mit anderer Menge als `create_supply_service` mit festem Vorlagenpreis (Hinweis). Schritt nach Wahl
+   (Detailgespräch/Projektplanung, nur Whitelist), Logbuch-Eintrag mit Positionen und offenen Punkten.
+4. **In HERO prüfen und abschließen** (PDF erzeugen). Danach in der Mail-App die Karte **„Prüfen & versenden“** (`send_document`):
+   Status wird live gelesen; versendet wird nur ein abgeschlossenes Dokument (Status ≥ 100, PDF da) desselben Projekts, mit einer HERO-Vorlage
+   des passenden Kontexts (`CUSTOMER_DOCUMENT_CONFIRMATION`, PER DU/SIE nach Anrede) über HERO `send_mail` – Betreff und Text aus der Vorlage,
+   PDF als Anhang. Danach Status „Versendet“ und Logbuch. Ist das Dokument noch Entwurf, bleibt die Karte offen.
+
+Auch **Angebote** profitieren: „Angebot vorbereiten“ legt das Angebot jetzt mit den HERO-Leistungen und Mengen an (`add_existing_service`,
+Preise aus den Stammdaten) und schlägt danach ebenfalls „Prüfen & versenden“ vor.
+
+**Live noch zu prüfen** (aus der Entwicklungsumgebung nicht ohne echten Schreibzugriff möglich): erste AB anlegen und ansehen; ersten Versand
+an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorlage mit ersetzten Platzhaltern und PDF an?
+
+## Mail-Liste und Mail-Ansicht
+
+- **Filterleiste:** Ansichten als Reiter (inkl. **Papierkorb**), Suche und Filter als Pillen mit Ausklappmenü (Kategorie mit Anzahl,
+  Zeitraum mit Voreinstellungen oder eigenem Zeitraum, Postfach, Status, HERO, Richtung, Belege, Anhang).
+- **Mehrfachauswahl:** Häkchen je Mail bzw. „alle auf dieser Seite“; Sammelaktionen *Kategorie setzen* (wie einzeln korrigiert, mit Lernen),
+  *Neu verarbeiten*, **Löschen** = in den Papierkorb des Postfachs verschieben (`email-mailbox`, IMAP MOVE; offene Vorschläge werden verworfen).
+  Im Papierkorb: *Wiederherstellen* (zurück in den Posteingang). Endgültig gelöscht wird nie – das macht man in Thunderbird.
+  Voraussetzung: der Papierkorb-Ordner ist am Postfach bekannt („Ordner anlegen & speichern“).
+- **Mail-Ansicht:** die Mail als HTML aus dem Postfach (beim ersten Öffnen per IMAP geholt, danach zwischengespeichert), im abgeschotteten
+  Rahmen ohne Skripte; externe Bilder (Tracking) erst per Klick. Ist die Mail nicht mehr im Postfach, wird der gespeicherte Text gezeigt.
+  Hintergrundinfos (Antwortentwurf, Beleg, HERO-Zuordnung, Plan, Korrektur & Wissen, Erkannte Daten, Verlauf, Parallelvergleich,
+  KI-Aufrufe) sind eingeklappt; zugeklappt zeigt jede Zeile eine Kurzinfo. Der Browser merkt sich, welche Bereiche offen sind.
+
+## Referenzwissen
+
+Einstellungen → **Referenzwissen** (`email_reference_docs`): längere Dokumente (Skill-Dateien, HERO-Doku) je KI-Aufgabe – Angebote,
+Auftragsbestätigungen, Einsortieren, Antwortentwürfe. Startbestand: „HERO bei SL WERBUNG – Grundlagen“ (aktiv) und ein Platzhalter
+„Angebotserstellung (Skill hero-angebote)“ (aus, bis der Inhalt von `Angebot_SKILL.md` eingefügt ist). Höchstens 60.000 Zeichen je Dokument;
+pro Aufruf gelesen: 30.000 (Angebot/AB) bzw. 8.000 (Einsortieren/Entwürfe). Keine Kundendaten hineinschreiben.
+
 ## Autopilot-Stufen und Schattenmodus
 
 *Aus / Vorschlag / Automatisch* je Aktion und Postfach. „Automatisch“ gilt nur bei Konfidenz ≥ 0,7 oder sicherer Zuordnung

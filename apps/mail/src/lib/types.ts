@@ -22,6 +22,8 @@ export interface MessageRow {
   hero_logged_at: string | null;
   beleg_state: "weiterleiten_offen" | "weitergeleitet" | "portal_offen" | "portal_erledigt" | null;
   beleg_vendor: string | null;
+  correction_note: string | null;
+  trashed_at: string | null;
 }
 
 export interface Account {
@@ -74,4 +76,17 @@ export interface Provider { id: string; name: string; type: "cloudflare" | "anth
 export interface AiSetting {
   task: string; provider_id: string | null; model: string; fallback_provider_id: string | null; fallback_model: string | null;
   shadow_provider_id: string | null; shadow_model: string | null; on_limit: "ausweichen" | "warten"; daily_neuron_limit: number;
+}
+
+export interface KnowledgeRow {
+  id: string;
+  text: string;
+  /** null = gilt fuer alle Mails; sonst Adresse oder @domain */
+  from_pattern: string | null;
+  source: "manuell" | "korrektur";
+  message_id: string | null;
+  message_subject: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
 }

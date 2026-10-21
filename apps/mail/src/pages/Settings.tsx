@@ -2,12 +2,16 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import Accounts from "./settings/Accounts";
 import Rules from "./settings/Rules";
+import Knowledge from "./settings/Knowledge";
+import ReferenceDocs from "./settings/ReferenceDocs";
 import Company from "./settings/Company";
 import Ai from "./settings/Ai";
 import Log from "./settings/Log";
 
 const tabs = [
   { to: "postfaecher", label: "Postfächer" },
+  { to: "wissen", label: "Wissen" },
+  { to: "referenz", label: "Referenzwissen" },
   { to: "regeln", label: "Absenderregeln" },
   { to: "firma", label: "Firma & HERO" },
   { to: "ki", label: "KI" },
@@ -28,6 +32,8 @@ export default function Settings() {
       <Routes>
         <Route index element={<Navigate to="postfaecher" replace />} />
         <Route path="postfaecher" element={<Accounts />} />
+        <Route path="wissen" element={<Knowledge />} />
+        <Route path="referenz" element={<ReferenceDocs />} />
         <Route path="regeln" element={<Rules />} />
         <Route path="firma" element={<Company />} />
         <Route path="ki" element={<Ai />} />

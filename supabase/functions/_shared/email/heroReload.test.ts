@@ -29,8 +29,9 @@ describe("heroReload", () => {
     expect(r.missing).toContain("archiviert");
   });
   it("Dokumenttypen", () => {
-    const r = mapDocumentTypes([{ id: 171300, name: "Angebot" }, { id: 338164, name: "Plan / Layout" }, { id: 428979, name: "Druckdaten" }, { id: 279269, name: "Aufmaßdokument" }, { id: 1250455, name: "Lager-Etiketten" }]);
+    const r = mapDocumentTypes([{ id: 171300, name: "Angebot" }, { id: 171301, name: "Auftragsbestätigung" }, { id: 338164, name: "Plan / Layout" }, { id: 428979, name: "Druckdaten" }, { id: 279269, name: "Aufmaßdokument" }, { id: 1250455, name: "Lager-Etiketten" }]);
     expect(r.found).toEqual({ layouts: 338164, aufmasse: 279269, druckdaten: 428979 });
     expect(r.offerTypeId).toBe(171300);
+    expect(r.confirmationTypeId).toBe(171301);
   });
 });

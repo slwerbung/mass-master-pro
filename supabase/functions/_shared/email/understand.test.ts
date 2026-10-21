@@ -67,6 +67,19 @@ describe("understandPending", () => {
     expect(t.calls).toHaveLength(0);
   });
 
+  it("Korrektur eines Mitarbeiters: Modell statt Regel, Hinweis und Absender-Wissen stehen im Prompt", async () => {
+    let body = "";
+    const t = setup([pm({ from_addr: "ci@vercel.com", correction_note: "Das ist eine Kundenanfrage, keine Systemmail." })], [cfOk()]);
+    t.llm.fetchImpl = (async (_u: string, init: any) => { body = String(init.body); return cfOk()(); }) as any;
+    const ctx = { ...t.ctx, knowledge: [{ text: "Vercel-Mails von ci@ sind manchmal Kunden.", from_pattern: "ci@vercel.com" }, { text: "Allgemein.", from_pattern: null }] };
+    await understandPending("A", t.store, ctx, t.llm);
+    expect(t.saved.M1).toMatchObject({ category: "anfrage_neu" });
+    expect((t.saved.M1.extracted as any)._meta.source).toBe("ki");
+    expect(body).toContain("Das ist eine Kundenanfrage");
+    expect(body).toContain("manchmal Kunden");
+    expect(body).toContain("Allgemein.");
+  });
+
   it("ausgehende Mails werden nicht klassifiziert", async () => {
     const t = setup([pm({ direction: "out" })], [() => { throw new Error("nein"); }]);
     await understandPending("A", t.store, t.ctx, t.llm);

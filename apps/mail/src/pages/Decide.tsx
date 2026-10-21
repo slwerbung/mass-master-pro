@@ -1,63 +1,16 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api, invokeFn } from "@/lib/api";
+import { api } from "@/lib/api";
 import type { Suggestion } from "@/lib/suggestions";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
-import { CategoryChip } from "@/components/CategoryChip";
 import { ProjectSearch } from "@/components/ProjectSearch";
-import { errorText, formatDateTime, pct } from "@/lib/utils";
-
-const TYPE_LABEL: Record<string, string> = {
-  create_project: "Kontakt + Projekt anlegen", link_project: "Projekt zuordnen", log_entry: "Ins Logbuch schreiben",
-  change_step: "Statuswechsel", upload_attachments: "Anhänge ans Projekt", prepare_offer: "Angebot vorbereiten",
-};
+import { ConfirmationCard, SendDocumentCard } from "@/components/OrderCards";
+import { Buttons, Header, useDecide } from "@/components/SuggestionParts";
+import { formatDateTime } from "@/lib/utils";
 
 interface Gewerk { short: string; name: string; measure_id: number | null }
-
-function useDecide(s: Suggestion) {
-  const qc = useQueryClient();
-  const done = () => { qc.invalidateQueries({ queryKey: ["suggestions"] }); qc.invalidateQueries({ queryKey: ["overview"] }); qc.invalidateQueries({ queryKey: ["messages"] }); };
-  const decide = useMutation({
-    mutationFn: ({ decision, edits }: { decision: "accept" | "reject"; edits?: Record<string, unknown> }) =>
-      invokeFn<{ warnings?: string[]; projectNr?: string }>("email-action", { action: "decide", suggestionId: s.id, decision, edits }),
-    onSuccess: (r, v) => {
-      if (v.decision === "reject") toast("Abgelehnt – der Assistent merkt es sich.");
-      else toast.success(r.projectNr ? `Angelegt: ${r.projectNr}` : "Erledigt");
-      r.warnings?.forEach((w) => toast.warning(w));
-      done();
-    },
-    onError: (e) => { toast.error(errorText(e)); done(); },
-  });
-  return decide;
-}
-
-function Header({ s }: { s: Suggestion }) {
-  const m = s.message;
-  return (
-    <CardHeader>
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge>{TYPE_LABEL[s.type] ?? s.type}</Badge>
-        <CategoryChip category={m.category} />
-        {m.confidence != null && <span className="text-xs text-muted-foreground">Konfidenz {pct(m.confidence)}</span>}
-        <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(m.sent_at)}</span>
-      </div>
-      <CardTitle className="pt-1"><Link className="hover:underline" to={`/mails/${m.id}`}>{m.subject || "(ohne Betreff)"}</Link></CardTitle>
-      <p className="text-xs text-muted-foreground">{m.direction === "out" ? "an" : "von"} {m.from_name || m.from_addr}</p>
-      {m.summary && <p className="text-sm">{m.summary}</p>}
-    </CardHeader>
-  );
-}
-
-function Buttons({ onAccept, onReject, acceptLabel, busy, disabled }: { onAccept: () => void; onReject: () => void; acceptLabel: string; busy: boolean; disabled?: boolean }) {
-  return (
-    <div className="flex gap-2">
-      <Button onClick={onAccept} disabled={busy || disabled}>{busy ? <Spinner /> : null} {acceptLabel}</Button>
-      <Button variant="outline" onClick={onReject} disabled={busy}>Ablehnen</Button>
-    </div>
-  );
-}
 
 function LinkCard({ s }: { s: Suggestion }) {
   const decide = useDecide(s);
@@ -83,7 +36,7 @@ function LinkCard({ s }: { s: Suggestion }) {
         <Button variant="ghost" size="sm" onClick={() => setShowSearch(!showSearch)}>{showSearch ? "Suche ausblenden" : "Anderes Projekt suchen"}</Button>
         {showSearch && <ProjectSearch selectedId={projectId} onPick={(p) => { setProjectId(p.id); toast(`Gewählt: ${p.nr}`); }} />}
         <Field label="Logbuch-Eintrag"><Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} /></Field>
-        <Buttons busy={decide.isPending} disabled={!projectId} acceptLabel="Zuordnen & ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { projectId, text } })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} disabled={!projectId} acceptLabel="Zuordnen & ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { projectId, text } })} onReject={() => decide.mutate({ decision: "reject" })} />
       </CardContent>
     </Card>
   );
@@ -98,7 +51,7 @@ function LogCard({ s }: { s: Suggestion }) {
       <CardContent className="space-y-3">
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>{s.payload.projectName ? ` · ${s.payload.projectName}` : ""}</p>
         <Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} />
-        <Buttons busy={decide.isPending} acceptLabel="Ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { text } })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} acceptLabel="Ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { text } })} onReject={() => decide.mutate({ decision: "reject" })} />
       </CardContent>
     </Card>
   );
@@ -120,7 +73,7 @@ function StepCard({ s }: { s: Suggestion }) {
           </Select>
         </Field>
         {s.payload.hint && <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-900">Hinweis: {s.payload.hint}</p>}
-        <Buttons busy={decide.isPending} acceptLabel="Status wechseln" onAccept={() => decide.mutate({ decision: "accept", edits: { toStepId: stepId } })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} acceptLabel="Status wechseln" onAccept={() => decide.mutate({ decision: "accept", edits: { toStepId: stepId } })} onReject={() => decide.mutate({ decision: "reject" })} />
       </CardContent>
     </Card>
   );
@@ -149,7 +102,7 @@ function UploadCard({ s }: { s: Suggestion }) {
             </Select>
           </div>
         ))}
-        <Buttons busy={decide.isPending} disabled={!items.some((i) => i.selected)} acceptLabel="Hochladen" onAccept={() => decide.mutate({ decision: "accept", edits: { items } })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} disabled={!items.some((i) => i.selected)} acceptLabel="Hochladen" onAccept={() => decide.mutate({ decision: "accept", edits: { items } })} onReject={() => decide.mutate({ decision: "reject" })} />
       </CardContent>
     </Card>
   );
@@ -185,7 +138,7 @@ function OfferCard({ s }: { s: Suggestion }) {
             <p className="text-xs text-muted-foreground">HERO kann Positionen nicht per Schnittstelle einfügen: die Liste kommt ins Logbuch, du übernimmst sie im Angebot und prüfst die Preise.</p>
           </div>
         )}
-        <Buttons busy={decide.isPending} acceptLabel={kind === "angebot" ? "Angebot vorbereiten" : "Vor-Ort-Termin anstoßen"} onAccept={() => decide.mutate({ decision: "accept", edits: { kind, positions } })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} acceptLabel={kind === "angebot" ? "Angebot vorbereiten" : "Vor-Ort-Termin anstoßen"} onAccept={() => decide.mutate({ decision: "accept", edits: { kind, positions } })} onReject={() => decide.mutate({ decision: "reject" })} />
       </CardContent>
     </Card>
   );
@@ -227,7 +180,7 @@ function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
           </div>
         )}
         <Buttons
-          busy={decide.isPending} acceptLabel="In HERO anlegen"
+          s={s} busy={decide.isPending} acceptLabel="In HERO anlegen"
           onAccept={() => decide.mutate({ decision: "accept", edits: { contact: c, project: { name, notes, gewerk: gewerke.find((g) => g.short === gw) ?? null } } })}
           onReject={() => decide.mutate({ decision: "reject" })}
         />
@@ -286,6 +239,8 @@ export default function Decide() {
             case "create_project": return <ProjectCard key={s.id} s={s} gewerke={gewerke} />;
             case "upload_attachments": return <UploadCard key={s.id} s={s} />;
             case "prepare_offer": return <OfferCard key={s.id} s={s} />;
+            case "create_confirmation": return <ConfirmationCard key={s.id} s={s} />;
+            case "send_document": return <SendDocumentCard key={s.id} s={s} />;
             default: return <GenericCard key={s.id} s={s} />;
           }
         })}
@@ -301,7 +256,7 @@ function GenericCard({ s }: { s: Suggestion }) {
       <Header s={s} />
       <CardContent className="space-y-3">
         <pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-xs">{JSON.stringify(s.payload, null, 2)}</pre>
-        <Buttons busy={decide.isPending} acceptLabel="Annehmen" onAccept={() => decide.mutate({ decision: "accept" })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} acceptLabel="Annehmen" onAccept={() => decide.mutate({ decision: "accept" })} onReject={() => decide.mutate({ decision: "reject" })} />
       </CardContent>
     </Card>
   );
