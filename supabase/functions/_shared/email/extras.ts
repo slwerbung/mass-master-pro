@@ -6,6 +6,7 @@ import { buildUploadItems, type DocTypes } from "./attachments.ts";
 import { generateDraft, shouldDraft, LimitWaitError, type DraftDeps, type DraftMsg } from "./draft.ts";
 import { BudgetExceededError } from "./llm.ts";
 import { shouldPrepareOffer } from "./offer.ts";
+import { shouldPrepareConfirmation } from "./confirmation.ts";
 
 export interface ExtraConfig {
   docTypes: DocTypes;
@@ -15,6 +16,8 @@ export interface ExtraConfig {
   /** Lexware-Belegadresse gesetzt? Dann werden Belege automatisch weitergeleitet. */
   forward?: { address: string; run(messageId: string, mode: "send" | "draft"): Promise<{ files: number; how: "gesendet" | "entwurf"; fallbackReason?: string }> } | null;
   offer?: { suggest(messageId: string, projectId: number, projectNr: string | null): Promise<unknown> } | null;
+  /** Bestellung -> Projekt + AB vorbereiten (null = HERO/KI nicht verfuegbar). */
+  confirmation?: { suggest(messageId: string): Promise<unknown> } | null;
 }
 
 function toDraftMsg(m: ActMessage): DraftMsg & { draft_uid: number | null } {
@@ -97,6 +100,23 @@ export function buildExtra(cfg: ExtraConfig): NonNullable<ActContext["extra"]> {
         } catch (e) {
           const msg = e instanceof BudgetExceededError ? "KI-Monatsbudget erreicht" : String((e as Error).message).slice(0, 120);
           plan.push({ action: "prepare_offer", decision: "skip", done: false, detail: `Angebotsvorbereitung nicht möglich: ${msg}` });
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------- Bestellung -> Projekt + AB
+    if (cfg.confirmation && shouldPrepareConfirmation(m)) {
+      const d = decide("create_confirmation", { autopilot: ctx.autopilot, shadowMode: ctx.shadowMode, confidence: m.confidence, certain });
+      if (d === "shadow") {
+        plan.push({ action: "create_confirmation", decision: d, done: false, detail: "Würde Projekt + Auftragsbestätigung vorschlagen" });
+      } else if (d !== "skip") {
+        // Neue Dokumente in HERO entstehen nur per Klick – auch bei „Automatisch" bleibt es ein Vorschlag.
+        try {
+          const r = await cfg.confirmation.suggest(m.id);
+          plan.push({ action: "create_confirmation", decision: "suggest", done: !!r, detail: r ? "Vorschlag: Projekt + Auftragsbestätigung" : "Kein Vorschlag (schon offen oder nicht nötig)" });
+        } catch (e) {
+          const msg = e instanceof BudgetExceededError ? "KI-Monatsbudget erreicht" : String((e as Error).message).slice(0, 120);
+          plan.push({ action: "create_confirmation", decision: "skip", done: false, detail: `AB-Vorbereitung nicht möglich: ${msg}` });
         }
       }
     }

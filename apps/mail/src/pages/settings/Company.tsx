@@ -10,7 +10,7 @@ import { errorText } from "@/lib/utils";
 interface Gewerk { short: string; name: string; measure_id: number | null; default: boolean; keywords?: string[]; services?: string[] }
 interface Hero {
   project_type_id: number; start_step_id: number; steps: Record<string, number>; excluded_steps: number[];
-  offer_document_type_id: number; document_types: Record<string, number>;
+  offer_document_type_id: number; confirmation_document_type_id?: number; document_types: Record<string, number>;
 }
 interface Config {
   folders: Partial<FolderNames> | null; gewerke: Gewerk[] | null; hero: Hero | null; company_knowledge: string | null;
@@ -125,6 +125,7 @@ export default function Company() {
             <Field label="Projekttyp (PROJEKT)"><Input type="number" value={hero.project_type_id} onChange={(e) => set("hero", { ...hero, project_type_id: num(e.target.value) })} /></Field>
             <Field label="Startschritt (📬 Anfragen)"><Input type="number" value={hero.start_step_id} onChange={(e) => set("hero", { ...hero, start_step_id: num(e.target.value) })} /></Field>
             <Field label="Dokumenttyp Angebot"><Input type="number" value={hero.offer_document_type_id} onChange={(e) => set("hero", { ...hero, offer_document_type_id: num(e.target.value) })} /></Field>
+            <Field label="Dokumenttyp Auftragsbestätigung"><Input type="number" value={hero.confirmation_document_type_id ?? ""} onChange={(e) => set("hero", { ...hero, confirmation_document_type_id: num(e.target.value) })} /></Field>
           </div>
           <h4 className="text-sm font-medium">Pipeline-Schritte für Vorschläge</h4>
           <div className="grid gap-3 sm:grid-cols-4">

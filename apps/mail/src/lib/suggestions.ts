@@ -10,7 +10,7 @@ export interface SuggestionMessage {
 
 export interface Suggestion {
   id: string;
-  type: "create_project" | "link_project" | "log_entry" | "change_step" | "upload_attachments" | "prepare_offer";
+  type: "create_project" | "link_project" | "log_entry" | "change_step" | "upload_attachments" | "prepare_offer" | "create_confirmation" | "send_document";
   // Der Inhalt ist je nach Art verschieden und wird in der Karte ausgelesen.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   payload: any;

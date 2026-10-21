@@ -2,6 +2,7 @@
 
 import { normalizeAutopilot } from "./autopilot.ts";
 import { listServices } from "./hero.ts";
+import { loadReference } from "./store.ts";
 import type { LlmDeps } from "./llm.ts";
 import { prepareOfferSuggestion, shouldPrepareOffer, type OfferPayload } from "./offer.ts";
 
@@ -19,6 +20,7 @@ export function offerSuggester(sb: any, llm: LlmDeps, heroKey: string) {
         llm,
         services: async () => (cache ??= await listServices(heroKey)),
         loadMessage: async () => m,
+        reference: () => loadReference(sb, "prepare_offer"),
         createSuggestion: async (id, type, payload) => {
           const { error } = await sb.from("email_suggestions").insert({ message_id: id, type, payload });
           if (error) {

@@ -13,7 +13,7 @@ function row(o: Partial<SuggestionRow> & { payload?: any } = {}): SuggestionRow 
 }
 
 function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; open?: number; claim?: boolean; offerFail?: boolean } = {}) {
-  const log: any = { offers: [], offerSuggest: [], uploaded: [], upsug: [], docs: [], claimed: [], finished: [], assigned: [], logged: [], feedback: [], status: [], logbook: [], steps: [], contacts: [], projects: [], dropped: [] };
+  const log: any = { suggestions: [], released: [], sent: [], marked: [], offers: [], offerSuggest: [], uploaded: [], upsug: [], docs: [], claimed: [], finished: [], assigned: [], logged: [], feedback: [], status: [], logbook: [], steps: [], contacts: [], projects: [], dropped: [] };
   const store: ActionStore = {
     getSuggestion: async () => s,
     claim: async (id) => (log.claimed.push(id), o.claim !== false),
@@ -27,6 +27,8 @@ function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; 
     attachmentFiles: async (_m, ids) => ids.map((id) => ({ id, filename: `${id}.pdf`, mime: "application/pdf", storage_path: `p/${id}` })),
     markUploaded: async (id, up) => { log.uploaded.push([id, up]); },
     suggestUploads: async (m, p, nr) => { log.upsug.push([m, p, nr]); },
+    createSuggestion: async (m, type, payload) => { log.suggestions.push([m, type, payload]); },
+    release: async (id) => { log.released.push(id); },
   };
   const hero: ActionHero | null = o.hero === null ? null : {
     addLogbook: async (id, t) => { log.logbook.push([id, t]); },
@@ -35,11 +37,15 @@ function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; 
     createContact: async (c, src) => (log.contacts.push([c, src]), 900),
     contactsByEmail: async () => [{ id: 900, customerId: 901, name: "Max", email: "kunde@x.de", isContactPerson: true }],
     createProject: async (p) => (log.projects.push(p), { id: 555, nr: "WER-555" }),
-    createOffer: async (pid, dt) => { if (o.offerFail) throw new Error("create_document passt nicht"); log.offers.push([pid, dt]); return { id: 88 }; },
+    createDocument: async (pid, dt, actions) => { if (o.offerFail) throw new Error("create_document passt nicht"); log.offers.push([pid, dt, actions]); return { id: 88, nr: null }; },
+    documentById: async (id) => ({ id, nr: "AB-1", date: null, statusCode: 100, statusName: "Erstellt", value: 10, projectId: 5, projectNr: "WER-5", baseType: "confirmation", fileUuid: "uuid-1", draft: null }),
+    emailTemplates: async () => [{ id: 5187, name: "Auftragsbestätigung verschicken (PER SIE)" }, { id: 5188, name: "Auftragsbestätigung verschicken (PER DU)" }],
+    sendDocumentMail: async (m) => { log.sent.push(m); },
+    setDocumentSent: async (id) => { log.marked.push(id); },
     uploadDocument: async (pid, f, dt) => { log.docs.push([pid, f.filename, dt]); if (f.filename === "bad.pdf") throw new Error("HERO 422"); return { uploadId: `u-${f.filename}` }; },
     ...(o.hero ?? {}),
   };
-  const deps: ActionDeps = { hero, store, files: { download: async () => new Uint8Array([1]) }, offers: { suggest: async (m, p, nr) => { log.offerSuggest.push([m, p, nr]); } }, config: { stepIds: [10, 11, 13], documentTypeIds: [100, 200], steps: { angebot: 266511, vor_ort: 266510 }, offerTypeId: 171300, projectTypeId: 181, startStepId: 2825, gewerke: [{ short: "WER", name: "W", measure_id: 6619, default: true }] } };
+  const deps: ActionDeps = { hero, store, files: { download: async () => new Uint8Array([1]) }, offers: { suggest: async (m, p, nr) => { log.offerSuggest.push([m, p, nr]); } }, config: { stepIds: [10, 11, 13], documentTypeIds: [100, 200], steps: { angebot: 266511, vor_ort: 266510 }, offerTypeId: 171300, confirmationTypeId: 171301, projectTypeId: 181, startStepId: 2825, gewerke: [{ short: "WER", name: "W", measure_id: 6619, default: true }] } };
   return { deps, log };
 }
 
@@ -239,7 +245,9 @@ describe("prepare_offer", () => {
     expect(r).toMatchObject({ status: "angenommen", kind: "angebot", stepId: 266511, documentId: 88 });
     expect(t.log.logbook[0][1]).toContain("📄 Angebotsvorbereitung");
     expect(t.log.steps).toEqual([[5, 266511]]);
-    expect(t.log.offers).toEqual([[5, 171300]]);
+    // Positionen mit HERO-Leistung und Menge stehen direkt im Angebot (Entwurf); danach „Angebot versenden".
+    expect(t.log.offers).toEqual([[5, 171300, [{ add_existing_service: { supplyServiceId: 11, quantity: 1 } }]]]);
+    expect(t.log.suggestions).toEqual([["M1", "send_document", expect.objectContaining({ kind: "offer", documentId: 88, projectId: 5, recipient: "kunde@x.de" })]]);
   });
   it("Vor-Ort-Termin: kein Dokument, Schritt Vor-Ort-Termin, Logbuch nennt das Fehlende", async () => {
     const t = setup(s("vor_ort"));
@@ -272,5 +280,113 @@ describe("prepare_offer", () => {
     const t = setup(row());
     await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
     expect(t.log.offerSuggest).toEqual([["M1", 5, "WER-5"]]);
+  });
+});
+
+describe("create_confirmation (Bestellung -> Projekt + AB)", () => {
+  const P = (o: any = {}) => ({
+    sourceDocId: 21, sourceDocNr: "AB-2620107", uid: "u1", type: "product", name: "Aufkleber lockEX", description: "", nr: "211.7", unit: "Stk",
+    quantity: 1000, sourceQuantity: 500, netPrice: 0.33, vat: 19, note: null, include: true, ...o,
+  });
+  const payload = (o: any = {}) => ({
+    projectId: 5, projectNr: "WER-5", contact: null, project: { name: "Nachbestellung", gewerk: null }, summary: "1000 Aufkleber",
+    sources: [{ id: 21, nr: "AB-2620107", kind: "ab", date: null, projectNr: "WER-4" }],
+    positions: [P(), P({ uid: "u2", type: "service", name: "Druckdaten", quantity: 1, sourceQuantity: 1, netPrice: 82 })],
+    openPoints: ["Sonderfarbe RAL 3020"], formality: "du", recipient: "kunde@x.de", toStepId: 11, ...o,
+  });
+  const s = (p: any) => row({ type: "create_confirmation", payload: p });
+
+  it("legt die AB als Entwurf mit den Positionen der Vorlage an, setzt den Schritt, schreibt ins Logbuch und schlaegt den Versand vor", async () => {
+    const t = setup(s(payload()));
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(r).toMatchObject({ status: "angenommen", projectId: 5, documentId: 88, positions: 2 });
+    const [pid, type, actions] = t.log.offers[0];
+    expect([pid, type]).toEqual([5, 171301]);
+    expect(actions).toEqual([
+      { add_product_position: { name: "Aufkleber lockEX", description: null, nr: "211.7", unit_type: "Stk", quantity: 1000, net_price: 0.33, vat_percent: 19 } },
+      { add_positions_from_document: { documentId: 21, selectedPositions: ["u2"], flowType: "copy" } },
+    ]);
+    expect(t.log.steps).toEqual([[5, 11]]);
+    expect(t.log.logbook.some(([, x]: any) => /Auftragsbestätigung.*Entwurf/.test(x) && /Sonderfarbe/.test(x))).toBe(true);
+    expect(t.log.suggestions).toEqual([["M1", "send_document", expect.objectContaining({ kind: "confirmation", documentId: 88, formality: "du", recipient: "kunde@x.de" })]]);
+  });
+
+  it("aus der Mail-App gelten nur Auswahl und Menge – Namen und Preise kommen aus dem gespeicherten Vorschlag", async () => {
+    const t = setup(s(payload()));
+    await decideSuggestion({
+      suggestionId: "S1", decision: "accept",
+      edits: { positions: [{ ...P(), quantity: 200, netPrice: 0.01, name: "billig" }, { ...P({ uid: "u2" }), include: false }] },
+    }, t.deps);
+    expect(t.log.offers[0][2]).toEqual([
+      { add_product_position: expect.objectContaining({ name: "Aufkleber lockEX", quantity: 200, net_price: 0.33 }) },
+    ]);
+  });
+
+  it("Leistung mit anderer Menge: feste Leistung zum Preis der Vorlage plus Hinweis", async () => {
+    const t = setup(s(payload({ positions: [P({ type: "service", quantity: 3, sourceQuantity: 1, netPrice: 82, name: "Montage" })] })));
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(t.log.offers[0][2][0].create_supply_service).toMatchObject({ name: "Montage", quantity: 3, net_price_per_unit: 82, is_fixed_net_price: true });
+    expect(r.warnings[0]).toMatch(/Menge 3 statt 1/);
+  });
+
+  it("ohne Projekt: Kontakt + Projekt anlegen, dann die AB daran", async () => {
+    const t = setup(s(payload({ projectId: null, projectNr: null, contact: { last_name: "Muster", email: "kunde@x.de" } })));
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(t.log.projects[0]).toMatchObject({ name: "Nachbestellung" });
+    expect(r).toMatchObject({ projectId: 555, documentId: 88 });
+    expect(t.log.offers[0][0]).toBe(555);
+  });
+
+  it("Schritt nur aus der Whitelist; ohne AB-Dokumenttyp keine Ausfuehrung", async () => {
+    const t = setup(s(payload({ toStepId: 999 })));
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(t.log.steps).toEqual([]);
+    expect(r.warnings.join(" ")).toMatch(/nicht als Ziel freigegeben/);
+    const t2 = setup(s(payload()));
+    t2.deps.config.confirmationTypeId = null;
+    await expect(decideSuggestion({ suggestionId: "S1", decision: "accept" }, t2.deps)).rejects.toThrow(/Auftragsbestätigung/);
+    expect(t2.log.offers).toEqual([]);
+  });
+});
+
+describe("send_document (Versand ueber HERO)", () => {
+  const s = (o: any = {}) => row({ type: "send_document", payload: { kind: "confirmation", documentId: 88, documentNr: null, projectId: 5, projectNr: "WER-5", recipient: "kunde@x.de", formality: "du", ...o } });
+  const doc = (o: any = {}) => async (id: number) => ({ id, nr: "AB-9", date: null, statusCode: 100, statusName: "Erstellt", value: 1, projectId: 5, projectNr: "WER-5", baseType: "confirmation", fileUuid: "uuid-1", draft: null, ...o });
+
+  it("versendet das abgeschlossene Dokument mit Vorlage und PDF, setzt den Status, schreibt ins Logbuch", async () => {
+    const t = setup(s(), { hero: { documentById: doc() } });
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept", edits: { templateId: 5188 } }, t.deps);
+    expect(r).toMatchObject({ status: "angenommen", sent: true, documentNr: "AB-9", recipient: "kunde@x.de" });
+    expect(t.log.sent).toEqual([{ kind: "confirmation", documentId: 88, recipient: "kunde@x.de", templateId: 5188, fileUuid: "uuid-1" }]);
+    expect(t.log.marked).toEqual([88]);
+    expect(t.log.logbook[0][1]).toMatch(/AB-9 an kunde@x.de versendet/);
+  });
+
+  it("Entwurf ohne PDF: nichts wird gesendet, der Vorschlag bleibt offen", async () => {
+    const t = setup(s(), { hero: { documentById: doc({ statusCode: 0, fileUuid: null }) } });
+    await expect(decideSuggestion({ suggestionId: "S1", decision: "accept", edits: { templateId: 5188 } }, t.deps)).rejects.toThrow(/Entwurf ohne PDF/);
+    expect(t.log.sent).toEqual([]);
+    expect(t.log.released).toEqual(["S1"]);
+    expect(t.log.finished).toEqual([]);
+  });
+
+  it("schon versendet: kein zweiter Versand", async () => {
+    const t = setup(s(), { hero: { documentById: doc({ statusCode: 200 }) } });
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept", edits: { templateId: 5188 } }, t.deps);
+    expect(r.alreadySent).toBe(true);
+    expect(t.log.sent).toEqual([]);
+  });
+
+  it("prueft Empfaenger, Vorlage, Dokument und Projekt – Dokument-ID nie aus dem Client", async () => {
+    const bad = async (edits: any, hero: any = {}, msg: RegExp) => {
+      const t = setup(s(), { hero });
+      await expect(decideSuggestion({ suggestionId: "S1", decision: "accept", edits }, t.deps)).rejects.toThrow(msg);
+      expect(t.log.sent).toEqual([]);
+    };
+    await bad({ templateId: 5188, recipient: "kein-mail" }, {}, /gültige Empfänger/);
+    await bad({ templateId: 1 }, {}, /Mailvorlage/);
+    await bad({ templateId: 5188, documentId: 99 }, {}, /passt nicht/);
+    await bad({ templateId: 5188 }, { documentById: doc({ projectId: 6 }) }, /anderen Projekt/);
+    await bad({ templateId: 5188 }, { documentById: doc({ baseType: "invoice" }) }, /keine Auftragsbestätigung/);
   });
 });

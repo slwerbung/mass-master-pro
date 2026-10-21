@@ -100,6 +100,19 @@ export async function loadExamples(sb: any, n = 20): Promise<FeedbackExample[]> 
   return (data || []).map((r: any) => ({ field: r.field, old_value: r.old_value, new_value: r.new_value, from: r.from_addr ?? undefined }));
 }
 
+/** Referenzwissen (Skill-Dateien, HERO-Doku) fuer eine KI-Aufgabe, gekappt auf `max` Zeichen. */
+export async function loadReference(sb: any, task: string, max = 30000): Promise<string> {
+  const { data } = await sb.from("email_reference_docs").select("title, content").eq("active", true).contains("tasks", [task])
+    .order("created_at", { ascending: true });
+  let out = "";
+  for (const d of data || []) {
+    const block = `## ${d.title}\n${String(d.content || "").trim()}\n\n`;
+    if (out.length + block.length > max) { out += block.slice(0, Math.max(0, max - out.length)); break; }
+    out += block;
+  }
+  return out.trim();
+}
+
 /** Aktive Eintraege der Wissensdatei, neueste zuerst (knowledge.ts begrenzt, was in den Prompt kommt). */
 export async function loadKnowledge(sb: any): Promise<KnowledgeEntry[]> {
   const { data } = await sb.from("email_knowledge").select("id, text, from_pattern").eq("active", true)
@@ -258,6 +271,13 @@ export function actionStore(sb: any): ActionStore {
     },
     async dropContactCache(email) {
       await sb.from("hero_contact_cache").delete().eq("email", email.toLowerCase());
+    },
+    async createSuggestion(messageId, type, payload) {
+      const { error } = await sb.from("email_suggestions").insert({ message_id: messageId, type, payload });
+      if (error && String(error.code) !== "23505") throw new Error(error.message); // 23505: gibt es schon offen
+    },
+    async release(id) {
+      must(await sb.from("email_suggestions").update({ status: "offen", decided_at: null }).eq("id", id));
     },
   };
 }

@@ -83,6 +83,37 @@ in der Mail-Ansicht bzw. „Falsch? Erklären“ an jedem Vorschlag (`email-api`
 - Einträge lassen sich in den Einstellungen bearbeiten, ausschalten und löschen; dort kann man auch von Hand Wissen anlegen.
   Feste „Absender → Kategorie“-Zuordnungen ohne KI bleiben Absenderregeln.
 
+## Bestellung → Projekt + Auftragsbestätigung → Versand
+
+Kommt eine Bestellung (Kategorie „Auftrag“ oder Signal „Angebot angenommen“), entsteht der Vorschlag **„Bestellung → Auftragsbestätigung“**
+(`create_confirmation`, Autopilot-Aktion „Bestellung → Projekt + Auftragsbestätigung vorbereiten“, nie automatisch):
+
+1. **Vorlage suchen** (nur lesend): Kunde über das zugeordnete Projekt oder die Absenderadresse; davon die neuesten abgeschlossenen ABs
+   (höchstens 3) und das Angebot im Projekt (höchstens 2), jeweils mit Positionen aus `published_customer_document_draft.data`.
+2. **KI wählt** (Aufgabe `prepare_confirmation`, liest das Referenzwissen): welche Positionen bestellt sind und in welcher Menge.
+   Namen, Artikelnummern, Einheiten und Preise kommen unverändert aus HERO. Was keiner Vorlage entspricht, steht als „Offen“ im Vorschlag.
+3. **Klick „(Projekt +) AB-Entwurf in HERO anlegen“**: ggf. Kontakt + Projekt; dann `create_document` (Typ Auftragsbestätigung, `publish: false`)
+   mit Aktionen – Artikel als `add_product_position` (Preis der Vorlage, Menge neu), Leistungen gleicher Menge per `add_positions_from_document`
+   (Kalkulation bleibt), Leistungen mit anderer Menge als `create_supply_service` mit festem Vorlagenpreis (Hinweis). Schritt nach Wahl
+   (Detailgespräch/Projektplanung, nur Whitelist), Logbuch-Eintrag mit Positionen und offenen Punkten.
+4. **In HERO prüfen und abschließen** (PDF erzeugen). Danach in der Mail-App die Karte **„Prüfen & versenden“** (`send_document`):
+   Status wird live gelesen; versendet wird nur ein abgeschlossenes Dokument (Status ≥ 100, PDF da) desselben Projekts, mit einer HERO-Vorlage
+   des passenden Kontexts (`CUSTOMER_DOCUMENT_CONFIRMATION`, PER DU/SIE nach Anrede) über HERO `send_mail` – Betreff und Text aus der Vorlage,
+   PDF als Anhang. Danach Status „Versendet“ und Logbuch. Ist das Dokument noch Entwurf, bleibt die Karte offen.
+
+Auch **Angebote** profitieren: „Angebot vorbereiten“ legt das Angebot jetzt mit den HERO-Leistungen und Mengen an (`add_existing_service`,
+Preise aus den Stammdaten) und schlägt danach ebenfalls „Prüfen & versenden“ vor.
+
+**Live noch zu prüfen** (aus der Entwicklungsumgebung nicht ohne echten Schreibzugriff möglich): erste AB anlegen und ansehen; ersten Versand
+an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorlage mit ersetzten Platzhaltern und PDF an?
+
+## Referenzwissen
+
+Einstellungen → **Referenzwissen** (`email_reference_docs`): längere Dokumente (Skill-Dateien, HERO-Doku) je KI-Aufgabe – Angebote,
+Auftragsbestätigungen, Einsortieren, Antwortentwürfe. Startbestand: „HERO bei SL WERBUNG – Grundlagen“ (aktiv) und ein Platzhalter
+„Angebotserstellung (Skill hero-angebote)“ (aus, bis der Inhalt von `Angebot_SKILL.md` eingefügt ist). Höchstens 60.000 Zeichen je Dokument;
+pro Aufruf gelesen: 30.000 (Angebot/AB) bzw. 8.000 (Einsortieren/Entwürfe). Keine Kundendaten hineinschreiben.
+
 ## Autopilot-Stufen und Schattenmodus
 
 *Aus / Vorschlag / Automatisch* je Aktion und Postfach. „Automatisch“ gilt nur bei Konfidenz ≥ 0,7 oder sicherer Zuordnung

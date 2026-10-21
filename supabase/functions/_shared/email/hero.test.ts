@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addLogbookEntry, buildDocumentInput, contactsByEmail, createContact, createEmptyDocument, createProject, heroGraphql,
+  addLogbookEntry, contactsByEmail, createContact, createDocument, createEmptyDocument, documentsOfProjects, pickTemplate, sendDocumentMail, createProject, heroGraphql,
   listServices, openProjectsOfCustomer, projectByNumber, setStep, toProject,
 } from "./hero.ts";
 
@@ -106,29 +106,36 @@ describe("Schreiben", () => {
   });
 });
 
-describe("create_document per Introspection", () => {
-  it("baut die Eingabe aus den Feldern des Eingabetyps", () => {
-    expect(buildDocumentInput(["document_type_id", "project_match_id", "x"], 5, 171300)).toEqual({ document_type_id: 171300, project_match_id: 5 });
-    expect(buildDocumentInput(["document_type_id", "target", "target_id"], 5, 171300)).toEqual({ document_type_id: 171300, target: "project_match", target_id: 5 });
-    expect(buildDocumentInput(["foo"], 5, 1)).toBeNull();
-    expect(buildDocumentInput(["document_type_id"], 5, 1)).toBeNull();
+describe("Dokumente", () => {
+  it("legt einen Entwurf mit Aktionen an (nie abgeschlossen) und liefert die Dokument-ID", async () => {
+    const { f, calls } = fakeFetch([() => ({ data: { create_document: { id: 7, customer_document_id: 88, nr: "0" } } })]);
+    expect(await createDocument("k", 5, 171301, [{ add_text: { text: "x" } }], f)).toEqual({ id: 88, nr: null });
+    expect(calls[0].v.input).toEqual({ document_type_id: 171301, project_match_id: 5, publish: false, with_defaults: true });
+    expect(calls[0].v.actions).toEqual([{ add_text: { text: "x" } }]);
+    // Leeres Dokument: die Aktionsliste ist Pflicht, also leer statt weggelassen.
+    const e = fakeFetch([() => ({ data: { create_document: { id: 9, customer_document_id: 99 } } })]);
+    expect(await createEmptyDocument("k", 5, 171300, e.f)).toEqual({ id: 99 });
+    expect(e.calls[0].v.actions).toEqual([]);
   });
-  it("legt das Dokument an, wenn die Form passt", async () => {
-    const { f, calls } = fakeFetch([
-      () => ({ data: { __type: { fields: [{ name: "create_document", args: [{ name: "input", type: { kind: "NON_NULL", ofType: { name: "DocumentInput", kind: "INPUT_OBJECT" } } }] }] } } }),
-      () => ({ data: { __type: { inputFields: [{ name: "document_type_id" }, { name: "project_match_id" }] } } }),
-      () => ({ data: { create_document: { id: "88" } } }),
-    ]);
-    expect(await createEmptyDocument("k", 5, 171300, f)).toEqual({ id: 88 });
-    expect(calls[2].q).toContain("$input: DocumentInput!");
-    expect(calls[2].v.input).toEqual({ document_type_id: 171300, project_match_id: 5 });
+  it("liest nur Dokumente der angefragten Projekte, ohne geloeschte, neueste zuerst", async () => {
+    const { f } = fakeFetch([() => ({ data: { customer_documents: [
+      { id: 1, nr: "AB-1", date: "2026-01-01", status_code: 200, project_match: { id: 5, project_nr: "WER-5" } },
+      { id: 2, nr: "AB-2", date: "2026-03-01", status_code: 100, project_match: { id: 5 } },
+      { id: 3, nr: "AB-3", date: "2026-04-01", status_code: 1000, project_match: { id: 5 } },
+      { id: 4, nr: "AB-4", date: "2026-05-01", status_code: 200, project_match: { id: 6 } },
+    ] } })]);
+    expect((await documentsOfProjects("k", [5], [171301], 20, f)).map((d) => d.nr)).toEqual(["AB-2", "AB-1"]);
   });
-  it("meldet klar, wenn HERO die Mutation nicht kennt oder die Form nicht passt", async () => {
-    await expect(createEmptyDocument("k", 5, 1, fakeFetch([() => ({ data: { __type: { fields: [] } } })]).f)).rejects.toThrow(/kennt create_document nicht/);
-    const { f } = fakeFetch([
-      () => ({ data: { __type: { fields: [{ name: "create_document", args: [{ name: "input", type: { name: "X", kind: "INPUT_OBJECT" } }] }] } } }),
-      () => ({ data: { __type: { inputFields: [{ name: "titel" }] } } }),
-    ]);
-    await expect(createEmptyDocument("k", 5, 1, f)).rejects.toThrow(/passt nicht/);
+  it("waehlt die Vorlage nach Anrede", () => {
+    const t = [{ id: 1, name: "Auftragsbestätigung verschicken (PER SIE)" }, { id: 2, name: "Auftragsbestätigung verschicken (PER DU)" }];
+    expect(pickTemplate(t, "du")?.id).toBe(2);
+    expect(pickTemplate(t, "sie")?.id).toBe(1);
+    expect(pickTemplate(t, null)?.id).toBe(1);
+    expect(pickTemplate([], null)).toBeNull();
+  });
+  it("versendet mit Kontext, Dokument, Vorlage und PDF – Betreff/Text aus der Vorlage", async () => {
+    const { f, calls } = fakeFetch([() => ({ data: { send_mail: { __typename: "OutboxMail" } } })]);
+    await sendDocumentMail("k", { kind: "confirmation", documentId: 88, recipient: "k@x.de", templateId: 5187, fileUuid: "u-1" }, f);
+    expect(calls[0].v.email).toEqual({ context: "CUSTOMER_DOCUMENT_CONFIRMATION", context_id: 88, recipient_email: "k@x.de", template_id: 5187, uuids: ["u-1"] });
   });
 });

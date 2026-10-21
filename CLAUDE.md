@@ -168,9 +168,15 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
   und Projektwahl ein; eine Korrektur hat Vorrang vor Absenderregeln, eine Projektnummer darin ordnet sicher zu (`betrieb.md`).
 - Regeln vor KI; das Modell liefert nur Felder (Zod-Schema), Aktionen entscheidet der Code (`autopilot.ts`). Schattenmodus =
   keine Automatik im Postfach/HERO, nur `plan`. Vorschläge ändern nichts, bis jemand klickt.
-- **Kein Versand, kein Löschen – eine Ausnahme:** Antworten an Kunden sind nur ENTWÜRFE im Ordner „Entwürfe“; kein Resend, kein
-  `messageDelete`/`\Deleted`/expunge. Einzige Ausnahme (ausdrücklich freigegeben): Belege gehen automatisch per SMTP (Port 465) an die
-  Lexware-Belegadresse, ausschließlich über `_shared/email/lexwareSend.ts` (prüft den Empfänger; `imap.test.ts` prüft den Quelltext).
+- **Kein Versand, kein Löschen – zwei Ausnahmen:** Antworten an Kunden sind nur ENTWÜRFE im Ordner „Entwürfe“; kein Resend, kein
+  `messageDelete`/`\Deleted`/expunge. Ausnahmen (ausdrücklich freigegeben): (1) Belege gehen automatisch per SMTP (Port 465) an die
+  Lexware-Belegadresse, ausschließlich über `_shared/email/lexwareSend.ts` (prüft den Empfänger). (2) Ein in HERO geprüftes und
+  abgeschlossenes Angebot / eine AB geht **nur per Klick** in der Mail-App über HERO `send_mail` (HERO-Vorlage + PDF) an den Kunden –
+  ausschließlich `sendDocument` in `action.ts` → `sendDocumentMail` in `hero.ts`. `imap.test.ts` prüft beides im Quelltext.
+- Bestellung → Projekt + AB: Vorschlag `create_confirmation` (`confirmation.ts`/`confirmationWiring.ts`). Grundlage ist die frühere AB des
+  Kunden bzw. das Angebot im Projekt; Namen/Preise kommen aus HERO, die KI wählt nur Positionen und Mengen. HERO-Dokumente entstehen
+  über `create_document(input, actions)` als ENTWURF (`publish: false`); danach Vorschlag `send_document` („Prüfen & versenden“).
+- Referenzwissen (`email_reference_docs`, Einstellungen → Referenzwissen): Skill-Dateien/HERO-Doku je KI-Aufgabe, `loadReference()`.
 - Rechnungen nur im Kundenportal (z. B. Aral): Ordner „8 Belege abholen (Portal)“, `email_messages.beleg_state = 'portal_offen'` ist die
   Warteschlange für eine spätere Browser-Automatisierung.
 - `apps/mail/src/lib/shared.ts` ist eine Kopie von `_shared/email/types.ts` (`npm run sync-shared`; ein Test prüft die Gleichheit).
@@ -211,7 +217,8 @@ Kurze prägnante Messages auf Englisch:
 - `sec: beschreibung` (Security-Fixes)
 
 ## Was vermeiden
-- Im Mail-Assistenten nie etwas senden (außer Belege an die Lexware-Adresse über `lexwareSend.ts`) oder löschen, nie `email_*`-Tabellen für anon/authenticated freigeben,
+- Im Mail-Assistenten nie etwas senden (außer Belege an die Lexware-Adresse über `lexwareSend.ts` und geprüfte Angebote/ABs per Klick über
+  `sendDocument`) oder löschen, nie `email_*`-Tabellen für anon/authenticated freigeben,
   nie IMAP-Passwörter oder KI-Schlüssel im Klartext speichern/loggen/zurückgeben (`EMAIL_ENCRYPTION_KEY`, AES-GCM).
 - Keine HERO-„Dateiordner“-IDs als `document_type_id` verwenden (Ordner ≠ Dokumenttyp, siehe `phase0.md`).
 - Niemals Signing-Secret-Fallback im Code (kein `|| "fallback"`)

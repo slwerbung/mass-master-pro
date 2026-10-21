@@ -478,6 +478,7 @@ const handlers: Record<string, Handler> = {
       excluded_steps: steps.excluded.length ? steps.excluded : cfg.excluded_steps ?? [],
       document_types: { ...(cfg.document_types ?? {}), ...docs.found },
       offer_document_type_id: docs.offerTypeId ?? cfg.offer_document_type_id,
+      confirmation_document_type_id: docs.confirmationTypeId ?? cfg.confirmation_document_type_id,
     };
     await setConfig(sb, "hero", next);
     return { hero: next, missing: steps.missing, docTypesFound: Object.keys(docs.found) };
@@ -493,6 +494,54 @@ const handlers: Record<string, Handler> = {
     const f = (data?.__type?.fields || []).find((x: any) => x.name === name);
     const services = await H.heroGraphql(key, "query { supply_services { id } }").then((d) => (d?.supply_services || []).length).catch(() => null);
     return { mutation: name, found: !!f, args: f?.args ?? null, supplyServices: services };
+  },
+
+  /** Live-Stand eines HERO-Dokuments fuer die Karte „versenden": Status, PDF, passende Mailvorlagen. Nur lesend. */
+  async document_info({ sb, body }) {
+    const key = await H.loadHeroKey(sb);
+    if (!key) throw new Error("HERO ist nicht aktiviert.");
+    const kind: H.DocumentKind = body.kind === "offer" ? "offer" : "confirmation";
+    const doc = await H.documentById(key, Number(body.documentId));
+    if (!doc) throw new Error("Dokument nicht gefunden (in HERO gelöscht?).");
+    const templates = await H.emailTemplates(key, H.DOCUMENT_MAIL_CONTEXT[kind]);
+    return {
+      id: doc.id, nr: doc.nr, statusCode: doc.statusCode, statusName: doc.statusName, value: doc.value, projectNr: doc.projectNr,
+      hasPdf: !!doc.fileUuid && doc.statusCode >= 100, sent: doc.statusCode === 200,
+      templates, suggestedTemplateId: H.pickTemplate(templates, body.formality === "du" ? "du" : body.formality === "sie" ? "sie" : null)?.id ?? null,
+    };
+  },
+
+  // ------------------------------------------------------------------ Referenzwissen (Skill-Dateien, HERO-Doku)
+  async list_reference_docs({ sb }) {
+    return must(await sb.from("email_reference_docs").select("id, title, content, tasks, active, created_at, updated_at").order("created_at"));
+  },
+  async save_reference_doc({ sb, body }) {
+    const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.title !== undefined) {
+      const t = String(body.title).trim();
+      if (t.length < 2 || t.length > 200) throw new Error("Titel: 2 bis 200 Zeichen.");
+      row.title = t;
+    }
+    if (body.content !== undefined) {
+      const c = String(body.content);
+      if (c.length > 60000) throw new Error("Höchstens 60.000 Zeichen je Dokument – bitte aufteilen.");
+      row.content = c;
+    }
+    if (body.tasks !== undefined) {
+      const allowed = ["prepare_offer", "prepare_confirmation", "understand", "draft"];
+      row.tasks = (Array.isArray(body.tasks) ? body.tasks : []).map(String).filter((t: string) => allowed.includes(t));
+    }
+    if (body.active !== undefined) row.active = !!body.active;
+    if (body.id) {
+      must(await sb.from("email_reference_docs").update(row).eq("id", String(body.id)));
+      return { id: body.id };
+    }
+    if (!row.title) throw new Error("Titel fehlt.");
+    return must(await sb.from("email_reference_docs").insert(row).select("id").single());
+  },
+  async delete_reference_doc({ sb, body }) {
+    must(await sb.from("email_reference_docs").delete().eq("id", String(body.id || "")));
+    return { ok: true };
   },
 
   // ------------------------------------------------------------------ Protokoll

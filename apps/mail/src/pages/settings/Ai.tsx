@@ -8,7 +8,7 @@ import { errorText } from "@/lib/utils";
 
 const TASK_LABELS: Record<string, string> = {
   understand: "Verstehen (Kategorie, Extraktion)", pick_project: "Projektwahl", summarize_out: "Ausgehende Mail zusammenfassen",
-  draft: "Antwortentwurf", prepare_offer: "Angebot vorbereiten",
+  draft: "Antwortentwurf", prepare_offer: "Angebot vorbereiten", prepare_confirmation: "Auftragsbestätigung vorbereiten",
 };
 const TYPE_LABELS = { cloudflare: "Cloudflare Workers AI", anthropic: "Anthropic", openai: "OpenAI-kompatibel" };
 

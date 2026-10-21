@@ -15,12 +15,13 @@ import { imapDraftWriter } from "../_shared/email/draftMime.ts";
 import { projectDraftContext } from "../_shared/email/hero.ts";
 import { directUploader } from "../_shared/email/uploader.ts";
 import { offerSuggester } from "../_shared/email/offerWiring.ts";
+import { confirmationSuggester } from "../_shared/email/confirmationWiring.ts";
 import { makeForwarder } from "../_shared/email/forwardWiring.ts";
 import { loadHeroKey } from "../_shared/email/hero.ts";
 import { LazyImap } from "../_shared/email/lazyImap.ts";
 import { matchPending } from "../_shared/email/matchStage.ts";
 import {
-  actStore, claimAccount, draftStore, loadExamples, loadKnowledge, loadRules, matchStore, recordRun, releaseAccount, understandStore,
+  actStore, claimAccount, draftStore, loadExamples, loadKnowledge, loadReference, loadRules, matchStore, recordRun, releaseAccount, understandStore,
 } from "../_shared/email/store.ts";
 import { understandPending } from "../_shared/email/understand.ts";
 import type { Gewerk } from "../_shared/email/gewerke.ts";
@@ -40,10 +41,13 @@ async function processOne(sb: any, id: string) {
       getConfig<any>(sb, "hero", {}), getConfig<Gewerk[]>(sb, "gewerke", []), loadHeroKey(sb),
       loadKnowledge(sb),
     ]);
+    // Referenzwissen (Einstellungen -> Referenzwissen) fuer Verstehen und Entwuerfe – knapp gehalten, es steht in jedem Aufruf.
+    const [refUnderstand, refDraft] = await Promise.all([loadReference(sb, "understand", 8000), loadReference(sb, "draft", 8000)]);
+    const withRef = (base: string, ref: string) => (ref ? `${base}\n\n${ref}` : base);
 
     // 1. Verstehen
     const u = await understandPending(
-      id, understandStore(sb), { companyKnowledge: knowledge, rules, examples, knowledge: wissen, shadowMode: !!acc.shadow_mode }, llm,
+      id, understandStore(sb), { companyKnowledge: withRef(knowledge, refUnderstand), rules, examples, knowledge: wissen, shadowMode: !!acc.shadow_mode }, llm,
     );
 
     // 2. Zuordnen
@@ -74,11 +78,15 @@ async function processOne(sb: any, id: string) {
     actCtx.extra = buildExtra({
       docTypes: heroCfg.document_types ?? {},
       offer: heroKey ? offerSuggester(sb, llm, heroKey) : null,
+      confirmation: heroKey ? confirmationSuggester(sb, llm, heroKey, {
+        confirmationTypeId: heroCfg.confirmation_document_type_id ?? null, offerTypeId: heroCfg.offer_document_type_id ?? null,
+        steps: (heroCfg.steps ?? {}) as StepIds, gewerke,
+      }) : null,
       forward: lexoffice?.address ? makeForwarder(sb, acc, String(lexoffice.address), lazy, COMPANY_NAME, await accountPassword(acc)) : null,
       draft: {
         canWrite: !!writer,
         deps: {
-          llm, store: draftStore(sb), writer, knowledge, replyRules, signature: acc.signature || "",
+          llm, store: draftStore(sb), writer, knowledge: withRef(knowledge, refDraft), replyRules, signature: acc.signature || "",
           heroContext: heroKey ? (pid) => projectDraftContext(heroKey, pid) : null,
         },
       },

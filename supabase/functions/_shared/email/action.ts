@@ -11,6 +11,8 @@ import type { MatchInfo } from "./matchStage.ts";
 import { stepLabel } from "./steps.ts";
 import type { UploadItem } from "./attachments.ts";
 import { offerLogText, type OfferPayload } from "./offer.ts";
+import { buildConfirmationActions, confirmationLogText, type ConfirmationPayload, type ConfirmationPosition } from "./confirmation.ts";
+import type { DocumentKind, HeroDocument } from "./hero.ts";
 import type { StepIds } from "./steps.ts";
 
 export interface SuggestionRow {
@@ -42,6 +44,10 @@ export interface ActionStore {
   markUploaded(attachmentId: string, uploadId: string): Promise<void>;
   /** Nach einer Zuordnung: Upload-Vorschlag fuer die Anhaenge anlegen (falls es welche gibt). */
   suggestUploads(messageId: string, projectId: number, projectNr: string): Promise<void>;
+  /** Folge-Vorschlag anlegen (z. B. „AB versenden" nach „AB anlegen"); ein offener gleicher bleibt. */
+  createSuggestion(messageId: string, type: string, payload: Record<string, unknown>): Promise<void>;
+  /** Vorschlag wieder auf „offen" (z. B. AB noch nicht abgeschlossen – spaeter erneut versenden). */
+  release(id: string): Promise<void>;
 }
 
 export interface ActionHero {
@@ -51,9 +57,14 @@ export interface ActionHero {
   createContact(c: NewContact, source: string): Promise<number>;
   contactsByEmail(email: string): Promise<HeroContact[]>;
   createProject(p: NewProject): Promise<{ id: number; nr: string }>;
-  /** Leeres Angebot am Projekt anlegen (HERO kann nur leer). */
-  createOffer(projectId: number, documentTypeId: number): Promise<{ id: number | null }>;
   uploadDocument(projectId: number, file: { bytes: Uint8Array; filename: string; mime: string }, documentTypeId: number): Promise<{ uploadId: string }>;
+  /** Dokument als ENTWURF mit DocumentBuilder-Aktionen anlegen. */
+  createDocument(projectId: number, documentTypeId: number, actions: Record<string, unknown>[]): Promise<{ id: number | null; nr: string | null }>;
+  documentById(id: number): Promise<HeroDocument | null>;
+  emailTemplates(kind: DocumentKind): Promise<{ id: number; name: string }[]>;
+  /** Echter Versand an den Kunden ueber HERO – nur in `sendDocument`. */
+  sendDocumentMail(m: { kind: DocumentKind; documentId: number; recipient: string; templateId: number; fileUuid: string }): Promise<void>;
+  setDocumentSent(documentId: number): Promise<void>;
 }
 
 export interface ActionConfig {
@@ -66,6 +77,8 @@ export interface ActionConfig {
   documentTypeIds: number[];
   steps: StepIds;
   offerTypeId: number | null;
+  /** Dokumenttyp „Auftragsbestätigung" (HERO 171301). */
+  confirmationTypeId: number | null;
 }
 
 export interface ActionDeps {
@@ -78,6 +91,8 @@ export interface ActionDeps {
 }
 
 export class ActionError extends Error {}
+/** Noch nicht moeglich (z. B. AB noch Entwurf): der Vorschlag bleibt offen und laesst sich spaeter erneut ausfuehren. */
+export class NotReadyError extends ActionError {}
 
 /** Bearbeitete Felder ueber den Payload legen; verschachtelte Objekte (contact, project, request) werden gemischt, nicht ersetzt. */
 export function mergeEdits(payload: any, edits: Record<string, any> | undefined): any {
@@ -186,7 +201,15 @@ export async function decideSuggestion(input: DecideInput, deps: ActionDeps): Pr
         break;
 
       case "prepare_offer":
-        result = await prepareOffer(p as OfferPayload, deps, warnings);
+        result = await prepareOffer(s, p as OfferPayload, deps, warnings);
+        break;
+
+      case "create_confirmation":
+        result = await createConfirmation(s, p, deps, warnings);
+        break;
+
+      case "send_document":
+        result = await sendDocument(s, p, deps, warnings);
         break;
 
       default:
@@ -196,7 +219,8 @@ export async function decideSuggestion(input: DecideInput, deps: ActionDeps): Pr
     await settle(store, s);
     return { status: "angenommen", ...result, ...(warnings.length ? { warnings } : {}) };
   } catch (e) {
-    await store.finish(s.id, "fehlgeschlagen", { error: String((e as Error).message).slice(0, 400) });
+    if (e instanceof NotReadyError) await store.release(s.id);
+    else await store.finish(s.id, "fehlgeschlagen", { error: String((e as Error).message).slice(0, 400) });
     throw e;
   }
 }
@@ -270,7 +294,7 @@ async function uploadAttachments(s: SuggestionRow, p: any, deps: ActionDeps, war
   return { projectId, uploaded, failed: failed.length };
 }
 
-async function prepareOffer(p: OfferPayload, deps: ActionDeps, warnings: string[]): Promise<Record<string, unknown>> {
+async function prepareOffer(s: SuggestionRow, p: OfferPayload, deps: ActionDeps, warnings: string[]): Promise<Record<string, unknown>> {
   const { hero, config } = deps;
   const projectId = Number(need(p.projectId, "Projekt fehlt."));
   const kind = p.kind === "vor_ort" ? "vor_ort" : "angebot";
@@ -283,17 +307,139 @@ async function prepareOffer(p: OfferPayload, deps: ActionDeps, warnings: string[
   // 2. Schritt wechseln (gleicher Schritt = nichts zu tun)
   if (project.stepId !== stepId) await hero!.setStep(projectId, stepId);
 
-  // 3. Leeres Angebot – nur beim Angebot, und nur Hinweis, wenn HERO es nicht anlegen laesst
+  // 3. Angebot als Entwurf: HERO-Leistungen mit Menge (Preise aus den HERO-Stammdaten). Positionen ohne
+  //    Leistung oder Menge stehen nur im Logbuch und werden in HERO ergaenzt.
   let documentId: number | null = null;
   if (kind === "angebot") {
     if (!config.offerTypeId) warnings.push("Dokumenttyp „Angebot“ ist nicht konfiguriert – bitte das Angebot in HERO von Hand anlegen.");
     else {
+      const actions = (p.positions ?? []).filter((x) => x.serviceId != null && x.quantity != null && x.quantity > 0)
+        .map((x) => ({ add_existing_service: { supplyServiceId: Number(x.serviceId), quantity: Number(x.quantity) } }));
       try {
-        documentId = (await hero!.createOffer(projectId, config.offerTypeId)).id;
+        documentId = (await hero!.createDocument(projectId, config.offerTypeId, actions)).id;
       } catch (e) {
-        warnings.push(`Leeres Angebot konnte nicht angelegt werden (bitte in HERO von Hand): ${(e as Error).message}`.slice(0, 300));
+        try {
+          documentId = (await hero!.createDocument(projectId, config.offerTypeId, [])).id;
+          warnings.push(`Positionen konnten nicht ins Angebot übernommen werden (stehen im Logbuch): ${(e as Error).message}`.slice(0, 300));
+        } catch (e2) {
+          warnings.push(`Angebot konnte nicht angelegt werden (bitte in HERO von Hand): ${(e2 as Error).message}`.slice(0, 300));
+        }
+      }
+      const missing = (p.positions ?? []).length - actions.length;
+      if (documentId && missing > 0) warnings.push(`${missing} Position(en) ohne HERO-Leistung oder Menge – bitte im Angebot ergänzen (siehe Logbuch).`);
+      if (documentId) {
+        await deps.store.createSuggestion(s.message_id, "send_document", sendPayload("offer", documentId, null, projectId, project.nr, s, null)).catch(() => {});
       }
     }
   }
   return { kind, projectId, stepId, documentId, positions: p.positions?.length ?? 0 };
+}
+
+function sendPayload(kind: DocumentKind, documentId: number, documentNr: string | null, projectId: number, projectNr: string | null, s: SuggestionRow, p: any): Record<string, unknown> {
+  return {
+    kind, documentId, documentNr, projectId, projectNr,
+    recipient: String(p?.recipient || s.message.from_addr || "").trim().toLowerCase(),
+    formality: p?.formality ?? null,
+  };
+}
+
+/** Freigegebene Mengen/Auswahl ueber die Positionen des urspruenglichen Vorschlags legen – Namen und Preise nie aus dem Client. */
+export function mergePositions(original: ConfirmationPosition[], edited: unknown): ConfirmationPosition[] {
+  const byKey = new Map<string, any>();
+  if (Array.isArray(edited)) for (const e of edited) if (e && typeof e === "object") byKey.set(`${(e as any).sourceDocId}/${(e as any).uid}`, e);
+  return (original ?? []).map((o) => {
+    const e = byKey.get(`${o.sourceDocId}/${o.uid}`);
+    if (!e) return o;
+    const q = Number(e.quantity);
+    return { ...o, include: e.include !== false, quantity: Number.isFinite(q) && q > 0 ? q : o.quantity };
+  });
+}
+
+async function createConfirmation(s: SuggestionRow, p: any, deps: ActionDeps, warnings: string[]): Promise<Record<string, unknown>> {
+  const { hero, config, store } = deps;
+  const typeId = need(config.confirmationTypeId, "Dokumenttyp „Auftragsbestätigung“ ist nicht konfiguriert (Einstellungen → Firma & HERO).");
+  const orig = s.payload as ConfirmationPayload;
+
+  // 1. Projekt: vorhandenes oder neu (Kontakt + Projekt wie bei „Projekt anlegen")
+  let projectId = Number(p.projectId) || null;
+  let projectNr: string | null = p.projectNr ?? null;
+  let stepId: number | null = null;
+  if (projectId) {
+    const project = need(await hero!.projectById(projectId), `Projekt ${projectId} gibt es in HERO nicht.`);
+    projectNr = project.nr;
+    stepId = project.stepId;
+    if (s.message.hero_project_match_id !== projectId || !s.message.hero_logged_at) {
+      await assignAndLog(s, project, logbookText({ ...s.message }, s.message.account_label), deps, warnings);
+    }
+  } else {
+    const r = await createProject(s, { contact: p.contact ?? orig.contact ?? {}, project: p.project ?? orig.project, request: {} }, deps, warnings);
+    projectId = Number(r.projectId);
+    projectNr = String(r.projectNr ?? "");
+    stepId = config.startStepId;
+  }
+
+  // Ab hier existiert das Projekt: Fehler sind Hinweise (sonst entstuende beim Wiederholen ein zweites Projekt).
+  const positions = mergePositions(orig.positions ?? [], p.positions);
+  const { actions, hints } = buildConfirmationActions(positions);
+  warnings.push(...hints);
+  let doc: { id: number | null; nr: string | null } = { id: null, nr: null };
+  try {
+    doc = await hero!.createDocument(projectId, Number(typeId), actions);
+  } catch (e) {
+    warnings.push(`Positionen konnten nicht in die AB übernommen werden (stehen im Logbuch): ${(e as Error).message}`.slice(0, 300));
+    try { doc = await hero!.createDocument(projectId, Number(typeId), []); } catch (e2) {
+      warnings.push(`AB konnte nicht angelegt werden – bitte in HERO von Hand: ${(e2 as Error).message}`.slice(0, 300));
+    }
+  }
+
+  // 2. Schritt (nur freigegebene Ziele)
+  const toStepId = Number(p.toStepId) || null;
+  if (toStepId) {
+    if (!config.stepIds.includes(toStepId)) warnings.push("Der gewählte Schritt ist nicht als Ziel freigegeben – Status unverändert.");
+    else if (stepId !== toStepId) await hero!.setStep(projectId, toStepId).catch((e) => warnings.push(`Statuswechsel fehlgeschlagen: ${(e as Error).message}`));
+  }
+
+  // 3. Logbuch + Folge-Vorschlag „AB versenden"
+  await hero!.addLogbook(projectId, confirmationLogText({ ...orig, positions }, doc.nr)).catch((e) => warnings.push(`Logbuch: ${(e as Error).message}`));
+  if (doc.id) await store.createSuggestion(s.message_id, "send_document", sendPayload("confirmation", doc.id, doc.nr, projectId, projectNr, s, { ...orig, ...p }));
+  return { projectId, projectNr, documentId: doc.id, positions: positions.filter((x) => x.include).length };
+}
+
+const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
+
+/**
+ * Dokument an den Kunden versenden – ueber HERO, mit der HERO-Vorlage und dem PDF. Echter Versand, deshalb:
+ * nur per Klick, nur ein abgeschlossenes Dokument (PDF da) genau dieses Projekts, nur eine Vorlage aus HERO.
+ */
+async function sendDocument(s: SuggestionRow, p: any, deps: ActionDeps, warnings: string[]): Promise<Record<string, unknown>> {
+  const { hero } = deps;
+  const kind: DocumentKind = p.kind === "offer" ? "offer" : "confirmation";
+  const documentId = Number(need(p.documentId, "Dokument fehlt."));
+  const projectId = Number(need(s.payload.projectId, "Projekt fehlt."));
+  const recipient = String(p.recipient ?? "").trim().toLowerCase();
+  if (!EMAIL_RE.test(recipient)) throw new NotReadyError("Bitte eine gültige Empfänger-Adresse eintragen.");
+
+  // Dokument-ID und Projekt kommen aus dem gespeicherten Vorschlag, nie aus dem Client.
+  if (documentId !== Number(s.payload.documentId)) throw new ActionError("Dokument passt nicht zum Vorschlag.");
+  const doc = need(await hero!.documentById(documentId), `Dokument ${documentId} gibt es in HERO nicht (gelöscht?).`);
+  if (doc.projectId !== projectId) throw new ActionError("Das Dokument gehört zu einem anderen Projekt.");
+  if (doc.baseType && doc.baseType !== kind) throw new ActionError(`Das Dokument ist kein${kind === "offer" ? " Angebot" : "e Auftragsbestätigung"}.`);
+  if (doc.statusCode === 200) return { documentId, documentNr: doc.nr, alreadySent: true };
+  if (doc.statusCode < 100 || !doc.fileUuid) {
+    throw new NotReadyError(`${doc.nr || "Das Dokument"} ist noch ein Entwurf ohne PDF – bitte in HERO prüfen und abschließen, dann hier versenden.`);
+  }
+
+  const templates = await hero!.emailTemplates(kind);
+  const tpl = templates.find((t) => t.id === Number(p.templateId));
+  if (!tpl) throw new NotReadyError("Bitte eine HERO-Mailvorlage auswählen.");
+
+  await hero!.sendDocumentMail({ kind, documentId, recipient, templateId: tpl.id, fileUuid: doc.fileUuid });
+
+  const after = await hero!.documentById(documentId).catch(() => null);
+  if (after && after.statusCode !== 200) {
+    await hero!.setDocumentSent(documentId).catch((e) => warnings.push(`Versendet, aber Status nicht gesetzt: ${(e as Error).message}`.slice(0, 200)));
+  }
+  await hero!.addLogbook(projectId, `📧 ${doc.nr} an ${recipient} versendet (Vorlage „${tpl.name}“, Mail-Assistent nach Freigabe).`)
+    .catch((e) => warnings.push(`Logbuch: ${(e as Error).message}`));
+  return { documentId, documentNr: doc.nr, recipient, templateId: tpl.id, sent: true };
 }

@@ -56,13 +56,13 @@ export type MessageStatus = "neu" | "klassifiziert" | "zugeordnet" | "ohne_bezug
 export type MatchMethod = "thread" | "nummer" | "kontakt" | "ki" | "manuell";
 export type Direction = "in" | "out";
 
-export type AiTask = "understand" | "pick_project" | "summarize_out" | "draft" | "prepare_offer";
-export const AI_TASKS: AiTask[] = ["understand", "pick_project", "summarize_out", "draft", "prepare_offer"];
+export type AiTask = "understand" | "pick_project" | "summarize_out" | "draft" | "prepare_offer" | "prepare_confirmation";
+export const AI_TASKS: AiTask[] = ["understand", "pick_project", "summarize_out", "draft", "prepare_offer", "prepare_confirmation"];
 
 export type AutopilotLevel = "off" | "suggest" | "auto";
 export const AUTOPILOT_ACTIONS = [
   "move_folders", "move_discard", "move_answered", "keywords", "log_certain", "log_assumed",
-  "attachments", "draft", "create_project", "prepare_offer", "status_change", "forward_beleg",
+  "attachments", "draft", "create_project", "prepare_offer", "create_confirmation", "status_change", "forward_beleg",
 ] as const;
 export type AutopilotAction = (typeof AUTOPILOT_ACTIONS)[number];
 export type Autopilot = Record<AutopilotAction, AutopilotLevel>;
@@ -78,6 +78,7 @@ export const AUTOPILOT_LABELS: Record<AutopilotAction, string> = {
   draft: "Antwortentwurf",
   create_project: "Kontakt + Projekt anlegen",
   prepare_offer: "Angebot vorbereiten",
+  create_confirmation: "Bestellung → Projekt + Auftragsbestätigung vorbereiten",
   status_change: "Statuswechsel",
   forward_beleg: "Belege an Lexware senden (echter Versand, nur an die Belegadresse)",
 };
@@ -94,6 +95,8 @@ export const AUTOPILOT_DEFAULTS: Autopilot = {
   draft: "auto",
   create_project: "suggest",
   prepare_offer: "suggest",
+  // Neue Dokumente in HERO entstehen nur per Klick: „Automatisch" wirkt hier wie „Vorschlag".
+  create_confirmation: "suggest",
   status_change: "suggest",
   forward_beleg: "auto",
 };

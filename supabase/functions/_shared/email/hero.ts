@@ -309,40 +309,127 @@ export async function listServices(apiKey: string, fetchImpl: F = fetch): Promis
   return out;
 }
 
-/** Aus den Feldern des HERO-Eingabetyps das Eingabeobjekt fuer `create_document` bauen (null, wenn es nicht passt). */
-export function buildDocumentInput(inputFields: string[], projectMatchId: number, documentTypeId: number): Record<string, unknown> | null {
-  const has = (f: string) => inputFields.includes(f);
-  if (!has("document_type_id")) return null;
-  const input: Record<string, unknown> = { document_type_id: documentTypeId };
-  if (has("project_match_id")) input.project_match_id = projectMatchId;
-  else if (has("target") && has("target_id")) { input.target = "project_match"; input.target_id = projectMatchId; }
-  else return null;
-  return input;
-}
+// ---------------------------------------------------------------------------
+// Dokumente (Angebot, Auftragsbestaetigung) – Form per Introspection belegt (Okt. 2026):
+//   create_document(input: Documents_CreateDocumentInput!, actions: [Documents_DocumentBuilderActionInput!]!)
+//     -> Documents_CustomerDocumentDraft { id customer_document_id nr status_code }
+//   send_mail(email: EmailInput) -> OutboxMail; context = Kontext der Vorlage, context_id = Dokument-ID,
+//     subject/body weggelassen = aus der Vorlage.
+// ---------------------------------------------------------------------------
 
-const unwrap = (t: any): string | null => (t?.name ? String(t.name) : t?.ofType ? unwrap(t.ofType) : null);
+/** Kontext der HERO-Mailvorlagen je Dokumentart. */
+export const DOCUMENT_MAIL_CONTEXT = { confirmation: "CUSTOMER_DOCUMENT_CONFIRMATION", offer: "CUSTOMER_DOCUMENT_OFFER" } as const;
+export type DocumentKind = keyof typeof DOCUMENT_MAIL_CONTEXT;
 
 /**
- * Leeres Angebot am Projekt anlegen. Die Form von `create_document` ist im Repo nirgends belegt –
- * deshalb liest die Funktion den Eingabetyp per Introspection und baut das Objekt daraus. Passt nichts,
- * wirft sie mit einer klaren Meldung (der Aufrufer behandelt das als Hinweis, nicht als Abbruch).
+ * Dokument am Projekt als ENTWURF anlegen (nicht abgeschlossen, kein PDF, nichts versendet).
+ * `actions` sind DocumentBuilder-Aktionen (Positionen, Texte); leer = leeres Dokument mit Standardtexten.
  */
-export async function createEmptyDocument(apiKey: string, projectMatchId: number, documentTypeId: number, fetchImpl: F = fetch): Promise<{ id: number | null }> {
-  const meta = await heroGraphql(
+export async function createDocument(
+  apiKey: string, projectMatchId: number, documentTypeId: number, actions: Record<string, unknown>[], fetchImpl: F = fetch,
+): Promise<{ id: number | null; nr: string | null }> {
+  const data = await heroGraphql(
     apiKey,
-    `query { __type(name: "Mutation") { fields { name args { name type { name kind ofType { name kind ofType { name kind } } } } } } }`,
-    {}, fetchImpl,
+    `mutation($input: Documents_CreateDocumentInput!, $actions: [Documents_DocumentBuilderActionInput!]!) {
+       create_document(input: $input, actions: $actions) { id customer_document_id nr }
+     }`,
+    { input: { document_type_id: documentTypeId, project_match_id: projectMatchId, publish: false, with_defaults: true }, actions },
+    fetchImpl,
   );
-  const f = (meta?.__type?.fields || []).find((x: any) => x.name === "create_document");
-  if (!f) throw new HeroError("HERO kennt create_document nicht");
-  const inputArg = (f.args || []).find((a: any) => a.name === "input");
-  const typeName = inputArg ? unwrap(inputArg.type) : null;
-  if (!typeName) throw new HeroError("create_document hat kein Argument „input“");
-  const t = await heroGraphql(apiKey, `query($n: String!) { __type(name: $n) { inputFields { name } } }`, { n: typeName }, fetchImpl);
-  const fields: string[] = (t?.__type?.inputFields || []).map((x: any) => x.name);
-  const input = buildDocumentInput(fields, projectMatchId, documentTypeId);
-  if (!input) throw new HeroError(`create_document-Eingabe passt nicht (Felder: ${fields.join(", ") || "keine"})`);
-  const data = await heroGraphql(apiKey, `mutation($input: ${typeName}!) { create_document(input: $input) { id } }`, { input }, fetchImpl);
-  const id = Number(data?.create_document?.id);
-  return { id: Number.isFinite(id) && id > 0 ? id : null };
+  const d = data?.create_document;
+  const id = Number(d?.customer_document_id ?? d?.id);
+  return { id: Number.isFinite(id) && id > 0 ? id : null, nr: d?.nr && d.nr !== "0" ? String(d.nr) : null };
+}
+
+/** Leeres Angebot (Kompatibilitaet fuer die Angebotsvorbereitung). */
+export async function createEmptyDocument(apiKey: string, projectMatchId: number, documentTypeId: number, fetchImpl: F = fetch): Promise<{ id: number | null }> {
+  return { id: (await createDocument(apiKey, projectMatchId, documentTypeId, [], fetchImpl)).id };
+}
+
+export interface HeroDocument {
+  id: number;
+  nr: string;
+  date: string | null;
+  statusCode: number;
+  statusName: string;
+  value: number | null;
+  projectId: number | null;
+  projectNr: string | null;
+  baseType: string | null;
+  fileUuid: string | null;
+  draft: any;
+}
+
+const DOC_FIELDS = `id nr date status_code status_name value project_match { id project_nr } document_type { base_type } file_upload { uuid }`;
+
+function toDocument(d: any): HeroDocument {
+  return {
+    id: Number(d.id), nr: String(d.nr ?? ""), date: d.date ?? null,
+    statusCode: Number(d.status_code ?? 0), statusName: String(d.status_name ?? ""),
+    value: d.value != null && Number.isFinite(Number(d.value)) ? Number(d.value) : null,
+    projectId: d.project_match?.id != null ? Number(d.project_match.id) : null, projectNr: d.project_match?.project_nr ?? null,
+    baseType: d.document_type?.base_type ?? null, fileUuid: d.file_upload?.uuid ?? null,
+    draft: d.published_customer_document_draft?.data ?? null,
+  };
+}
+
+/** Dokumente bestimmter Typen an diesen Projekten, neueste zuerst – mit Positionen (Entwurfsdaten). */
+export async function documentsOfProjects(
+  apiKey: string, projectIds: number[], typeIds: number[], limit = 20, fetchImpl: F = fetch,
+): Promise<HeroDocument[]> {
+  if (!projectIds.length || !typeIds.length) return [];
+  const data = await heroGraphql(
+    apiKey,
+    `query($p: [Int], $t: [Int], $n: Int) { customer_documents(project_match_ids: $p, document_type_ids: $t, last: $n) { ${DOC_FIELDS} published_customer_document_draft { data } } }`,
+    { p: projectIds, t: typeIds, n: limit }, fetchImpl,
+  );
+  return (data?.customer_documents || []).map(toDocument)
+    // Nur was wirklich zu diesen Projekten gehoert; geloeschte (1000) nie.
+    .filter((d: HeroDocument) => d.projectId != null && projectIds.includes(d.projectId) && d.statusCode !== 1000)
+    .sort((a: HeroDocument, b: HeroDocument) => String(b.date ?? "").localeCompare(String(a.date ?? "")) || b.id - a.id);
+}
+
+/** Ein Dokument (ohne Positionen) – Status, PDF, Projekt. */
+export async function documentById(apiKey: string, id: number, fetchImpl: F = fetch): Promise<HeroDocument | null> {
+  const data = await heroGraphql(apiKey, `query($ids: [Int]) { customer_documents(ids: $ids) { ${DOC_FIELDS} } }`, { ids: [id] }, fetchImpl);
+  const d = data?.customer_documents?.[0];
+  return d?.id ? toDocument(d) : null;
+}
+
+/** Mailvorlagen eines Kontexts (z. B. alle „Auftragsbestätigung verschicken"-Vorlagen). */
+export async function emailTemplates(apiKey: string, context: string, fetchImpl: F = fetch): Promise<{ id: number; name: string }[]> {
+  const data = await heroGraphql(apiKey, `query { EmailTemplate_EmailTemplates(first: 200) { edges { node { id name context } } } }`, {}, fetchImpl);
+  return (data?.EmailTemplate_EmailTemplates?.edges || []).map((e: any) => e.node)
+    .filter((n: any) => n?.context === context)
+    .map((n: any) => ({ id: Number(n.id), name: String(n.name) }));
+}
+
+/** Vorlage passend zur Anrede waehlen: „PER DU" bei du, sonst „PER SIE"; sonst die erste. */
+export function pickTemplate(templates: { id: number; name: string }[], formality: "du" | "sie" | null): { id: number; name: string } | null {
+  const want = formality === "du" ? /PER DU/i : /PER SIE/i;
+  return templates.find((t) => want.test(t.name) && !/kopie/i.test(t.name)) ?? templates.find((t) => !/kopie/i.test(t.name)) ?? templates[0] ?? null;
+}
+
+/**
+ * Dokument per Mail aus HERO versenden (echter Versand an den Kunden!). Nur aus action.ts
+ * `sendDocument`, nur nach einem Klick in der Mail-App. Betreff und Text kommen aus der Vorlage.
+ */
+export async function sendDocumentMail(
+  apiKey: string, m: { kind: DocumentKind; documentId: number; recipient: string; templateId: number; fileUuid: string }, fetchImpl: F = fetch,
+): Promise<void> {
+  await heroGraphql(
+    apiKey,
+    `mutation($email: EmailInput) { send_mail(email: $email) { __typename } }`,
+    { email: { context: DOCUMENT_MAIL_CONTEXT[m.kind], context_id: m.documentId, recipient_email: m.recipient, template_id: m.templateId, uuids: [m.fileUuid] } },
+    fetchImpl,
+  );
+}
+
+/** Dokumentstatus setzen (z. B. SENT, falls HERO es beim Versand nicht selbst tut). */
+export async function setDocumentStatus(apiKey: string, documentId: number, status: "SENT", fetchImpl: F = fetch): Promise<void> {
+  await heroGraphql(
+    apiKey,
+    `mutation($id: Int!, $s: Documents_DocumentStatusCode!) { transition_customer_document_status(document_id: $id, target_status_code: $s) { id } }`,
+    { id: documentId, s: status }, fetchImpl,
+  );
 }

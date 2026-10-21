@@ -54,7 +54,7 @@ const DOC_PATTERNS: Record<string, string> = {
   druckdaten: "druckdaten",
 };
 
-export function mapDocumentTypes(types: NamedId[]): { found: Record<string, number>; offerTypeId: number | null } {
+export function mapDocumentTypes(types: NamedId[]): { found: Record<string, number>; offerTypeId: number | null; confirmationTypeId: number | null } {
   const norm = types.map((t) => ({ id: Number(t.id), n: normalizeName(t.name) }));
   const found: Record<string, number> = {};
   for (const [key, pat] of Object.entries(DOC_PATTERNS)) {
@@ -62,5 +62,6 @@ export function mapDocumentTypes(types: NamedId[]): { found: Record<string, numb
     if (hit) found[key] = hit.id;
   }
   const offer = norm.find((t) => t.n === "angebot");
-  return { found, offerTypeId: offer?.id ?? null };
+  const confirmation = norm.find((t) => t.n.startsWith("auftragsbest"));
+  return { found, offerTypeId: offer?.id ?? null, confirmationTypeId: confirmation?.id ?? null };
 }
