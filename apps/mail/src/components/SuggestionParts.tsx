@@ -91,6 +91,12 @@ export function SuggestionCard({ s, brief, actions, children }: { s: Suggestion;
   );
 }
 
+/** „Titel“ in Anführungszeichen, gekürzt – für Knopf-Beschriftungen. */
+export const quoted = (t: string | null | undefined, max = 45) => {
+  const x = String(t ?? "").trim();
+  return `„${x.length > max ? `${x.slice(0, max - 1)}…` : x}“`;
+};
+
 const SKIP_REASONS = ["Schon erledigt", "Brauchen wir nicht", "Mache ich selbst in HERO"];
 
 /**
@@ -107,7 +113,7 @@ export function Buttons({ s, onAccept, onReject, acceptLabel, busy, disabled }: 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
-        <Button onClick={onAccept} disabled={busy || disabled}>{busy ? <Spinner /> : null} {acceptLabel}</Button>
+        <Button onClick={onAccept} disabled={busy || disabled} className="h-auto min-h-9 whitespace-normal py-2 text-left">{busy ? <Spinner /> : null} {acceptLabel}</Button>
         <Button variant="outline" onClick={() => toggle("teach")} disabled={busy} className={panel === "teach" ? "bg-accent" : ""}>
           <MessageSquareText className="h-4 w-4" /> Nein, anders …
         </Button>
