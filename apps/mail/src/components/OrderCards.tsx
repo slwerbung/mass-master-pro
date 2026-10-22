@@ -3,8 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, RefreshCw, Send } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Suggestion } from "@/lib/suggestions";
-import { Badge, Button, Card, CardContent, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
-import { Buttons, Header, useDecide } from "@/components/SuggestionParts";
+import { Badge, Button, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
+import { Buttons, SuggestionCard, useDecide } from "@/components/SuggestionParts";
 import { cn, formatDate } from "@/lib/utils";
 
 const euro = (n: number) => n.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
@@ -31,11 +31,23 @@ export function ConfirmationCard({ s }: { s: Suggestion }) {
   const steps = (p.stepOptions ?? []) as { stepId: number; label: string }[];
   const open = (p.openPoints ?? []) as string[];
   const newProject = !p.projectId;
+  const included = positions.filter((x) => x.include).length;
 
   return (
-    <Card>
-      <Header s={s} />
-      <CardContent className="space-y-4">
+    <SuggestionCard
+      s={s} brief={`${newProject ? "neues Projekt" : (p.projectNr ?? `#${p.projectId}`)} · ${included} Position(en)${included ? ` · ${euro(sum)} netto` : ""}`}
+      actions={
+        <div className="space-y-2">
+          <Buttons
+            s={s} busy={decide.isPending}
+            acceptLabel={newProject ? "Projekt + AB-Entwurf in HERO anlegen" : "AB-Entwurf in HERO anlegen"}
+            onAccept={() => decide.mutate({ decision: "accept", edits: { positions, toStepId: toStepId || null, ...(newProject ? { project: { ...p.project, name }, contact } : {}) } })}
+            onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
+          />
+          <p className="text-xs text-muted-foreground">Es wird nichts versendet. Die AB entsteht als Entwurf; danach erscheint hier „Prüfen &amp; versenden“.</p>
+        </div>
+      }
+    >
         {newProject ? (
           <div className="space-y-2 rounded-md border border-dashed p-3">
             <p className="text-sm font-medium">Neues Projekt anlegen (Kunde/Kontakt wird in HERO gesucht oder angelegt)</p>
@@ -105,15 +117,7 @@ export function ConfirmationCard({ s }: { s: Suggestion }) {
           </Field>
         )}
 
-        <Buttons
-          s={s} busy={decide.isPending}
-          acceptLabel={newProject ? "Projekt + AB-Entwurf in HERO anlegen" : "AB-Entwurf in HERO anlegen"}
-          onAccept={() => decide.mutate({ decision: "accept", edits: { positions, toStepId: toStepId || null, ...(newProject ? { project: { ...p.project, name }, contact } : {}) } })}
-          onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
-        />
-        <p className="text-xs text-muted-foreground">Es wird nichts versendet. Die AB entsteht als Entwurf; danach erscheint hier „Prüfen &amp; versenden“.</p>
-      </CardContent>
-    </Card>
+    </SuggestionCard>
   );
 }
 
@@ -144,9 +148,24 @@ export function SendDocumentCard({ s }: { s: Suggestion }) {
   };
 
   return (
-    <Card>
-      <Header s={s} />
-      <CardContent className="space-y-3">
+    <SuggestionCard
+      s={s} brief={`${kindLabel} ${d?.nr || p.documentNr || `#${p.documentId}`} an ${recipient || "?"}${d ? ` · ${d.sent ? "schon versendet" : d.hasPdf ? "bereit" : "noch Entwurf"}` : ""}`}
+      actions={
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {d?.sent ? (
+              <Button onClick={() => decide.mutate({ decision: "accept", edits: { recipient: recipient.trim(), templateId: Number(tpl) } })} disabled={decide.isPending}>Als erledigt markieren</Button>
+            ) : (
+              <Button onClick={send} disabled={!ready || !tpl || !validRecipient || decide.isPending}>
+                {decide.isPending ? <Spinner /> : <Send className="h-4 w-4" />} Jetzt über HERO versenden
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => decide.mutate({ decision: "reject", edits: { reason: "Nicht versenden" } })} disabled={decide.isPending}>Nicht versenden</Button>
+          </div>
+          {d && !d.hasPdf && <p className="text-xs text-amber-800">Noch ein Entwurf ohne PDF – unter „Vorschlag“ steht, was zu tun ist.</p>}
+        </div>
+      }
+    >
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span>{kindLabel} <b>{d?.nr || p.documentNr || `#${p.documentId}`}</b> · Projekt <b>{p.projectNr ?? p.projectId}</b></span>
           {d && <Badge variant={d.sent ? "good" : d.hasPdf ? "default" : "warn"}>{d.statusName || (d.hasPdf ? "Erstellt" : "Entwurf")}</Badge>}
@@ -178,20 +197,9 @@ export function SendDocumentCard({ s }: { s: Suggestion }) {
           </Field>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {d?.sent ? (
-            <Button onClick={() => decide.mutate({ decision: "accept", edits: { recipient: recipient.trim(), templateId: Number(tpl) } })} disabled={decide.isPending}>Als erledigt markieren</Button>
-          ) : (
-            <Button onClick={send} disabled={!ready || !tpl || !validRecipient || decide.isPending}>
-              {decide.isPending ? <Spinner /> : <Send className="h-4 w-4" />} Jetzt über HERO versenden
-            </Button>
-          )}
-          <Button variant="outline" onClick={() => decide.mutate({ decision: "reject" })} disabled={decide.isPending}>Nicht versenden</Button>
-        </div>
         <p className="text-xs text-muted-foreground">
           Echter Versand an den Kunden: HERO verschickt die Mail mit der gewählten Vorlage (Betreff und Text aus HERO) und dem PDF; der Versand steht im HERO-Verlauf und im Logbuch.
         </p>
-      </CardContent>
-    </Card>
+    </SuggestionCard>
   );
 }

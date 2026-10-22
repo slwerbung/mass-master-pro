@@ -83,6 +83,16 @@ in der Mail-Ansicht bzw. „Falsch? Erklären“ an jedem Vorschlag (`email-api`
 - Einträge lassen sich in den Einstellungen bearbeiten, ausschalten und löschen; dort kann man auch von Hand Wissen anlegen.
   Feste „Absender → Kategorie“-Zuordnungen ohne KI bleiben Absenderregeln.
 
+### Ansicht „Zu entscheiden"
+
+Jede Karte zeigt nur den Kopf (Art des Vorschlags, Kategorie, Betreff, Absender, Kurzfassung der Mail) und die Knöpfe.
+Eingeklappt sind:
+- **„Mail“**: die Mail selbst als HTML (`MailBody`, wird erst beim Aufklappen aus dem Postfach geholt);
+- **„Vorschlag“**: alle Felder des Vorschlags zum Prüfen und Ändern. Die Zeile nennt eingeklappt das Wesentliche, z. B.
+  „WER-1820 Sprinter Beschriftung“ oder „neues Projekt · 2 Position(en) · 339,90 € netto“.
+
+Annehmen geht auch eingeklappt; dann gelten die Werte des Vorschlags.
+
 ### Vorschlag ablehnen
 
 Ein bloßes „Ablehnen" gibt es nicht. An jedem Vorschlag stehen neben „Annehmen" zwei Wege:
