@@ -36,7 +36,7 @@ function LinkCard({ s }: { s: Suggestion }) {
         <Button variant="ghost" size="sm" onClick={() => setShowSearch(!showSearch)}>{showSearch ? "Suche ausblenden" : "Anderes Projekt suchen"}</Button>
         {showSearch && <ProjectSearch selectedId={projectId} onPick={(p) => { setProjectId(p.id); toast(`Gewählt: ${p.nr}`); }} />}
         <Field label="Logbuch-Eintrag"><Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} /></Field>
-        <Buttons s={s} busy={decide.isPending} disabled={!projectId} acceptLabel="Zuordnen & ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { projectId, text } })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} disabled={!projectId} acceptLabel="Zuordnen & ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { projectId, text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
       </CardContent>
     </Card>
   );
@@ -51,7 +51,7 @@ function LogCard({ s }: { s: Suggestion }) {
       <CardContent className="space-y-3">
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>{s.payload.projectName ? ` · ${s.payload.projectName}` : ""}</p>
         <Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} />
-        <Buttons s={s} busy={decide.isPending} acceptLabel="Ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { text } })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} acceptLabel="Ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
       </CardContent>
     </Card>
   );
@@ -73,7 +73,7 @@ function StepCard({ s }: { s: Suggestion }) {
           </Select>
         </Field>
         {s.payload.hint && <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-900">Hinweis: {s.payload.hint}</p>}
-        <Buttons s={s} busy={decide.isPending} acceptLabel="Status wechseln" onAccept={() => decide.mutate({ decision: "accept", edits: { toStepId: stepId } })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} acceptLabel="Status wechseln" onAccept={() => decide.mutate({ decision: "accept", edits: { toStepId: stepId } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
       </CardContent>
     </Card>
   );
@@ -102,7 +102,7 @@ function UploadCard({ s }: { s: Suggestion }) {
             </Select>
           </div>
         ))}
-        <Buttons s={s} busy={decide.isPending} disabled={!items.some((i) => i.selected)} acceptLabel="Hochladen" onAccept={() => decide.mutate({ decision: "accept", edits: { items } })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} disabled={!items.some((i) => i.selected)} acceptLabel="Hochladen" onAccept={() => decide.mutate({ decision: "accept", edits: { items } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
       </CardContent>
     </Card>
   );
@@ -138,7 +138,7 @@ function OfferCard({ s }: { s: Suggestion }) {
             <p className="text-xs text-muted-foreground">HERO kann Positionen nicht per Schnittstelle einfügen: die Liste kommt ins Logbuch, du übernimmst sie im Angebot und prüfst die Preise.</p>
           </div>
         )}
-        <Buttons s={s} busy={decide.isPending} acceptLabel={kind === "angebot" ? "Angebot vorbereiten" : "Vor-Ort-Termin anstoßen"} onAccept={() => decide.mutate({ decision: "accept", edits: { kind, positions } })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} acceptLabel={kind === "angebot" ? "Angebot vorbereiten" : "Vor-Ort-Termin anstoßen"} onAccept={() => decide.mutate({ decision: "accept", edits: { kind, positions } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
       </CardContent>
     </Card>
   );
@@ -182,7 +182,7 @@ function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
         <Buttons
           s={s} busy={decide.isPending} acceptLabel="In HERO anlegen"
           onAccept={() => decide.mutate({ decision: "accept", edits: { contact: c, project: { name, notes, gewerk: gewerke.find((g) => g.short === gw) ?? null } } })}
-          onReject={() => decide.mutate({ decision: "reject" })}
+          onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
         />
       </CardContent>
     </Card>
@@ -256,7 +256,7 @@ function GenericCard({ s }: { s: Suggestion }) {
       <Header s={s} />
       <CardContent className="space-y-3">
         <pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-xs">{JSON.stringify(s.payload, null, 2)}</pre>
-        <Buttons s={s} busy={decide.isPending} acceptLabel="Annehmen" onAccept={() => decide.mutate({ decision: "accept" })} onReject={() => decide.mutate({ decision: "reject" })} />
+        <Buttons s={s} busy={decide.isPending} acceptLabel="Annehmen" onAccept={() => decide.mutate({ decision: "accept" })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
       </CardContent>
     </Card>
   );

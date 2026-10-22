@@ -161,7 +161,8 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
 - Edge Functions: `email-sync` (IMAP holen, pg_cron 5 Min), `email-process` (Verstehen → Zuordnen → Handeln),
   `email-action` (Klick auf einen Vorschlag: einzige Stelle mit schreibenden HERO-Aufrufen), `email-draft` (Antwortentwürfe,
   Lexoffice-Entwurf), `email-account-test`, `email-api` (einzige Schnittstelle der Mail-App für Daten), `email-mailbox` (IMAP aus der
-  Mail-App: HTML-Ansicht `body`, `trash`/`restore`). Jede hat ein eigenes `deno.json`
+  Mail-App: HTML-Ansicht `body`, `trash`/`restore`), `email-retention` (Aufbewahrung, pg_cron täglich; Anhänge über die
+  Storage-API, weil Supabase `DELETE` auf `storage.objects` sperrt). Jede hat ein eigenes `deno.json`
   (Import-Map für `npm:`), gemeinsamer Code in `_shared/email/`. Antworten immer HTTP 200 mit `{ ok, data | error }`.
 - Tabellen `email_*` sind **nur für service_role** (RLS an, keine Policy, kein Grant) – nie vom Frontend/Anon-Key lesen.
   `hero_open_cache` gehört CaptFix und wird vom Assistenten nicht benutzt.

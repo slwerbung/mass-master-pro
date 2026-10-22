@@ -153,9 +153,10 @@ export async function decideSuggestion(input: DecideInput, deps: ActionDeps): Pr
 
   if (input.decision === "reject") {
     if (s.status !== "offen" && s.status !== "fehlgeschlagen") throw new ActionError("Der Vorschlag wurde schon entschieden.");
-    await store.finish(s.id, "abgelehnt", {});
-    // Eine Ablehnung ist eine Korrektur: der Assistent lernt daraus.
-    await store.addFeedback(s.message_id, `suggestion.${s.type}`, "vorgeschlagen", "abgelehnt");
+    const reason = String(input.edits?.reason ?? "").trim().slice(0, 300);
+    await store.finish(s.id, "abgelehnt", reason ? { reason } : {});
+    // Eine Ablehnung ist eine Korrektur: der Assistent lernt daraus (mit Grund, wenn einer genannt wurde).
+    await store.addFeedback(s.message_id, `suggestion.${s.type}`, "vorgeschlagen", reason ? `abgelehnt: ${reason}` : "abgelehnt");
     await settle(store, s);
     return { status: "abgelehnt" };
   }

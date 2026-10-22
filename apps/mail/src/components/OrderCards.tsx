@@ -109,7 +109,7 @@ export function ConfirmationCard({ s }: { s: Suggestion }) {
           s={s} busy={decide.isPending}
           acceptLabel={newProject ? "Projekt + AB-Entwurf in HERO anlegen" : "AB-Entwurf in HERO anlegen"}
           onAccept={() => decide.mutate({ decision: "accept", edits: { positions, toStepId: toStepId || null, ...(newProject ? { project: { ...p.project, name }, contact } : {}) } })}
-          onReject={() => decide.mutate({ decision: "reject" })}
+          onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
         />
         <p className="text-xs text-muted-foreground">Es wird nichts versendet. Die AB entsteht als Entwurf; danach erscheint hier „Prüfen &amp; versenden“.</p>
       </CardContent>

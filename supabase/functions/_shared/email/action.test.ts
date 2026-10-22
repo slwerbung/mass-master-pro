@@ -123,6 +123,12 @@ describe("Ablehnen", () => {
     expect(t.log.status).toEqual([["M1", "erledigt"]]);
     expect(t.log.claimed).toEqual([]);
   });
+  it("speichert den Grund und gibt ihn als Korrektur weiter", async () => {
+    const t = setup(row());
+    await decideSuggestion({ suggestionId: "S1", decision: "reject", edits: { reason: "  schon telefonisch erledigt " } }, t.deps);
+    expect(t.log.finished[0]).toEqual(["S1", "abgelehnt", { reason: "schon telefonisch erledigt" }]);
+    expect(t.log.feedback[0]).toEqual(["M1", "suggestion.link_project", "vorgeschlagen", "abgelehnt: schon telefonisch erledigt"]);
+  });
   it("schon Entschiedenes laesst sich nicht noch einmal ablehnen", async () => {
     const t = setup(row({ status: "angenommen" }));
     await expect(decideSuggestion({ suggestionId: "S1", decision: "reject" }, t.deps)).rejects.toThrow(/schon entschieden/);

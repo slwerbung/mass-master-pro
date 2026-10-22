@@ -56,3 +56,6 @@ verify_jwt = false
 
 [functions.email-mailbox]
 verify_jwt = false
+
+[functions.email-retention]
+verify_jwt = false

@@ -2,13 +2,13 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { GraduationCap } from "lucide-react";
+import { MessageSquareText, X } from "lucide-react";
 import { invokeFn } from "@/lib/api";
 import type { Suggestion } from "@/lib/suggestions";
-import { Badge, Button, CardHeader, CardTitle, Spinner } from "@/components/ui";
+import { Badge, Button, CardHeader, CardTitle, Input, Spinner } from "@/components/ui";
 import { CategoryChip } from "@/components/CategoryChip";
 import { TeachBox } from "@/components/TeachBox";
-import { errorText, formatDateTime, pct } from "@/lib/utils";
+import { cn, errorText, formatDateTime, pct } from "@/lib/utils";
 
 // Gemeinsame Bausteine der Vorschlagskarten („Zu entscheiden").
 
@@ -26,7 +26,7 @@ export function useDecide(s: Suggestion, successText?: (r: Record<string, any>) 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       invokeFn<{ warnings?: string[]; projectNr?: string } & Record<string, any>>("email-action", { action: "decide", suggestionId: s.id, decision, edits }),
     onSuccess: (r, v) => {
-      if (v.decision === "reject") toast("Abgelehnt – der Assistent merkt es sich.");
+      if (v.decision === "reject") toast("Verworfen – in HERO und im Postfach hat sich nichts geändert.");
       else toast.success(successText?.(r) ?? (r.projectNr ? `Angelegt: ${r.projectNr}` : "Erledigt"));
       r.warnings?.forEach((w) => toast.warning(w));
       done();
@@ -53,19 +53,57 @@ export function Header({ s }: { s: Suggestion }) {
   );
 }
 
-export function Buttons({ s, onAccept, onReject, acceptLabel, busy, disabled }: { s: Suggestion; onAccept: () => void; onReject: () => void; acceptLabel: string; busy: boolean; disabled?: boolean }) {
-  const [teach, setTeach] = useState(false);
+const SKIP_REASONS = ["Schon erledigt", "Brauchen wir nicht", "Mache ich selbst in HERO"];
+
+/**
+ * Annehmen – oder sagen, was stattdessen richtig ist. Ein nacktes „Ablehnen" gibt es nicht mehr:
+ * „Nein, anders" erklärt dem Assistenten die Lage (Mail läuft neu, neuer Vorschlag),
+ * „Nicht nötig" verwirft den Vorschlag ohne Folgen, mit Grund.
+ */
+export function Buttons({ s, onAccept, onReject, acceptLabel, busy, disabled }: {
+  s: Suggestion; onAccept: () => void; onReject: (reason: string) => void; acceptLabel: string; busy: boolean; disabled?: boolean;
+}) {
+  const [panel, setPanel] = useState<null | "teach" | "skip">(null);
+  const [reason, setReason] = useState("");
+  const toggle = (p: "teach" | "skip") => setPanel(panel === p ? null : p);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
         <Button onClick={onAccept} disabled={busy || disabled}>{busy ? <Spinner /> : null} {acceptLabel}</Button>
-        <Button variant="outline" onClick={onReject} disabled={busy}>Ablehnen</Button>
-        <Button variant="ghost" onClick={() => setTeach(!teach)} disabled={busy} className={teach ? "bg-accent" : ""}>
-          <GraduationCap className="h-4 w-4" /> Falsch? Erklären
+        <Button variant="outline" onClick={() => toggle("teach")} disabled={busy} className={panel === "teach" ? "bg-accent" : ""}>
+          <MessageSquareText className="h-4 w-4" /> Nein, anders …
+        </Button>
+        <Button variant="ghost" onClick={() => toggle("skip")} disabled={busy} className={panel === "skip" ? "bg-accent" : ""}>
+          <X className="h-4 w-4" /> Nicht nötig
         </Button>
       </div>
-      {teach && <TeachBox messageId={s.message.id} fromAddr={s.message.from_addr} onCancel={() => setTeach(false)} />}
+      {panel === "teach" && (
+        <TeachBox
+          messageId={s.message.id} fromAddr={s.message.from_addr} onCancel={() => setPanel(null)}
+          title="Was ist Sache – und was soll stattdessen passieren?"
+          placeholder="z. B. „Kein neues Projekt – gehört zu WER-1820, nur ins Logbuch.“ oder „Das ist eine Lieferantenrechnung, kein Kunde.“"
+          footnote="Dieser Vorschlag wird verworfen und die Mail mit deinem Hinweis neu verarbeitet – danach liegt hier der neue Vorschlag."
+        />
+      )}
+      {panel === "skip" && (
+        <div className="space-y-2 rounded-md border bg-muted/40 p-3">
+          <div className="text-sm font-medium">Vorschlag verwerfen</div>
+          <p className="text-xs text-muted-foreground">Es passiert nichts – in HERO und im Postfach bleibt alles, wie es ist. Der Grund hilft dem Assistenten, so etwas künftig seltener vorzuschlagen.</p>
+          <div className="flex flex-wrap gap-1.5">
+            {SKIP_REASONS.map((r) => (
+              <button
+                key={r} type="button" onClick={() => setReason(r)}
+                className={cn("rounded-full border px-3 py-1 text-xs", reason === r ? "border-primary bg-primary text-primary-foreground" : "bg-background hover:bg-accent")}
+              >{r}</button>
+            ))}
+          </div>
+          <Input value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} placeholder="Grund (optional)" />
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => onReject(reason)} disabled={busy}>{busy && <Spinner />} Verwerfen</Button>
+            <Button size="sm" variant="ghost" onClick={() => setPanel(null)}>Abbrechen</Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
