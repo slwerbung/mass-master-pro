@@ -4,7 +4,7 @@ import { ExternalLink, RefreshCw, Send } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Suggestion } from "@/lib/suggestions";
 import { Badge, Button, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
-import { Buttons, SuggestionCard, useDecide } from "@/components/SuggestionParts";
+import { Buttons, quoted, SuggestionCard, useDecide } from "@/components/SuggestionParts";
 import { cn, formatDate } from "@/lib/utils";
 
 const euro = (n: number) => n.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
@@ -40,7 +40,7 @@ export function ConfirmationCard({ s }: { s: Suggestion }) {
         <div className="space-y-2">
           <Buttons
             s={s} busy={decide.isPending}
-            acceptLabel={newProject ? "Projekt + AB-Entwurf in HERO anlegen" : "AB-Entwurf in HERO anlegen"}
+            acceptLabel={newProject ? `Neues Projekt ${quoted(name)} und AB-Entwurf in HERO anlegen` : `AB-Entwurf in ${p.projectNr ?? `#${p.projectId}`} anlegen`}
             onAccept={() => decide.mutate({ decision: "accept", edits: { positions, toStepId: toStepId || null, ...(newProject ? { project: { ...p.project, name }, contact } : {}) } })}
             onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
           />
@@ -156,8 +156,8 @@ export function SendDocumentCard({ s }: { s: Suggestion }) {
             {d?.sent ? (
               <Button onClick={() => decide.mutate({ decision: "accept", edits: { recipient: recipient.trim(), templateId: Number(tpl) } })} disabled={decide.isPending}>Als erledigt markieren</Button>
             ) : (
-              <Button onClick={send} disabled={!ready || !tpl || !validRecipient || decide.isPending}>
-                {decide.isPending ? <Spinner /> : <Send className="h-4 w-4" />} Jetzt über HERO versenden
+              <Button onClick={send} disabled={!ready || !tpl || !validRecipient || decide.isPending} className="h-auto min-h-9 whitespace-normal py-2 text-left">
+                {decide.isPending ? <Spinner /> : <Send className="h-4 w-4" />} {d?.nr || p.documentNr || kindLabel} jetzt über HERO an {recipient.trim() || "?"} senden
               </Button>
             )}
             <Button variant="outline" onClick={() => decide.mutate({ decision: "reject", edits: { reason: "Nicht versenden" } })} disabled={decide.isPending}>Nicht versenden</Button>

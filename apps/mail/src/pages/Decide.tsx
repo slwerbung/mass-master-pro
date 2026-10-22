@@ -7,7 +7,7 @@ import type { Suggestion } from "@/lib/suggestions";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { ProjectSearch } from "@/components/ProjectSearch";
 import { ConfirmationCard, SendDocumentCard } from "@/components/OrderCards";
-import { Buttons, SuggestionCard, useDecide } from "@/components/SuggestionParts";
+import { Buttons, quoted, SuggestionCard, useDecide } from "@/components/SuggestionParts";
 import { formatDateTime } from "@/lib/utils";
 
 interface Gewerk { short: string; name: string; measure_id: number | null }
@@ -22,7 +22,7 @@ function LinkCard({ s }: { s: Suggestion }) {
   return (
     <SuggestionCard
       s={s} brief={chosen ? `${chosen.nr} ${chosen.name || ""}` : projectId ? (s.payload.projectNr ?? `#${projectId}`) : `${cands.length} Projekte zur Auswahl`}
-      actions={<Buttons s={s} busy={decide.isPending} disabled={!projectId} acceptLabel="Zuordnen & ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { projectId, text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+      actions={<Buttons s={s} busy={decide.isPending} disabled={!projectId} acceptLabel={projectId ? `Zu ${chosen?.nr ?? s.payload.projectNr ?? `#${projectId}`} zuordnen und ins Logbuch schreiben` : "Erst ein Projekt wählen"} onAccept={() => decide.mutate({ decision: "accept", edits: { projectId, text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
         {s.payload.reason && <p className="text-xs text-muted-foreground">Warum: {s.payload.reason}</p>}
         <div className="space-y-1">
@@ -48,7 +48,7 @@ function LogCard({ s }: { s: Suggestion }) {
   return (
     <SuggestionCard
       s={s} brief={`${s.payload.projectNr ?? s.payload.projectId}${s.payload.projectName ? ` ${s.payload.projectName}` : ""}`}
-      actions={<Buttons s={s} busy={decide.isPending} acceptLabel="Ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+      actions={<Buttons s={s} busy={decide.isPending} acceptLabel={`Ins Logbuch von ${s.payload.projectNr ?? `#${s.payload.projectId}`} schreiben`} onAccept={() => decide.mutate({ decision: "accept", edits: { text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>{s.payload.projectName ? ` · ${s.payload.projectName}` : ""}</p>
         <Field label="Logbuch-Eintrag"><Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} /></Field>
@@ -64,7 +64,7 @@ function StepCard({ s }: { s: Suggestion }) {
   return (
     <SuggestionCard
       s={s} brief={`${s.payload.projectNr ?? s.payload.projectId} → ${label ?? "?"}`}
-      actions={<Buttons s={s} busy={decide.isPending} acceptLabel="Status wechseln" onAccept={() => decide.mutate({ decision: "accept", edits: { toStepId: stepId } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+      actions={<Buttons s={s} busy={decide.isPending} acceptLabel={`${s.payload.projectNr ?? `#${s.payload.projectId}`}: Status auf ${quoted(label)} setzen`} onAccept={() => decide.mutate({ decision: "accept", edits: { toStepId: stepId } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>: {s.payload.reason}.</p>
         <Field label="Neuer Schritt">
@@ -90,7 +90,7 @@ function UploadCard({ s }: { s: Suggestion }) {
   return (
     <SuggestionCard
       s={s} brief={`${n} von ${items.length} Anhang/Anhänge → ${s.payload.projectNr ?? s.payload.projectId}`}
-      actions={<Buttons s={s} busy={decide.isPending} disabled={!n} acceptLabel="Hochladen" onAccept={() => decide.mutate({ decision: "accept", edits: { items } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+      actions={<Buttons s={s} busy={decide.isPending} disabled={!n} acceptLabel={`${n} ${n === 1 ? "Anhang" : "Anhänge"} an ${s.payload.projectNr ?? `#${s.payload.projectId}`} hochladen`} onAccept={() => decide.mutate({ decision: "accept", edits: { items } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
         <p className="text-sm">Ans Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b> hochladen:</p>
         {items.map((it, i) => (
@@ -118,7 +118,7 @@ function OfferCard({ s }: { s: Suggestion }) {
   return (
     <SuggestionCard
       s={s} brief={kind === "angebot" ? `Angebot mit ${positions.length} Position(en)` : "Vor-Ort-Termin"}
-      actions={<Buttons s={s} busy={decide.isPending} acceptLabel={kind === "angebot" ? "Angebot vorbereiten" : "Vor-Ort-Termin anstoßen"} onAccept={() => decide.mutate({ decision: "accept", edits: { kind, positions } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+      actions={<Buttons s={s} busy={decide.isPending} acceptLabel={kind === "angebot" ? `Angebotsentwurf in ${s.payload.projectNr ?? `#${s.payload.projectId}`} anlegen` : `${s.payload.projectNr ?? `#${s.payload.projectId}`}: Status auf „Vor-Ort-Termin“ setzen`} onAccept={() => decide.mutate({ decision: "accept", edits: { kind, positions } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>: {s.payload.summary}</p>
         <div className="flex flex-wrap gap-4 text-sm">
@@ -161,7 +161,7 @@ function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
       s={s} brief={`${name || "(ohne Projektname)"}${who ? ` · ${who}` : ""}`}
       actions={
         <Buttons
-          s={s} busy={decide.isPending} acceptLabel="In HERO anlegen"
+          s={s} busy={decide.isPending} acceptLabel={`Neues Projekt ${quoted(name)}${who ? ` für ${who}` : ""} in HERO anlegen`}
           onAccept={() => decide.mutate({ decision: "accept", edits: { contact: c, project: { name, notes, gewerk: gewerke.find((g) => g.short === gw) ?? null } } })}
           onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
         />
