@@ -7,9 +7,9 @@ Reihenfolge man es einschaltet und was bewusst anders gelöst ist als im Konzept
 
 | Teil | Ort |
 |---|---|
-| Tabellen, Seed, Cron, Aufbewahrung | `supabase/migrations/20261007100000…`, `…100100…`, `…100200…`, `…100300…`, `20261008090000…` |
+| Tabellen, Seed, Cron, Aufbewahrung | `supabase/migrations/20261007100000…`, `…100100…`, `…100200…`, `…100300…`, `20261008090000…`, `20261023100000…` (Aufbewahrung) |
 | Gemeinsamer Code | `supabase/functions/_shared/email/` (IMAP, KI-Schicht, Klassifikation, Zuordnung, Handeln, Entwürfe, HERO) |
-| Edge Functions | `email-account-test`, `email-sync`, `email-process`, `email-api`, `email-action`, `email-draft` |
+| Edge Functions | `email-account-test`, `email-sync`, `email-process`, `email-api`, `email-action`, `email-draft`, `email-mailbox`, `email-retention` |
 | Mail-App | `apps/mail/` (Vite + React + TS + Tailwind), eigenes Vercel-Projekt |
 | Phase-0-Skript | `scripts/mail-assistant/phase0-imap-check.ts` |
 | Tests | `npm run test:unit` (vitest, ~340 Tests) und `deno test` für `draftMime.deno_test.ts` |
@@ -83,6 +83,17 @@ in der Mail-Ansicht bzw. „Falsch? Erklären“ an jedem Vorschlag (`email-api`
 - Einträge lassen sich in den Einstellungen bearbeiten, ausschalten und löschen; dort kann man auch von Hand Wissen anlegen.
   Feste „Absender → Kategorie“-Zuordnungen ohne KI bleiben Absenderregeln.
 
+### Vorschlag ablehnen
+
+Ein bloßes „Ablehnen" gibt es nicht. An jedem Vorschlag stehen neben „Annehmen" zwei Wege:
+
+- **„Nein, anders …"**: Freitext, was Sache ist oder was stattdessen passieren soll, z. B. „gehört zu WER-1820, nur ins
+  Logbuch“. Das läuft wie eine Korrektur (`teach`): Der Vorschlag wird verworfen, die Mail mit dem Hinweis neu verarbeitet,
+  danach liegt der neue Vorschlag da. Auf Wunsch kommt der Satz in die Wissensdatei.
+- **„Nicht nötig"**: verwirft den Vorschlag ohne Folgen (HERO und Postfach bleiben unverändert). Der Grund
+  („Schon erledigt“ o. Ä.) steht in `email_suggestions.result.reason` und als `abgelehnt: <Grund>` in `email_feedback`.
+  Von dort fließt er als Korrekturbeispiel ins Verstehen ein.
+
 ## Bestellung → Projekt + Auftragsbestätigung → Versand
 
 Kommt eine Bestellung (Kategorie „Auftrag“ oder Signal „Angebot angenommen“), entsteht der Vorschlag **„Bestellung → Auftragsbestätigung“**
@@ -119,6 +130,19 @@ an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorl
   Rahmen ohne Skripte; externe Bilder (Tracking) erst per Klick. Ist die Mail nicht mehr im Postfach, wird der gespeicherte Text gezeigt.
   Hintergrundinfos (Antwortentwurf, Beleg, HERO-Zuordnung, Plan, Korrektur & Wissen, Erkannte Daten, Verlauf, Parallelvergleich,
   KI-Aufrufe) sind eingeklappt; zugeklappt zeigt jede Zeile eine Kurzinfo. Der Browser merkt sich, welche Bereiche offen sind.
+
+## Aufbewahrung
+
+Die Edge Function `email-retention` läuft per pg_cron täglich um 03:17 UTC. Sie löscht für Mails, die älter als
+`email_config.retention_days` sind (Standard 180):
+
+- die Anhang-Dateien im Bucket `email-attachments`, über die Storage-API in Portionen;
+- danach per `email_retention()` Mailtext und HTML-Ansicht;
+- KI-Aufrufe nach 400 Tagen und Läufe nach 90 Tagen.
+
+Absender, Betreff, Kategorie und Zuordnung bleiben erhalten, im Postfach wird nichts angefasst. Direkt in
+`storage.objects` zu löschen sperrt Supabase (Trigger `storage.protect_delete`). Deshalb erledigt die Dateien die Function
+und nicht SQL. Jeder Lauf steht in `email_runs` (kind `retention`).
 
 ## Referenzwissen
 

@@ -14,8 +14,9 @@ const MAX = 1000;
  * werden verworfen, die Mail läuft mit dem Hinweis neu durch, und auf Wunsch landet der Satz
  * in der Wissensdatei (Einstellungen → Wissen).
  */
-export function TeachBox({ messageId, fromAddr, onDone, onCancel, className }: {
+export function TeachBox({ messageId, fromAddr, onDone, onCancel, className, title, placeholder, footnote }: {
   messageId: string; fromAddr: string; onDone?: () => void; onCancel?: () => void; className?: string;
+  title?: string; placeholder?: string; footnote?: string;
 }) {
   const qc = useQueryClient();
   const [note, setNote] = useState("");
@@ -55,10 +56,10 @@ export function TeachBox({ messageId, fromAddr, onDone, onCancel, className }: {
 
   return (
     <div className={cn("space-y-3 rounded-md border border-amber-200 bg-amber-50/60 p-3", className)}>
-      <div className="flex items-center gap-2 text-sm font-medium"><GraduationCap className="h-4 w-4" /> Was wäre richtig?</div>
+      <div className="flex items-center gap-2 text-sm font-medium"><GraduationCap className="h-4 w-4" /> {title ?? "Was wäre richtig?"}</div>
       <Textarea
         rows={3} maxLength={MAX} value={note} onChange={(e) => setNote(e.target.value)} autoFocus
-        placeholder="z. B. „Das ist keine neue Anfrage, sondern gehört zum Projekt Carport Müller (WER-1820).“ oder „Rechnungen von Probo sind Lieferanten-Belege.“"
+        placeholder={placeholder ?? "z. B. „Das ist keine neue Anfrage, sondern gehört zum Projekt Carport Müller (WER-1820).“ oder „Rechnungen von Probo sind Lieferanten-Belege.“"}
       />
       <div className="space-y-1">
         <div className="text-xs font-medium text-muted-foreground">Merken für künftige Mails</div>
@@ -82,7 +83,7 @@ export function TeachBox({ messageId, fromAddr, onDone, onCancel, className }: {
           {teach.isPending && <Spinner />} Korrigieren &amp; neu verarbeiten
         </Button>
         {onCancel && <Button size="sm" variant="ghost" onClick={onCancel}>Abbrechen</Button>}
-        <span className="text-xs text-muted-foreground">Offene Vorschläge zu dieser Mail werden dabei verworfen.</span>
+        <span className="text-xs text-muted-foreground">{footnote ?? "Offene Vorschläge zu dieser Mail werden dabei verworfen."}</span>
       </div>
     </div>
   );
