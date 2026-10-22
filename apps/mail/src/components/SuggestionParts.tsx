@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { MessageSquareText, X } from "lucide-react";
+import { ChevronRight, Mail, MessageSquareText, SlidersHorizontal, X } from "lucide-react";
 import { invokeFn } from "@/lib/api";
 import type { Suggestion } from "@/lib/suggestions";
-import { Badge, Button, CardHeader, CardTitle, Input, Spinner } from "@/components/ui";
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, Spinner } from "@/components/ui";
+import { MailBody } from "@/components/MailBody";
 import { CategoryChip } from "@/components/CategoryChip";
 import { TeachBox } from "@/components/TeachBox";
 import { cn, errorText, formatDateTime, pct } from "@/lib/utils";
@@ -50,6 +51,43 @@ export function Header({ s }: { s: Suggestion }) {
       <p className="text-xs text-muted-foreground">{m.direction === "out" ? "an" : "von"} {m.from_name || m.from_addr}</p>
       {m.summary && <p className="text-sm">{m.summary}</p>}
     </CardHeader>
+  );
+}
+
+function Toggle({ open, onClick, icon, label, hint }: { open: boolean; onClick: () => void; icon: ReactNode; label: string; hint?: ReactNode }) {
+  return (
+    <button
+      type="button" onClick={onClick} aria-expanded={open}
+      className={cn("inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm hover:bg-accent", open && "bg-accent")}
+    >
+      <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+      {icon}
+      <span className="shrink-0">{label}</span>
+      {hint != null && hint !== "" && <span className="min-w-0 truncate text-muted-foreground">· {hint}</span>}
+    </button>
+  );
+}
+
+/**
+ * Rahmen jeder Vorschlagskarte: sichtbar sind nur Kopf (mit Kurzfassung der Mail) und die Knöpfe.
+ * Die Mail selbst und die Felder des Vorschlags klappen bei Bedarf auf.
+ */
+export function SuggestionCard({ s, brief, actions, children }: { s: Suggestion; brief?: ReactNode; actions: ReactNode; children: ReactNode }) {
+  const [details, setDetails] = useState(false);
+  const [mail, setMail] = useState(false);
+  return (
+    <Card>
+      <Header s={s} />
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          <Toggle open={mail} onClick={() => setMail(!mail)} icon={<Mail className="h-3.5 w-3.5" />} label="Mail" />
+          <Toggle open={details} onClick={() => setDetails(!details)} icon={<SlidersHorizontal className="h-3.5 w-3.5" />} label="Vorschlag" hint={brief} />
+        </div>
+        {mail && <div className="rounded-md border p-2"><MailBody messageId={s.message.id} fallbackText={null} /></div>}
+        {details && <div className="space-y-3 rounded-md border bg-muted/20 p-3">{children}</div>}
+        {actions}
+      </CardContent>
+    </Card>
   );
 }
 

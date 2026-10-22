@@ -7,7 +7,7 @@ import type { Suggestion } from "@/lib/suggestions";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { ProjectSearch } from "@/components/ProjectSearch";
 import { ConfirmationCard, SendDocumentCard } from "@/components/OrderCards";
-import { Buttons, Header, useDecide } from "@/components/SuggestionParts";
+import { Buttons, SuggestionCard, useDecide } from "@/components/SuggestionParts";
 import { formatDateTime } from "@/lib/utils";
 
 interface Gewerk { short: string; name: string; measure_id: number | null }
@@ -18,10 +18,12 @@ function LinkCard({ s }: { s: Suggestion }) {
   const [projectId, setProjectId] = useState<number | null>(s.payload.projectId ?? null);
   const [text, setText] = useState<string>(s.payload.text ?? "");
   const [showSearch, setShowSearch] = useState(false);
+  const chosen = cands.find((c) => c.id === projectId);
   return (
-    <Card>
-      <Header s={s} />
-      <CardContent className="space-y-3">
+    <SuggestionCard
+      s={s} brief={chosen ? `${chosen.nr} ${chosen.name || ""}` : projectId ? (s.payload.projectNr ?? `#${projectId}`) : `${cands.length} Projekte zur Auswahl`}
+      actions={<Buttons s={s} busy={decide.isPending} disabled={!projectId} acceptLabel="Zuordnen & ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { projectId, text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+    >
         {s.payload.reason && <p className="text-xs text-muted-foreground">Warum: {s.payload.reason}</p>}
         <div className="space-y-1">
           {cands.map((c) => (
@@ -36,9 +38,7 @@ function LinkCard({ s }: { s: Suggestion }) {
         <Button variant="ghost" size="sm" onClick={() => setShowSearch(!showSearch)}>{showSearch ? "Suche ausblenden" : "Anderes Projekt suchen"}</Button>
         {showSearch && <ProjectSearch selectedId={projectId} onPick={(p) => { setProjectId(p.id); toast(`Gewählt: ${p.nr}`); }} />}
         <Field label="Logbuch-Eintrag"><Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} /></Field>
-        <Buttons s={s} busy={decide.isPending} disabled={!projectId} acceptLabel="Zuordnen & ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { projectId, text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
-      </CardContent>
-    </Card>
+    </SuggestionCard>
   );
 }
 
@@ -46,14 +46,13 @@ function LogCard({ s }: { s: Suggestion }) {
   const decide = useDecide(s);
   const [text, setText] = useState<string>(s.payload.text ?? "");
   return (
-    <Card>
-      <Header s={s} />
-      <CardContent className="space-y-3">
+    <SuggestionCard
+      s={s} brief={`${s.payload.projectNr ?? s.payload.projectId}${s.payload.projectName ? ` ${s.payload.projectName}` : ""}`}
+      actions={<Buttons s={s} busy={decide.isPending} acceptLabel="Ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+    >
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>{s.payload.projectName ? ` · ${s.payload.projectName}` : ""}</p>
-        <Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} />
-        <Buttons s={s} busy={decide.isPending} acceptLabel="Ins Logbuch" onAccept={() => decide.mutate({ decision: "accept", edits: { text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
-      </CardContent>
-    </Card>
+        <Field label="Logbuch-Eintrag"><Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} /></Field>
+    </SuggestionCard>
   );
 }
 
@@ -61,10 +60,12 @@ function StepCard({ s }: { s: Suggestion }) {
   const decide = useDecide(s);
   const alts = (s.payload.alternatives ?? []) as { key: string; stepId: number; label: string }[];
   const [stepId, setStepId] = useState<number>(s.payload.toStepId);
+  const label = stepId === s.payload.toStepId ? s.payload.toLabel : alts.find((a) => a.stepId === stepId)?.label;
   return (
-    <Card>
-      <Header s={s} />
-      <CardContent className="space-y-3">
+    <SuggestionCard
+      s={s} brief={`${s.payload.projectNr ?? s.payload.projectId} → ${label ?? "?"}`}
+      actions={<Buttons s={s} busy={decide.isPending} acceptLabel="Status wechseln" onAccept={() => decide.mutate({ decision: "accept", edits: { toStepId: stepId } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+    >
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>: {s.payload.reason}.</p>
         <Field label="Neuer Schritt">
           <Select value={stepId} onChange={(e) => setStepId(Number(e.target.value))}>
@@ -73,9 +74,7 @@ function StepCard({ s }: { s: Suggestion }) {
           </Select>
         </Field>
         {s.payload.hint && <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-900">Hinweis: {s.payload.hint}</p>}
-        <Buttons s={s} busy={decide.isPending} acceptLabel="Status wechseln" onAccept={() => decide.mutate({ decision: "accept", edits: { toStepId: stepId } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
-      </CardContent>
-    </Card>
+    </SuggestionCard>
   );
 }
 
@@ -87,10 +86,12 @@ function UploadCard({ s }: { s: Suggestion }) {
   const labels: Record<string, string> = { layouts: "Layouts / Pläne", aufmasse: "Aufmaße", druckdaten: "Druckdaten", fahrzeugdaten: "Fahrzeugdaten", allgemein: "Allgemein" };
   const upd = (i: number, p: Partial<(typeof items)[number]>) => setItems(items.map((x, j) => (j === i ? { ...x, ...p } : x)));
   const thumbs = new Map(s.attachments.map((a) => [a.id, a.url]));
+  const n = items.filter((i) => i.selected).length;
   return (
-    <Card>
-      <Header s={s} />
-      <CardContent className="space-y-3">
+    <SuggestionCard
+      s={s} brief={`${n} von ${items.length} Anhang/Anhänge → ${s.payload.projectNr ?? s.payload.projectId}`}
+      actions={<Buttons s={s} busy={decide.isPending} disabled={!n} acceptLabel="Hochladen" onAccept={() => decide.mutate({ decision: "accept", edits: { items } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+    >
         <p className="text-sm">Ans Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b> hochladen:</p>
         {items.map((it, i) => (
           <div key={it.attachmentId} className="flex flex-wrap items-center gap-3 rounded-md border p-2 text-sm">
@@ -102,9 +103,7 @@ function UploadCard({ s }: { s: Suggestion }) {
             </Select>
           </div>
         ))}
-        <Buttons s={s} busy={decide.isPending} disabled={!items.some((i) => i.selected)} acceptLabel="Hochladen" onAccept={() => decide.mutate({ decision: "accept", edits: { items } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
-      </CardContent>
-    </Card>
+    </SuggestionCard>
   );
 }
 
@@ -117,9 +116,10 @@ function OfferCard({ s }: { s: Suggestion }) {
   const upd = (i: number, p: Partial<OfferPos>) => setPositions(positions.map((x, j) => (j === i ? { ...x, ...p } : x)));
   const missing = (s.payload.missing ?? []) as string[];
   return (
-    <Card>
-      <Header s={s} />
-      <CardContent className="space-y-3">
+    <SuggestionCard
+      s={s} brief={kind === "angebot" ? `Angebot mit ${positions.length} Position(en)` : "Vor-Ort-Termin"}
+      actions={<Buttons s={s} busy={decide.isPending} acceptLabel={kind === "angebot" ? "Angebot vorbereiten" : "Vor-Ort-Termin anstoßen"} onAccept={() => decide.mutate({ decision: "accept", edits: { kind, positions } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+    >
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>: {s.payload.summary}</p>
         <div className="flex flex-wrap gap-4 text-sm">
           <label className="flex items-center gap-2"><input type="radio" checked={kind === "angebot"} onChange={() => setKind("angebot")} /> Angebot vorbereiten</label>
@@ -138,9 +138,7 @@ function OfferCard({ s }: { s: Suggestion }) {
             <p className="text-xs text-muted-foreground">HERO kann Positionen nicht per Schnittstelle einfügen: die Liste kommt ins Logbuch, du übernimmst sie im Angebot und prüfst die Preise.</p>
           </div>
         )}
-        <Buttons s={s} busy={decide.isPending} acceptLabel={kind === "angebot" ? "Angebot vorbereiten" : "Vor-Ort-Termin anstoßen"} onAccept={() => decide.mutate({ decision: "accept", edits: { kind, positions } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
-      </CardContent>
-    </Card>
+    </SuggestionCard>
   );
 }
 
@@ -157,10 +155,18 @@ function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
     ["phone", "Telefon"], ["street", "Straße"], ["zip", "PLZ"], ["city", "Ort"],
   ];
   const images = s.attachments.filter((a) => a.url);
+  const who = c.company || [c.first_name, c.last_name].filter(Boolean).join(" ") || c.email;
   return (
-    <Card>
-      <Header s={s} />
-      <CardContent className="space-y-3">
+    <SuggestionCard
+      s={s} brief={`${name || "(ohne Projektname)"}${who ? ` · ${who}` : ""}`}
+      actions={
+        <Buttons
+          s={s} busy={decide.isPending} acceptLabel="In HERO anlegen"
+          onAccept={() => decide.mutate({ decision: "accept", edits: { contact: c, project: { name, notes, gewerk: gewerke.find((g) => g.short === gw) ?? null } } })}
+          onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
+        />
+      }
+    >
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {fields.map(([k, l]) => <Field key={k} label={l}><Input value={c[k] ?? ""} onChange={(e) => set(k, e.target.value)} /></Field>)}
         </div>
@@ -179,13 +185,7 @@ function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
             {s.attachments.filter((a) => !a.url && !a.is_ignored).map((a) => <Badge key={a.id} variant="outline">{a.filename}</Badge>)}
           </div>
         )}
-        <Buttons
-          s={s} busy={decide.isPending} acceptLabel="In HERO anlegen"
-          onAccept={() => decide.mutate({ decision: "accept", edits: { contact: c, project: { name, notes, gewerk: gewerke.find((g) => g.short === gw) ?? null } } })}
-          onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
-        />
-      </CardContent>
-    </Card>
+    </SuggestionCard>
   );
 }
 
@@ -252,12 +252,8 @@ export default function Decide() {
 function GenericCard({ s }: { s: Suggestion }) {
   const decide = useDecide(s);
   return (
-    <Card>
-      <Header s={s} />
-      <CardContent className="space-y-3">
+    <SuggestionCard s={s} actions={<Buttons s={s} busy={decide.isPending} acceptLabel="Annehmen" onAccept={() => decide.mutate({ decision: "accept" })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}>
         <pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-xs">{JSON.stringify(s.payload, null, 2)}</pre>
-        <Buttons s={s} busy={decide.isPending} acceptLabel="Annehmen" onAccept={() => decide.mutate({ decision: "accept" })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />
-      </CardContent>
-    </Card>
+    </SuggestionCard>
   );
 }
