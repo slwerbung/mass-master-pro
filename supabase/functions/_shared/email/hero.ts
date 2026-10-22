@@ -133,6 +133,27 @@ export async function contactsByEmail(apiKey: string, email: string, fetchImpl: 
     }));
 }
 
+export interface HeroContactHit extends HeroContact { company: string | null }
+
+/**
+ * Freie Kontaktsuche (Firmen-Domain, Firmenname). Liefert alle Treffer mit ihrer echten Adresse;
+ * welche davon passen, entscheidet der Aufrufer (match.ts `findCustomer`).
+ */
+export async function searchContacts(apiKey: string, term: string, fetchImpl: F = fetch): Promise<HeroContactHit[]> {
+  const q = `query($s: String) {
+    contacts(search: $s) { id email is_contact_person parent_customer_id full_name company_name first_name last_name }
+  }`;
+  const data = await heroGraphql(apiKey, q, { s: term }, fetchImpl);
+  return (data?.contacts || []).map((c: any) => ({
+    id: Number(c.id),
+    customerId: Number(c.is_contact_person && c.parent_customer_id ? c.parent_customer_id : c.id),
+    name: String(c.full_name || c.company_name || [c.first_name, c.last_name].filter(Boolean).join(" ") || "").trim(),
+    email: String(c.email || "").trim().toLowerCase(),
+    isContactPerson: !!c.is_contact_person,
+    company: c.company_name ? String(c.company_name) : null,
+  }));
+}
+
 /** Logbuch-Eintrag am Projekt. v9: `custom_text` ist Pflicht, kein Titel-Feld. */
 export async function addLogbookEntry(apiKey: string, projectMatchId: number, text: string, fetchImpl: F = fetch): Promise<void> {
   await heroGraphql(

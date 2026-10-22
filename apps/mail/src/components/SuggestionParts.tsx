@@ -42,7 +42,7 @@ export function Header({ s }: { s: Suggestion }) {
   return (
     <CardHeader>
       <div className="flex flex-wrap items-center gap-2">
-        <Badge>{TYPE_LABEL[s.type] ?? s.type}</Badge>
+        <Badge>{s.type === "create_project" && s.payload?.existingCustomer ? "Projekt anlegen (Kunde bekannt)" : TYPE_LABEL[s.type] ?? s.type}</Badge>
         <CategoryChip category={m.category} />
         {m.confidence != null && <span className="text-xs text-muted-foreground">Konfidenz {pct(m.confidence)}</span>}
         <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(m.sent_at)}</span>
@@ -88,6 +88,22 @@ export function SuggestionCard({ s, brief, actions, children }: { s: Suggestion;
         {actions}
       </CardContent>
     </Card>
+  );
+}
+
+export interface ExistingCustomer { id: number; name: string; email: string; via: "email" | "domain" | "firma" }
+const VIA: Record<ExistingCustomer["via"], string> = { email: "über die E-Mail-Adresse", domain: "über die Firmen-Domain", firma: "über den Firmennamen" };
+
+/** Den Kunden gibt es schon in HERO: Projekt dort anlegen oder (bei falschem Treffer) doch einen neuen Kontakt. */
+export function ExistingCustomerChoice({ customer, useExisting, onChange }: { customer: ExistingCustomer; useExisting: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="space-y-2 rounded-md border border-emerald-200 bg-emerald-50/60 p-3 text-sm">
+      <p>Den Kunden gibt es schon in HERO: <b>{customer.name}</b>{customer.email ? ` (${customer.email})` : ""} – gefunden {VIA[customer.via] ?? ""}.</p>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        <label className="flex items-center gap-2"><input type="radio" checked={useExisting} onChange={() => onChange(true)} /> Projekt bei diesem Kunden anlegen</label>
+        <label className="flex items-center gap-2"><input type="radio" checked={!useExisting} onChange={() => onChange(false)} /> Falscher Kunde – neuen Kontakt anlegen</label>
+      </div>
+    </div>
   );
 }
 

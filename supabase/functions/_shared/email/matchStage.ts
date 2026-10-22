@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 import { BudgetExceededError, LimitWaitError, runTask, type LlmDeps, type LlmRequest } from "./llm.ts";
-import { buildPickRequest, counterpart, matchMessage, PickSchema, type MatchDeps, type MatchInput, type MatchOutcome } from "./match.ts";
+import { buildPickRequest, counterpart, matchMessage, PickSchema, type CustomerRef, type MatchDeps, type MatchInput, type MatchOutcome } from "./match.ts";
 import type { HeroProject } from "./hero.ts";
 import { MAX_ATTEMPTS } from "./understand.ts";
 import type { MatchMethod, MessageStatus } from "./types.ts";
@@ -23,6 +23,8 @@ export interface MatchMessageRow {
   summary: string | null;
   attempts: number;
   correction_note?: string | null;
+  /** Ergebnis von „Verstehen" – daraus Kundenadresse und Firma fuer die Kontaktsuche. */
+  extracted?: { contact?: { email?: string | null; company?: string | null } } | null;
 }
 
 export interface MatchInfo {
@@ -33,6 +35,8 @@ export interface MatchInfo {
   projectName?: string;
   stepId?: number | null;
   candidates?: { id: number; nr: string; name: string; stepName: string | null }[];
+  /** Gefundener HERO-Kunde (auch ohne Projekt): „Projekt anlegen" legt dann keinen neuen Kontakt an. */
+  customer?: CustomerRef;
   error?: string;
 }
 
@@ -58,6 +62,7 @@ export interface MatchHero {
   projectByNumber(rel: number): Promise<HeroProject | null>;
   projectById(id: number): Promise<HeroProject | null>;
   contactsByEmail: MatchDeps["contactsByEmail"];
+  searchContacts?: MatchDeps["searchContacts"];
   openProjects: MatchDeps["openProjects"];
 }
 
@@ -113,6 +118,8 @@ export async function matchPending(
       const input: MatchInput = {
         direction: m.direction, threadId: m.thread_id, from: m.from_addr, to: m.to_addrs, cc: m.cc_addrs,
         subject: m.subject, body: m.body_text ?? "", summary: m.summary,
+        altEmails: m.extracted?.contact?.email ? [m.extracted.contact.email] : [],
+        company: m.extracted?.contact?.company ?? null,
       };
       const kn = splitKnowledge(ctx.knowledge ?? [], counterpart(input, ctx.ownAddresses));
       input.guidance = guidanceBlock({ sender: kn.sender, note: m.correction_note });
@@ -122,6 +129,7 @@ export async function matchPending(
         threadProject: hero.threadProject,
         projectByNumber: hero.projectByNumber,
         contactsByEmail: hero.contactsByEmail,
+        searchContacts: hero.searchContacts,
         openProjects: hero.openProjects,
         prefixes: ctx.prefixes,
         ownAddresses: ctx.ownAddresses,
@@ -142,6 +150,7 @@ export async function matchPending(
 
       const info: MatchInfo = {
         certain: out.certain, knownContact: out.knownContact, reason: out.reason,
+        ...(out.customer ? { customer: out.customer } : {}),
         ...(project ? { projectNr: project.nr, projectName: project.name, stepId: project.stepId } : {}),
         ...(out.candidates.length
           ? { candidates: out.candidates.map((c) => ({ id: c.id, nr: c.nr, name: c.name, stepName: c.stepName })) }

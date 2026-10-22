@@ -4,7 +4,7 @@ import { ExternalLink, RefreshCw, Send } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Suggestion } from "@/lib/suggestions";
 import { Badge, Button, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
-import { Buttons, quoted, SuggestionCard, useDecide } from "@/components/SuggestionParts";
+import { Buttons, ExistingCustomerChoice, quoted, SuggestionCard, useDecide, type ExistingCustomer } from "@/components/SuggestionParts";
 import { cn, formatDate } from "@/lib/utils";
 
 const euro = (n: number) => n.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
@@ -31,17 +31,22 @@ export function ConfirmationCard({ s }: { s: Suggestion }) {
   const steps = (p.stepOptions ?? []) as { stepId: number; label: string }[];
   const open = (p.openPoints ?? []) as string[];
   const newProject = !p.projectId;
+  const existing = (p.existingCustomer ?? null) as ExistingCustomer | null;
+  const [useExisting, setUseExisting] = useState(!!existing);
+  const fromExisting = newProject && !!existing && useExisting;
   const included = positions.filter((x) => x.include).length;
 
   return (
     <SuggestionCard
-      s={s} brief={`${newProject ? "neues Projekt" : (p.projectNr ?? `#${p.projectId}`)} · ${included} Position(en)${included ? ` · ${euro(sum)} netto` : ""}`}
+      s={s} brief={`${!newProject ? (p.projectNr ?? `#${p.projectId}`) : fromExisting ? `neues Projekt bei ${existing!.name}` : "neues Projekt + neuer Kontakt"} · ${included} Position(en)${included ? ` · ${euro(sum)} netto` : ""}`}
       actions={
         <div className="space-y-2">
           <Buttons
             s={s} busy={decide.isPending}
-            acceptLabel={newProject ? `Neues Projekt ${quoted(name)} und AB-Entwurf in HERO anlegen` : `AB-Entwurf in ${p.projectNr ?? `#${p.projectId}`} anlegen`}
-            onAccept={() => decide.mutate({ decision: "accept", edits: { positions, toStepId: toStepId || null, ...(newProject ? { project: { ...p.project, name }, contact } : {}) } })}
+            acceptLabel={!newProject ? `AB-Entwurf in ${p.projectNr ?? `#${p.projectId}`} anlegen`
+              : fromExisting ? `Neues Projekt ${quoted(name)} beim bestehenden Kunden ${existing!.name} + AB-Entwurf anlegen`
+              : `Neuen Kontakt, Projekt ${quoted(name)} und AB-Entwurf in HERO anlegen`}
+            onAccept={() => decide.mutate({ decision: "accept", edits: { positions, toStepId: toStepId || null, ...(newProject ? { project: { ...p.project, name }, contact, useExisting: fromExisting } : {}) } })}
             onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
           />
           <p className="text-xs text-muted-foreground">Es wird nichts versendet. Die AB entsteht als Entwurf; danach erscheint hier „Prüfen &amp; versenden“.</p>
@@ -50,12 +55,15 @@ export function ConfirmationCard({ s }: { s: Suggestion }) {
     >
         {newProject ? (
           <div className="space-y-2 rounded-md border border-dashed p-3">
-            <p className="text-sm font-medium">Neues Projekt anlegen (Kunde/Kontakt wird in HERO gesucht oder angelegt)</p>
+            <p className="text-sm font-medium">Neues Projekt anlegen</p>
+            {existing && <ExistingCustomerChoice customer={existing} useExisting={useExisting} onChange={setUseExisting} />}
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Projektname"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
-              <Field label="Firma"><Input value={contact.company ?? ""} onChange={(e) => setContact({ ...contact, company: e.target.value })} /></Field>
-              <Field label="Nachname"><Input value={contact.last_name ?? ""} onChange={(e) => setContact({ ...contact, last_name: e.target.value })} /></Field>
-              <Field label="E-Mail"><Input value={contact.email ?? ""} onChange={(e) => setContact({ ...contact, email: e.target.value })} /></Field>
+              {!fromExisting && <>
+                <Field label="Firma"><Input value={contact.company ?? ""} onChange={(e) => setContact({ ...contact, company: e.target.value })} /></Field>
+                <Field label="Nachname"><Input value={contact.last_name ?? ""} onChange={(e) => setContact({ ...contact, last_name: e.target.value })} /></Field>
+                <Field label="E-Mail"><Input value={contact.email ?? ""} onChange={(e) => setContact({ ...contact, email: e.target.value })} /></Field>
+              </>}
             </div>
           </div>
         ) : (

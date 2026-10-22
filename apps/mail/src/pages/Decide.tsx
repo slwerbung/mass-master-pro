@@ -7,7 +7,7 @@ import type { Suggestion } from "@/lib/suggestions";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { ProjectSearch } from "@/components/ProjectSearch";
 import { ConfirmationCard, SendDocumentCard } from "@/components/OrderCards";
-import { Buttons, quoted, SuggestionCard, useDecide } from "@/components/SuggestionParts";
+import { Buttons, ExistingCustomerChoice, quoted, SuggestionCard, useDecide, type ExistingCustomer } from "@/components/SuggestionParts";
 import { formatDateTime } from "@/lib/utils";
 
 interface Gewerk { short: string; name: string; measure_id: number | null }
@@ -149,27 +149,36 @@ function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
   const [name, setName] = useState<string>(p.project?.name ?? "");
   const [notes, setNotes] = useState<string>(p.project?.notes ?? "");
   const [gw, setGw] = useState<string>(p.project?.gewerk?.short ?? "");
+  const existing = (p.existingCustomer ?? null) as ExistingCustomer | null;
+  const [useExisting, setUseExisting] = useState(!!existing);
   const set = (k: string, v: string) => setC({ ...c, [k]: v });
   const fields: [string, string][] = [
     ["salutation", "Anrede"], ["first_name", "Vorname"], ["last_name", "Nachname"], ["company", "Firma"], ["email", "E-Mail"],
     ["phone", "Telefon"], ["street", "Straße"], ["zip", "PLZ"], ["city", "Ort"],
   ];
   const images = s.attachments.filter((a) => a.url);
-  const who = c.company || [c.first_name, c.last_name].filter(Boolean).join(" ") || c.email;
+  const fromExisting = !!existing && useExisting;
+  const who = fromExisting ? existing!.name : c.company || [c.first_name, c.last_name].filter(Boolean).join(" ") || c.email;
   return (
     <SuggestionCard
-      s={s} brief={`${name || "(ohne Projektname)"}${who ? ` · ${who}` : ""}`}
+      s={s} brief={`${name || "(ohne Projektname)"}${who ? ` · ${who}${fromExisting ? " (bestehender Kunde)" : " (neuer Kontakt)"}` : ""}`}
       actions={
         <Buttons
-          s={s} busy={decide.isPending} acceptLabel={`Neues Projekt ${quoted(name)}${who ? ` für ${who}` : ""} in HERO anlegen`}
-          onAccept={() => decide.mutate({ decision: "accept", edits: { contact: c, project: { name, notes, gewerk: gewerke.find((g) => g.short === gw) ?? null } } })}
+          s={s} busy={decide.isPending}
+          acceptLabel={fromExisting
+            ? `Neues Projekt ${quoted(name)} beim bestehenden Kunden ${who} in HERO anlegen`
+            : `Neuen Kontakt${who ? ` ${who}` : ""} und Projekt ${quoted(name)} in HERO anlegen`}
+          onAccept={() => decide.mutate({ decision: "accept", edits: { contact: c, useExisting: fromExisting, project: { name, notes, gewerk: gewerke.find((g) => g.short === gw) ?? null } } })}
           onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
         />
       }
     >
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {fields.map(([k, l]) => <Field key={k} label={l}><Input value={c[k] ?? ""} onChange={(e) => set(k, e.target.value)} /></Field>)}
-        </div>
+        {existing && <ExistingCustomerChoice customer={existing} useExisting={useExisting} onChange={setUseExisting} />}
+        {!fromExisting && (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {fields.map(([k, l]) => <Field key={k} label={l}><Input value={c[k] ?? ""} onChange={(e) => set(k, e.target.value)} /></Field>)}
+          </div>
+        )}
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Projektname"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label="Gewerk">

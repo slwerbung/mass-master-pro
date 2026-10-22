@@ -230,17 +230,27 @@ async function createProject(s: SuggestionRow, p: any, deps: ActionDeps, warning
   const { hero, store } = deps;
   const c = p.contact ?? {};
   const email = String(c.email || s.message.from_addr || "").trim().toLowerCase();
-  need(email, "E-Mail-Adresse fehlt.");
-  if (!String(c.last_name || "").trim() && !String(c.company || "").trim()) throw new ActionError("Nachname oder Firma fehlt.");
+  // Bestehender HERO-Kunde (aus der Zuordnung), solange in der Mail-App nicht „neuen Kontakt anlegen" gewaehlt ist.
+  const existingId = p.useExisting !== false && Number(p.existingCustomer?.id) > 0 ? Number(p.existingCustomer.id) : null;
+  if (!existingId) {
+    need(email, "E-Mail-Adresse fehlt.");
+    if (!String(c.last_name || "").trim() && !String(c.company || "").trim()) throw new ActionError("Nachname oder Firma fehlt.");
+  }
   const name = String(need(p.project?.name, "Projektname fehlt.")).trim().slice(0, 200);
 
   const g = deps.config.gewerke.find((x) => x.short === p.project?.gewerk?.short) ?? null;
   const measureId = g?.measure_id ?? p.project?.gewerk?.measure_id ?? null;
 
-  // 1. Kontakt: `findExisting` verhindert Dubletten bei gleicher E-Mail.
-  const contactId = await hero!.createContact({ ...c, email }, "Mail-Assistent");
-  const found = await hero!.contactsByEmail(email).catch(() => [] as HeroContact[]);
-  const customerId = found.find((x) => x.id === contactId)?.customerId ?? found[0]?.customerId ?? contactId;
+  // 1. Kontakt: bestehenden Kunden nehmen, sonst anlegen (`findExisting` verhindert Dubletten bei gleicher E-Mail).
+  let contactId: number | null = null;
+  let customerId: number;
+  if (existingId) {
+    customerId = existingId;
+  } else {
+    contactId = await hero!.createContact({ ...c, email }, "Mail-Assistent");
+    const found = await hero!.contactsByEmail(email).catch(() => [] as HeroContact[]);
+    customerId = found.find((x) => x.id === contactId)?.customerId ?? found[0]?.customerId ?? contactId;
+  }
 
   // 2. Projekt (Startschritt „Anfragen")
   const notes = String(p.project?.notes || s.message.summary || s.message.subject || "").slice(0, 2000);
@@ -251,7 +261,7 @@ async function createProject(s: SuggestionRow, p: any, deps: ActionDeps, warning
 
   // Ab hier existiert das Projekt: weitere Fehler sind Hinweise, kein Abbruch (sonst gaebe es beim Wiederholen ein zweites Projekt).
   try {
-    await store.dropContactCache(email);
+    if (email) await store.dropContactCache(email);
     const details = [p.request?.service, p.request?.dimensions, p.request?.quantity && `Menge: ${p.request.quantity}`, p.request?.material, p.request?.location]
       .filter(Boolean).join(" · ");
     const text = logbookText({ ...s.message }, s.message.account_label) + (details ? `\nAnfrage: ${details}` : "");
@@ -373,7 +383,10 @@ async function createConfirmation(s: SuggestionRow, p: any, deps: ActionDeps, wa
       await assignAndLog(s, project, logbookText({ ...s.message }, s.message.account_label), deps, warnings);
     }
   } else {
-    const r = await createProject(s, { contact: p.contact ?? orig.contact ?? {}, project: p.project ?? orig.project, request: {} }, deps, warnings);
+    const r = await createProject(s, {
+      contact: p.contact ?? orig.contact ?? {}, project: p.project ?? orig.project, request: {},
+      existingCustomer: p.existingCustomer ?? orig.existingCustomer ?? null, useExisting: p.useExisting,
+    }, deps, warnings);
     projectId = Number(r.projectId);
     projectNr = String(r.projectNr ?? "");
     stepId = config.startStepId;
