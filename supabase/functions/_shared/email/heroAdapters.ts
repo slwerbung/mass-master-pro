@@ -23,6 +23,15 @@ export function matchHero(sb: any, apiKey: string, excludedSteps: number[]): Mat
       await sb.from("hero_contact_cache").upsert({ email: key, contacts, fetched_at: new Date().toISOString() });
       return contacts;
     },
+    async searchContacts(term) {
+      // Gleicher Zwischenspeicher wie oben, eigener Schluessel-Raum (kein @ am Anfang einer Adresse).
+      const key = `search:${term.trim().toLowerCase()}`;
+      const { data } = await sb.from("hero_contact_cache").select("contacts, fetched_at").eq("email", key).maybeSingle();
+      if (data && Date.now() - new Date(data.fetched_at).getTime() < CONTACT_TTL_MS) return data.contacts as H.HeroContactHit[];
+      const contacts = await H.searchContacts(apiKey, term);
+      await sb.from("hero_contact_cache").upsert({ email: key, contacts, fetched_at: new Date().toISOString() });
+      return contacts;
+    },
     openProjects: (customerId) => H.openProjectsOfCustomer(apiKey, customerId, excludedSteps),
   };
 }

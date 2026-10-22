@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildPickRequest, counterpart, matchMessage, PickSchema, type MatchDeps, type MatchInput } from "./match.ts";
-import type { HeroProject } from "./hero.ts";
+import { buildPickRequest, contactAddresses, counterpart, matchMessage, normalizeCompany, PickSchema, type MatchDeps, type MatchInput } from "./match.ts";
+import type { HeroContactHit, HeroProject } from "./hero.ts";
 
 const P = (id: number, nr: string, stepName = "Layout"): HeroProject => ({ id, nr, name: `Projekt ${id}`, stepId: 1, stepName, customerId: 7, customerName: "Muster GmbH" });
 
@@ -125,5 +125,50 @@ describe("Projektwahl-Prompt", () => {
   it("Schema toleriert Muell", () => {
     expect(PickSchema.parse({ project_id: "4", confidence: "x" })).toEqual({ project_id: 4, confidence: 0, reason: "" });
     expect(PickSchema.parse({ project_id: null, confidence: 1, reason: "r" }).project_id).toBeNull();
+  });
+});
+
+describe("Kunde finden – nicht nur ueber die exakte Absenderadresse", () => {
+  const hit = (id: number, customerId: number, email: string, company: string | null = null): HeroContactHit =>
+    ({ id, customerId, name: company ?? email, email, isContactPerson: false, company });
+
+  it("Formular-Mail (notifications@…): sucht mit der Kundenadresse aus der Mail", async () => {
+    const asked: string[] = [];
+    const d = deps({
+      contactsByEmail: async (e) => (asked.push(e), e === "info@arslan-events.com" ? [hit(8, 8, e, "Arslan Event GmbH")] : []),
+    });
+    const r = await matchMessage(input({ from: "notifications@captfix.app", altEmails: ["Info@Arslan-Events.com"] }), d);
+    expect(asked).toEqual(["notifications@captfix.app", "info@arslan-events.com"]);
+    expect(r).toMatchObject({ knownContact: true, customer: { id: 8, via: "email" } });
+    expect(r.reason).toContain("aus der Mail");
+  });
+
+  it("andere Adresse derselben Firma: Treffer ueber die Domain", async () => {
+    const d = deps({ searchContacts: async (t) => (t === "bestcare.de" ? [hit(5, 5, "schneider@bestcare.de", "BestCare GmbH")] : []) });
+    const r = await matchMessage(input({ from: "helmut.schneider@bestcare.de" }), d);
+    expect(r).toMatchObject({ knownContact: true, customer: { id: 5, via: "domain", email: "schneider@bestcare.de" } });
+  });
+
+  it("Freemail-Domain wird nie als Firma gesucht, Firmenname schon", async () => {
+    const terms: string[] = [];
+    const d = deps({
+      searchContacts: async (t) => (terms.push(t), t === "Müller Bau GmbH" ? [hit(9, 9, "x@mueller-bau.de", "Müller Bau")] : []),
+    });
+    const r = await matchMessage(input({ from: "max@gmx.de", company: "Müller Bau GmbH" }), d);
+    expect(terms).toEqual(["Müller Bau GmbH"]);
+    expect(r.customer).toMatchObject({ id: 9, via: "firma" });
+  });
+
+  it("unscharf nur bei genau einem Kunden; die eigene Firma zaehlt nie", async () => {
+    const two = deps({ searchContacts: async () => [hit(1, 1, "a@firma.de"), hit(2, 2, "b@firma.de")] });
+    expect((await matchMessage(input({ from: "c@firma.de" }), two)).knownContact).toBe(false);
+    const own = deps({ searchContacts: async () => [hit(3, 3, "info@slwerbung.de", "SL WERBUNG")] });
+    expect((await matchMessage(input({ from: "notifications@captfix.app", company: "SL WERBUNG" }), own)).knownContact).toBe(false);
+  });
+
+  it("Adressliste: eigene Adressen und Domain raus, keine Doppelten", () => {
+    expect(contactAddresses(input({ altEmails: ["max@muster.de", "werner@slwerbung.de", "kunde@x.de"] }), ["info@slwerbung.de"]))
+      .toEqual(["max@muster.de", "kunde@x.de"]);
+    expect(normalizeCompany("Firma BestCare Intensivpflege GmbH")).toBe(normalizeCompany("BestCare Intensivpflege"));
   });
 });

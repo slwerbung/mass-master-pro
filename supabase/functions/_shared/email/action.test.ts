@@ -172,6 +172,22 @@ describe("create_project", () => {
     expect(t.log.assigned[0].slice(0, 3)).toEqual(["M1", "T1", 555]);
     expect(t.log.dropped).toEqual(["kunde@x.de"]);
   });
+  it("bestehender HERO-Kunde: kein neuer Kontakt, Projekt beim Kunden", async () => {
+    const x = s(); x.payload.existingCustomer = { id: 777, name: "Muster GmbH", email: "info@muster.de", via: "domain" };
+    x.payload.contact.last_name = null;
+    const t = setup(x);
+    const r = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(r).toMatchObject({ contactId: null, customerId: 777, projectId: 555 });
+    expect(t.log.contacts).toEqual([]);
+    expect(t.log.projects[0]).toMatchObject({ customerId: 777 });
+  });
+  it("„neuen Kontakt anlegen“ gewaehlt: Kontakt wird trotz Treffer angelegt", async () => {
+    const x = s(); x.payload.existingCustomer = { id: 777, name: "Muster GmbH", email: "info@muster.de", via: "domain" };
+    const t = setup(x);
+    await decideSuggestion({ suggestionId: "S1", decision: "accept", edits: { useExisting: false } }, t.deps);
+    expect(t.log.contacts).toHaveLength(1);
+    expect(t.log.projects[0]).toMatchObject({ customerId: 901 });
+  });
   it("Pflichtangaben werden vor dem Anlegen geprueft – nichts landet halb in HERO", async () => {
     const bad = s(); bad.payload.contact.last_name = null;
     const t = setup(bad);

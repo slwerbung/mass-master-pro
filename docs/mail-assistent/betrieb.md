@@ -19,6 +19,18 @@ Kontakt → KI) → **Handeln** (verschieben, Schlagwörter, Logbuch, Vorschläg
 drei Stufen; Stand je Mail steht in `email_messages.status`, der Plan (was getan wurde bzw. im Schattenmodus getan würde)
 in `email_messages.plan`.
 
+**Kunde in HERO finden** (Stufe „Kontakt“, `match.ts` `findCustomer`), in dieser Reihenfolge:
+1. exakt über die Adresse des Gegenübers und, bei eingehenden Mails, über die Kundenadresse aus „Verstehen“. Das ist wichtig
+   für Formular-Mails von `notifications@captfix.app`, bei denen der Absender nie der Kunde ist;
+2. über die Firmen-Domain (z. B. `kollege@firma.de` findet den Kunden mit `info@firma.de`), nicht bei Freemail und nicht bei der
+   eigenen Domain;
+3. über den Firmennamen (ohne Rechtsform verglichen). Die eigene Firma zählt nie.
+
+Die Wege 2 und 3 zählen nur bei genau einem passenden Kunden. Der Treffer steht in `match_info.customer` (mit `via`). „Projekt
+anlegen“ und „Projekt + AB“ legen das Projekt dann beim bestehenden Kunden an, ohne neuen Kontakt. In der Mail-App lässt sich das
+umstellen („Falscher Kunde – neuen Kontakt anlegen“). Suchergebnisse werden 24 h in `hero_contact_cache` (Schlüssel `search:…`)
+zwischengespeichert; nach dem Anlegen eines Kontakts werden Adresse und Domain verworfen.
+
 ## Einschalten – Reihenfolge
 
 1. **Datenschutz zuerst:** AV-Vertrag mit Cloudflare (und Anthropic, wenn Haiku ausweicht), Verarbeitungsregion klären,

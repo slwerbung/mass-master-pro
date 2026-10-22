@@ -171,6 +171,8 @@ export interface ConfirmationPayload {
   projectNr: string | null;
   /** Fuer ein neues Projekt (kein Projekt zugeordnet). */
   contact: Record<string, string | null> | null;
+  /** Kunde gibt es schon in HERO: das neue Projekt kommt dorthin (kein zweiter Kontakt). */
+  existingCustomer?: { id: number; name: string; email: string; via: string } | null;
   project: { name: string; gewerk: { short: string; measure_id: number | null } | null };
   summary: string;
   sources: { id: number; nr: string; kind: "ab" | "angebot"; date: string | null; projectNr: string | null }[];

@@ -145,7 +145,7 @@ export function matchStore(sb: any): MatchStore {
   return {
     async loadForMatch(accountId, limit): Promise<MatchMessageRow[]> {
       const { data } = await sb.from("email_messages")
-        .select("id, account_id, thread_id, direction, from_addr, to_addrs, cc_addrs, subject, body_text, summary, attempts, correction_note")
+        .select("id, account_id, thread_id, direction, from_addr, to_addrs, cc_addrs, subject, body_text, summary, attempts, correction_note, extracted")
         .eq("account_id", accountId).eq("status", "klassifiziert")
         .order("sent_at", { ascending: true, nullsFirst: false }).limit(limit);
       return (data || []) as MatchMessageRow[];
@@ -270,7 +270,10 @@ export function actionStore(sb: any): ActionStore {
       await sb.from("email_feedback").insert({ message_id: messageId, field, old_value: oldValue, new_value: newValue, from_addr: data?.from_addr ?? null });
     },
     async dropContactCache(email) {
-      await sb.from("hero_contact_cache").delete().eq("email", email.toLowerCase());
+      // Auch die Domain-Suche: sonst gilt die Firma bis zu 24 h weiter als unbekannt.
+      const e = email.toLowerCase();
+      const dom = e.includes("@") ? e.slice(e.lastIndexOf("@") + 1) : "";
+      await sb.from("hero_contact_cache").delete().in("email", dom ? [e, `search:${dom}`] : [e]);
     },
     async createSuggestion(messageId, type, payload) {
       const { error } = await sb.from("email_suggestions").insert({ message_id: messageId, type, payload });

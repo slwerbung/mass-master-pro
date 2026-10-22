@@ -213,7 +213,8 @@ export async function actOn(m: ActMessage, ctx: ActContext, deps: ActDeps): Prom
     if (d === "suggest" || d === "auto") {
       // „Automatisch" gibt es hier bewusst nicht: neue Daten in HERO entstehen nur per Klick.
       const created = await deps.store.createSuggestion(m.id, "create_project", buildCreateProjectPayload(m, ctx));
-      note("create_project", "suggest", created, created ? "Vorschlag: Kontakt + Projekt anlegen" : "Vorschlag liegt schon offen");
+      const what = m.match_info?.customer ? `Projekt für bestehenden Kunden „${m.match_info.customer.name}“ anlegen` : "Kontakt + Projekt anlegen";
+      note("create_project", "suggest", created, created ? `Vorschlag: ${what}` : "Vorschlag liegt schon offen");
     } else if (d === "shadow") {
       note("create_project", d, false, "Würde Kontakt + Projekt vorschlagen");
     }
@@ -354,5 +355,7 @@ export function buildCreateProjectPayload(m: ActMessage, ctx: Pick<ActContext, "
     summary: m.summary,
     subject: m.subject,
     from: m.from_addr,
+    // Gibt es den Kunden schon in HERO, wird das Projekt bei ihm angelegt (kein zweiter Kontakt).
+    existingCustomer: m.match_info?.customer ?? null,
   };
 }

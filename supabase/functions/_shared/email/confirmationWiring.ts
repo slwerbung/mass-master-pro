@@ -32,10 +32,10 @@ export function confirmationSuggester(sb: any, llm: LlmDeps, heroKey: string, cf
       const { data: acc } = await sb.from("email_accounts").select("autopilot").eq("id", m.account_id).maybeSingle();
       if (normalizeAutopilot(acc?.autopilot).create_confirmation === "off") return null;
 
-      // Kunde: ueber das zugeordnete Projekt, sonst ueber die Absenderadresse.
+      // Kunde: ueber das zugeordnete Projekt, sonst ueber die Zuordnung (Adresse, Domain, Firma), zuletzt die Absenderadresse.
       const projectId: number | null = m.hero_project_match_id ?? null;
       const project = projectId ? await H.projectById(heroKey, projectId).catch(() => null) : null;
-      let customerId = project?.customerId ?? null;
+      let customerId: number | null = project?.customerId ?? m.match_info?.customer?.id ?? null;
       if (!customerId) customerId = (await H.contactsByEmail(heroKey, m.from_addr).catch(() => []))[0]?.customerId ?? null;
 
       const docs: SourceDoc[] = [];
@@ -68,6 +68,7 @@ export function confirmationSuggester(sb: any, llm: LlmDeps, heroKey: string, cf
       if (!docs.length) openPoints.unshift("Keine frühere AB und kein Angebot gefunden – Positionen bitte in HERO anlegen.");
       const payload: ConfirmationPayload & { stepOptions: typeof stepOptions } = {
         projectId, projectNr: project?.nr ?? m.match_info?.projectNr ?? null,
+        existingCustomer: projectId ? null : (m.match_info?.customer ?? null),
         contact: projectId ? null : {
           salutation: c.salutation ?? null, first_name: c.first_name ?? null, last_name: c.last_name ?? null, company: c.company ?? null,
           email: c.email || m.from_addr, phone: c.phone ?? null, street: c.street ?? null, zip: c.zip ?? null, city: c.city ?? null,
