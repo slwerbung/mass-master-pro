@@ -1,6 +1,7 @@
 // Absicherung der harten Regel „Kein Versand, kein Loeschen" („Loeschen" in der Mail-App = Verschieben in den Papierkorb): der Quelltext des
-// gesamten Mail-Assistenten darf kein IMAP-Loeschen und – bis auf lexwareSend.ts (Belege an Lexware) und den
-// Dokumentversand ueber HERO nach Klick (hero.ts sendDocumentMail, nur aus action.ts sendDocument) – keinen Versand enthalten.
+// gesamten Mail-Assistenten darf kein IMAP-Loeschen und – bis auf lexwareSend.ts (Belege an Lexware), den
+// Dokumentversand ueber HERO nach Klick (hero.ts sendDocumentMail, nur aus action.ts sendDocument) und das Senden aus der
+// Mail-App per Klick (composeSend.ts, nur aus email-send) – keinen Versand enthalten.
 
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -40,9 +41,19 @@ describe("Kein Versand, kein Loeschen", () => {
 
   // EINZIGE Ausnahme (ausdruecklich freigegeben): Belege automatisch an die Lexware-Belegadresse.
   // Gesendet wird ausschliesslich in lexwareSend.ts; kein anderer Code darf einen Transport anlegen.
-  it("sendet nur in lexwareSend.ts (sendMail/createTransport)", () => {
+  // DRITTE Ausnahme (ausdruecklich freigegeben, Okt. 2026): Senden aus der Mail-App per Klick (composeSend.ts).
+  it("sendet nur in lexwareSend.ts und composeSend.ts (sendMail/createTransport)", () => {
     const hits = sources.filter((f) => /sendMail\s*\(|createTransport\s*\(/.test(readFileSync(f, "utf8")));
-    expect(hits.map((f) => f.split("/").pop())).toEqual(["lexwareSend.ts"]);
+    expect(hits.map((f) => f.split("/").pop()).sort()).toEqual(["composeSend.ts", "lexwareSend.ts"]);
+  });
+  it("sendComposed wird nur aus email-send (Aktion send, Admin-Sitzung) aufgerufen", () => {
+    const callers = sources.filter((f) => /sendComposed\s*\(/.test(readFileSync(f, "utf8")) && !f.endsWith("composeSend.ts"));
+    expect(callers.map((f) => f.split("/").slice(-2).join("/"))).toEqual(["email-send/index.ts"]);
+    const src = readFileSync(callers[0], "utf8");
+    expect(src.match(/sendComposed\s*\(/g)).toHaveLength(1);
+    const i = src.indexOf("sendComposed(smtp");
+    expect(src.lastIndexOf("async send(sb, body, user)", i)).toBeGreaterThan(-1);
+    expect(src.indexOf("requireAdmin(req, sb)")).toBeGreaterThan(-1);
   });
   it("lexwareSend.ts prueft den Empfaenger vor jedem Versand und hat genau einen Sendeaufruf", () => {
     const f = sources.find((x) => x.endsWith("lexwareSend.ts"))!;

@@ -7,9 +7,9 @@ Reihenfolge man es einschaltet und was bewusst anders gelöst ist als im Konzept
 
 | Teil | Ort |
 |---|---|
-| Tabellen, Seed, Cron, Aufbewahrung | `supabase/migrations/20261007100000…`, `…100100…`, `…100200…`, `…100300…`, `20261008090000…`, `20261023100000…` (Aufbewahrung) |
+| Tabellen, Seed, Cron, Aufbewahrung | `supabase/migrations/20261007100000…`, `…100100…`, `…100200…`, `…100300…`, `20261008090000…`, `20261023100000…` (Aufbewahrung), `20261023120000…` (Senden, Signatur) |
 | Gemeinsamer Code | `supabase/functions/_shared/email/` (IMAP, KI-Schicht, Klassifikation, Zuordnung, Handeln, Entwürfe, HERO) |
-| Edge Functions | `email-account-test`, `email-sync`, `email-process`, `email-api`, `email-action`, `email-draft`, `email-mailbox`, `email-retention` |
+| Edge Functions | `email-account-test`, `email-sync`, `email-process`, `email-api`, `email-action`, `email-draft`, `email-mailbox`, `email-send`, `email-retention` |
 | Mail-App | `apps/mail/` (Vite + React + TS + Tailwind), eigenes Vercel-Projekt |
 | Phase-0-Skript | `scripts/mail-assistant/phase0-imap-check.ts` |
 | Tests | `npm run test:unit` (vitest, ~340 Tests) und `deno test` für `draftMime.deno_test.ts` |
@@ -152,6 +152,22 @@ an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorl
   Rahmen ohne Skripte; externe Bilder (Tracking) erst per Klick. Ist die Mail nicht mehr im Postfach, wird der gespeicherte Text gezeigt.
   Hintergrundinfos (Antwortentwurf, Beleg, HERO-Zuordnung, Plan, Korrektur & Wissen, Erkannte Daten, Verlauf, Parallelvergleich,
   KI-Aufrufe) sind eingeklappt; zugeklappt zeigt jede Zeile eine Kurzinfo. Der Browser merkt sich, welche Bereiche offen sind.
+
+## Mails schreiben und senden (Ersatz für Thunderbird)
+
+- **Seitenleiste:** „Neue Mail“, darunter die Kategorien als Ordner (Posteingang mit den Kundenkategorien, „Ablage“ mit dem Rest,
+  dazu Gesendet und Papierkorb). Die Ordner sind Filter der Liste (`/mails?category=…`), die Zahl ist die Anzahl Mails ohne Papierkorb.
+  Am Handy bleiben die Kategorien im Filter „Kategorie“.
+- **Verfassen** (`/verfassen`): neu, **Antworten**, **Allen antworten** (alle Empfänger außer den eigenen Adressen), **Weiterleiten**
+  (Originalanhänge wählbar, sofern noch gespeichert). Von (Postfach), An/Cc/Bcc, Betreff, Text, Dateien anhängen (zusammen höchstens
+  15 MB), Zitat der Originalmail ein/aus. Aus dem Antwortentwurf: „Bearbeiten & senden“ übernimmt den KI-Text (ohne die Text-Signatur).
+- **Senden** (`email-send` `send`, nur per Klick mit Rückfrage): MIME mit Text- und HTML-Teil, In-Reply-To/References für den Thread,
+  SMTP Port 465 des Postfachs. Danach: Kopie in den Gesendet-Ordner (`\Seen`), Original bekommt `\Answered`, ein KI-Entwurf zur Mail
+  wandert auf Wunsch in den Papierkorb (nie löschen), Protokoll in `email_sent`. Der nächste Abruf übernimmt die Kopie aus „Gesendet“
+  wie eine in Thunderbird gesendete Mail (Richtung „out“, HERO-Logbuch). Bcc steht nur im Umschlag, nicht im Kopf.
+- **Signatur:** je Postfach eine **HTML-Signatur** (Einstellungen → Postfächer, mit Vorschau). Sie hängt an jede gesendete Mail; im
+  Text-Teil als Text nach „-- “. Bilder bitte als https-Link einbinden. Die Text-Signatur bleibt für die KI-Entwürfe.
+- Das Zitat stammt aus dem gespeicherten Text der Mail (bereinigt, ca. 6000 Zeichen); nach der Aufbewahrungsfrist fehlt es.
 
 ## Aufbewahrung
 

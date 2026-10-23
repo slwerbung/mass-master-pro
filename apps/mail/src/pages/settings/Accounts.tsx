@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, invokeFn } from "@/lib/api";
@@ -6,6 +6,8 @@ import type { Account } from "@/lib/types";
 import { AUTOPILOT_ACTIONS, AUTOPILOT_LABELS, type AutopilotLevel } from "@/lib/shared";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Select, Spinner, Switch, Textarea } from "@/components/ui";
 import { errorText, formatDateTime } from "@/lib/utils";
+import { SignaturePreview } from "@/components/SignaturePreview";
+import type { SendAccount } from "@/lib/types";
 
 const LEVELS: { v: AutopilotLevel; l: string }[] = [{ v: "off", l: "Aus" }, { v: "suggest", l: "Vorschlag" }, { v: "auto", l: "Automatisch" }];
 
@@ -69,7 +71,7 @@ function AccountCard({ account }: { account: Account }) {
           <Field label="Benutzername"><Input value={a.username} onChange={(e) => set("username", e.target.value)} /></Field>
           <Field label="IMAP-Server"><Input value={a.imap_host} onChange={(e) => set("imap_host", e.target.value)} /></Field>
           <Field label="Port"><Input type="number" value={a.imap_port} onChange={(e) => set("imap_port", Number(e.target.value))} /></Field>
-          <Field label="SMTP-Server (nur für Lexware)" hint="Nur für die automatische Weiterleitung von Belegen an die Lexware-Belegadresse – sonst sendet der Assistent nie. Port 465.">
+          <Field label="SMTP-Server" hint="Zum Senden aus der Mail-App (per Klick) und für Belege an die Lexware-Belegadresse. Der Assistent selbst sendet nie. Port 465.">
             <Input value={a.smtp_host ?? ""} onChange={(e) => set("smtp_host", e.target.value)} placeholder="smtp.ionos.de" />
           </Field>
           <Field label="SMTP-Port"><Input type="number" value={a.smtp_port} onChange={(e) => set("smtp_port", Number(e.target.value))} /></Field>
@@ -78,7 +80,8 @@ function AccountCard({ account }: { account: Account }) {
           </Field>
           <Field label="Beim ersten Abruf nur die letzten … Mails" hint="0 = nur künftige Mails"><Input type="number" min={0} max={500} value={a.backfill} onChange={(e) => set("backfill", Number(e.target.value))} /></Field>
         </div>
-        <Field label="Signatur (für Antwortentwürfe)"><Textarea value={a.signature} onChange={(e) => set("signature", e.target.value)} /></Field>
+        <Field label="Signatur als Text (für KI-Antwortentwürfe)"><Textarea value={a.signature} onChange={(e) => set("signature", e.target.value)} /></Field>
+        <HtmlSignature accountId={a.id} />
 
         <div className="flex flex-wrap gap-6">
           <Switch checked={a.enabled} onChange={(v) => set("enabled", v)} label="Postfach aktiv (Abruf alle 5 Minuten)" />
@@ -120,6 +123,29 @@ function AccountCard({ account }: { account: Account }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** HTML-Signatur je Postfach: haengt an jede aus der App gesendete Mail (gespeichert ueber email-send). */
+function HtmlSignature({ accountId }: { accountId: string }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["send-accounts"], queryFn: () => invokeFn<SendAccount[]>("email-send", { action: "accounts" }) });
+  const stored = q.data?.find((x) => x.id === accountId)?.signatureHtml ?? "";
+  const [html, setHtml] = useState(stored);
+  useEffect(() => { setHtml(stored); }, [stored]);
+  const save = useMutation({
+    mutationFn: () => invokeFn("email-send", { action: "signature_save", accountId, html }),
+    onSuccess: () => { toast.success("Signatur gespeichert"); qc.invalidateQueries({ queryKey: ["send-accounts"] }); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  return (
+    <div className="space-y-2">
+      <Field label="HTML-Signatur (für gesendete Mails)" hint="HTML-Code, z. B. aus Thunderbird (Konten-Einstellungen → Signatur) kopieren. Bilder als Link (https://…) einbinden.">
+        <Textarea rows={6} className="font-mono text-xs" value={html} onChange={(e) => setHtml(e.target.value)} placeholder={'<p>Viele Grüße<br><b>SL WERBUNG</b></p>'} />
+      </Field>
+      {html.trim() && <SignaturePreview html={html} />}
+      <Button size="sm" variant="outline" onClick={() => save.mutate()} disabled={save.isPending || html === stored}>Signatur speichern</Button>
+    </div>
   );
 }
 
