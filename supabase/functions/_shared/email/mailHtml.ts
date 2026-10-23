@@ -19,7 +19,7 @@ export function toBase64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
-const escapeHtml = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+export const escapeHtml = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /** Text-Mail als HTML (Zeilenumbrueche, Links klickbar). */
 export function textToHtml(text: string): string {

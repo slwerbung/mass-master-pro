@@ -9,6 +9,7 @@ import Decide from "@/pages/Decide";
 import Messages from "@/pages/Messages";
 import MessageDetail from "@/pages/MessageDetail";
 import Settings from "@/pages/Settings";
+import Compose from "@/pages/Compose";
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/" element={<Decide />} />
         <Route path="/mails" element={<Messages />} />
         <Route path="/mails/:id" element={<MessageDetail />} />
+        <Route path="/verfassen" element={<Compose />} />
         <Route path="/einstellungen/*" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

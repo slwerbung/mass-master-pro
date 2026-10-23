@@ -161,7 +161,8 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
 - Edge Functions: `email-sync` (IMAP holen, pg_cron 5 Min), `email-process` (Verstehen → Zuordnen → Handeln),
   `email-action` (Klick auf einen Vorschlag: einzige Stelle mit schreibenden HERO-Aufrufen), `email-draft` (Antwortentwürfe,
   Lexoffice-Entwurf), `email-account-test`, `email-api` (einzige Schnittstelle der Mail-App für Daten), `email-mailbox` (IMAP aus der
-  Mail-App: HTML-Ansicht `body`, `trash`/`restore`), `email-retention` (Aufbewahrung, pg_cron täglich; Anhänge über die
+  Mail-App: HTML-Ansicht `body`, `trash`/`restore`), `email-send` (Verfassen/Antworten/Weiterleiten und Senden aus der Mail-App,
+  HTML-Signatur je Postfach), `email-retention` (Aufbewahrung, pg_cron täglich; Anhänge über die
   Storage-API, weil Supabase `DELETE` auf `storage.objects` sperrt). Jede hat ein eigenes `deno.json`
   (Import-Map für `npm:`), gemeinsamer Code in `_shared/email/`. Antworten immer HTTP 200 mit `{ ok, data | error }`.
 - Tabellen `email_*` sind **nur für service_role** (RLS an, keine Policy, kein Grant) – nie vom Frontend/Anon-Key lesen.
@@ -174,11 +175,14 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
   wiederherstellbar. Endgültig gelöscht wird nie.
 - HTML-Ansicht: `email-mailbox` `body` holt die Mail per IMAP, bettet `cid:`-Bilder ein (`mailHtml.ts`) und speichert in `body_html`
   (Aufbewahrungsfrist wie `body_text`). Angezeigt nur im iframe mit `sandbox` ohne Skripte und CSP; externe Bilder erst per Klick.
-- **Kein Versand, kein Löschen – zwei Ausnahmen:** Antworten an Kunden sind nur ENTWÜRFE im Ordner „Entwürfe“; kein Resend, kein
+- **Kein Versand, kein Löschen – drei Ausnahmen:** Der Assistent selbst schreibt Antworten nur als ENTWÜRFE in „Entwürfe“; kein Resend, kein
   `messageDelete`/`\Deleted`/expunge. Ausnahmen (ausdrücklich freigegeben): (1) Belege gehen automatisch per SMTP (Port 465) an die
   Lexware-Belegadresse, ausschließlich über `_shared/email/lexwareSend.ts` (prüft den Empfänger). (2) Ein in HERO geprüftes und
   abgeschlossenes Angebot / eine AB geht **nur per Klick** in der Mail-App über HERO `send_mail` (HERO-Vorlage + PDF) an den Kunden –
-  ausschließlich `sendDocument` in `action.ts` → `sendDocumentMail` in `hero.ts`. `imap.test.ts` prüft beides im Quelltext.
+  ausschließlich `sendDocument` in `action.ts` → `sendDocumentMail` in `hero.ts`. (3) Mails, die ein Mensch in der Mail-App verfasst
+  (neu, Antwort, Weiterleitung), gehen **nur per Klick** auf „Senden“ per SMTP raus – ausschließlich `sendComposed` in
+  `composeSend.ts`, aufgerufen nur aus `email-send` (Admin-Sitzung); Kopie in „Gesendet“, Protokoll `email_sent`.
+  `imap.test.ts` prüft alle drei im Quelltext. Kategorien sind in der Seitenleiste der Mail-App als Ordner (= Filter, kein IMAP-Ordner).
 - Bestellung → Projekt + AB: Vorschlag `create_confirmation` (`confirmation.ts`/`confirmationWiring.ts`). Grundlage ist die frühere AB des
   Kunden bzw. das Angebot im Projekt; Namen/Preise kommen aus HERO, die KI wählt nur Positionen und Mengen. HERO-Dokumente entstehen
   über `create_document(input, actions)` als ENTWURF (`publish: false`); danach Vorschlag `send_document` („Prüfen & versenden“).
@@ -223,8 +227,8 @@ Kurze prägnante Messages auf Englisch:
 - `sec: beschreibung` (Security-Fixes)
 
 ## Was vermeiden
-- Im Mail-Assistenten nie etwas senden (außer Belege an die Lexware-Adresse über `lexwareSend.ts` und geprüfte Angebote/ABs per Klick über
-  `sendDocument`) oder löschen, nie `email_*`-Tabellen für anon/authenticated freigeben,
+- Im Mail-Assistenten nie etwas senden (außer Belege an die Lexware-Adresse über `lexwareSend.ts`, geprüfte Angebote/ABs per Klick über
+  `sendDocument` und vom Menschen verfasste Mails per Klick über `email-send`/`composeSend.ts` – nie automatisch) oder löschen, nie `email_*`-Tabellen für anon/authenticated freigeben,
   nie IMAP-Passwörter oder KI-Schlüssel im Klartext speichern/loggen/zurückgeben (`EMAIL_ENCRYPTION_KEY`, AES-GCM).
 - Keine HERO-„Dateiordner“-IDs als `document_type_id` verwenden (Ordner ≠ Dokumenttyp, siehe `phase0.md`).
 - Niemals Signing-Secret-Fallback im Code (kein `|| "fallback"`)

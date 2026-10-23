@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ArrowLeft, Cpu, Download, FolderKanban, GraduationCap, ListChecks, MessagesSquare, Paperclip, PenLine, Receipt, RefreshCw, Scale, ScanText, Trash2, Undo2,
+  ArrowLeft, Cpu, Download, FolderKanban, Forward, GraduationCap, ListChecks, MessagesSquare, Paperclip, PenLine, Receipt, RefreshCw, Reply, ReplyAll, Scale, ScanText, Send, Trash2, Undo2,
 } from "lucide-react";
 import { api, invokeFn } from "@/lib/api";
 import { ProjectSearch } from "@/components/ProjectSearch";
@@ -45,6 +45,7 @@ const FIELDS: { group: string; key: string; label: string }[] = [
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function DraftCard({ m, onChanged }: { m: any; onChanged: () => void }) {
+  const navigate = useNavigate();
   const [text, setText] = useState<string>(m.draft_text ?? "");
   const [hint, setHint] = useState("");
   useEffect(() => { setText(m.draft_text ?? ""); }, [m.id, m.draft_text]);
@@ -73,14 +74,20 @@ function DraftCard({ m, onChanged }: { m: any; onChanged: () => void }) {
         <p className="text-sm text-muted-foreground">Kein Entwurf. Der Assistent schreibt nur einen, wenn eine Antwort per Mail wirklich nötig ist – du kannst jederzeit einen anstoßen.</p>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        {hasDraft && <Button size="sm" onClick={() => run.mutate({ action: "save", text, write: true })} disabled={run.isPending}>{m.draft_written_at ? "Speichern & im Postfach ersetzen" : "In Postfach legen"}</Button>}
+        {hasDraft && (
+          <Button size="sm" onClick={async () => {
+            if (text !== (m.draft_text ?? "")) await run.mutateAsync({ action: "save", text }).catch(() => null);
+            navigate(`/verfassen?reply=${m.id}&mode=reply&draft=1`);
+          }} disabled={run.isPending}><Send className="h-3 w-3" /> Bearbeiten &amp; senden</Button>
+        )}
+        {hasDraft && <Button size="sm" variant="outline" onClick={() => run.mutate({ action: "save", text, write: true })} disabled={run.isPending}>{m.draft_written_at ? "Speichern & im Postfach ersetzen" : "In Postfach legen"}</Button>}
         {hasDraft && text !== (m.draft_text ?? "") && <Button size="sm" variant="outline" onClick={() => run.mutate({ action: "save", text })} disabled={run.isPending}>Nur speichern</Button>}
         <Input className="w-64" placeholder="Hinweis, z. B. „kürzer“" value={hint} onChange={(e) => setHint(e.target.value)} />
         <Button size="sm" variant="outline" onClick={() => run.mutate({ action: "generate", hint: hint || undefined, write: !!m.draft_written_at })} disabled={run.isPending}>
           {run.isPending ? <Spinner /> : <RefreshCw className="h-3 w-3" />} {hasDraft ? "Neu erzeugen" : "Entwurf erzeugen"}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">Es wird nichts versendet: der Entwurf liegt im Ordner „Entwürfe“ und wird in Thunderbird geprüft und gesendet.</p>
+      <p className="text-xs text-muted-foreground">„Bearbeiten &amp; senden“ öffnet den Entwurf zum Senden direkt aus der App (mit HTML-Signatur). „In Postfach legen“ legt ihn nur in den Ordner „Entwürfe“ – gesendet wird erst per Klick.</p>
     </div>
   );
 }
@@ -160,6 +167,11 @@ export default function MessageDetail() {
       <div className="flex flex-wrap items-center gap-2">
         <Link to="/mails" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:underline"><ArrowLeft className="h-4 w-4" /> Alle Mails</Link>
         <div className="ml-auto flex flex-wrap gap-2">
+          <Link to={`/verfassen?reply=${m.id}&mode=reply`}><Button size="sm"><Reply className="h-3.5 w-3.5" /> Antworten</Button></Link>
+          {(m.to_addrs?.length ?? 0) + (m.cc_addrs?.length ?? 0) > 1 && (
+            <Link to={`/verfassen?reply=${m.id}&mode=replyAll`}><Button size="sm" variant="outline"><ReplyAll className="h-3.5 w-3.5" /> Allen antworten</Button></Link>
+          )}
+          <Link to={`/verfassen?reply=${m.id}&mode=forward`}><Button size="sm" variant="outline"><Forward className="h-3.5 w-3.5" /> Weiterleiten</Button></Link>
           <Button size="sm" variant={teach ? "secondary" : "outline"} onClick={() => setTeach(!teach)}><GraduationCap className="h-3.5 w-3.5" /> Falsch? Erklären</Button>
           <Button variant="outline" size="sm" onClick={() => reprocess.mutate()} disabled={reprocess.isPending}><RefreshCw className="h-3.5 w-3.5" /> Neu verarbeiten</Button>
           {m.trashed_at ? (

@@ -46,6 +46,15 @@ export interface Account {
   last_error: string | null;
 }
 
+/** email-send `accounts` */
+export interface SendAccount { id: string; label: string; address: string; signatureHtml: string; smtp: boolean; sentFolder: string | null; enabled: boolean }
+
+/** email-send `prepare` */
+export interface ComposePrefill {
+  accountId: string; to: string[]; cc: string[]; bcc: string[]; subject: string; quoteText: string; hasDraft: boolean; draftText: string | null;
+  attachments: { id: string; filename: string; mime: string; size: number; available: boolean; ignored: boolean }[];
+}
+
 export interface Overview {
   statusCounts: Record<string, number>;
   openSuggestions: number;

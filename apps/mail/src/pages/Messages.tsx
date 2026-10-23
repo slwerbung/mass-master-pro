@@ -100,6 +100,9 @@ export default function Messages() {
   const accountLabel = new Map((accounts.data ?? []).map((a) => [a.id, a.label]));
   const multiAccount = (accounts.data?.length ?? 0) > 1;
   const inTrash = f.view === "papierkorb";
+  const title = inTrash ? "Papierkorb"
+    : f.category ? CATEGORY_LABELS[f.category as Category] ?? f.category
+    : f.direction === "out" ? "Gesendet" : f.direction === "in" ? "Posteingang" : "Alle Mails";
   const activeFilters = ["q", "category", "accountId", "status", "hero", "direction", "belegState", "attachments", "zeit"].filter((k) => f[k as keyof typeof f]).length;
   const resetAll = () => { setSp(new URLSearchParams(f.view ? { view: f.view } : {}), { replace: true }); setQText(""); setPage(0); };
 
@@ -136,7 +139,7 @@ export default function Messages() {
   return (
     <div className="space-y-4">
       <div className="flex items-baseline gap-3">
-        <h1 className="text-xl font-semibold">{inTrash ? "Papierkorb" : "Alle Mails"}</h1>
+        <h1 className="text-xl font-semibold">{title}</h1>
         {list.data && <span className="text-sm text-muted-foreground">{total.toLocaleString("de-DE")} Treffer</span>}
         {list.isFetching && <Spinner />}
       </div>
