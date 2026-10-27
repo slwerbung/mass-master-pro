@@ -18,7 +18,7 @@ interface Position {
  * Bestellung -> Projekt + Auftragsbestätigung. Positionen, Einheiten und Preise stammen aus einer früheren AB
  * bzw. dem Angebot in HERO; hier lassen sich nur Auswahl und Menge ändern. Angelegt wird ein ENTWURF.
  */
-export function ConfirmationCard({ s }: { s: Suggestion }) {
+export function ConfirmationCard({ s, embedded }: { s: Suggestion; embedded?: boolean }) {
   const decide = useDecide(s, (r) => `AB-Entwurf in HERO angelegt${r.projectNr ? ` (${r.projectNr})` : ""} – bitte dort prüfen und abschließen.`);
   const p = s.payload;
   const [positions, setPositions] = useState<Position[]>(p.positions ?? []);
@@ -38,7 +38,7 @@ export function ConfirmationCard({ s }: { s: Suggestion }) {
 
   return (
     <SuggestionCard
-      s={s} brief={`${!newProject ? (p.projectNr ?? `#${p.projectId}`) : fromExisting ? `neues Projekt bei ${existing!.name}` : "neues Projekt + neuer Kontakt"} · ${included} Position(en)${included ? ` · ${euro(sum)} netto` : ""}`}
+      s={s} embedded={embedded} brief={`${!newProject ? (p.projectNr ?? `#${p.projectId}`) : fromExisting ? `neues Projekt bei ${existing!.name}` : "neues Projekt + neuer Kontakt"} · ${included} Position(en)${included ? ` · ${euro(sum)} netto` : ""}`}
       actions={
         <div className="space-y-2">
           <Buttons
@@ -135,7 +135,7 @@ interface DocInfo {
 }
 
 /** Geprüftes Dokument (AB oder Angebot) per Klick über HERO an den Kunden senden – mit HERO-Vorlage und PDF. */
-export function SendDocumentCard({ s }: { s: Suggestion }) {
+export function SendDocumentCard({ s, embedded }: { s: Suggestion; embedded?: boolean }) {
   const p = s.payload;
   const kindLabel = p.kind === "offer" ? "Angebot" : "Auftragsbestätigung";
   const decide = useDecide(s, (r) => (r.alreadySent ? "War schon versendet – erledigt." : `${r.documentNr ?? kindLabel} an ${r.recipient} versendet.`));
@@ -157,7 +157,7 @@ export function SendDocumentCard({ s }: { s: Suggestion }) {
 
   return (
     <SuggestionCard
-      s={s} brief={`${kindLabel} ${d?.nr || p.documentNr || `#${p.documentId}`} an ${recipient || "?"}${d ? ` · ${d.sent ? "schon versendet" : d.hasPdf ? "bereit" : "noch Entwurf"}` : ""}`}
+      s={s} embedded={embedded} brief={`${kindLabel} ${d?.nr || p.documentNr || `#${p.documentId}`} an ${recipient || "?"}${d ? ` · ${d.sent ? "schon versendet" : d.hasPdf ? "bereit" : "noch Entwurf"}` : ""}`}
       actions={
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">

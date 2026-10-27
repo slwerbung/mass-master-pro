@@ -51,12 +51,15 @@ export function useRejectAll(ids: string[]) {
   });
 }
 
+export const typeLabel = (s: Suggestion) =>
+  s.type === "create_project" && s.payload?.existingCustomer ? "Projekt anlegen (Kunde bekannt)" : TYPE_LABEL[s.type] ?? s.type;
+
 export function Header({ s, label }: { s: Suggestion; label?: string }) {
   const m = s.message;
   return (
     <CardHeader>
       <div className="flex flex-wrap items-center gap-2">
-        <Badge>{label ?? (s.type === "create_project" && s.payload?.existingCustomer ? "Projekt anlegen (Kunde bekannt)" : TYPE_LABEL[s.type] ?? s.type)}</Badge>
+        <Badge>{label ?? typeLabel(s)}</Badge>
         <CategoryChip category={m.category} />
         {m.confidence != null && <span className="text-xs text-muted-foreground">Konfidenz {pct(m.confidence)}</span>}
         <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(m.sent_at)}</span>
@@ -200,27 +203,61 @@ export function Buttons({ s, onAccept, onReject, acceptLabel, busy, disabled }: 
  * Mehrere Vorschlaege zur selben Frage (z. B. „Zu bestehendem Projekt zuordnen“ oder „Neues Projekt anlegen“) als EINE
  * Karte: Kopf und Mail einmal, darunter die Wahl. Wird eine Variante angenommen, schliesst der Server die andere.
  */
-export function AlternativesCard({ items, label }: {
-  items: { s: Suggestion; title: string; render: (embedded: true) => ReactNode }[]; label: string;
-}) {
+type Alternative = { s: Suggestion; title: string; render: (embedded: true) => ReactNode };
+
+export function AlternativesCard({ items, label }: { items: Alternative[]; label: string }) {
   const [mail, setMail] = useState(false);
+  return (
+    <Card>
+      <Header s={items[0].s} label={label} />
+      <CardContent className="space-y-3">
+        <div><Toggle open={mail} onClick={() => setMail(!mail)} icon={<Mail className="h-3.5 w-3.5" />} label="Mail" /></div>
+        {mail && <div className="rounded-md border p-2"><MailBody messageId={items[0].s.message.id} fallbackText={null} /></div>}
+        <AlternativesPicker items={items} />
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Die Wahl zwischen den Varianten (Umschalter + gewaehlte Variante), ohne Rahmen. */
+export function AlternativesPicker({ items }: { items: Alternative[] }) {
   const [pick, setPick] = useState(0);
   const cur = items[Math.min(pick, items.length - 1)];
   return (
+    <div className="space-y-3">
+      <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1" role="radiogroup">
+        {items.map((it, i) => (
+          <button
+            key={it.s.id} type="button" role="radio" aria-checked={i === pick} onClick={() => setPick(i)}
+            className={cn("rounded-md px-3 py-1.5 text-sm", i === pick ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >{it.title}</button>
+        ))}
+      </div>
+      <div key={cur.s.id}>{cur.render(true)}</div>
+    </div>
+  );
+}
+
+/**
+ * Mehrere Entscheidungen zur SELBEN Mail (z. B. Anhaenge hochladen + Angebot vorbereiten) als eine Karte:
+ * Kopf und Mail einmal, darunter nummeriert jede Entscheidung mit eigenen Knoepfen.
+ */
+export function MessageGroupCard({ s, sections }: { s: Suggestion; sections: { key: string; title: string; node: ReactNode }[] }) {
+  const [mail, setMail] = useState(false);
+  return (
     <Card>
-      <Header s={cur.s} label={label} />
+      <Header s={s} label={`${sections.length} Entscheidungen`} />
       <CardContent className="space-y-3">
         <div><Toggle open={mail} onClick={() => setMail(!mail)} icon={<Mail className="h-3.5 w-3.5" />} label="Mail" /></div>
-        {mail && <div className="rounded-md border p-2"><MailBody messageId={cur.s.message.id} fallbackText={null} /></div>}
-        <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1" role="radiogroup">
-          {items.map((it, i) => (
-            <button
-              key={it.s.id} type="button" role="radio" aria-checked={i === pick} onClick={() => setPick(i)}
-              className={cn("rounded-md px-3 py-1.5 text-sm", i === pick ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")}
-            >{it.title}</button>
-          ))}
-        </div>
-        <div key={cur.s.id}>{cur.render(true)}</div>
+        {mail && <div className="rounded-md border p-2"><MailBody messageId={s.message.id} fallbackText={null} /></div>}
+        {sections.map((x, i) => (
+          <section key={x.key} className="space-y-2 border-t pt-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs">{i + 1}</span>{x.title}
+            </div>
+            {x.node}
+          </section>
+        ))}
       </CardContent>
     </Card>
   );
