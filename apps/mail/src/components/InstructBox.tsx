@@ -15,11 +15,17 @@ type PlanProject =
 interface Plan {
   project: PlanProject;
   offer: boolean;
-  appointment: { categoryId: number; categoryLabel: string; date: string; time: string; durationMin: number; title: string } | null;
+  appointments: Appointment[];
+  /** Mitarbeiter aus HERO, denen ein Termin zugewiesen werden kann */
+  people?: { id: number; name: string }[];
   notDoable: string[];
   summary: string;
 }
 interface Step { step: string; ok: boolean; text: string }
+interface Appointment {
+  categoryId: number; categoryLabel: string; date: string; time: string; durationMin: number; title: string;
+  partnerId: number | null; partnerName: string | null;
+}
 
 /**
  * „Nein, anders …“: in eigenen Worten sagen, was passieren soll. Der Assistent macht daraus einen Plan
@@ -48,7 +54,7 @@ export function InstructBox({ messageId, onCancel, onExplain }: { messageId: str
     onError: (e) => toast.error(errorText(e)),
   });
 
-  const nothing = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointment;
+  const nothing = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointments.length;
   // „Kontakt gibt es schon“: ohne gewaehlten Kunden wird nichts angelegt (nie ein neuer Kontakt).
   const customerMissing = plan?.project.mode === "new" && plan.project.requireExisting && !plan.project.existingCustomer;
   const p = plan;
@@ -107,16 +113,30 @@ export function InstructBox({ messageId, onCancel, onExplain }: { messageId: str
               Angebotsentwurf im Projekt anlegen (Positionen aus der Mail, Preise aus HERO)
             </Row>
           )}
-          {p.appointment && (
-            <Row icon={<CalendarPlus className="h-4 w-4" />} onRemove={() => setPlan({ ...p, appointment: null })}>
-              <span className="shrink-0">Termin ({p.appointment.categoryLabel})</span>
-              <Input className="h-8 w-36" type="date" value={p.appointment.date} onChange={(e) => setPlan({ ...p, appointment: { ...p.appointment!, date: e.target.value } })} />
-              <Input className="h-8 w-24" type="time" value={p.appointment.time} onChange={(e) => setPlan({ ...p, appointment: { ...p.appointment!, time: e.target.value } })} />
-              <Input className="h-8 w-20" type="number" min={5} max={600} value={p.appointment.durationMin} onChange={(e) => setPlan({ ...p, appointment: { ...p.appointment!, durationMin: Number(e.target.value) } })} />
-              <span className="text-xs text-muted-foreground">Min.</span>
-              <Input className="h-8 min-w-40 flex-1" value={p.appointment.title} onChange={(e) => setPlan({ ...p, appointment: { ...p.appointment!, title: e.target.value } })} />
-            </Row>
-          )}
+          {p.appointments.map((a, i) => {
+            const upd = (x: Partial<Appointment>) => setPlan({ ...p, appointments: p.appointments.map((y, j) => (j === i ? { ...y, ...x } : y)) });
+            return (
+              <Row key={i} icon={<CalendarPlus className="h-4 w-4" />} onRemove={() => setPlan({ ...p, appointments: p.appointments.filter((_, j) => j !== i) })}>
+                <span className="shrink-0">Termin ({a.categoryLabel})</span>
+                <Input className="h-8 w-36" type="date" value={a.date} onChange={(e) => upd({ date: e.target.value })} />
+                <Input className="h-8 w-24" type="time" value={a.time} onChange={(e) => upd({ time: e.target.value })} />
+                <Input className="h-8 w-20" type="number" min={5} max={600} value={a.durationMin} onChange={(e) => upd({ durationMin: Number(e.target.value) })} />
+                <span className="text-xs text-muted-foreground">Min.</span>
+                <select
+                  aria-label="Mitarbeiter" className="h-8 rounded-md border bg-background px-2 text-sm"
+                  value={a.partnerId ?? ""}
+                  onChange={(e) => {
+                    const person = (p.people ?? []).find((x) => x.id === Number(e.target.value));
+                    upd({ partnerId: person?.id ?? null, partnerName: person?.name ?? null });
+                  }}
+                >
+                  <option value="">ohne Mitarbeiter</option>
+                  {(p.people ?? []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                </select>
+                <Input className="h-8 min-w-40 flex-1" value={a.title} onChange={(e) => upd({ title: e.target.value })} />
+              </Row>
+            );
+          })}
           {nothing && <p className="text-muted-foreground">Daraus ergibt sich nichts, was der Assistent in HERO tun kann.</p>}
           {p.notDoable.length > 0 && (
             <p className="text-xs text-amber-800">Geht nicht automatisch (bitte selbst erledigen): {p.notDoable.join(" · ")}</p>

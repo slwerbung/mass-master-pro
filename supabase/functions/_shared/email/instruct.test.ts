@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { berlinToIso, buildInstructionRequest, InstructionSchema, nextWorkday, resolveCustomer, runInstruction, toPlan, type InstructionContext, type RunDeps } from "./instruct";
+import { berlinToIso, buildInstructionRequest, findPerson, InstructionSchema, nextWorkday, resolveCustomer, runInstruction, toPlan, type InstructionContext, type RunDeps } from "./instruct";
 
 const ctx: InstructionContext = {
   subject: "WG: Anhänger", summary: "Anfrage Beschriftung Anhänger", fromName: "Peter Heinle", projectNr: null,
@@ -28,26 +28,26 @@ describe("toPlan", () => {
   it("neues Projekt beim bekannten Kunden, Angebot, Büro-Termin mit Voreinstellungen", () => {
     const r = InstructionSchema.parse({
       project: { action: "neu", project_nr: null, name: null }, offer: true,
-      appointment: { category: "büro", date: null, time: null, duration_min: null, title: null }, not_doable: [], summary: "x",
+      appointments: [{ category: "büro", date: null, time: null, duration_min: null, title: null, person: null }], not_doable: [], summary: "x",
     });
     const p = toPlan(r, ctx, "Anhänger Beschriftung");
     expect(p.project).toEqual({ mode: "new", name: "Anhänger Beschriftung", existingCustomer: { id: 4469248, name: "Firma Elektro Heinle" }, requireExisting: false, customerOptions: [] });
     expect(p.offer).toBe(true);
-    expect(p.appointment).toEqual({ categoryId: 32131, categoryLabel: "Büro", date: "2026-10-28", time: "09:00", durationMin: 30, title: "Büro: WG: Anhänger" });
+    expect(p.appointments).toEqual([{ categoryId: 32131, categoryLabel: "Büro", date: "2026-10-28", time: "09:00", durationMin: 30, title: "Büro: WG: Anhänger", partnerId: null, partnerName: null }]);
   });
   it("bestehendes Projekt aus den Kandidaten; unbekannte Kategorie faellt auf Büro", () => {
     const r = InstructionSchema.parse({
       project: { action: "bestehend", project_nr: "wer-1270", name: null }, offer: false,
-      appointment: { category: "Gibtsnicht", date: "2026-11-03", time: "14:30", duration_min: 60, title: "Rückruf" }, not_doable: ["Mail senden"], summary: "",
+      appointments: [{ category: "Gibtsnicht", date: "2026-11-03", time: "14:30", duration_min: 60, title: "Rückruf" }], not_doable: ["Mail senden"], summary: "",
     });
     const p = toPlan(r, ctx, "");
     expect(p.project).toEqual({ mode: "link", projectNr: "WER-1270", projectId: 6620478 });
-    expect(p.appointment).toMatchObject({ categoryId: 32131, date: "2026-11-03", time: "14:30", durationMin: 60, title: "Rückruf" });
+    expect(p.appointments[0]).toMatchObject({ categoryId: 32131, date: "2026-11-03", time: "14:30", durationMin: 60, title: "Rückruf" });
     expect(p.notDoable).toEqual(["Mail senden"]);
   });
   it("kaputte Modellantwort -> nichts tun", () => {
     const p = toPlan(InstructionSchema.parse({}), ctx, "");
-    expect(p).toMatchObject({ project: { mode: "keep" }, offer: false, appointment: null });
+    expect(p).toMatchObject({ project: { mode: "keep" }, offer: false, appointments: [] });
   });
 });
 
@@ -76,7 +76,7 @@ function deps(o: { failProject?: boolean; noOffer?: boolean; current?: { id: num
 
 const plan = {
   project: { mode: "new" as const, name: "Anhänger", existingCustomer: { id: 1, name: "K" }, requireExisting: false, customerOptions: [] }, offer: true,
-  appointment: { categoryId: 32131, categoryLabel: "Büro", date: "2026-10-28", time: "09:00", durationMin: 30, title: "Büro: Anhänger" },
+  appointments: [{ categoryId: 32131, categoryLabel: "Büro", date: "2026-10-28", time: "09:00", durationMin: 30, title: "Büro: Anhänger", partnerId: null, partnerName: null }],
   notDoable: [], summary: "",
 };
 
@@ -99,7 +99,7 @@ describe("runInstruction", () => {
   });
   it("Zuordnung ueber eine Projektnummer ausserhalb der Kandidaten", async () => {
     const t = deps();
-    const r = await runInstruction({ ...plan, project: { mode: "link", projectNr: "WER-9", projectId: null }, offer: false, appointment: null }, "x", t.d);
+    const r = await runInstruction({ ...plan, project: { mode: "link", projectNr: "WER-9", projectId: null }, offer: false, appointments: [] }, "x", t.d);
     expect(r).toEqual([{ step: "project", ok: true, text: "Zu WER-1270 zugeordnet und ins Logbuch geschrieben" }]);
     expect(t.log.ensured[0]).toEqual(["link_project", { projectId: 9, manual: true }]);
   });
@@ -109,7 +109,7 @@ describe("„Den Kontakt gibt es schon“", () => {
   const unknown = { ...ctx, existingCustomer: null };
   const said = InstructionSchema.parse({
     project: { action: "neu", project_nr: null, name: "Weihnachtsgeschenke 26" }, contact: "vorhanden", customer_hint: "VfR Birkmannsweiler",
-    offer: false, appointment: null, not_doable: [], summary: "",
+    offer: false, appointments: [], not_doable: [], summary: "",
   });
   const lookup = (hits: Record<string, { id: number; name: string }[]>) => {
     const asked: string[] = [];
@@ -135,7 +135,7 @@ describe("„Den Kontakt gibt es schon“", () => {
     const p = await resolveCustomer(toPlan(said, unknown, ""), said.customer_hint, [], lookup({}));
     expect(p.notDoable.join()).toContain("kein neuer Kontakt");
     const t = deps();
-    const r = await runInstruction({ ...p, appointment: null }, "x", t.d);
+    const r = await runInstruction({ ...p, appointments: [] }, "x", t.d);
     expect(r).toEqual([expect.objectContaining({ step: "project", ok: false })]);
     expect(t.log.ensured).toEqual([]);
     expect(t.log.decided).toEqual([]);
@@ -146,5 +146,55 @@ describe("„Den Kontakt gibt es schon“", () => {
     const p = await resolveCustomer(toPlan(r, unknown, ""), r.customer_hint, [], l);
     expect(p.project).toMatchObject({ existingCustomer: null, requireExisting: false });
     expect(l.asked).toEqual([]);
+  });
+});
+
+describe("Mehrere Termine mit Mitarbeiter (Weihnachtsbanner aufhängen + abhängen)", () => {
+  const people = [{ id: 33288, name: "Jens Langner" }, { id: 33287, name: "Silas Layer" }];
+  const cats = [...ctx.categories, { id: 74899, label: "Montage vor Ort" }];
+  const c = { ...ctx, categories: cats, people, projectNr: "WER-1949", bodyText: "bitte vom 13. – 30.11. einplanen" };
+  const r = InstructionSchema.parse({
+    project: { action: "bestehend", project_nr: "wer-1949", name: null }, offer: false,
+    appointments: [
+      { category: "Montage vor Ort", date: "2026-11-13", time: null, duration_min: null, title: "Weihnachtsbanner aufhängen", person: "jens Langner" },
+      { category: "Montage vor Ort", date: "2026-11-30", time: null, duration_min: null, title: "Weihnachtsbanner abhängen", person: "jens" },
+    ],
+    not_doable: [], summary: "",
+  });
+
+  it("zwei Termine, beide Jens zugewiesen; schon zugeordnetes Projekt bleibt", () => {
+    const p = toPlan(r, c, "");
+    expect(p.project).toEqual({ mode: "keep" });
+    expect(p.appointments.map((a) => [a.date, a.time, a.durationMin, a.categoryId, a.partnerId])).toEqual([
+      ["2026-11-13", "08:00", 240, 74899, 33288], ["2026-11-30", "08:00", 240, 74899, 33288],
+    ]);
+    expect(p.notDoable).toEqual([]);
+  });
+  it("Prompt kennt Mitarbeiter, Mailtext und die Zeitraum-Regel", () => {
+    const req = buildInstructionRequest("x", c);
+    expect(req.system[0].text).toContain("Mitarbeiter: Jens Langner, Silas Layer");
+    expect(req.system[0].text).toContain("am ERSTEN Tag");
+    expect(req.user).toContain("13. – 30.11.");
+  });
+  it("findPerson nur bei eindeutigem Treffer", () => {
+    expect(findPerson("Langner", people)?.id).toBe(33288);
+    expect(findPerson("silas", people)?.id).toBe(33287);
+    expect(findPerson("Max", people)).toBeNull();
+    expect(findPerson("", people)).toBeNull();
+  });
+  it("unbekannter Mitarbeiter -> Termin ohne Zuweisung + Hinweis", () => {
+    const x = InstructionSchema.parse({ ...r, appointments: [{ ...r.appointments[0], person: "Kai" }] });
+    const p = toPlan(x, c, "");
+    expect(p.appointments[0].partnerId).toBeNull();
+    expect(p.notDoable[0]).toContain("Kai");
+  });
+  it("Ausführen legt jeden Termin mit Mitarbeiter an", async () => {
+    const t = deps({ current: { id: 1949, nr: "WER-1949" } });
+    const out = await runInstruction(toPlan(r, c, ""), "x", t.d);
+    expect(out.map((o) => o.ok)).toEqual([true, true]);
+    expect(t.log.appts.map((a: any) => [a.projectId, a.partnerId, a.startIso])).toEqual([
+      [1949, 33288, "2026-11-13T07:00:00.000Z"], [1949, 33288, "2026-11-30T07:00:00.000Z"],
+    ]);
+    expect(out[0].text).toContain("für Jens Langner");
   });
 });

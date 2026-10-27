@@ -19,12 +19,12 @@ import { buildLlmDeps } from "../_shared/email/config.ts";
 import { offerSuggester } from "../_shared/email/offerWiring.ts";
 import type { Gewerk } from "../_shared/email/gewerke.ts";
 import { buildCreateProjectPayload } from "../_shared/email/act.ts";
-import { berlinToday, planInstruction, runInstruction, type CustomerLookup, type CustomerOption, type InstructionContext, type InstructionPlan } from "../_shared/email/instruct.ts";
+import { berlinToday, planInstruction, runInstruction, type CustomerLookup, type CustomerOption, type InstructionContext, type InstructionPerson, type InstructionPlan } from "../_shared/email/instruct.ts";
 import { emailDomain } from "../_shared/email/match.ts";
 import { FREEMAIL_DOMAINS } from "../_shared/email/types.ts";
 import { heroCreateAppointment } from "../_shared/booking/hero.ts";
 
-const INSTRUCT_MSG_COLS = "id, account_id, direction, category, subject, summary, from_name, from_addr, to_addrs, has_attachments, extracted, match_info, hero_project_match_id";
+const INSTRUCT_MSG_COLS = "id, account_id, direction, category, subject, summary, body_text, from_name, from_addr, to_addrs, has_attachments, extracted, match_info, hero_project_match_id";
 
 /** HERO-Terminkategorien (aus der Terminbuchung, `appointment_category` mit Quelle hero). */
 async function heroCategories(sb: any): Promise<{ id: number; label: string }[]> {
@@ -32,14 +32,29 @@ async function heroCategories(sb: any): Promise<{ id: number; label: string }[]>
   return (data || []).map((c: any) => ({ id: Number(String(c.key).replace(/^hero:/, "")), label: c.label })).filter((c: any) => c.id > 0);
 }
 
-function instructionContext(m: any, categories: { id: number; label: string }[]): InstructionContext {
+/**
+ * Mitarbeiter, denen in HERO Termine zugewiesen werden koennen. HERO hat dafuer keine Liste: abgeleitet aus den Terminen
+ * (wie die Automationen in admin-manage), ergaenzt um die Zuordnung `employees.hero_partner_id`.
+ */
+async function heroPeople(sb: any, key: string | null): Promise<InstructionPerson[]> {
+  const out = new Map<number, string>();
+  if (key) {
+    const data = await H.heroGraphql(key, `query { calendar_events(last: 300) { partners { id full_name } } }`).catch(() => null);
+    for (const e of data?.calendar_events ?? []) for (const p of e?.partners ?? []) if (Number(p?.id) > 0 && p.full_name) out.set(Number(p.id), String(p.full_name));
+  }
+  const { data: emps } = await sb.from("employees").select("name, hero_partner_id").not("hero_partner_id", "is", null);
+  for (const e of emps || []) if (!out.has(Number(e.hero_partner_id))) out.set(Number(e.hero_partner_id), String(e.name));
+  return [...out].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function instructionContext(m: any, categories: { id: number; label: string }[], people: InstructionPerson[]): InstructionContext {
   const mi = m.match_info || {};
   return {
     subject: m.subject || "", summary: m.summary ?? null, fromName: m.from_name || m.from_addr,
     projectNr: m.hero_project_match_id ? (mi.projectNr ?? `#${m.hero_project_match_id}`) : null,
     candidates: (mi.candidates || []).map((c: any) => ({ id: Number(c.id), nr: String(c.nr), name: String(c.name || "") })),
     existingCustomer: mi.customer?.id ? { id: Number(mi.customer.id), name: String(mi.customer.name || "") } : null,
-    categories, today: berlinToday(),
+    categories, people, bodyText: m.body_text ?? null, today: berlinToday(),
   };
 }
 
@@ -63,8 +78,8 @@ function customerLookup(key: string): CustomerLookup {
 
 const optionOf = (v: any): CustomerOption | null => (Number(v?.id) > 0 ? { id: Number(v.id), name: String(v.name || "").slice(0, 200) } : null);
 
-/** Plan aus dem Client pruefen: nur bekannte Kategorien, gueltige Zeiten, Pflichtfelder. */
-function checkPlan(p: any, categories: { id: number; label: string }[]): InstructionPlan {
+/** Plan aus dem Client pruefen: nur bekannte Kategorien und Mitarbeiter, gueltige Zeiten, Pflichtfelder. */
+function checkPlan(p: any, categories: { id: number; label: string }[], people: InstructionPerson[]): InstructionPlan {
   if (!p || typeof p !== "object") throw new ActionError("Plan fehlt.");
   const mode = p.project?.mode;
   let project: InstructionPlan["project"] = { mode: "keep" };
@@ -81,18 +96,20 @@ function checkPlan(p: any, categories: { id: number; label: string }[]): Instruc
     if (!nr) throw new ActionError("Projektnummer fehlt.");
     project = { mode: "link", projectNr: nr, projectId: Number(p.project.projectId) > 0 ? Number(p.project.projectId) : null };
   }
-  let appointment: InstructionPlan["appointment"] = null;
-  if (p.appointment) {
-    const a = p.appointment;
+  const appointments: InstructionPlan["appointments"] = [];
+  for (const a of (Array.isArray(p.appointments) ? p.appointments : []).slice(0, 6)) {
     const cat = categories.find((c) => c.id === Number(a.categoryId));
     if (!cat) throw new ActionError("Unbekannte Terminkategorie.");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.date)) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(a.time))) throw new ActionError("Datum oder Uhrzeit ungültig.");
-    appointment = {
+    const person = a.partnerId ? people.find((x) => x.id === Number(a.partnerId)) : null;
+    if (a.partnerId && !person) throw new ActionError("Unbekannter Mitarbeiter.");
+    appointments.push({
       categoryId: cat.id, categoryLabel: cat.label, date: String(a.date), time: String(a.time),
       durationMin: Math.min(Math.max(Math.round(Number(a.durationMin) || 30), 5), 600), title: String(a.title || cat.label).slice(0, 200),
-    };
+      partnerId: person?.id ?? null, partnerName: person?.name ?? null,
+    });
   }
-  return { project, offer: !!p.offer, appointment, notDoable: [], summary: String(p.summary || "") };
+  return { project, offer: !!p.offer, appointments, notDoable: [], summary: String(p.summary || "") };
 }
 
 /** Angebotsvorbereitung nach der Zuordnung – nur wenn HERO aktiv ist; die KI-Schicht wird dafuer erst jetzt aufgebaut. */
@@ -157,10 +174,10 @@ Deno.serve(async (req) => {
       if (text.length < 3) return fail("Bitte die Anweisung eintragen.");
       const { data: m } = await sb.from("email_messages").select(INSTRUCT_MSG_COLS).eq("id", String(body.messageId || "")).maybeSingle();
       if (!m) return fail("Mail nicht gefunden.");
-      const categories = await heroCategories(sb);
+      const [categories, people] = await Promise.all([heroCategories(sb), heroPeople(sb, key)]);
       if (body.action === "instruct_plan") {
         const defaultName = String((buildCreateProjectPayload(m, { gewerke }) as any).project?.name || "");
-        const ctx = instructionContext(m, categories);
+        const ctx = instructionContext(m, categories, people);
         // Aeltere Mails tragen den erkannten Kunden nicht in match_info: dann direkt in HERO nach der Adresse suchen.
         if (!ctx.existingCustomer && key) {
           const found = await H.contactsByEmail(key, m.from_addr).catch(() => []);
@@ -169,10 +186,11 @@ Deno.serve(async (req) => {
         // Sagt die Anweisung „Kontakt gibt es schon“, sucht der Plan den Kunden auch ueber Firma und Firmen-Domain.
         const dom = emailDomain(m.from_addr);
         const terms = [m.extracted?.contact?.company, dom && !FREEMAIL_DOMAINS.includes(dom) ? dom : null].filter(Boolean) as string[];
-        return ok(await planInstruction(text, ctx, defaultName, await buildLlmDeps(sb), m.id, key ? customerLookup(key) : undefined, terms));
+        const plan = await planInstruction(text, ctx, defaultName, await buildLlmDeps(sb), m.id, key ? customerLookup(key) : undefined, terms);
+        return ok({ ...plan, people });
       }
       if (!key || !hero) return fail("HERO ist nicht aktiviert (hero_enabled / hero_api_key).");
-      const plan = checkPlan(body.plan, categories);
+      const plan = checkPlan(body.plan, categories, people);
       const openOf = async (type: string) => {
         const { data } = await sb.from("email_suggestions").select("id").eq("message_id", m.id).eq("type", type).eq("status", "offen").maybeSingle();
         return data?.id as string | undefined;
@@ -202,7 +220,7 @@ Deno.serve(async (req) => {
           const p = n > 0 ? await H.projectByNumber(key, n) : null;
           return p ? { id: p.id, nr: p.nr } : null;
         },
-        createAppointment: (a) => heroCreateAppointment(key, { heroProjectId: a.projectId, title: a.title, startIso: a.startIso, endIso: a.endIso, categoryId: a.categoryId, description: a.description }),
+        createAppointment: (a) => heroCreateAppointment(key, { heroProjectId: a.projectId, title: a.title, startIso: a.startIso, endIso: a.endIso, categoryId: a.categoryId, description: a.description, partnerId: a.partnerId }),
         async finish(note) {
           const now = new Date().toISOString();
           // Was die Anweisung entschieden hat, ist erledigt: offene Projekt-Vorschlaege dieser Mail schliessen.
