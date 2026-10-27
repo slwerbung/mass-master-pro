@@ -4,7 +4,7 @@ import { ImageOff, RefreshCw } from "lucide-react";
 import { invokeFn } from "@/lib/api";
 import { Button, Spinner } from "@/components/ui";
 
-interface BodyResult { html: string | null; kind: "html" | "text" | "missing"; text?: string | null; source: string }
+interface BodyResult { html: string | null; kind: "html" | "text" | "missing"; text?: string | null; source: string; error?: string }
 
 /** Externe Bilder (Tracking-Pixel) erst nach Klick laden – wie in Thunderbird. */
 const hasRemoteImages = (html: string) => /<img[^>]+src\s*=\s*["']?https?:/i.test(html) || /url\(\s*["']?https?:/i.test(html);
@@ -47,9 +47,9 @@ export function MailBody({ messageId, fallbackText }: { messageId: string; fallb
     return (
       <div className="space-y-2">
         <p className="text-xs text-muted-foreground">
-          {q.error ? `Original konnte nicht geladen werden (${(q.error as Error).message}). ` : "Die Mail liegt nicht mehr im Postfach. "}Gezeigt wird der gespeicherte Text.
+          {q.error || r?.error ? `Original konnte nicht geladen werden (${q.error ? (q.error as Error).message : r?.error}). ` : "Die Mail liegt nicht mehr im Postfach. "}Gezeigt wird der gespeicherte Text.
         </p>
-        <div className="whitespace-pre-wrap text-sm">{fallbackText ?? r?.text ?? "(Text nach der Aufbewahrungsfrist entfernt)"}</div>
+        <div className="whitespace-pre-wrap text-sm">{r?.text ?? fallbackText ?? "(kein Text gespeichert)"}</div>
       </div>
     );
   }

@@ -8,6 +8,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { simpleParser } from "mailparser";
+import { Buffer } from "node:buffer";
 import { fail, ok, preflight, readJson, requireAdmin } from "../_shared/email/http.ts";
 import { accountPassword } from "../_shared/email/config.ts";
 import { fetchSource, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
@@ -37,23 +38,28 @@ const handlers: Record<string, (sb: any, body: any) => Promise<unknown>> = {
     const { data: m } = await sb.from("email_messages").select(COLS).eq("id", String(body.id || "")).maybeSingle();
     if (!m) throw new Error("Mail nicht gefunden.");
     if (m.body_html && !body.refresh) return { html: m.body_html, kind: "html", source: "cache" };
-    const { acc, creds } = await account(sb, m.account_id);
-    const fm = acc.folder_map || {};
-    const r = await withImap(creds, async (client) => {
-      const at = await locate(client, m, [fm.inbox || "INBOX", fm.sent, ...Object.values(fm.folders || {})].filter(Boolean) as string[]);
-      if (!at) return null;
-      const src = await fetchSource(client, at.folder, at.uid);
-      return src ? { at, src } : null;
-    });
-    if (!r) {
-      // Nicht (mehr) im Postfach: der gespeicherte Text ist alles, was es gibt.
-      return { html: null, kind: "missing", text: m.body_text, source: "none" };
+    try {
+      const { acc, creds } = await account(sb, m.account_id);
+      const fm = acc.folder_map || {};
+      const r = await withImap(creds, async (client) => {
+        const at = await locate(client, m, [fm.inbox || "INBOX", fm.sent, ...Object.values(fm.folders || {})].filter(Boolean) as string[]);
+        if (!at) return null;
+        const src = await fetchSource(client, at.folder, at.uid);
+        return src ? { at, src } : null;
+      });
+      if (!r) {
+        // Nicht (mehr) im Postfach: der gespeicherte Text ist alles, was es gibt.
+        return { html: null, kind: "missing", text: m.body_text, source: "none" };
+      }
+      const view = mailHtml(await simpleParser(Buffer.from(r.src) as any));
+      const patch: Record<string, unknown> = { current_folder: r.at.folder, current_uid: r.at.uid };
+      if (view.html.length <= MAX_CACHE_CHARS) patch.body_html = view.html;
+      await sb.from("email_messages").update(patch).eq("id", m.id);
+      return { html: view.html, kind: view.kind, source: "imap" };
+    } catch (e) {
+      // Postfach nicht erreichbar o. Ae.: wenigstens den gespeicherten Text zeigen.
+      return { html: null, kind: "missing", text: m.body_text, source: "none", error: String((e as Error).message).slice(0, 200) };
     }
-    const view = mailHtml(await simpleParser(r.src as any));
-    const patch: Record<string, unknown> = { current_folder: r.at.folder, current_uid: r.at.uid };
-    if (view.html.length <= MAX_CACHE_CHARS) patch.body_html = view.html;
-    await sb.from("email_messages").update(patch).eq("id", m.id);
-    return { html: view.html, kind: view.kind, source: "imap" };
   },
 
   async trash(sb, body) {

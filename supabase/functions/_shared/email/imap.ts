@@ -235,7 +235,9 @@ export async function fetchSource(client: ImapFlow, folder: string, uid: number)
   const lock = await client.getMailboxLock(folder, { readOnly: true });
   try {
     const msg: any = await client.fetchOne(String(uid), { source: true }, { uid: true });
-    return msg?.source ? new Uint8Array(msg.source) : null;
+    // Den Buffer von imapflow unveraendert weitergeben: mailparser erkennt nur einen echten Buffer als Daten –
+    // ein nacktes Uint8Array haelt er fuer einen Stream („input.once is not a function“).
+    return msg?.source ? (msg.source as Uint8Array) : null;
   } finally {
     lock.release();
   }
