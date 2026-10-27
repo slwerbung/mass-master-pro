@@ -31,10 +31,17 @@
 //
 // Aktionen:
 //   GET  ?action=context[&project=<uuid>|&hp=<heroId>|&p=<nr>][&staff=<slug|nachname>]
-//   GET  ?action=availability&from=&to=[&project=&hp=&p=&staff=&ruleSet=&street=&zip=&city=]
+//   GET  ?action=availability&from=&to=[&project=&hp=&p=&staff=&ruleSet=&d=&street=&zip=&city=]
 //   POST { action:'create', project?|heroProject?|projectNr?, staff?, ruleSet?,
-//          slot:{startsAt,endsAt}, staffId, contact:{name,email,phone},
+//          d?, slot:{startsAt}, staffId, contact:{name,email,phone},
 //          addressOverride?, hinweis? }
+//
+// `d` ist die Dauer dieses Termins in Minuten. Manche Terminarten („Montage vor
+// Ort") dauern von Auftrag zu Auftrag anders lang; die Dauer legt der
+// Mitarbeiter beim Einladen fest und sie steht im Link. Was davon gilt,
+// entscheidet `_shared/booking/duration.ts` gegen die Terminart — ein Link ist
+// von Hand aenderbar, und ein geaenderter Link darf keine Dauer erzwingen, die
+// die Terminart nicht erlaubt.
 //   POST { action:'cancel', cancelToken }
 //   POST { action:'staff-action', staffToken, mode:'cancel'|'reschedule' }
 
@@ -43,6 +50,11 @@ import { DateTime } from "luxon";
 import { computeSlots } from "../_shared/booking/engine.ts";
 import { buildComputeInput } from "../_shared/booking/inputs.ts";
 import { createTravelProvider, type TravelCache } from "../_shared/booking/travel.ts";
+import { durationBounds, effectiveDuration } from "../_shared/booking/duration.ts";
+import {
+  asLocationMode, brauchtAdresse, brauchtAnfahrt, brauchtTelefon, brauchtVideoLink,
+  formatOffice, jitsiUrl, treffpunktText,
+} from "../_shared/booking/location.ts";
 import {
   formatAddress, geocode, heroCreateAppointment, heroDeleteAppointment,
   heroProjectByNumber, loadHeroContext, type GeocodeCache, type HeroAddress,
@@ -87,6 +99,10 @@ interface Settings {
   heroCategoryId: number | null;
   heroApiKey: string | null;
   reminderHours: number;
+  /** Unsere eigene Adresse aus `legal_info` — Treffpunkt bei "Bei uns im Buero". */
+  office: string;
+  /** Dienst fuer Onlinetermine. Leer = oeffentliches meet.jit.si. */
+  jitsiBase: string;
 }
 
 async function loadSettings(db: DB): Promise<Settings> {
@@ -95,6 +111,7 @@ async function loadSettings(db: DB): Promise<Settings> {
     "booking_travel_overhead", "booking_travel_max_min", "booking_holiday_state",
     "booking_hero_write", "booking_hero_category_id",
     "booking_reminder_hours", "hero_api_key", "hero_enabled",
+    "booking_jitsi_base", "legal_info",
   ]);
   const m = new Map((data ?? []).map((r: any) => [r.key, r.value]));
   const num = (k: string, d: number) => {
@@ -114,7 +131,23 @@ async function loadSettings(db: DB): Promise<Settings> {
     heroCategoryId: Number.isFinite(cat) && cat > 0 ? cat : null,
     heroApiKey: heroOn ? (m.get("hero_api_key") as string) || null : null,
     reminderHours: num("booking_reminder_hours", 24),
+    office: buero(m.get("legal_info")),
+    jitsiBase: String(m.get("booking_jitsi_base") ?? "").trim(),
   };
+}
+
+/**
+ * Unsere Adresse aus `legal_info`. Dieselbe Quelle wie Impressum und
+ * Mailfusszeile — eine zweite Stelle fuer die eigene Adresse waere eine
+ * Stelle, die irgendwann veraltet.
+ */
+function buero(roh: unknown): string {
+  try {
+    const info = JSON.parse(String(roh ?? "{}"));
+    return formatOffice({ street: info?.street, zip: info?.zip, city: info?.city });
+  } catch {
+    return "";
+  }
 }
 
 // Der Routing-Schluessel steht in den Secrets, nicht in app_config: app_config
@@ -312,11 +345,21 @@ async function buildContext(db: DB, s: Settings, ziel: ProjektZiel) {
 
 async function availabilityFor(
   db: DB, s: Settings, from: string, to: string, address: Geo | null, ruleSetKey: string,
-  nurStaffId?: string | null,
+  nurStaffId?: string | null, dauerWunsch?: unknown,
 ) {
   const { data: rs } = await db.from("rule_set").select("*")
     .eq("key", ruleSetKey).eq("active", true).maybeSingle();
   if (!rs) return { error: "Terminart nicht eingerichtet" as const };
+
+  // Dauer dieses Termins: Vorgabe der Terminart oder der Wunsch aus dem Link,
+  // geprueft gegen die Grenzen der Terminart.
+  const dauer = effectiveDuration(rs as any, dauerWunsch);
+
+  // Fahren wir hin? Nur dann zaehlt eine Adresse. Hier steht es noch einmal
+  // (die Aufrufer filtern schon), weil die Engine an der Adresse entscheidet,
+  // ob sie Fahrzeit und Einsatzradius rechnet: eine durchgerutschte Adresse
+  // wuerde bei einem Telefontermin Zeiten wegen Anfahrt streichen.
+  const ziel = brauchtAnfahrt((rs as any).location_mode) ? address : null;
 
   let staffIds: string[];
   if (nurStaffId) {
@@ -332,7 +375,7 @@ async function availabilityFor(
       staffIds = (all ?? []).map((s2: any) => s2.id);
     }
   }
-  if (staffIds.length === 0) return { rs, slots: [] as any[] };
+  if (staffIds.length === 0) return { rs, dauer, slots: [] as any[] };
 
   const [{ data: staff }, { data: wh }, { data: exc }, { data: busy }, { data: bookings }, { data: cats }, { data: hol }] =
     await Promise.all([
@@ -362,10 +405,11 @@ async function availabilityFor(
     ruleSet: rs as any, staff: staff ?? [], workingHours: wh ?? [], exceptions: exc ?? [],
     busy: busy ?? [], bookingCounts: bookings ?? [], categoryBlocks,
     holidays: (hol ?? []).map((h: any) => String(h.date)),
-    now: new Date().toISOString(), from, to, address, timezone: TZ,
+    now: new Date().toISOString(), from, to, address: ziel, timezone: TZ,
     travelProvider, maxTravelMin: s.maxTravelMin,
+    durationMinutes: dauer.minutes,
   });
-  return { rs, slots: await computeSlots(input) };
+  return { rs, dauer, slots: await computeSlots(input) };
 }
 
 /**
@@ -373,16 +417,22 @@ async function availabilityFor(
  * Weitergeben. Ohne Angabe: die einzige buchbare Art, sonst die Vorgabe — so
  * funktionieren auch Links, die noch keine Art nennen.
  */
+type Terminart = Awaited<ReturnType<typeof buchbareTerminarten>>[number];
+
 async function pruefeTerminart(
   db: DB, gewuenscht: unknown,
-): Promise<string | { error: Record<string, string>; status: number }> {
+): Promise<Terminart | { error: Record<string, string>; status: number }> {
   const arten = await buchbareTerminarten(db);
   if (arten.length === 0) return { error: { error: "Terminart nicht eingerichtet" }, status: 503 };
   const key = typeof gewuenscht === "string" && gewuenscht.trim() ? gewuenscht.trim() : null;
-  if (!key) return arten.length === 1 ? arten[0].key : (arten.find((a) => a.key === RULE_SET_DEFAULT)?.key ?? arten[0].key);
+  if (!key) {
+    return arten.length === 1
+      ? arten[0]
+      : (arten.find((a) => a.key === RULE_SET_DEFAULT) ?? arten[0]);
+  }
   const treffer = arten.find((a) => a.key === key);
   if (!treffer) return { error: { error: "Diese Terminart ist nicht buchbar" }, status: 400 };
-  return treffer.key;
+  return treffer;
 }
 
 /**
@@ -391,7 +441,9 @@ async function pruefeTerminart(
  */
 async function buchbareTerminarten(db: DB) {
   const { data } = await db.from("rule_set")
-    .select("key, label, duration_minutes, form_fields, booking_window_days, category_id, active")
+    .select(`key, label, duration_minutes, duration_choosable, duration_min_minutes,
+             duration_max_minutes, location_mode, form_fields, booking_window_days,
+             category_id, active`)
     .eq("active", true);
   const arten = data ?? [];
   if (arten.length === 0) return [];
@@ -400,13 +452,25 @@ async function buchbareTerminarten(db: DB) {
   return arten
     .filter((r: any) => buchbar.get(r.category_id) === true)
     .sort((a: any, b: any) => a.duration_minutes - b.duration_minutes)
-    .map((r: any) => ({
-      key: r.key,
-      label: r.label,
-      durationMinutes: r.duration_minutes,
-      formFields: r.form_fields ?? [],
-      bookingWindowDays: r.booking_window_days,
-    }));
+    .map((r: any) => {
+      const grenzen = durationBounds(r);
+      return {
+        key: r.key,
+        label: r.label,
+        durationMinutes: r.duration_minutes,
+        formFields: r.form_fields ?? [],
+        bookingWindowDays: r.booking_window_days,
+        // Damit die Buchungsseite die Dauer im Link einordnen kann, ohne selbst
+        // zu rechnen. Gerechnet wird in `duration.ts`, hier steht nur, was
+        // erlaubt ist.
+        durationChoosable: !!r.duration_choosable,
+        durationMin: grenzen.min,
+        durationMax: grenzen.max,
+        // Wo der Termin stattfindet. Entscheidet auf der Buchungsseite, ob
+        // ueberhaupt nach einer Adresse gefragt wird.
+        locationMode: asLocationMode(r.location_mode),
+      };
+    });
 }
 
 /**
@@ -464,7 +528,10 @@ Deno.serve(async (req) => {
         // Dauerlink ohne Projekt: wir wissen nichts ueber den Kunden. Adresse
         // und Kontakt traegt er selbst ein — deshalb beides leer statt geraten.
         if (!hatProjekt(ziel)) {
-          return json({ project: null, staff: mitarbeiter, appointments: arten, address: null, contact: { name: "", email: null, phone: null } });
+          return json({
+            project: null, staff: mitarbeiter, appointments: arten, address: null,
+            contact: { name: "", email: null, phone: null }, office: s.office,
+          });
         }
 
         const ctx = await buildContext(db, s, ziel);
@@ -479,7 +546,7 @@ Deno.serve(async (req) => {
           return json({
             project: null, projectMissing: true, staff: mitarbeiter,
             appointments: arten, address: null,
-            contact: { name: "", email: null, phone: null },
+            contact: { name: "", email: null, phone: null }, office: s.office,
           });
         }
 
@@ -502,6 +569,9 @@ Deno.serve(async (req) => {
           appointments: arten,
           address: ctx.address ? { ...ctx.address, text: addressText, source: ctx.addressSource, located: !!geo } : null,
           contact: ctx.contact,
+          // Unsere Adresse — Treffpunkt, wenn die Terminart "Bei uns im Buero"
+          // ist. Kommt aus `legal_info`, nicht aus einer zweiten Einstellung.
+          office: s.office,
         });
       }
 
@@ -522,35 +592,47 @@ Deno.serve(async (req) => {
 
         // Welche Terminart? Nur eine, die wirklich buchbar ist — sonst koennte
         // ueber die URL eine intern gedachte Art gebucht werden.
-        const artFehler = await pruefeTerminart(db, url.searchParams.get("ruleSet"));
-        if (typeof artFehler !== "string") return json(artFehler.error, artFehler.status);
-        const ruleSetKey = artFehler;
+        const art = await pruefeTerminart(db, url.searchParams.get("ruleSet"));
+        if ("error" in art) return json(art.error, art.status);
+        const ruleSetKey = art.key;
 
         const st = slug ? await aufloeseStaff(db, slug) : null;
         if (st === "inaktiv") return json({ error: "Dieser Einladungslink gilt nicht mehr" }, 404);
 
-        // Hat der Kunde die Adresse geaendert, zaehlt seine Eingabe.
-        const street = url.searchParams.get("street");
-        const zip = url.searchParams.get("zip");
-        const city = url.searchParams.get("city");
-        let addressText: string;
-        if (zip || street || city) {
-          addressText = formatAddress({ street, zipcode: zip, city });
-        } else if (hatProjekt(ziel)) {
-          const ctx = await buildContext(db, s, ziel);
-          // Unbekanntes Projekt: wie ohne Projekt rechnen (siehe `context`),
-          // damit ein Link mit toter Projektnummer nicht in einen leeren
-          // Kalender fuehrt. Ohne Mitarbeiter bleibt es beim 404.
-          if ("error" in ctx && !slug) return json(ctx, 404);
-          addressText = "error" in ctx ? "" : formatAddress(ctx.address);
-        } else {
-          addressText = "";
+        // Adresse nur, wenn wir ueberhaupt hinfahren. Bei Buero-, Telefon- und
+        // Onlineterminen gibt es keine Anfahrt — dann wird nicht geocodiert
+        // (spart den Aufruf) und die Engine rechnet ohne Fahrzeit und ohne
+        // Einsatzradius, weil sie beides nur mit Adresse rechnet.
+        let addressText = "";
+        if (brauchtAdresse(art.locationMode)) {
+          // Hat der Kunde die Adresse geaendert, zaehlt seine Eingabe.
+          const street = url.searchParams.get("street");
+          const zip = url.searchParams.get("zip");
+          const city = url.searchParams.get("city");
+          if (zip || street || city) {
+            addressText = formatAddress({ street, zipcode: zip, city });
+          } else if (hatProjekt(ziel)) {
+            const ctx = await buildContext(db, s, ziel);
+            // Unbekanntes Projekt: wie ohne Projekt rechnen (siehe `context`),
+            // damit ein Link mit toter Projektnummer nicht in einen leeren
+            // Kalender fuehrt. Ohne Mitarbeiter bleibt es beim 404.
+            if ("error" in ctx && !slug) return json(ctx, 404);
+            addressText = "error" in ctx ? "" : formatAddress(ctx.address);
+          }
         }
         const geo = addressText ? await geocode(addressText, routingKey(), geoCache(db)) : null;
 
-        const res = await availabilityFor(db, s, from, to, geo, ruleSetKey, st ? st.id : null);
+        const res = await availabilityFor(
+          db, s, from, to, geo, ruleSetKey, st ? st.id : null, url.searchParams.get("d"),
+        );
         if ("error" in res) return json(res, 503);
-        return json({ slots: res.slots, addressLocated: !!geo });
+        // `durationMinutes` ist die Dauer, mit der hier gerechnet wurde. Die
+        // Buchungsseite zeigt genau diese Zahl an, statt selbst zu rechnen —
+        // sonst stuende auf der Seite etwas anderes als im Kalender.
+        return json({
+          slots: res.slots, addressLocated: !!geo,
+          durationMinutes: res.dauer.minutes, durationSource: res.dauer.source,
+        });
       }
 
       return json({ error: "Unbekannte Aktion" }, 400);
@@ -607,15 +689,26 @@ Deno.serve(async (req) => {
         const slug = String(body.staff || "");
         const slot = body.slot || {};
         const contact = body.contact || {};
-        if ((!hatProjekt(ziel) && !slug) || !slot.startsAt || !slot.endsAt || !contact.name || !contact.email) {
+        if ((!hatProjekt(ziel) && !slug) || !slot.startsAt || !contact.name || !contact.email) {
           return json({ error: "Pflichtfelder fehlen" }, 400);
         }
-        if (!istZeit(slot.startsAt) || !istZeit(slot.endsAt)) {
+        if (!istZeit(slot.startsAt)) {
           return json({ error: "Der Zeitpunkt des Slots ist unlesbar" }, 400);
         }
-        const artPruefung = await pruefeTerminart(db, body.ruleSet);
-        if (typeof artPruefung !== "string") return json(artPruefung.error, artPruefung.status);
-        const ruleSetKey = artPruefung;
+        // `slot.endsAt` des Frontends wird bewusst NICHT uebernommen: das Ende
+        // ergibt sich aus der Dauer, und die entscheidet der Server. Sonst
+        // koennte ein veraenderter Aufruf eine Achtstunden-Montage als
+        // Zehnminuten-Termin eintragen.
+        const art = await pruefeTerminart(db, body.ruleSet);
+        if ("error" in art) return json(art.error, art.status);
+        const ruleSetKey = art.key;
+
+        // Ohne Rufnummer ist ein Telefontermin wertlos: niemand weiss, wen er
+        // anrufen soll. Deshalb dort Pflicht — und zwar hier, nicht nur im
+        // Formular, sonst kommt sie bei einem direkten Aufruf nie an.
+        if (brauchtTelefon(art.locationMode) && !String(contact.phone ?? "").trim()) {
+          return json({ error: "Für einen Telefontermin brauchen wir Ihre Rufnummer." }, 400);
+        }
 
         // Wer eingeladen hat, bekommt den Termin. Steht ein Slug im Link,
         // entscheidet DER — nicht die staffId aus dem Formular, die sich
@@ -633,12 +726,17 @@ Deno.serve(async (req) => {
         const ctx = geladen && !("error" in geladen) ? geladen : null;
 
         // Adresse: Eingabe des Kunden schlaegt HERO. Ohne Projekt gibt es nur
-        // seine Eingabe.
-        const ov = body.addressOverride || null;
-        const address: HeroAddress | null = ov
-          ? { street: ov.street ?? null, zipcode: ov.zip ?? null, city: ov.city ?? null }
-          : (ctx?.address ?? null);
-        const addressSource = ov ? "manual" : (ctx?.addressSource ?? "manual");
+        // seine Eingabe. Bei Buero-, Telefon- und Onlineterminen gibt es gar
+        // keine: dort steht kein Kundenort im Termin, und es wird auch nicht
+        // geocodiert.
+        const mitAdresse = brauchtAdresse(art.locationMode);
+        const ov = mitAdresse ? (body.addressOverride || null) : null;
+        const address: HeroAddress | null = mitAdresse
+          ? (ov
+            ? { street: ov.street ?? null, zipcode: ov.zip ?? null, city: ov.city ?? null }
+            : (ctx?.address ?? null))
+          : null;
+        const addressSource = mitAdresse ? (ov ? "manual" : (ctx?.addressSource ?? "manual")) : null;
         const addressText = formatAddress(address);
         const geo = addressText ? await geocode(addressText, routingKey(), geoCache(db)) : null;
 
@@ -646,14 +744,18 @@ Deno.serve(async (req) => {
         const dayStart = DateTime.fromISO(slot.startsAt, { zone: "utc" }).setZone(TZ).startOf("day");
         const res = await availabilityFor(
           db, s, dayStart.toUTC().toISO()!, dayStart.plus({ days: 1 }).toUTC().toISO()!, geo, ruleSetKey,
-          eingeladenVon ? eingeladenVon.id : null,
+          eingeladenVon ? eingeladenVon.id : null, body.d,
         );
         if ("error" in res) return json(res, 503);
         const wanted = DateTime.fromISO(slot.startsAt, { zone: "utc" }).toISO();
-        const stillFree = res.slots.some((x: any) =>
+        // Der gerechnete Slot selbst, nicht nur ein „ja, frei": aus ihm kommt
+        // das Ende des Termins.
+        const frei = res.slots.find((x: any) =>
           DateTime.fromISO(x.startsAt, { zone: "utc" }).toISO() === wanted &&
           (x.assignedStaffId === staffId || (x.staffIds ?? []).includes(staffId)));
-        if (!stillFree) return json({ error: "Dieser Termin ist nicht mehr verfügbar." }, 409);
+        if (!frei) return json({ error: "Dieser Termin ist nicht mehr verfügbar." }, 409);
+        const startsAt = frei.startsAt;
+        const endsAt = frei.endsAt;
 
         const rs: any = res.rs;
         const { data: cat } = await db.from("appointment_category")
@@ -662,6 +764,23 @@ Deno.serve(async (req) => {
         const cancelToken = crypto.randomUUID();
         const rescheduleToken = crypto.randomUUID();
         const staffToken = crypto.randomUUID();
+
+        // Onlinetermin: eigener Videoraum fuer DIESEN Termin. Nicht einer pro
+        // Terminart — sonst sitzen zwei Kunden im selben Meeting. Der Raumname
+        // traegt Zufall, weil bei Jitsi jeder hereinkommt, der ihn kennt.
+        const meetingUrl = brauchtVideoLink(art.locationMode)
+          ? jitsiUrl(s.jitsiBase, rs.label)
+          : null;
+        // Treffpunkt in einem Satz — dieselbe Formulierung in Mail, .ics und
+        // HERO. Eine Quelle, damit nicht in der Mail „Büro" steht und im
+        // Kalender die Kundenadresse.
+        const treffpunkt = treffpunktText({
+          mode: art.locationMode,
+          customerAddress: addressText,
+          office: s.office,
+          meetingUrl,
+          phone: String(contact.phone ?? "").trim() || null,
+        });
 
         // Korrekturen des Kunden getrennt festhalten — bewusst NICHT nach HERO
         // zurueckschreiben, damit eine Buchung keine Stammdaten ueberschreibt.
@@ -677,13 +796,14 @@ Deno.serve(async (req) => {
 
         const { data: created, error: insErr } = await db.from("booking").insert({
           rule_set_id: rs.id, staff_id: staffId,
-          starts_at: slot.startsAt, ends_at: slot.endsAt, status,
+          starts_at: startsAt, ends_at: endsAt, status,
           customer_name: contact.name, customer_email: contact.email, customer_phone: contact.phone ?? null,
           address: addressText || null, address_lat: geo?.lat ?? null, address_lng: geo?.lng ?? null,
           address_source: addressSource, contact_overrides: overrides,
           project_id: ctx?.proj.id ?? null, hero_project_id: ctx?.proj.heroProjectId ?? null,
           answers: body.hinweis ? { hinweis: String(body.hinweis) } : {},
           cancel_token: cancelToken, reschedule_token: rescheduleToken, staff_token: staffToken,
+          meeting_url: meetingUrl,
         }).select("id, status, starts_at, ends_at").single();
 
         if (insErr) {
@@ -695,7 +815,7 @@ Deno.serve(async (req) => {
         }
 
         await db.from("busy_block").insert({
-          staff_id: staffId, starts_at: slot.startsAt, ends_at: slot.endsAt,
+          staff_id: staffId, starts_at: startsAt, ends_at: endsAt,
           source: "booking", source_ref: created!.id, category_key: cat?.key ?? null,
           geo_lat: geo?.lat ?? null, geo_lng: geo?.lng ?? null,
         });
@@ -714,15 +834,17 @@ Deno.serve(async (req) => {
             const p = Number((emp as any)?.hero_partner_id);
             if (Number.isFinite(p) && p > 0) partnerId = p;
           }
-          const start = DateTime.fromISO(slot.startsAt, { zone: "utc" }).setZone(TZ);
-          const end = DateTime.fromISO(slot.endsAt, { zone: "utc" }).setZone(TZ);
+          const start = DateTime.fromISO(startsAt, { zone: "utc" }).setZone(TZ);
+          const end = DateTime.fromISO(endsAt, { zone: "utc" }).setZone(TZ);
           const wer = ctx?.customerName || String(contact.name || "").trim();
           const r = await heroCreateAppointment(s.heroApiKey, {
             heroProjectId: ctx?.proj.heroProjectId ?? null,
             title: [rs.label, wer].filter(Boolean).join(" – "),
             startIso: start.toISO()!, endIso: end.toISO()!,
             description: [
-              addressText,
+              // Bei Buero/Telefon/Online steht hier der Treffpunkt bzw. der
+              // Videolink — die Kundenadresse waere dort schlicht falsch.
+              treffpunkt,
               contact.email ? `E-Mail: ${contact.email}` : "",
               contact.phone ? `Telefon: ${contact.phone}` : "",
               body.hinweis ? `Hinweis: ${body.hinweis}` : "",
@@ -748,7 +870,7 @@ Deno.serve(async (req) => {
           { booking_id: created!.id, kind: "internal_new", send_after: jetzt },
         ];
         if (status === "confirmed" && s.reminderHours > 0) {
-          const sendAfter = DateTime.fromISO(slot.startsAt, { zone: "utc" }).minus({ hours: s.reminderHours });
+          const sendAfter = DateTime.fromISO(startsAt, { zone: "utc" }).minus({ hours: s.reminderHours });
           if (sendAfter.toMillis() > Date.now()) {
             notes.push({ booking_id: created!.id, kind: "reminder", send_after: sendAfter.toUTC().toISO() });
           }
@@ -763,6 +885,7 @@ Deno.serve(async (req) => {
           booking: {
             id: created!.id, status: created!.status,
             startsAt: created!.starts_at, endsAt: created!.ends_at,
+            meetingUrl, treffpunkt,
           },
           cancelToken,
           heroError,

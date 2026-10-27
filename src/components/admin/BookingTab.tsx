@@ -35,6 +35,17 @@ import {
 } from "lucide-react";
 
 const WOCHENTAGE = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
+
+/**
+ * Wo der Termin stattfindet. Die Folgen stehen daneben, weil man sie beim
+ * Einstellen wissen muss — nicht erst, wenn der erste Kunde gebucht hat.
+ */
+const TERMINORTE: { value: string; label: string; folge: string }[] = [
+  { value: "vor_ort", label: "Beim Kunden vor Ort", folge: "Adresse aus HERO, Anfahrt wird eingerechnet." },
+  { value: "buero", label: "Bei uns im Büro", folge: "Keine Anfahrt. Treffpunkt ist unsere Adresse aus dem Impressum." },
+  { value: "telefon", label: "Telefontermin", folge: "Keine Anfahrt, keine Adresse. Die Rufnummer ist Pflicht." },
+  { value: "online", label: "Onlinetermin", folge: "Keine Anfahrt. Jeder Termin bekommt einen eigenen Jitsi-Meet-Link." },
+];
 const BUNDESLAENDER: [string, string][] = [
   ["BW", "Baden-Württemberg"], ["BY", "Bayern"], ["BE", "Berlin"], ["BB", "Brandenburg"],
   ["HB", "Bremen"], ["HH", "Hamburg"], ["HE", "Hessen"], ["MV", "Mecklenburg-Vorpommern"],
@@ -53,6 +64,9 @@ interface StaffRow {
 }
 interface RuleSetRow {
   id: string; key: string; label: string; active: boolean; duration_minutes: number;
+  duration_choosable: boolean;
+  duration_min_minutes: number | null; duration_max_minutes: number | null;
+  location_mode: string;
   buffer_before_min: number; buffer_after_min: number; travel_buffer: boolean;
   min_notice_min: number; booking_window_days: number; slot_granularity_min: number;
   max_per_day_global: number | null; max_per_day_per_staff: number | null;
@@ -190,6 +204,10 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
       key: art.key,
       patch: {
         label: art.label, active: art.active, duration_minutes: art.duration_minutes,
+        duration_choosable: art.duration_choosable,
+        duration_min_minutes: art.duration_choosable ? art.duration_min_minutes : null,
+        duration_max_minutes: art.duration_choosable ? art.duration_max_minutes : null,
+        location_mode: art.location_mode,
         buffer_before_min: art.buffer_before_min, buffer_after_min: art.buffer_after_min,
         travel_buffer: art.travel_buffer, min_notice_min: art.min_notice_min,
         booking_window_days: art.booking_window_days, slot_granularity_min: art.slot_granularity_min,
@@ -201,6 +219,28 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
     await invoke("set_rule_set_staff", { key: art.key, staffIds: art.staffIds });
     toast.success(`„${art.label}“ gespeichert`);
     await ladeAlles();
+  });
+
+  const [neueArt, setNeueArt] = useState("");
+
+  /** Neue Terminart — leer oder als Kopie der gerade gewaehlten. */
+  const legeArtAn = (copyFrom?: string) => mitBusy("neueArt", async () => {
+    const label = neueArt.trim() || (copyFrom && art ? `${art.label} (Kopie)` : "");
+    if (!label) { toast.error("Bitte eine Bezeichnung angeben."); return; }
+    const res = await invoke("create_rule_set", { label, ...(copyFrom ? { copyFrom } : {}) });
+    setNeueArt("");
+    await ladeAlles();
+    setGewaehlt(res.key);
+    toast.success(res.kopie ? `„${res.label}“ als Kopie angelegt` : `„${res.label}“ angelegt`);
+  });
+
+  const loescheArt = () => mitBusy("loeschen", async () => {
+    if (!art) return;
+    if (!confirm(`„${art.label}“ wirklich löschen? Das geht nur, solange keine Termine daran hängen.`)) return;
+    await invoke("delete_rule_set", { key: art.key });
+    setGewaehlt(null);
+    await ladeAlles();
+    toast.success(`„${art.label}“ gelöscht`);
   });
 
   const importiereFeiertage = () => mitBusy("holidays", async () => {
@@ -277,7 +317,14 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
                   ${r.key === gewaehlt ? "bg-accent" : "hover:bg-muted/60"}`}
               >
                 <span className="font-medium flex-1 min-w-[140px]">{r.label}</span>
-                <span className="text-muted-foreground">{r.duration_minutes} Min.</span>
+                <span className="text-muted-foreground">
+                  {r.duration_minutes} Min.{r.duration_choosable ? " (einstellbar)" : ""}
+                </span>
+                {r.location_mode !== "vor_ort" && (
+                  <Badge variant="outline">
+                    {TERMINORTE.find((o) => o.value === r.location_mode)?.label ?? r.location_mode}
+                  </Badge>
+                )}
                 <span className="text-muted-foreground">
                   {r.staffIds.length > 0 ? `${r.staffIds.length} zugeordnet` : "alle"}
                 </span>
@@ -289,6 +336,32 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
               </button>
             ))}
           </div>
+
+          {/* Neue Terminart: leer oder als Kopie der gewaehlten. Eine Kopie
+              uebernimmt alles ausser der Kennung — der schnellste Weg zu
+              „Montage 4h" neben „Montage 8h". */}
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="flex-1 min-w-[180px]">
+              <Label className="text-xs">Neue Terminart</Label>
+              <Input
+                value={neueArt} placeholder="z.B. Montage 4 Stunden"
+                onChange={(e) => setNeueArt(e.target.value)}
+              />
+            </div>
+            <Button size="sm" variant="outline" disabled={busy === "neueArt"} onClick={() => legeArtAn()}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Anlegen
+            </Button>
+            {art && (
+              <Button size="sm" variant="outline" disabled={busy === "neueArt"}
+                onClick={() => legeArtAn(art.key)} title={`„${art.label}“ kopieren`}>
+                <Copy className="h-3.5 w-3.5 mr-1" /> „{art.label}“ duplizieren
+              </Button>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground -mt-2">
+            Eine neue Terminart ist zunächst <strong>aus</strong> – erst einstellen, dann einschalten.
+            Eine Kopie übernimmt alle Einstellungen samt Zuständigen und HERO-Kategorie.
+          </p>
 
           {art && (
             <div className="border rounded-lg p-3 space-y-4">
@@ -331,6 +404,55 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
                       max_per_day_global: e.target.value === "" ? null : Number(e.target.value),
                     })} />
                 </Feld>
+              </div>
+
+              {/* Wo findet der Termin statt? Entscheidet Adresse und Anfahrt. */}
+              <Feld label="Wo findet der Termin statt?"
+                hilfe={TERMINORTE.find((o) => o.value === art.location_mode)?.folge}>
+                <Select value={art.location_mode} onValueChange={(v) => setArt({ location_mode: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {TERMINORTE.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Feld>
+
+              {/* Dauer je Einladung einstellbar — der Anlass war „Montage vor
+                  Ort": mal drei, mal acht Stunden. Die Zahl oben bleibt die
+                  Vorgabe (sie gilt fuer Links ohne Angabe, etwa aus einer
+                  HERO-Mailvorlage ohne Dauersegment). */}
+              <div className="rounded-lg border p-3 space-y-3">
+                <Schalter
+                  label="Dauer individuell einstellbar bei Linkerstellung"
+                  hilfe="An: beim Verschicken einer Einladung lässt sich die Länge dieses einen Termins eintragen. Die Dauer oben bleibt die Vorgabe."
+                  checked={art.duration_choosable}
+                  onChange={(v) => setArt({ duration_choosable: v })}
+                />
+                {art.duration_choosable && (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Feld label="Mindestens (Minuten)" hilfe="Leer = 15 Minuten.">
+                        <Input type="number" min={5} step={15} value={art.duration_min_minutes ?? ""}
+                          onChange={(e) => setArt({
+                            duration_min_minutes: e.target.value === "" ? null : Number(e.target.value),
+                          })} />
+                      </Feld>
+                      <Feld label="Höchstens (Minuten)" hilfe="Leer = 12 Stunden.">
+                        <Input type="number" min={5} step={15} value={art.duration_max_minutes ?? ""}
+                          onChange={(e) => setArt({
+                            duration_max_minutes: e.target.value === "" ? null : Number(e.target.value),
+                          })} />
+                      </Feld>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Die Grenzen sind nicht nur Komfort: die Dauer steht im Terminlink, und ein Link
+                      lässt sich von Hand ändern. Was außerhalb liegt, zieht der Server auf die
+                      nächste erlaubte Länge zurück.
+                    </p>
+                  </>
+                )}
               </div>
 
               <div>
@@ -378,12 +500,18 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
                 </Feld>
               )}
 
-              <Schalter
-                label="Anfahrt einrechnen"
-                hilfe="Prüft, ob zwischen zwei Terminen genug Zeit für die Fahrt bleibt."
-                checked={art.travel_buffer}
-                onChange={(v) => setArt({ travel_buffer: v })}
-              />
+              {art.location_mode === "vor_ort" ? (
+                <Schalter
+                  label="Anfahrt einrechnen"
+                  hilfe="Prüft, ob zwischen zwei Terminen genug Zeit für die Fahrt bleibt."
+                  checked={art.travel_buffer}
+                  onChange={(v) => setArt({ travel_buffer: v })}
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Anfahrt entfällt bei dieser Terminart – wir fahren nicht zum Kunden.
+                </p>
+              )}
               <Schalter
                 label="Termin muss bestätigt werden"
                 hilfe="Aus: der Termin gilt sofort (so abgestimmt). An: er ist erst vorgemerkt."
@@ -404,9 +532,17 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
                 </p>
               )}
 
-              <Button size="sm" disabled={busy === "art"} onClick={speichereArt}>
-                {busy === "art" && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />} Terminart speichern
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" disabled={busy === "art"} onClick={speichereArt}>
+                  {busy === "art" && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />} Terminart speichern
+                </Button>
+                {/* Loeschen geht nur, solange keine Termine daran haengen —
+                    das prueft der Server und sagt es sonst genau. */}
+                <Button size="sm" variant="ghost" className="text-destructive"
+                  disabled={busy === "loeschen"} onClick={loescheArt}>
+                  <Trash2 className="h-3.5 w-3.5 mr-1" /> Löschen
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
@@ -703,6 +839,11 @@ export default function BookingTab({ adminToken }: { adminToken: string }) {
             <Feld label="HERO-Vorschau (Tage)" hilfe="Wie weit nach vorne HERO-Termine gelesen werden.">
               <Input type="number" min={1} value={settings.booking_hero_sync_days ?? "60"}
                 onChange={(e) => setzeSetting("booking_hero_sync_days", e.target.value)} />
+            </Feld>
+            <Feld label="Dienst für Onlinetermine"
+              hilfe="Leer = öffentliches meet.jit.si. Für einen eigenen Jitsi-Server hier dessen Adresse eintragen.">
+              <Input value={settings.booking_jitsi_base ?? ""} placeholder="https://meet.jit.si"
+                onChange={(e) => setzeSetting("booking_jitsi_base", e.target.value)} />
             </Feld>
           </div>
 

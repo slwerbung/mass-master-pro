@@ -23,6 +23,22 @@ function slots() {
 
 const AUFMASS = { key: "aufmass_vor_ort", label: "Aufmass vor Ort", durationMinutes: 90, formFields: [], bookingWindowDays: 60 };
 const MONTAGE = { key: "montage_vor_ort", label: "Montage vor Ort", durationMinutes: 480, formFields: [], bookingWindowDays: 60 };
+/** Dauer je Einladung einstellbar — der Anlass fuer `?d=`/`/d240`. */
+const MONTAGE_WAEHLBAR = {
+  ...MONTAGE, durationChoosable: true, durationMin: 60, durationMax: 600,
+};
+const TELEFON = {
+  key: "telefontermin", label: "Telefontermin", durationMinutes: 30,
+  formFields: [], bookingWindowDays: 60, locationMode: "telefon",
+};
+const ONLINE = {
+  key: "onlinetermin", label: "Onlinetermin", durationMinutes: 45,
+  formFields: [], bookingWindowDays: 60, locationMode: "online",
+};
+const BUERO = {
+  key: "buerotermin", label: "Beratung im Büro", durationMinutes: 60,
+  formFields: [], bookingWindowDays: 60, locationMode: "buero",
+};
 
 const kontext = {
   project: { id: PROJEKT, number: "WER-1234", customerName: "Musterfirma GmbH", heroLinked: true },
@@ -34,6 +50,7 @@ const kontext = {
     text: "Hauptstr. 1, 71332 Waiblingen", source: "project", located: true,
   },
   contact: { name: "Erika Muster", email: "erika@example.org", phone: "07151 1234" },
+  office: "Otto-Hahn-Straße 3, 71364 Winnenden",
 };
 
 /** Dauerlink eines Mitarbeiters: kein Projekt, also auch keine Adresse. */
@@ -43,12 +60,19 @@ const kontextOhneProjekt = {
   appointments: [AUFMASS],
   address: null,
   contact: { name: "", email: null, phone: null },
+  office: "Otto-Hahn-Straße 3, 71364 Winnenden",
 };
 
 /** Faengt alle Aufrufe der Buchungs-API ab und merkt sich, was gesendet wurde. */
 async function stub(
   page: Page,
-  opts: { onCreate?: (body: any) => any; arten?: any[]; projektFehlt?: boolean } = {},
+  opts: {
+    onCreate?: (body: any) => any; arten?: any[]; projektFehlt?: boolean;
+    /** Was der Server als gerechnete Dauer meldet. */
+    dauer?: number;
+    /** Was `create` als Treffpunkt/Videolink zurueckmeldet. */
+    meetingUrl?: string; treffpunkt?: string;
+  } = {},
 ) {
   const gesendet: any[] = [];
   await page.route("**/functions/v1/booking-api**", async (route) => {
@@ -81,8 +105,12 @@ async function stub(
           project: url.searchParams.get("project"),
           projectNr: url.searchParams.get("p"),
           staff: url.searchParams.get("staff"),
+          d: url.searchParams.get("d"),
         });
-        return json({ slots: slots(), addressLocated: true });
+        return json({
+          slots: slots(), addressLocated: true,
+          durationMinutes: opts.dauer ?? 90,
+        });
       }
     }
     const body = req.postDataJSON?.() ?? {};
@@ -92,7 +120,15 @@ async function stub(
       if (antwort) return json(antwort.body, antwort.status ?? 200);
       return json({
         ok: true,
-        booking: { id: "b1", status: "confirmed", startsAt: body.slot.startsAt, endsAt: body.slot.endsAt },
+        booking: {
+          id: "b1", status: "confirmed",
+          startsAt: body.slot.startsAt,
+          // Das Ende rechnet der Server — die Seite schickt es nicht mehr mit.
+          endsAt: DateTime.fromISO(body.slot.startsAt, { zone: "utc" })
+            .plus({ minutes: opts.dauer ?? 90 }).toISO(),
+          ...(opts.meetingUrl ? { meetingUrl: opts.meetingUrl } : {}),
+          ...(opts.treffpunkt ? { treffpunkt: opts.treffpunkt } : {}),
+        },
         cancelToken: "tok", heroError: null, mailQueued: true,
       });
     }
@@ -111,7 +147,8 @@ test.describe("Buchungsseite", () => {
     await page.goto(`/termin/${PROJEKT}`);
 
     await expect(page.getByRole("heading", { name: "Aufmass vor Ort" })).toBeVisible();
-    await expect(page.getByText("90 Minuten")).toBeVisible();
+    // Gelesen wird die Dauer, nicht gerechnet: 90 Minuten sind "1,5 Stunden".
+    await expect(page.getByText("1,5 Stunden")).toBeVisible();
     await expect(page.getByText("Hauptstr. 1, 71332 Waiblingen")).toBeVisible();
     await expect(page.getByText("Projekt WER-1234")).toBeVisible();
   });
@@ -264,7 +301,7 @@ test.describe("Mehrere Terminarten", () => {
     await expect(page.getByRole("heading", { name: "Termin vereinbaren" })).toBeVisible();
     await expect(page.getByText("Aufmass vor Ort")).toBeVisible();
     await expect(page.getByText("Montage vor Ort")).toBeVisible();
-    await expect(page.getByText("480 Minuten")).toBeVisible();
+    await expect(page.getByText("8 Stunden")).toBeVisible();
     expect(gesendet.some((g) => g.action === "availability")).toBe(false);
 
     await page.getByText("Montage vor Ort").click();
@@ -472,5 +509,104 @@ test.describe("Einladung eines Mitarbeiters", () => {
     const buchung = gesendet.find((b) => b.action === "create");
     expect(buchung.staff).toBe("langner");
     expect(buchung.project).toBe(PROJEKT);
+  });
+});
+
+test.describe("Dauer aus dem Link", () => {
+  test("nimmt die Dauer aus dem Pfadsegment und zeigt die gerechnete Laenge", async ({ page }) => {
+    // Vorlagenform: alles im Pfad, die Dauer als `d240` (das `d` unterscheidet
+    // sie von der Projektnummer).
+    const gesendet = await stub(page, { arten: [MONTAGE_WAEHLBAR], dauer: 240 });
+    await page.goto("/termin/m/Langner/1916/montage_vor_ort/d240");
+
+    await expect(page.getByRole("heading", { name: "Montage vor Ort" })).toBeVisible();
+    await expect(page.getByText("4 Stunden")).toBeVisible();
+
+    const verf = gesendet.find((g) => g.action === "availability");
+    expect(verf.d).toBe("240");
+    expect(verf.projectNr).toBe("1916");
+    expect(verf.ruleSet).toBe("montage_vor_ort");
+  });
+
+  test("nimmt die Dauer auch aus der Query", async ({ page }) => {
+    const gesendet = await stub(page, { arten: [MONTAGE_WAEHLBAR], dauer: 120 });
+    await page.goto("/termin/m/langner?art=montage_vor_ort&d=120");
+
+    await expect(page.getByText("2 Stunden")).toBeVisible();
+    expect(gesendet.find((g) => g.action === "availability").d).toBe("120");
+  });
+
+  test("zeigt die Dauer des Servers, nicht die aus dem Link", async ({ page }) => {
+    // Der Link will 5 Minuten, erlaubt sind mindestens 60 — der Server klemmt,
+    // und auf der Seite muss stehen, was wirklich gilt.
+    await stub(page, { arten: [MONTAGE_WAEHLBAR], dauer: 60 });
+    await page.goto("/termin/m/langner?art=montage_vor_ort&d=5");
+    await expect(page.getByText("1 Stunde")).toBeVisible();
+  });
+
+  test("schickt beim Buchen nur den Start, nicht das Ende", async ({ page }) => {
+    // Das Ende rechnet der Server aus der Dauer. Wuerde die Seite es
+    // mitschicken, liesse sich eine Achtstunden-Montage auf zehn Minuten
+    // kuerzen.
+    const gesendet = await stub(page, { arten: [MONTAGE_WAEHLBAR], dauer: 240 });
+    await page.goto("/termin/m/langner?art=montage_vor_ort&d=240");
+    await page.getByRole("button", { name: "09:00" }).click();
+    await page.getByLabel("Name *").fill("Erika Muster");
+    await page.getByLabel("E-Mail *").fill("erika@example.org");
+    await page.getByRole("button", { name: /Termin bestätigen|buchen/i }).click();
+
+    // Erst auf die Bestaetigung warten: vorher ist die Buchung noch unterwegs.
+    await expect(page.getByText("Termin steht")).toBeVisible();
+
+    const create = gesendet.find((g) => g.action === "create");
+    expect(create.slot.startsAt).toBeTruthy();
+    expect(create.slot.endsAt).toBeUndefined();
+    expect(create.d).toBe(240);
+  });
+});
+
+test.describe("Terminorte ohne Anfahrt", () => {
+  test("fragt beim Telefontermin nicht nach einer Adresse, aber nach der Nummer",
+    async ({ page }) => {
+      await stub(page, { arten: [TELEFON], dauer: 30 });
+      await page.goto("/termin/m/langner?art=telefontermin");
+
+      await expect(page.getByText("Telefontermin – wir rufen Sie an")).toBeVisible();
+      // Kein Adressblock: wir fahren nicht hin.
+      await expect(page.getByRole("button", { name: "Adresse ändern" })).toBeHidden();
+      await expect(page.getByLabel("Straße und Nr.")).toBeHidden();
+
+      await page.getByRole("button", { name: "09:00" }).click();
+      await page.getByLabel("Name *").fill("Erika Muster");
+      await page.getByLabel("E-Mail *").fill("erika@example.org");
+      await expect(page.getByLabel("Telefon *")).toBeVisible();
+      await page.getByRole("button", { name: /Termin bestätigen|buchen/i }).click();
+      // Ohne Nummer weiss niemand, wen er anrufen soll.
+      await expect(page.getByText("Für einen Telefontermin brauchen wir Ihre Rufnummer.")).toBeVisible();
+    });
+
+  test("nennt beim Buerotermin unsere Adresse", async ({ page }) => {
+    await stub(page, { arten: [BUERO], dauer: 60 });
+    await page.goto("/termin/m/langner?art=buerotermin");
+
+    await expect(page.getByText("Bei uns im Büro, Otto-Hahn-Straße 3, 71364 Winnenden")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Adresse ändern" })).toBeHidden();
+  });
+
+  test("zeigt beim Onlinetermin nach dem Buchen den Videolink", async ({ page }) => {
+    const url = "https://meet.jit.si/onlinetermin-0123456789abcdef";
+    await stub(page, {
+      arten: [ONLINE], dauer: 45, meetingUrl: url, treffpunkt: `Onlinetermin: ${url}`,
+    });
+    await page.goto("/termin/m/langner?art=onlinetermin");
+
+    await expect(page.getByText("Onlinetermin – den Link bekommen Sie per E-Mail")).toBeVisible();
+    await page.getByRole("button", { name: "09:00" }).click();
+    await page.getByLabel("Name *").fill("Erika Muster");
+    await page.getByLabel("E-Mail *").fill("erika@example.org");
+    await page.getByRole("button", { name: /Termin bestätigen|buchen/i }).click();
+
+    await expect(page.getByText("Termin steht")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Zum Videotermin" })).toHaveAttribute("href", url);
   });
 });

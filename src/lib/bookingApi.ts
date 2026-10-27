@@ -19,10 +19,19 @@ export interface BookingAddress {
 export interface AppointmentType {
   key: string;
   label: string;
+  /** Vorgabe der Terminart. Im Link kann eine andere Dauer stehen. */
   durationMinutes: number;
   formFields?: unknown[];
   bookingWindowDays?: number;
+  /** Darf die Dauer beim Erstellen des Links geaendert werden? */
+  durationChoosable?: boolean;
+  durationMin?: number;
+  durationMax?: number;
+  /** vor_ort | buero | telefon | online — entscheidet Adresse und Anfahrt. */
+  locationMode?: LocationMode;
 }
+
+export type LocationMode = "vor_ort" | "buero" | "telefon" | "online";
 
 export interface BookingContext {
   /** null = Dauerlink eines Mitarbeiters, ohne Projektbezug. */
@@ -39,6 +48,8 @@ export interface BookingContext {
   appointments: AppointmentType[];
   address: BookingAddress | null;
   contact: { name: string; email: string | null; phone: string | null };
+  /** Unsere Adresse — Treffpunkt bei „Bei uns im Büro". */
+  office?: string | null;
 }
 
 /**
@@ -112,9 +123,17 @@ export const loadBookingContext = (target: BookingTarget) =>
 export const loadAvailability = (
   target: BookingTarget, ruleSet: string, from: string, to: string,
   address?: { street?: string; zip?: string; city?: string },
+  /** Dauer aus dem Link in Minuten. Der Server prueft sie. */
+  duration?: number | null,
 ) =>
-  get<{ slots: Slot[]; addressLocated: boolean }>({
+  get<{
+    slots: Slot[]; addressLocated: boolean;
+    /** Die Dauer, mit der der Server gerechnet hat — die zeigt die Seite an. */
+    durationMinutes?: number;
+    durationSource?: "standard" | "link" | "geklemmt" | "fest";
+  }>({
     action: "availability", ...ziel(target), ruleSet, from, to,
+    ...(duration ? { d: String(duration) } : {}),
     ...(address?.street ? { street: address.street } : {}),
     ...(address?.zip ? { zip: address.zip } : {}),
     ...(address?.city ? { city: address.city } : {}),
@@ -126,7 +145,9 @@ export const createBooking = (payload: {
   heroProject?: string | null;
   staff?: string | null;
   ruleSet: string;
-  slot: { startsAt: string; endsAt: string };
+  /** Dauer aus dem Link. Das Ende des Termins rechnet der Server. */
+  d?: number | null;
+  slot: { startsAt: string; endsAt?: string };
   staffId: string;
   contact: { name: string; email: string; phone?: string };
   addressOverride?: { street?: string; zip?: string; city?: string } | null;
@@ -134,7 +155,13 @@ export const createBooking = (payload: {
 }) =>
   post<{
     ok: boolean;
-    booking: { id: string; status: string; startsAt: string; endsAt: string };
+    booking: {
+      id: string; status: string; startsAt: string; endsAt: string;
+      /** Gesetzt beim Onlinetermin. */
+      meetingUrl?: string | null;
+      /** Treffpunkt in einem Satz, wie er auch in der Mail steht. */
+      treffpunkt?: string | null;
+    };
     cancelToken: string;
     heroError: string | null;
   }>({ action: "create", ...payload });
@@ -162,7 +189,11 @@ export interface BookingInviteLinks {
    * Verschicken, `vorlage` mit HERO-Platzhaltern fuer eine Mailvorlage. Die
    * Terminart waehlt der Mitarbeiter — deshalb gibt es keinen Link "ohne Art".
    */
-  appointments: (AppointmentType & { link: string; vorlage: string })[];
+  appointments: (AppointmentType & {
+    link: string; vorlage: string;
+    /** Dauer, die in diesen Links steckt. */
+    linkDuration: number;
+  })[];
   neuAngelegt: boolean;
 }
 
@@ -173,14 +204,28 @@ async function invite<T>(body: Record<string, unknown>): Promise<T> {
   return data as T;
 }
 
-export const loadInviteLinks = (token: string, projectId?: string | null) =>
-  invite<BookingInviteLinks>({ action: "link", token, ...(projectId ? { projectId } : {}) });
+/**
+ * `ruleSet` + `duration` legen die Dauer in die Links dieser einen Terminart.
+ * Die Links baut immer der Server — nie das Frontend, sonst steht in der Mail
+ * etwas anderes als im Kalender.
+ */
+export const loadInviteLinks = (
+  token: string, projectId?: string | null,
+  art?: { ruleSet: string; duration: number } | null,
+) =>
+  invite<BookingInviteLinks>({
+    action: "link", token,
+    ...(projectId ? { projectId } : {}),
+    ...(art ? { ruleSet: art.ruleSet, duration: art.duration } : {}),
+  });
 
 export const sendBookingInvite = (payload: {
   token: string;
   email: string;
   /** Pflicht: welche Terminart eingeladen wird. */
   ruleSet: string;
+  /** Dauer dieses Termins, wenn die Terminart sie einstellbar macht. */
+  duration?: number | null;
   projectId?: string | null;
   projectNumber?: string | null;
   note?: string;

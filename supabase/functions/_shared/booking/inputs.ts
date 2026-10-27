@@ -8,7 +8,11 @@ import type { BusyBlock, ComputeInput, Geo, RuleSetConfig, Staff, TravelTimeProv
 export interface RuleSetRow {
   id: string;
   duration_minutes: number;
+  /** Seit M1 vorhanden, von keiner Zeile Code gelesen. Siehe M9-Migration. */
   duration_options?: number[] | null;
+  duration_choosable?: boolean | null;
+  duration_min_minutes?: number | null;
+  duration_max_minutes?: number | null;
   buffer_before_min: number;
   buffer_after_min: number;
   travel_buffer: boolean;
@@ -31,10 +35,16 @@ const hhmm = (t: string) => t.slice(0, 5); // "08:00:00" → "08:00"
 const geoOf = (lat?: number | null, lng?: number | null): Geo | null =>
   (lat != null && lng != null) ? { lat, lng } : null;
 
-export function ruleSetConfigFromRow(r: RuleSetRow): RuleSetConfig {
+/**
+ * `durationMinutes` ist die Dauer DIESES Termins, nicht zwingend die Vorgabe
+ * der Terminart: bei einstellbaren Terminarten steht sie im Link. Entschieden
+ * wird das in `duration.ts`; hier kommt nur das Ergebnis an.
+ */
+export function ruleSetConfigFromRow(r: RuleSetRow, durationMinutes?: number | null): RuleSetConfig {
   const cfg = (r.config ?? {}) as Record<string, unknown>;
+  const dauer = Number(durationMinutes);
   return {
-    durationMinutes: r.duration_minutes,
+    durationMinutes: Number.isFinite(dauer) && dauer > 0 ? Math.round(dauer) : r.duration_minutes,
     bufferBeforeMin: r.buffer_before_min,
     bufferAfterMin: r.buffer_after_min,
     travelBuffer: r.travel_buffer,
@@ -80,6 +90,11 @@ export interface BuildArgs {
   travelProvider?: TravelTimeProvider;
   /** Einsatzradius in Minuten (betriebsweite Einstellung, nicht pro Regelset). */
   maxTravelMin?: number | null;
+  /**
+   * Dauer dieses Termins in Minuten, wenn sie von der Vorgabe der Terminart
+   * abweicht (einstellbare Terminart, Dauer im Link). Leer = Vorgabe.
+   */
+  durationMinutes?: number | null;
 }
 
 export function buildComputeInput(a: BuildArgs): ComputeInput {
@@ -123,7 +138,7 @@ export function buildComputeInput(a: BuildArgs): ComputeInput {
   }
 
   return {
-    ruleSet: ruleSetConfigFromRow(a.ruleSet),
+    ruleSet: ruleSetConfigFromRow(a.ruleSet, a.durationMinutes),
     staffPool, workingHours, exceptions, busyBlocks,
     existingBookingsCountPerDay: existing,
     globalBookingsCountPerDay: global,

@@ -14,15 +14,27 @@
 // dauerhaft. Rechnen tut ohnehin `booking-api`: dieser Dienst stellt nur Link
 // und Mail bereit und kann keine Termine anlegen.
 //
+// Manche Terminarten dauern von Auftrag zu Auftrag anders lang („Montage vor
+// Ort": mal drei, mal acht Stunden). Bei denen gehoert auch die DAUER in den
+// Link — festgelegt von dem, der einlaedt. Sie steht als `&d=<minuten>` im
+// Link und als Segment `/d<minuten>` in der Vorlagenform. Eine HERO-Vorlage
+// kann keine Dauer einsetzen (HERO kennt dafuer keinen Platzhalter), deshalb
+// gilt dort: Dauer im Vorlagenlink festgeschrieben, oder ohne Segment die
+// Standarddauer der Terminart. Wer zwei Laengen braucht, legt zwei Vorlagen an.
+//
 // Aktionen:
-//   POST { action:'link',  token, projectId? }
+//   POST { action:'link',  token, projectId?, ruleSet?, duration? }
 //     -> Slug, Name und die buchbaren Terminarten, jede mit zwei Links:
 //        `link`      fertig ausgefuellt (zum Verschicken aus der App)
 //        `vorlage`   mit HERO-Platzhaltern (zum Einsetzen in eine Mailvorlage)
-//   POST { action:'send',  token, email, ruleSet, projectId?, projectNumber?, note? }
+//        `ruleSet` + `duration` legen die Dauer in die Links DIESER Terminart.
+//   POST { action:'send',  token, email, ruleSet, duration?, projectId?, projectNumber?, note? }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
+import {
+  durationBounds, durationLabel, durationToSegment, effectiveDuration,
+} from "../_shared/booking/duration.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -115,9 +127,23 @@ async function freierSlug(db: any, basis: string): Promise<string> {
  * Die Liste kommt vom Server, damit im Dialog nichts auftaucht, was gar nicht
  * buchbar ist (der Kunde liefe sonst in einen leeren Kalender).
  */
-async function buchbareTerminarten(db: any): Promise<{ key: string; label: string; durationMinutes: number }[]> {
+interface Terminart {
+  key: string;
+  label: string;
+  durationMinutes: number;
+  /** Darf der Mitarbeiter die Dauer fuer diesen Link aendern? */
+  durationChoosable: boolean;
+  durationMin: number;
+  durationMax: number;
+  /** Die Zeile selbst — `effectiveDuration` prueft gegen sie. */
+  row: any;
+}
+
+async function buchbareTerminarten(db: any): Promise<Terminart[]> {
   const { data } = await db.from("rule_set")
-    .select("key, label, duration_minutes, category_id").eq("active", true);
+    .select(`key, label, duration_minutes, duration_choosable, duration_min_minutes,
+             duration_max_minutes, category_id`)
+    .eq("active", true);
   const arten = data ?? [];
   if (arten.length === 0) return [];
   const { data: cats } = await db.from("appointment_category").select("id, is_bookable");
@@ -125,7 +151,15 @@ async function buchbareTerminarten(db: any): Promise<{ key: string; label: strin
   return arten
     .filter((r: any) => buchbar.get(r.category_id) === true)
     .sort((a: any, b: any) => a.duration_minutes - b.duration_minutes)
-    .map((r: any) => ({ key: r.key, label: r.label, durationMinutes: r.duration_minutes }));
+    .map((r: any) => {
+      const g = durationBounds(r);
+      return {
+        key: r.key, label: r.label, durationMinutes: r.duration_minutes,
+        durationChoosable: !!r.duration_choosable,
+        durationMin: g.min, durationMax: g.max,
+        row: r,
+      };
+    });
 }
 
 /** Firmenname fuer die Mail. */
@@ -152,6 +186,8 @@ async function firma(db: any): Promise<string> {
  */
 function baueMail(opts: {
   companyName: string; link: string; artLabel: string;
+  /** Gesetzt, wenn die Laenge dieses Termins nicht selbstverstaendlich ist. */
+  dauerText?: string | null;
   projectNumber: string | null; note: string;
 }) {
   const bezug = opts.projectNumber
@@ -167,7 +203,9 @@ function baueMail(opts: {
     <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827;max-width:560px;line-height:1.55;font-size:15px">
       <p style="font-weight:600;font-size:17px;margin:0 0 18px">${escapeHtml(opts.companyName)}</p>
       <p>Guten Tag,</p>
-      <p>gerne vereinbaren wir${bezug} einen Termin mit Ihnen: <strong>${escapeHtml(opts.artLabel)}</strong>.
+      <p>gerne vereinbaren wir${bezug} einen Termin mit Ihnen: <strong>${escapeHtml(opts.artLabel)}</strong>${
+        opts.dauerText ? ` (${escapeHtml(opts.dauerText)})` : ""
+      }.
          Den Zeitpunkt können Sie selbst aussuchen.</p>
       ${noteBlock}
       <p style="margin:16px 0">Link öffnen, eine freie Zeit wählen, Kontaktdaten prüfen – fertig.
@@ -228,12 +266,21 @@ Deno.serve(async (req) => {
     const arten = await buchbareTerminarten(db);
     if (arten.length === 0) return json({ error: "Es ist keine Terminart buchbar (Adminmenü → Termine)." }, 503);
 
-    /** Der fertige Link zu EINER Terminart. Nur hier wird er gebaut. */
-    const link = (artKey: string) => {
-      const art = `art=${encodeURIComponent(artKey)}`;
+    /**
+     * Der fertige Link zu EINER Terminart. Nur hier wird er gebaut.
+     *
+     * `dauer` ist gesetzt, wenn die Terminart eine einstellbare Dauer hat und
+     * der Mitarbeiter eine gewaehlt hat. Entspricht sie der Standarddauer,
+     * bleibt sie weg — ein kuerzerer Link ist einer, an dem weniger kaputtgehen
+     * kann.
+     */
+    const link = (artKey: string, dauer?: number | null) => {
+      const teile = [`art=${encodeURIComponent(artKey)}`];
+      if (dauer) teile.push(`d=${dauer}`);
+      const query = teile.join("&");
       return projectId
-        ? `${APP_BASE}/termin/${encodeURIComponent(projectId)}?m=${encodeURIComponent(slug)}&${art}`
-        : `${APP_BASE}/termin/m/${encodeURIComponent(slug)}?${art}`;
+        ? `${APP_BASE}/termin/${encodeURIComponent(projectId)}?m=${encodeURIComponent(slug)}&${query}`
+        : `${APP_BASE}/termin/m/${encodeURIComponent(slug)}?${query}`;
     };
 
     /**
@@ -254,9 +301,33 @@ Deno.serve(async (req) => {
      * die Buchungsseite stand mit leerer Adresse da. Im Pfad ging derselbe
      * Platzhalter durch. Die Terminart steht deshalb als festes Segment
      * HINTEN — so endet der Link nie auf einer Klammer.
+     *
+     * Die DAUER kann HERO nicht einsetzen (es gibt keinen Platzhalter dafuer).
+     * Deshalb steht sie, wenn gewaehlt, als festes Segment `/d<minuten>` hinten
+     * drin: eine Vorlage = eine Laenge („Montage 4h", „Montage 8h"). Ohne das
+     * Segment gilt die Standarddauer der Terminart.
      */
-    const vorlage = (artKey: string) =>
-      `${APP_BASE}/termin/m/{{Partner.last_name}}/{{ProjectMatch.display_id}}/${encodeURIComponent(artKey)}`;
+    const vorlage = (artKey: string, dauer?: number | null) => {
+      const pfad = [
+        `${APP_BASE}/termin/m/{{Partner.last_name}}/{{ProjectMatch.display_id}}`,
+        encodeURIComponent(artKey),
+      ];
+      if (dauer) pfad.push(durationToSegment(dauer));
+      return pfad.join("/");
+    };
+
+    /**
+     * Welche Dauer gilt fuer diesen Aufruf? Nur fuer die genannte Terminart und
+     * nur, wenn sie einstellbar ist — geprueft gegen ihre Grenzen, nicht
+     * geglaubt. Rueckgabe null = Standarddauer, also kein `d` im Link.
+     */
+    const dauerFuer = (art: Terminart): number | null => {
+      if (String(body.ruleSet || "") !== art.key) return null;
+      if (!Object.prototype.hasOwnProperty.call(body, "duration")) return null;
+      const r = effectiveDuration(art.row, body.duration);
+      if (r.source === "standard" || r.source === "fest") return null;
+      return r.minutes === art.durationMinutes ? null : r.minutes;
+    };
 
     if (body.action === "link") {
       return json({
@@ -264,7 +335,18 @@ Deno.serve(async (req) => {
         mitProjekt: !!projectId,
         // Jede Terminart mit ihrem eigenen Link: der Mitarbeiter waehlt, der
         // Kunde bekommt nur noch den Kalender dieser einen Art zu sehen.
-        appointments: arten.map((a) => ({ ...a, link: link(a.key), vorlage: vorlage(a.key) })),
+        appointments: arten.map((a) => {
+          const dauer = dauerFuer(a);
+          const { row: _row, ...oeffentlich } = a;
+          return {
+            ...oeffentlich,
+            // Die Dauer, die in DIESEN Links steckt — damit der Dialog zeigen
+            // kann, was der Kunde zu sehen bekommt.
+            linkDuration: dauer ?? a.durationMinutes,
+            link: link(a.key, dauer),
+            vorlage: vorlage(a.key, dauer),
+          };
+        }),
         neuAngelegt: !!(res as any).angelegt,
       });
     }
@@ -282,9 +364,14 @@ Deno.serve(async (req) => {
 
       const companyName = await firma(db);
       const projectNumber = projectId ? (String(body.projectNumber || "").trim() || null) : null;
-      const url = link(art.key);
+      const dauer = dauerFuer(art);
+      const url = link(art.key, dauer);
       const { subject, html } = baueMail({
         companyName, link: url, artLabel: art.label,
+        // Bei einstellbarer Dauer steht die Laenge in der Mail: fuer den Kunden
+        // ist ein Achtstundentermin etwas anderes als ein Dreistundentermin,
+        // und er soll es vor dem Klicken wissen.
+        dauerText: art.durationChoosable ? durationLabel(dauer ?? art.durationMinutes) : null,
         projectNumber, note: String(body.note || ""),
       });
 

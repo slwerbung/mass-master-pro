@@ -24,6 +24,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import { fetchHolidays, isGermanState, isIsoDate } from "../_shared/booking/holidays.ts";
 import { geocode } from "../_shared/booking/hero.ts";
+import { asLocationMode } from "../_shared/booking/location.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -44,6 +45,7 @@ const ERLAUBTE_KEYS = new Set([
   "booking_travel_overhead", "booking_travel_max_min", "booking_holiday_state",
   "booking_hero_write", "booking_hero_read", "booking_hero_category_id",
   "booking_reminder_hours", "booking_notify_internal", "booking_hero_sync_days",
+  "booking_jitsi_base",
 ]);
 
 /** Spalten des Regelsets, die aus dem Adminmenue kommen duerfen. */
@@ -51,7 +53,24 @@ const ERLAUBTE_RULESET_SPALTEN = new Set([
   "label", "active", "duration_minutes", "buffer_before_min", "buffer_after_min",
   "travel_buffer", "min_notice_min", "booking_window_days", "slot_granularity_min",
   "max_per_day_global", "max_per_day_per_staff", "requires_approval",
+  // M9: Dauer je Link einstellbar. M10: wo der Termin stattfindet.
+  "duration_choosable", "duration_min_minutes", "duration_max_minutes",
+  "location_mode",
 ]);
+
+/**
+ * Spalten, die eine Kopie uebernimmt. Bewusst eine eigene Liste und nicht
+ * „alles ausser id": `key` muss neu sein, und `created_at`/`updated_at`
+ * gehoeren der neuen Zeile.
+ */
+const KOPIE_SPALTEN = [
+  "active", "category_id", "duration_minutes", "duration_options",
+  "duration_choosable", "duration_min_minutes", "duration_max_minutes",
+  "location_mode", "buffer_before_min", "buffer_after_min", "travel_buffer",
+  "min_notice_min", "booking_window_days", "slot_granularity_min",
+  "max_per_day_global", "max_per_day_per_staff", "assignment_mode",
+  "required_skills", "requires_approval", "auto_confirm", "form_fields", "config",
+];
 
 // Es gibt MEHRERE Terminarten (M1 hat drei angelegt). Frueher stand hier eine
 // feste Kennung — damit waren zwei davon unsichtbar und unbuchbar. Die Kennung
@@ -74,6 +93,37 @@ async function koordinaten(db: any, adresse: string | null): Promise<{ lat: numb
   };
   const geo = await geocode(text, key, cache);
   return { lat: geo?.lat ?? null, lng: geo?.lng ?? null };
+}
+
+/**
+ * Kennung aus der Bezeichnung: „Montage 4 h" -> `montage_4_h`.
+ *
+ * Die Kennung steht im Terminlink und in HERO-Mailvorlagen, deshalb nur
+ * Kleinbuchstaben, Zahlen und Unterstriche — und sie wird nie wieder geaendert,
+ * auch wenn der Admin die Bezeichnung spaeter umschreibt. Sonst waeren alle
+ * verschickten Links tot.
+ */
+async function freierKey(db: any, label: string): Promise<string> {
+  const umlaute: Record<string, string> = {
+    "ä": "ae", "ö": "oe", "ü": "ue", "Ä": "ae", "Ö": "oe", "Ü": "ue", "ß": "ss",
+  };
+  const basis = label.replace(/[äöüÄÖÜß]/g, (c) => umlaute[c] ?? c)
+    .toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40) || "terminart";
+  for (let i = 1; i <= 50; i++) {
+    const kandidat = i === 1 ? basis : `${basis}_${i}`;
+    const { data } = await db.from("rule_set").select("key").eq("key", kandidat).maybeSingle();
+    if (!data) {
+      // Die Kategorie teilt sich bei neuen Terminarten denselben Schluessel.
+      const { data: kat } = await db.from("appointment_category")
+        .select("key").eq("key", kandidat).maybeSingle();
+      if (!kat) return kandidat;
+    }
+  }
+  return `terminart_${crypto.randomUUID().slice(0, 8)}`;
 }
 
 const zahl = (v: unknown): number | null => {
@@ -262,8 +312,11 @@ Deno.serve(async (req) => {
       for (const [k, v] of Object.entries(patch)) {
         if (!ERLAUBTE_RULESET_SPALTEN.has(k)) continue;
         if (k === "label") update[k] = String(v ?? "").trim() || key;
-        else if (k === "travel_buffer" || k === "active" || k === "requires_approval") update[k] = v === true || v === "true";
-        else if (k === "max_per_day_global" || k === "max_per_day_per_staff") update[k] = zahl(v);
+        else if (k === "travel_buffer" || k === "active" || k === "requires_approval"
+                 || k === "duration_choosable") update[k] = v === true || v === "true";
+        else if (k === "location_mode") update[k] = asLocationMode(v);
+        else if (k === "max_per_day_global" || k === "max_per_day_per_staff"
+                 || k === "duration_min_minutes" || k === "duration_max_minutes") update[k] = zahl(v);
         else {
           const n = zahl(v);
           if (n != null && n >= 0) update[k] = n;
@@ -285,6 +338,92 @@ Deno.serve(async (req) => {
       const { error } = await db.from("rule_set").update(update).eq("key", key);
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true, key, felder: Object.keys(update) });
+    }
+
+    // ── Neue Terminart, leer oder als Kopie ──
+    //
+    // Entschieden: eine NEUE Terminart bekommt eine eigene Kategorie, eine
+    // KOPIE behaelt die des Originals. Grund: die Kategorie entscheidet, ob ein
+    // Termin die Zeit blockiert und ob er buchbar ist. Bei einer Kopie
+    // („Montage 4h" aus „Montage vor Ort") soll genau das gleich bleiben; bei
+    // etwas Neuem waere das Mitbenutzen einer fremden Kategorie eine Falle,
+    // weil eine spaetere Aenderung dann zwei Terminarten trifft.
+    if (body.action === "create_rule_set") {
+      const label = String(body.label ?? "").trim();
+      if (!label) return json({ error: "Bitte eine Bezeichnung angeben" }, 400);
+      if (label.length > 80) return json({ error: "Die Bezeichnung ist zu lang (max. 80 Zeichen)" }, 400);
+
+      const key = await freierKey(db, label);
+      const zeile: Record<string, unknown> = { key, label };
+
+      const vorlageKey = String(body.copyFrom ?? "").trim();
+      if (vorlageKey) {
+        const { data: quelle } = await db.from("rule_set").select("*").eq("key", vorlageKey).maybeSingle();
+        if (!quelle) return json({ error: "Die Terminart, die kopiert werden soll, gibt es nicht" }, 404);
+        for (const spalte of KOPIE_SPALTEN) {
+          if (Object.prototype.hasOwnProperty.call(quelle, spalte)) {
+            zeile[spalte] = (quelle as any)[spalte];
+          }
+        }
+      } else {
+        // Startwerte einer leeren Terminart: eine Stunde beim Kunden, nichts
+        // vorgemerkt. Alles weitere stellt der Admin danach ein.
+        zeile.duration_minutes = 60;
+        zeile.location_mode = asLocationMode(body.locationMode);
+        zeile.active = false; // erst einrichten, dann anbieten
+        const { data: kat, error: katErr } = await db.from("appointment_category").insert({
+          key, label, source: "internal", blocks_availability: true, is_bookable: true,
+        }).select("id").single();
+        if (katErr) return json({ error: `Kategorie: ${katErr.message}` }, 500);
+        zeile.category_id = (kat as any).id;
+      }
+
+      const { data: neu, error } = await db.from("rule_set").insert(zeile).select("key, label").single();
+      if (error) return json({ error: error.message }, 500);
+
+      // Zuordnung der Mitarbeiter mitkopieren — sonst waere eine Kopie
+      // „fuer jeden" offen, obwohl das Original eine Auswahl hatte.
+      if (vorlageKey) {
+        const { data: quelle } = await db.from("rule_set").select("id").eq("key", vorlageKey).maybeSingle();
+        const { data: ziel } = await db.from("rule_set").select("id").eq("key", key).maybeSingle();
+        if (quelle && ziel) {
+          const { data: zuordnung } = await db.from("rule_set_staff")
+            .select("staff_id").eq("rule_set_id", (quelle as any).id);
+          if (zuordnung && zuordnung.length > 0) {
+            await db.from("rule_set_staff").insert(
+              zuordnung.map((z: any) => ({ rule_set_id: (ziel as any).id, staff_id: z.staff_id })),
+            );
+          }
+        }
+      }
+      return json({ ok: true, key: (neu as any).key, label: (neu as any).label, kopie: !!vorlageKey });
+    }
+
+    // ── Terminart loeschen ──
+    //
+    // Nur, solange kein Termin daran haengt. Sonst verlieren wir Historie
+    // (`booking.rule_set_id` ist Pflicht) — dann bleibt „Terminart aus", das
+    // sie ueberall verschwinden laesst, ohne etwas wegzuwerfen.
+    if (body.action === "delete_rule_set") {
+      const key = String(body.key ?? "").trim();
+      if (!key) return json({ error: "key erforderlich" }, 400);
+      const { data: rs } = await db.from("rule_set").select("id, label").eq("key", key).maybeSingle();
+      if (!rs) return json({ error: "Terminart nicht gefunden" }, 404);
+
+      const { count } = await db.from("booking")
+        .select("id", { count: "exact", head: true }).eq("rule_set_id", (rs as any).id);
+      if ((count ?? 0) > 0) {
+        return json({
+          error: `An „${(rs as any).label}" hängen ${count} Termine. `
+            + `Bitte stattdessen auf „Terminart aktiv: aus" stellen.`,
+          termine: count,
+        }, 409);
+      }
+
+      // rule_set_staff haengt mit ON DELETE CASCADE dran und geht mit.
+      const { error } = await db.from("rule_set").delete().eq("id", (rs as any).id);
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true, key });
     }
 
     // ── Wer macht diese Terminart? ──

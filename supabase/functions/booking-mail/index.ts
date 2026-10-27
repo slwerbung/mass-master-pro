@@ -16,6 +16,9 @@ import { DateTime } from "luxon";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import { buildIcs, toBase64 } from "../_shared/booking/ics.ts";
 import { buildBookingMail, type MailInfo, type MailKind } from "../_shared/booking/mails.ts";
+import {
+  asLocationMode, brauchtAdresse, formatOffice, LOCATION_LABEL, treffpunktText,
+} from "../_shared/booking/location.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -49,14 +52,16 @@ async function sendMail(
 
 /** Der Kalendereintrag. Gleiche UID wie bei der Einladung, damit eine Absage
  *  im Kalender den bestehenden Termin trifft statt einen zweiten anzulegen. */
-function icsFor(kind: MailKind, bk: any, label: string, address: string | null, firma: string): Attachment | null {
+function icsFor(kind: MailKind, bk: any, label: string, ort: string | null, firma: string): Attachment | null {
   if (kind !== "confirmation" && kind !== "cancellation") return null;
   const text = buildIcs({
     uid: `booking-${bk.id}@captfix.app`,
     start: new Date(bk.starts_at),
     end: new Date(bk.ends_at),
     summary: `${label}${bk.customer_name ? ` – ${bk.customer_name}` : ""}`,
-    location: address ?? undefined,
+    // Dasselbe, was in der Mail als Treffpunkt steht: Kundenadresse, unsere
+    // Buero-Adresse, "Telefontermin" oder der Videolink.
+    location: ort ?? undefined,
     organizer: { name: firma, email: "info@slwerbung.de" },
     method: kind === "cancellation" ? "CANCEL" : "REQUEST",
     sequence: kind === "cancellation" ? 1 : 0,
@@ -93,9 +98,13 @@ Deno.serve(async (req) => {
     // Firmenname aus dem Adminmenue: Fusszeile der Mail und Anzeigename des
     // Absenders. Steht dort nichts, bleibt der Betriebsname als Vorgabe.
     let firma = "SL WERBUNG";
+    let buero = "";
     try {
       const info = JSON.parse(String(cfg.get("legal_info") || "{}"));
       if (info?.companyName && String(info.companyName).trim()) firma = String(info.companyName).trim();
+      // Treffpunkt fuer "Bei uns im Buero" — dieselbe Quelle wie Impressum und
+      // Fusszeile, damit es nur eine eigene Adresse im Haus gibt.
+      buero = formatOffice({ street: info?.street, zip: info?.zip, city: info?.city });
     } catch { /* Vorgabe behalten */ }
     const from = `${firma} <${MAIL_ABSENDER}>`;
 
@@ -104,8 +113,8 @@ Deno.serve(async (req) => {
     const { data: due, error: dueErr } = await db.from("notification")
       .select(`id, kind, attempts, booking_id,
                booking:booking_id ( id, status, starts_at, ends_at, customer_name, customer_email,
-                                    address, answers, cancel_token, staff_token, cancel_reason,
-                                    project_id, staff_id, rule_set_id )`)
+                                    customer_phone, address, meeting_url, answers, cancel_token,
+                                    staff_token, cancel_reason, project_id, staff_id, rule_set_id )`)
       .is("sent_at", null)
       .lte("send_after", new Date().toISOString())
       .lt("attempts", MAX_ATTEMPTS)
@@ -118,10 +127,13 @@ Deno.serve(async (req) => {
     const ruleSetIds = [...new Set(due.map((n: any) => n.booking?.rule_set_id).filter(Boolean))];
     const staffIds = [...new Set(due.map((n: any) => n.booking?.staff_id).filter(Boolean))];
     const [{ data: ruleSets }, { data: staff }] = await Promise.all([
-      ruleSetIds.length ? db.from("rule_set").select("id, label").in("id", ruleSetIds) : Promise.resolve({ data: [] }),
+      ruleSetIds.length
+        ? db.from("rule_set").select("id, label, location_mode").in("id", ruleSetIds)
+        : Promise.resolve({ data: [] }),
       staffIds.length ? db.from("staff").select("id, display_name").in("id", staffIds) : Promise.resolve({ data: [] }),
     ]);
     const labelOf = new Map((ruleSets ?? []).map((r: any) => [r.id, r.label]));
+    const ortArtOf = new Map((ruleSets ?? []).map((r: any) => [r.id, asLocationMode(r.location_mode)]));
     const staffOf = new Map((staff ?? []).map((s: any) => [s.id, s.display_name]));
 
     let sent = 0, skipped = 0, failed = 0;
@@ -147,6 +159,15 @@ Deno.serve(async (req) => {
         }
 
         const label = labelOf.get(bk.rule_set_id) || "Termin vor Ort";
+        const ortArt = ortArtOf.get(bk.rule_set_id) ?? "vor_ort";
+        // Beim Kunden zaehlt seine Adresse, sonst der Treffpunkt der Terminart.
+        const treffpunkt = brauchtAdresse(ortArt)
+          ? null
+          : treffpunktText({
+            mode: ortArt, office: buero,
+            meetingUrl: bk.meeting_url ?? null,
+            phone: bk.customer_phone ?? null,
+          });
         const info: MailInfo = {
           customerName: bk.customer_name || "",
           projectNumber: "",
@@ -154,6 +175,9 @@ Deno.serve(async (req) => {
           start: bk.starts_at,
           end: bk.ends_at,
           address: bk.address ?? null,
+          treffpunkt,
+          ortLabel: treffpunkt ? LOCATION_LABEL[ortArt] : null,
+          meetingUrl: bk.meeting_url ?? null,
           hinweis: (bk.answers as any)?.hinweis ?? null,
           staffName: kind === "internal_new" ? (staffOf.get(bk.staff_id) ?? null) : null,
           cancelReason: bk.cancel_reason ?? null,
@@ -172,7 +196,7 @@ Deno.serve(async (req) => {
         }
 
         const { subject, html } = buildBookingMail(kind, info);
-        const ics = icsFor(kind, bk, label, info.address, firma);
+        const ics = icsFor(kind, bk, label, treffpunkt ?? info.address, firma);
         await sendMail(resendKey, from, empfaenger, subject, html, ics ? [ics] : undefined);
 
         await db.from("notification").update({ sent_at: new Date().toISOString(), last_error: null }).eq("id", n.id);

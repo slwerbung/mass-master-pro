@@ -14,6 +14,17 @@ export interface MailInfo {
   start: Date | string;
   end: Date | string;
   address: string | null;
+  /**
+   * Wo der Termin stattfindet, in einem Satz — bei uns im Buero, am Telefon
+   * oder per Video. Gesetzt, sobald die Terminart kein Termin beim Kunden ist;
+   * dann steht hier NICHT die Kundenadresse (`treffpunktText` in
+   * `location.ts`). Leer = Termin beim Kunden, dann zaehlt `address`.
+   */
+  treffpunkt?: string | null;
+  /** Fuer die Zeile im Steckbrief: Adresse, Treffpunkt, Telefon oder Online. */
+  ortLabel?: string | null;
+  /** Videolink des Termins. Bekommt in der Bestaetigung einen eigenen Knopf. */
+  meetingUrl?: string | null;
   hinweis?: string | null;
   staffName?: string | null;
   /** Link, mit dem der Kunde selbst absagt. */
@@ -79,7 +90,11 @@ function facts(info: MailInfo): string {
     ["Termin", `${dateText(info.start, tz)}<br>${timeText(info.start, info.end, tz)}`],
     ["Anlass", escapeHtml(info.label)],
   ];
-  if (info.address) rows.push(["Adresse", escapeHtml(info.address)]);
+  // Bei Buero-, Telefon- und Onlineterminen steht hier der Treffpunkt. Die
+  // Kundenadresse waere dort falsch — und bei einem Telefontermin gibt es gar
+  // keine.
+  if (info.treffpunkt) rows.push([info.ortLabel || "Treffpunkt", escapeHtml(info.treffpunkt)]);
+  else if (info.address) rows.push(["Adresse", escapeHtml(info.address)]);
   if (info.projectNumber) rows.push(["Projekt", escapeHtml(info.projectNumber)]);
   if (info.staffName) rows.push(["Kollege", escapeHtml(info.staffName)]);
   if (info.hinweis) rows.push(["Hinweis", escapeHtml(info.hinweis)]);
@@ -105,6 +120,12 @@ export function buildBookingMail(kind: MailKind, info: MailInfo): { subject: str
         `<p>${anrede}</p><p>Ihr Termin steht — wir haben ihn fest eingeplant.</p>` +
         facts(info) +
         `<p>Der Kalendereintrag liegt dieser Mail als Datei bei.</p>` +
+        // Onlinetermin: der Link ist das Wichtigste in dieser Mail. Er steht
+        // zusaetzlich im Steckbrief, damit er auch beim Weiterleiten mitkommt.
+        (info.meetingUrl
+          ? `<p style="margin-top:20px">${button(info.meetingUrl, "Zum Videotermin", "#1d4ed8")}</p>` +
+            `<p style="font-size:13px;color:#6b7280">Falls der Knopf nicht geht: ${escapeHtml(info.meetingUrl)}</p>`
+          : "") +
         (info.cancelUrl
           ? `<p style="margin-top:20px">Passt es doch nicht? ${button(info.cancelUrl, "Termin absagen", "#b91c1c")}</p>`
           : "") +
@@ -118,6 +139,9 @@ export function buildBookingMail(kind: MailKind, info: MailInfo): { subject: str
       subject: `Erinnerung: ${info.label} am ${kurz}`,
       html: shell(
         `<p>${anrede}</p><p>kurze Erinnerung an unseren Termin.</p>` + facts(info) +
+        (info.meetingUrl
+          ? `<p style="margin-top:20px">${button(info.meetingUrl, "Zum Videotermin", "#1d4ed8")}</p>`
+          : "") +
         (info.cancelUrl
           ? `<p style="margin-top:20px">Wenn es nicht passt, bitte kurz absagen: ${button(info.cancelUrl, "Termin absagen", "#b91c1c")}</p>`
           : ""),

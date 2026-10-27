@@ -157,3 +157,56 @@ describe("Branding", () => {
     expect(html).toContain("SL WERBUNG");
   });
 });
+
+describe("Treffpunkt statt Adresse", () => {
+  it("zeigt beim Kunden die Adresse", () => {
+    const { html } = buildBookingMail("confirmation", info);
+    expect(html).toContain("Adresse");
+    expect(html).toContain("Hauptstr. 1, 71332 Waiblingen");
+  });
+
+  it("zeigt im Buero unsere Adresse und NICHT die des Kunden", () => {
+    const { html } = buildBookingMail("confirmation", {
+      ...info,
+      treffpunkt: "Bei uns im Büro, Otto-Hahn-Straße 3, 71364 Winnenden",
+      ortLabel: "Bei uns im Büro",
+    });
+    expect(html).toContain("Otto-Hahn-Straße 3");
+    // Die Kundenadresse waere hier schlicht falsch.
+    expect(html).not.toContain("Hauptstr. 1");
+  });
+
+  it("nennt beim Telefontermin die Rufnummer", () => {
+    const { html } = buildBookingMail("confirmation", {
+      ...info, address: null,
+      treffpunkt: "Telefontermin, wir rufen an unter 07151 1234",
+      ortLabel: "Telefontermin",
+    });
+    expect(html).toContain("07151 1234");
+  });
+
+  it("gibt dem Onlinetermin einen Knopf zum Videoraum", () => {
+    const url = "https://meet.jit.si/beratung-0123456789abcdef";
+    const { html } = buildBookingMail("confirmation", {
+      ...info, address: null,
+      treffpunkt: `Onlinetermin: ${url}`,
+      ortLabel: "Onlinetermin",
+      meetingUrl: url,
+    });
+    expect(html).toContain(`href="${url}"`);
+    expect(html).toContain("Zum Videotermin");
+    // Auch als Text, damit er beim Weiterleiten nicht verlorengeht.
+    expect(html).toContain(url);
+  });
+
+  it("erinnert mit dem Videolink, nicht nur mit dem Termin", () => {
+    const url = "https://meet.jit.si/termin-aaaabbbbccccdddd";
+    const { html } = buildBookingMail("reminder", { ...info, meetingUrl: url });
+    expect(html).toContain(`href="${url}"`);
+  });
+
+  it("schickt ohne Videotermin keinen Knopf mit", () => {
+    const { html } = buildBookingMail("confirmation", info);
+    expect(html).not.toContain("Zum Videotermin");
+  });
+});

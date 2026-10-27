@@ -44,6 +44,28 @@ import {
 } from "@/lib/bookingApi";
 
 const TZ = "Europe/Berlin";
+
+/** „90 Minuten", „4 Stunden", „1,5 Stunden" — wie man es liest. */
+function dauerText(minuten: number): string {
+  const m = Math.max(0, Math.round(minuten));
+  if (m < 60) return `${m} Minuten`;
+  const rest = m % 60;
+  if (rest !== 0 && rest !== 30) return `${Math.floor(m / 60)} Std. ${rest} Min.`;
+  const std = m / 60;
+  const text = Number.isInteger(std) ? String(std) : std.toFixed(1).replace(".", ",");
+  return `${text} ${std === 1 ? "Stunde" : "Stunden"}`;
+}
+
+/** Wo der Termin stattfindet — Satz fuer die linke Spalte. */
+function ortText(art: AppointmentType, office?: string | null): string {
+  switch (art.locationMode) {
+    case "buero": return office ? `Bei uns im Büro, ${office}` : "Bei uns im Büro";
+    case "telefon": return "Telefontermin – wir rufen Sie an";
+    case "online": return "Onlinetermin – den Link bekommen Sie per E-Mail";
+    default: return "";
+  }
+}
+
 const dayKey = (iso: string) => DateTime.fromISO(iso, { zone: "utc" }).setZone(TZ).toFormat("yyyy-MM-dd");
 const timeLabel = (iso: string) => DateTime.fromISO(iso, { zone: "utc" }).setZone(TZ).toFormat("HH:mm");
 
@@ -76,16 +98,21 @@ const echt = (v: string | null | undefined): string => {
  * Reihenfolge darf nicht im 404 enden — eine falsch geratene Terminart fällt
  * ohnehin durch, weil sie gegen die buchbaren Arten geprüft wird.
  */
-function pfadTeile(rest: string): { slug: string; nr: string; art: string } {
+function pfadTeile(rest: string): { slug: string; nr: string; art: string; dauer: number | null } {
   const teile = rest.split("/").map(echt).filter(Boolean);
   const slug = teile.shift() || "";
   let nr = "";
   let art = "";
+  let dauer: number | null = null;
   for (const t of teile) {
+    // Dauer zuerst pruefen: `d240` traegt das `d` genau deshalb, damit es nicht
+    // mit einer Projektnummer verwechselt wird.
+    const d = /^[dD](\d{1,4})$/.exec(t);
+    if (d && dauer == null) { dauer = Number(d[1]) || null; continue; }
     if (!nr && /^[A-Za-z]{0,5}-?\d+$/.test(t)) nr = t;
     else if (!art) art = t;
   }
-  return { slug, nr, art };
+  return { slug, nr, art, dauer };
 }
 
 export default function BookingPage() {
@@ -100,6 +127,9 @@ export default function BookingPage() {
   // Die Terminart kommt aus der Einladung. Steht sie im Link, bekommt der
   // Kunde keine Auswahl zu sehen.
   const artAusLink = pfad.art || echt(query.get("art"));
+  // Dauer dieses Termins: aus dem Pfad (`/d240`, Vorlagenform) oder `?d=240`.
+  // Was davon gilt, entscheidet der Server — hier wird nur gelesen.
+  const dauerAusLink = pfad.dauer ?? (Number(echt(query.get("d"))) || null);
   // Projekt: unsere UUID im Pfad (Links aus der App), die HERO-Nummer als
   // Pfadsegment (Mailvorlage) oder als `?p=` (aeltere Vorlagen).
   const projektNr = pfad.nr || echt(query.get("p"));
@@ -123,6 +153,9 @@ export default function BookingPage() {
 
   const [month, setMonth] = useState<Date>(new Date());
   const [slots, setSlots] = useState<Slot[]>([]);
+  // Die Dauer, mit der der Server gerechnet hat. Angezeigt wird diese, nicht
+  // die Vorgabe der Terminart und nicht die Zahl aus dem Link.
+  const [dauerMinuten, setDauerMinuten] = useState<number | null>(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
@@ -142,7 +175,10 @@ export default function BookingPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ startsAt: string; endsAt: string } | null>(null);
+  const [done, setDone] = useState<{
+    startsAt: string; endsAt: string;
+    meetingUrl?: string | null; treffpunkt?: string | null;
+  } | null>(null);
 
   // ── Kontext laden ──
   useEffect(() => {
@@ -161,7 +197,12 @@ export default function BookingPage() {
         setName(c.contact.name || c.project?.customerName || "");
         setEmail(c.contact.email || "");
         setPhone(c.contact.phone || "");
-        if (!c.address) setEditAddress(true);
+        // Aufklappen nur, wenn die Adresse ueberhaupt gebraucht wird. Welche
+        // Terminart gilt, steht eine Zeile weiter oben erst fest, deshalb hier
+        // gegen die gewaehlte Art pruefen.
+        const gewaehlteArt = ausLink ?? (c.appointments.length === 1 ? c.appointments[0] : null);
+        const mitAdresse = !gewaehlteArt?.locationMode || gewaehlteArt.locationMode === "vor_ort";
+        if (!c.address && mitAdresse) setEditAddress(true);
       })
       .catch((e) => alive && setLoadError(e.message || "Die Buchungsseite konnte nicht geladen werden."));
     return () => { alive = false; };
@@ -180,8 +221,10 @@ export default function BookingPage() {
     setLoadingSlots(true);
     try {
       const res = await loadAvailability(ziel, art.key, range.from, range.to,
-        editAddress || addressApplied ? { street, zip, city } : undefined);
+        editAddress || addressApplied ? { street, zip, city } : undefined,
+        dauerAusLink);
       setSlots(res.slots || []);
+      if (res.durationMinutes) setDauerMinuten(res.durationMinutes);
     } catch (e) {
       setSlots([]);
       setSubmitError((e as Error).message);
@@ -191,7 +234,7 @@ export default function BookingPage() {
     // street/zip/city bewusst NICHT in den Abhaengigkeiten: es soll erst beim
     // Uebernehmen neu gerechnet werden, nicht bei jedem Tastendruck.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx, art, ziel, range.from, range.to, addressApplied]);
+  }, [ctx, art, ziel, range.from, range.to, addressApplied, dauerAusLink]);
 
   useEffect(() => { fetchSlots(); }, [fetchSlots]);
 
@@ -222,12 +265,22 @@ export default function BookingPage() {
 
   const daySlots = selectedDay ? (slotsByDay.get(selectedDay) ?? []) : [];
   const addressText = [street, [zip, city].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  // Nach einer Adresse wird nur gefragt, wenn wir auch hinfahren. Bei Buero-,
+  // Telefon- und Onlineterminen waere das eine Frage ohne Zweck.
+  const brauchtAdresse = !art?.locationMode || art.locationMode === "vor_ort";
+  const telefonPflicht = art?.locationMode === "telefon";
 
   async function submit() {
     if (!selectedSlot || !ctx || !art) return;
     setSubmitError(null);
     if (!name.trim() || !email.trim()) {
       setSubmitError("Bitte Name und E-Mail angeben.");
+      return;
+    }
+    // Ohne Rufnummer weiss niemand, wen er anrufen soll. Der Server lehnt das
+    // ebenfalls ab — hier nur, damit der Kunde es gleich sieht.
+    if (telefonPflicht && !phone.trim()) {
+      setSubmitError("Für einen Telefontermin brauchen wir Ihre Rufnummer.");
       return;
     }
     const staffId = selectedSlot.assignedStaffId || selectedSlot.staffIds?.[0];
@@ -237,19 +290,29 @@ export default function BookingPage() {
     }
     setSubmitting(true);
     try {
-      await createBooking({
+      const res = await createBooking({
         project: ziel.projectId,
         projectNr: ziel.projectNr,
         heroProject: ziel.heroId,
         staff: ziel.staffSlug,
         ruleSet: art.key,
-        slot: { startsAt: selectedSlot.startsAt, endsAt: selectedSlot.endsAt },
+        d: dauerAusLink,
+        // Nur der Start wird gemeldet: das Ende rechnet der Server aus der
+        // Dauer. Was hier stuende, wuerde ohnehin nicht uebernommen.
+        slot: { startsAt: selectedSlot.startsAt },
         staffId,
         contact: { name: name.trim(), email: email.trim(), phone: phone.trim() || undefined },
-        addressOverride: addressApplied || editAddress ? { street, zip, city } : null,
+        addressOverride: brauchtAdresse && (addressApplied || editAddress) ? { street, zip, city } : null,
         hinweis: hinweis.trim() || undefined,
       });
-      setDone({ startsAt: selectedSlot.startsAt, endsAt: selectedSlot.endsAt });
+      // Zeiten und Treffpunkt aus der Antwort, nicht aus dem gewaehlten Slot —
+      // die Wahrheit steht in der Buchung.
+      setDone({
+        startsAt: res.booking.startsAt,
+        endsAt: res.booking.endsAt,
+        meetingUrl: res.booking.meetingUrl ?? null,
+        treffpunkt: res.booking.treffpunkt ?? null,
+      });
     } catch (e) {
       // 409 heisst: in der Zwischenzeit vergeben. Dann neu laden, damit der
       // Kunde sofort sieht, was noch frei ist.
@@ -297,7 +360,20 @@ export default function BookingPage() {
               {d.toFormat("cccc, d. LLLL yyyy")} um {timeLabel(done.startsAt)} – {timeLabel(done.endsAt)} Uhr
             </p>
           </div>
-          {addressText && <p className="text-sm text-muted-foreground">{addressText}</p>}
+          {(done.treffpunkt || addressText) && (
+            <p className="text-sm text-muted-foreground">{done.treffpunkt || addressText}</p>
+          )}
+          {/* Onlinetermin: der Link ist das Wichtigste auf dieser Seite. Er
+              kommt zusaetzlich per Mail. */}
+          {done.meetingUrl && (
+            <p className="text-sm">
+              <a href={done.meetingUrl} target="_blank" rel="noreferrer"
+                className="inline-block rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground">
+                Zum Videotermin
+              </a>
+              <span className="block text-xs text-muted-foreground mt-2 break-all">{done.meetingUrl}</span>
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
             Sie bekommen gleich eine Bestätigung per E-Mail, mit Kalendereintrag zum Hinzufügen.
             Falls es doch nicht passt, können Sie den Termin über den Link in der Mail absagen.
@@ -336,7 +412,9 @@ export default function BookingPage() {
                 >
                   <span className="font-medium">{a.label}</span>
                   <span className="block text-sm text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                    <Clock className="h-3.5 w-3.5" /> {a.durationMinutes} Minuten
+                    <Clock className="h-3.5 w-3.5" />
+                    {dauerText(a.key === artAusLink && dauerAusLink ? dauerAusLink : a.durationMinutes)}
+                    {ortText(a, ctx.office) && <span>· {ortText(a, ctx.office)}</span>}
                   </span>
                 </button>
               ))}
@@ -373,20 +451,32 @@ export default function BookingPage() {
             <div className="space-y-2 text-sm">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Clock className="h-4 w-4 shrink-0" />
-                <span>{art.durationMinutes} Minuten</span>
+                {/* Die Dauer, mit der der Server gerechnet hat. Solange die
+                    Zeiten noch laden, die Vorgabe der Terminart. */}
+                <span>{dauerText(dauerMinuten ?? art.durationMinutes)}</span>
               </div>
               <div className="flex items-start gap-2 text-muted-foreground">
                 <MapPin className="h-4 w-4 shrink-0 mt-0.5" />
                 <span>
-                  {addressText || "Adresse bitte eintragen"}
-                  {ctx.address?.source === "customer" && !addressApplied && (
-                    <span className="block text-xs">(Ihre Kundenadresse)</span>
-                  )}
+                  {brauchtAdresse
+                    ? (
+                      <>
+                        {addressText || "Adresse bitte eintragen"}
+                        {ctx.address?.source === "customer" && !addressApplied && (
+                          <span className="block text-xs">(Ihre Kundenadresse)</span>
+                        )}
+                      </>
+                    )
+                    : ortText(art, ctx.office)}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-muted-foreground">
                 <User className="h-4 w-4 shrink-0" />
-                <span>Vor Ort mit einem Kollegen von uns</span>
+                <span>
+                  {art.locationMode === "telefon" ? "Am Telefon mit einem Kollegen von uns"
+                    : art.locationMode === "online" ? "Per Video mit einem Kollegen von uns"
+                    : "Mit einem Kollegen von uns"}
+                </span>
               </div>
             </div>
 
@@ -414,7 +504,10 @@ export default function BookingPage() {
               </Button>
             )}
 
-            {!editAddress ? (
+            {/* Adressblock nur, wenn wir hinfahren. Bei Buero-, Telefon- und
+                Onlineterminen gibt es keine Anfahrt und damit nichts zu
+                aendern — ein Adressfeld waere dort nur Verwirrung. */}
+            {!brauchtAdresse ? null : !editAddress ? (
               <Button variant="outline" size="sm" className="w-full" onClick={() => setEditAddress(true)}>
                 <Pencil className="h-3.5 w-3.5 mr-2" /> Adresse ändern
               </Button>
@@ -547,8 +640,13 @@ export default function BookingPage() {
                       <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
                     </div>
                     <div>
-                      <Label htmlFor="phone">Telefon</Label>
+                      <Label htmlFor="phone">Telefon{telefonPflicht ? " *" : ""}</Label>
                       <Input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                      {telefonPflicht && (
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Unter dieser Nummer rufen wir Sie zum Termin an.
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div>

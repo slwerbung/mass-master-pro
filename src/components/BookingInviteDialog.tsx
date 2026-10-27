@@ -22,6 +22,22 @@ import { toast } from "sonner";
 import { getSession } from "@/lib/session";
 import { loadInviteLinks, sendBookingInvite, loadBookingContext, type BookingInviteLinks } from "@/lib/bookingApi";
 
+/** Kurztext zum Terminort — mehr braucht der Mitarbeiter hier nicht. */
+const ORT_TEXT: Record<string, string> = {
+  buero: "bei uns im Büro",
+  telefon: "am Telefon",
+  online: "online",
+  vor_ort: "beim Kunden",
+};
+
+/**
+ * Ein paar runde Laengen zum Antippen, innerhalb der erlaubten Grenzen.
+ * Tippen geht weiter — das ist nur der schnelle Weg fuer die ueblichen Faelle.
+ */
+function schnellwahl(min: number, max: number): number[] {
+  return [60, 120, 240, 360, 480].filter((m) => m >= min && m <= max);
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -38,6 +54,8 @@ export function BookingInviteDialog({ open, onOpenChange, projectId, projectNumb
   const [email, setEmail] = useState("");
   const [note, setNote] = useState("");
   const [senden, setSenden] = useState(false);
+  // Dauer dieses einen Termins (nur bei Terminarten, die das erlauben).
+  const [dauer, setDauer] = useState<number | null>(null);
 
   const token = getSession()?.authToken;
   const gewaehlt = daten?.appointments.find((a) => a.key === art) ?? null;
@@ -50,6 +68,7 @@ export function BookingInviteDialog({ open, onOpenChange, projectId, projectNumb
     setNote("");
     setEmail("");
     setArt(null);
+    setDauer(null);
     if (!token) { setFehler("Nicht angemeldet."); return; }
     let abgebrochen = false;
     setLaden(true);
@@ -76,6 +95,34 @@ export function BookingInviteDialog({ open, onOpenChange, projectId, projectNumb
     return () => { abgebrochen = true; };
   }, [open, projectId]);
 
+  // Terminart gewechselt: Vorgabedauer uebernehmen, damit im Feld etwas
+  // Sinnvolles steht.
+  useEffect(() => {
+    if (!gewaehlt) { setDauer(null); return; }
+    setDauer(gewaehlt.durationChoosable ? gewaehlt.durationMinutes : null);
+    // Absicht: nur beim Wechsel der Terminart, nicht bei jedem Nachladen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [art]);
+
+  /**
+   * Neue Links holen, wenn die Dauer sich geaendert hat.
+   *
+   * Der Link kommt IMMER vom Server — hier wird nichts zusammengesetzt, sonst
+   * stuende in der Mail etwas anderes als im Kalender. Deshalb ein kurzes
+   * Nachladen statt eines selbstgebauten `&d=`.
+   */
+  useEffect(() => {
+    if (!open || !token || !gewaehlt?.durationChoosable || !dauer) return;
+    if (dauer === gewaehlt.linkDuration) return;
+    const timer = setTimeout(() => {
+      loadInviteLinks(token, projectId ?? null, { ruleSet: gewaehlt.key, duration: dauer })
+        .then((d) => setDaten(d))
+        .catch(() => { /* der alte Link bleibt stehen */ });
+    }, 450);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dauer, art, open, token, projectId]);
+
   async function kopieren(text: string, was: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -94,6 +141,7 @@ export function BookingInviteDialog({ open, onOpenChange, projectId, projectNumb
         token,
         email: email.trim(),
         ruleSet: gewaehlt.key,
+        duration: gewaehlt.durationChoosable ? dauer : null,
         projectId: projectId ?? null,
         projectNumber: projectNumber ?? null,
         note: note.trim() || undefined,
@@ -143,19 +191,56 @@ export function BookingInviteDialog({ open, onOpenChange, projectId, projectNumb
                   >
                     <span className="font-medium text-sm">{a.label}</span>
                     <span className="block text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                      <Clock className="h-3.5 w-3.5" /> {a.durationMinutes} Minuten
+                      <Clock className="h-3.5 w-3.5" />
+                      {a.durationChoosable ? "Dauer wählbar" : `${a.durationMinutes} Minuten`}
+                      {a.locationMode && a.locationMode !== "vor_ort" && (
+                        <span>· {ORT_TEXT[a.locationMode]}</span>
+                      )}
                     </span>
                   </button>
                 ))}
               </div>
             </div>
 
+            {/* Dauer dieses einen Termins. Nur bei Terminarten, bei denen das
+                im Adminmenue erlaubt ist („Montage vor Ort": 3 h oder 8 h). */}
+            {gewaehlt?.durationChoosable && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Wie lange dauert dieser Termin?</Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  {schnellwahl(gewaehlt.durationMin ?? 15, gewaehlt.durationMax ?? 720).map((m) => (
+                    <Button
+                      key={m} type="button" size="sm"
+                      variant={dauer === m ? "default" : "outline"}
+                      onClick={() => setDauer(m)}
+                    >
+                      {m % 60 === 0 ? `${m / 60} h` : `${m} Min.`}
+                    </Button>
+                  ))}
+                  <Input
+                    type="number" className="w-24"
+                    min={gewaehlt.durationMin} max={gewaehlt.durationMax} step={15}
+                    value={dauer ?? ""}
+                    onChange={(e) => setDauer(e.target.value === "" ? null : Number(e.target.value))}
+                  />
+                  <span className="text-xs text-muted-foreground">Minuten</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Erlaubt sind {gewaehlt.durationMin} bis {gewaehlt.durationMax} Minuten.
+                  Der Kunde sieht dann nur Zeiten, in die diese Länge passt.
+                </p>
+              </div>
+            )}
+
             {/* Der Link entsteht erst mit der Terminart — sonst wüsste er nicht,
                 worauf der Kunde landen soll. */}
             {gewaehlt ? (
               <div className="space-y-3">
                 <div className="space-y-1">
-                  <Label className="text-xs">Link für „{gewaehlt.label}“</Label>
+                  <Label className="text-xs">
+                    Link für „{gewaehlt.label}“
+                    {gewaehlt.durationChoosable && ` · ${gewaehlt.linkDuration} Minuten`}
+                  </Label>
                   <div className="flex gap-2">
                     <Input readOnly value={gewaehlt.link} className="text-xs"
                       onFocus={(e) => e.currentTarget.select()} />
@@ -182,6 +267,7 @@ export function BookingInviteDialog({ open, onOpenChange, projectId, projectNumb
                     Mitarbeiter und Projekt füllt HERO beim Versand aus. Einmal pro Terminart in
                     die passende Vorlage einsetzen – danach braucht es diesen Dialog dafür nicht mehr.
                     Beim Einsetzen bitte prüfen, dass der Link bis zum letzten Zeichen verlinkt ist.
+                    {gewaehlt.durationChoosable && " Die Dauer steht fest im Link: eine Vorlage je Länge."}
                   </p>
                 </div>
               </div>
