@@ -139,7 +139,9 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
   Kennt **mehrere Terminarten**: buchbar ist, was `rule_set.active` ist und
   dessen Kategorie `is_bookable` trägt. `ruleSet` gehört deshalb zu
   `availability` und `create` – nie eine Kennung fest verdrahten
-- `booking-admin` – Admin-Aktionen zur Terminbuchung (alle Terminarten,
+- `booking-admin` – Admin-Aktionen zur Terminbuchung. Legt Terminarten auch
+  **an, duplizieren und loeschen** (`create_rule_set` mit `copyFrom`,
+  `delete_rule_set` nur ohne Termine daran). Weiter: (alle Terminarten,
   Personal mit Startadresse + Arbeitszeiten, Feiertage, Anfahrt, Mailschlange).
   Feiertage: Import pro Bundesland aus öffentlicher Quelle, danach bearbeitbar.
   Schreibt nur Whitelist-Schlüssel/-Spalten – der Admin-Token darf kein
@@ -255,6 +257,25 @@ Kurze prägnante Messages auf Englisch:
   in `app_config` – das Adminmenue kann `app_config` lesen.
 - Keine fest verdrahtete Terminart-Kennung. Es gibt mehrere Terminarten; wer
   eine Kennung hart einträgt, macht die anderen unsichtbar (genau so passiert).
+- Die **Dauer eines Termins** entscheidet nie der Link, sondern
+  `_shared/booking/duration.ts` gegen die Terminart. Ein Link ist von Hand
+  änderbar: eine Wunschdauer außerhalb der Grenzen wird geklemmt (nicht
+  abgelehnt – ein toter Link sperrt den Kunden aus), bei einer Terminart ohne
+  `duration_choosable` schlicht ignoriert. Im Link steht sie als `&d=<minuten>`
+  bzw. als Pfadsegment `/d<minuten>`; das `d` ist Pflicht, sonst ist die Zahl
+  nicht von einer Projektnummer zu unterscheiden.
+- Beim Buchen **nie `slot.endsAt` des Frontends übernehmen**. Das Ende kommt
+  aus dem neu gerechneten Slot, sonst ließe sich eine Achtstunden-Montage als
+  Zehnminuten-Termin eintragen (geprüft wurde nur die Startzeit).
+- **Terminorte** (`rule_set.location_mode`): bei `buero`, `telefon` und
+  `online` wird keine Adresse gefragt und keine Anfahrt gerechnet – dafür
+  braucht die Engine keinen Sonderfall, sie bekommt einfach keine Adresse
+  (`engine.ts` rechnet Fahrzeit und Radius nur mit Adresse). Der Videoraum
+  gehört an die **Buchung** (`booking.meeting_url`), nicht an die Terminart,
+  sonst sitzen zwei Kunden im selben Meeting.
+- HERO kann in einer Mailvorlage **keine Dauer einsetzen**. Darum trägt eine
+  Vorlage eine feste Länge im Pfad (Vorlagen 66033–66042 für 8/6/4/2/1 Std.,
+  je per Du und per Sie).
 - Keine Qualifikationen/Skills bei Terminarten. `rule_set.required_skills`
   bleibt leer – gefüllt heißt es „niemand kann das" und damit dauerhaft null
   freie Zeiten.

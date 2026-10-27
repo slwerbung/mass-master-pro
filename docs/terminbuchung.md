@@ -404,6 +404,88 @@ Was dabei wichtig ist:
   Objekt „Torstraße 10", angezeigt „Otto-Hahn-Straße 3"). Reihenfolge jetzt:
   `project_match.address` → `project.address` → Adresse des Kunden.
 
+## M9 — Dauer je Terminlink (27.10.2026)
+Eine „Montage vor Ort" ist bei einem Auftrag drei Stunden lang und beim
+naechsten acht. Die Dauer gehoert deshalb nicht allein an die Terminart,
+sondern an die EINZELNE Einladung: wer einlaedt, weiss, wie lange es dauert.
+
+- Die Terminart behaelt `duration_minutes` als **Standarddauer** und bekommt
+  `duration_choosable` plus `duration_min_minutes`/`duration_max_minutes`.
+  Im Adminmenue ist das ein Haekchen „Dauer individuell einstellbar bei
+  Linkerstellung" mit zwei Grenzen darunter.
+- Gewaehlt wird die Dauer im **Einladungsdialog**. Der Link kommt weiterhin
+  komplett vom Server (`booking-invite`), auch wenn sich die Dauer aendert —
+  das Frontend baut keinen Link zusammen.
+- Im Link steht sie als `&d=<minuten>`, in der **Vorlagenform** als Segment
+  `/d<minuten>` am Ende:
+  `/termin/m/{{Partner.last_name}}/{{ProjectMatch.display_id}}/montage_vor_ort/d240`
+  Das `d` ist Pflicht: ohne Praefix waere `240` nicht von einer Projektnummer
+  zu unterscheiden, und beides steht im selben Pfad.
+- **HERO kann keine Dauer einsetzen** (es gibt keinen Platzhalter dafuer).
+  Deshalb traegt eine Vorlage eine feste Laenge, und es gibt eine Vorlage je
+  Laenge. Ohne Segment gilt die Standarddauer.
+
+### Was gilt, wenn der Link etwas anderes behauptet
+Ein Link ist von Hand aenderbar und lebt Wochen. Entschieden wird deshalb
+NIE im Link, sondern in `_shared/booking/duration.ts`:
+
+| Fall | Ergebnis |
+| --- | --- |
+| Terminart nicht einstellbar | Standarddauer, Wunsch wird ignoriert |
+| Wunsch unlesbar (`d=abc`, unersetzter Platzhalter) | Standarddauer |
+| Wunsch ausserhalb der Grenzen | **geklemmt**, nicht abgelehnt |
+
+Geklemmt statt abgelehnt, weil ein toter Link den Kunden aussperrt: senkt
+jemand im Adminmenue das Maximum, oder vertippt sich eine Vorlage, soll er
+weiter buchen koennen. Was wirklich gilt, steht auf der Seite — die
+Buchungsseite zeigt die Dauer, die `availability` zurueckmeldet, und rechnet
+selbst nichts.
+
+**Dabei gleich mitgeschlossen:** `create` uebernimmt das Ende des Slots nicht
+mehr vom Frontend, sondern aus dem neu gerechneten Slot. Vorher haette ein
+veraenderter Aufruf eine Achtstunden-Montage als Zehnminuten-Termin eintragen
+koennen — geprueft wurde nur die Startzeit.
+
+## M10 — Wo findet der Termin statt? (27.10.2026)
+`rule_set.location_mode`: `vor_ort` (Vorgabe), `buero`, `telefon`, `online`.
+
+| Art | Adresse | Anfahrt | Treffpunkt in Mail/.ics/HERO |
+| --- | --- | --- | --- |
+| `vor_ort` | Kundenadresse, aenderbar | ja | Kundenadresse |
+| `buero` | wird nicht gefragt | nein | unsere Adresse aus `legal_info` |
+| `telefon` | wird nicht gefragt | nein | „wir rufen an unter …" (Rufnummer **Pflicht**) |
+| `online` | wird nicht gefragt | nein | Jitsi-Link dieses Termins |
+
+- **Die Engine braucht dafuer keinen Sonderfall.** Sie rechnet Fahrzeit und
+  Einsatzradius nur, wenn sie eine Adresse bekommt (`if (input.address && …)`).
+  Fuer alles ausser `vor_ort` wird schlicht keine uebergeben — und auch nicht
+  geocodiert, das spart den Aufruf.
+- **Der Videoraum gehoert zur Buchung, nicht zur Terminart**
+  (`booking.meeting_url`). Ein Raum pro Terminart hiesse: zwei Kunden im
+  selben Meeting. Der Raumname traegt 16 Hex-Zeichen Zufall, weil bei Jitsi
+  jeder hereinkommt, der den Namen kennt.
+- Dienst einstellbar ueber `booking_jitsi_base` (leer = oeffentliches
+  meet.jit.si).
+- Der Treffpunkt kommt ueberall aus derselben Funktion (`treffpunktText` in
+  `_shared/booking/location.ts`) — sonst stuende in der Mail „Büro" und im
+  Kalendereintrag die Kundenadresse.
+
+## Terminarten selbst anlegen (27.10.2026)
+`booking-admin` kann jetzt `create_rule_set` und `delete_rule_set`.
+
+- **Neu** bekommt eine eigene `appointment_category` (`source='internal'`,
+  buchbar) und startet **inaktiv** — erst einrichten, dann anbieten.
+- **Kopie** (`copyFrom`) uebernimmt alle Einstellungen, die Kategorie des
+  Originals und die zugeordneten Mitarbeiter. Das ist der schnelle Weg zu
+  „Montage 4h" neben „Montage 8h". Die Kategorie bleibt bewusst dieselbe:
+  bei einer Kopie soll sich an „blockiert" und „buchbar" nichts aendern.
+- Die **Kennung** wird aus der Bezeichnung gebildet und danach nie wieder
+  geaendert, auch wenn die Bezeichnung umgeschrieben wird — sie steht in
+  verschickten Links.
+- **Loeschen** nur, solange keine Buchung auf die Terminart verweist
+  (`booking.rule_set_id` ist Pflicht). Sonst sagt die Function, wie viele
+  Termine daran haengen, und verweist auf „Terminart aktiv: aus".
+
 ## M5 — Mails (`supabase/functions/booking-mail`)
 Die Buchung verschickt nichts, sie legt `notification`-Zeilen ab. Der Worker
 arbeitet sie ab (pg_cron alle 5 Minuten, `x-poll-secret`; Admin-Token für den
@@ -600,6 +682,16 @@ Mindest-Vorlaufzeit, Buchungsfenster, Tageslimits, Qualifikation, Zuweisung
 | `context&p=99999&staff=Langner` | 200 mit `projectMissing: true` statt 404 |
 | `booking-hero-sync` nach M8 | `{ok:true, events:13, blocks:9, removed:1}`; HERO-Termin 14:00 sperrt jetzt 14:00 |
 | Deploy-Stand | `booking-api` v9, `booking-hero-sync` v3, `booking-invite` v4, `run-automations` v21, `send-notification` v21 – jeweils byte-genau gegen das Repo geprüft |
+
+### Nachgewiesen gegen Produktion (27.10.2026, Dauer/Terminorte)
+
+| Pruefung | Ergebnis |
+| --- | --- |
+| Migrationen M9 + M10 | angewandt; `rule_set` hat `duration_choosable`/`duration_min_minutes`/`duration_max_minutes`/`location_mode`, `booking` hat `meeting_url` |
+| `montage_vor_ort` | `duration_choosable=true`, 60–600 Minuten |
+| **Fehlende HERO-Kategorie** | `montage_vor_ort` hatte keine `hero_category_id` — eine Montage waere bei uns gebucht worden, in HERO aber kein Termin entstanden („HERO verlangt eine Kategorie"). Auf 74899 „Montage vor Ort" gesetzt. |
+| HERO-Mailvorlagen 66033–66042 | je Laenge 8/6/4/2/1 Std. per Du und per Sie; Link als reiner Text mit Dauersegment, nach dem Anlegen zuruueckgelesen und unveraendert |
+| Deploy-Stand | `booking-mail` v5 (byte-genau bis auf einen fehlenden Zeilenumbruch am Ende von `ics.ts`, Code identisch). **`booking-api`, `booking-invite` und `booking-admin` sind noch NICHT deployt** — bis dahin ignoriert der Server das `d` im Link und bucht die Standarddauer. |
 
 ### Nachgewiesen gegen Produktion (09.10.2026, Urlaub)
 
