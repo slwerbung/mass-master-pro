@@ -13,7 +13,7 @@ function row(o: Partial<SuggestionRow> & { payload?: any } = {}): SuggestionRow 
 }
 
 function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; open?: number; claim?: boolean; offerFail?: boolean } = {}) {
-  const log: any = { suggestions: [], released: [], sent: [], marked: [], offers: [], offerSuggest: [], uploaded: [], upsug: [], docs: [], claimed: [], finished: [], assigned: [], logged: [], feedback: [], status: [], logbook: [], steps: [], contacts: [], projects: [], dropped: [] };
+  const log: any = { suggestions: [], released: [], sent: [], marked: [], offers: [], offerSuggest: [], uploaded: [], upsug: [], docs: [], claimed: [], finished: [], assigned: [], logged: [], feedback: [], status: [], logbook: [], steps: [], contacts: [], projects: [], dropped: [], alternatives: [] };
   const store: ActionStore = {
     getSuggestion: async () => s,
     claim: async (id) => (log.claimed.push(id), o.claim !== false),
@@ -21,6 +21,7 @@ function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; 
     assignProject: async (m, t, p, info) => { log.assigned.push([m, t, p, info]); },
     markLogged: async (m) => { log.logged.push(m); },
     openCount: async () => o.open ?? 0,
+    closeAlternatives: async (m, except, types, reason) => { log.alternatives.push([m, except, types, reason]); },
     setMessageStatus: async (m, st) => { log.status.push([m, st]); },
     addFeedback: async (m, f, a, b) => { log.feedback.push([m, f, a, b]); },
     dropContactCache: async (e) => { log.dropped.push(e); },
@@ -410,5 +411,21 @@ describe("send_document (Versand ueber HERO)", () => {
     await bad({ templateId: 5188, documentId: 99 }, {}, /passt nicht/);
     await bad({ templateId: 5188 }, { documentById: doc({ projectId: 6 }) }, /anderen Projekt/);
     await bad({ templateId: 5188 }, { documentById: doc({ baseType: "invoice" }) }, /keine Auftragsbestätigung/);
+  });
+});
+
+describe("Alternativen (Zuordnen oder neues Projekt)", () => {
+  it("Annehmen der Zuordnung schliesst den offenen Projekt-Anlegen-Vorschlag derselben Mail", async () => {
+    const t = setup(row());
+    await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(t.log.alternatives).toEqual([["M1", "S1", ["link_project", "create_project"], "Alternative gewählt"]]);
+  });
+  it("Ablehnen schliesst nichts anderes; andere Arten auch nicht", async () => {
+    const t = setup(row());
+    await decideSuggestion({ suggestionId: "S1", decision: "reject", edits: { reason: "x" } }, t.deps);
+    expect(t.log.alternatives).toEqual([]);
+    const u = setup(row({ type: "log_entry" }));
+    await decideSuggestion({ suggestionId: "S1", decision: "accept" }, u.deps);
+    expect(u.log.alternatives).toEqual([]);
   });
 });

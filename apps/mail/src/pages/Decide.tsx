@@ -7,12 +7,17 @@ import type { Suggestion } from "@/lib/suggestions";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { ProjectSearch } from "@/components/ProjectSearch";
 import { ConfirmationCard, SendDocumentCard } from "@/components/OrderCards";
-import { Buttons, ExistingCustomerChoice, quoted, SuggestionCard, useDecide, type ExistingCustomer } from "@/components/SuggestionParts";
+import {
+  AlternativesCard, Buttons, ExistingCustomerChoice, quoted, SuggestionCard, useDecide, useRejectAll, type ExistingCustomer,
+} from "@/components/SuggestionParts";
 import { formatDateTime } from "@/lib/utils";
 
 interface Gewerk { short: string; name: string; measure_id: number | null }
 
-function LinkCard({ s }: { s: Suggestion }) {
+/** Eingebettet in eine Alternativen-Karte: ohne eigenen Kopf, „Nicht nötig“ verwirft alle Varianten. */
+interface AltProps { embedded?: boolean; onSkip?: (reason: string) => void }
+
+function LinkCard({ s, embedded, onSkip }: { s: Suggestion } & AltProps) {
   const decide = useDecide(s);
   const cands = (s.payload.candidates ?? []) as { id: number; nr: string; name: string; stepName: string | null }[];
   const [projectId, setProjectId] = useState<number | null>(s.payload.projectId ?? null);
@@ -21,8 +26,8 @@ function LinkCard({ s }: { s: Suggestion }) {
   const chosen = cands.find((c) => c.id === projectId);
   return (
     <SuggestionCard
-      s={s} brief={chosen ? `${chosen.nr} ${chosen.name || ""}` : projectId ? (s.payload.projectNr ?? `#${projectId}`) : `${cands.length} Projekte zur Auswahl`}
-      actions={<Buttons s={s} busy={decide.isPending} disabled={!projectId} acceptLabel={projectId ? `Zu ${chosen?.nr ?? s.payload.projectNr ?? `#${projectId}`} zuordnen und ins Logbuch schreiben` : "Erst ein Projekt wählen"} onAccept={() => decide.mutate({ decision: "accept", edits: { projectId, text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
+      s={s} embedded={embedded} brief={chosen ? `${chosen.nr} ${chosen.name || ""}` : projectId ? (s.payload.projectNr ?? `#${projectId}`) : `${cands.length} Projekte zur Auswahl`}
+      actions={<Buttons s={s} busy={decide.isPending} disabled={!projectId} acceptLabel={projectId ? `Zu ${chosen?.nr ?? s.payload.projectNr ?? `#${projectId}`} zuordnen und ins Logbuch schreiben` : "Erst unter „Vorschlag“ ein Projekt wählen"} onAccept={() => decide.mutate({ decision: "accept", edits: { projectId, text } })} onReject={onSkip ?? ((reason) => decide.mutate({ decision: "reject", edits: { reason } }))} />}
     >
         {s.payload.reason && <p className="text-xs text-muted-foreground">Warum: {s.payload.reason}</p>}
         <div className="space-y-1">
@@ -142,7 +147,7 @@ function OfferCard({ s }: { s: Suggestion }) {
   );
 }
 
-function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
+function ProjectCard({ s, gewerke, embedded, onSkip }: { s: Suggestion; gewerke: Gewerk[] } & AltProps) {
   const decide = useDecide(s);
   const p = s.payload;
   const [c, setC] = useState({ ...p.contact });
@@ -161,7 +166,7 @@ function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
   const who = fromExisting ? existing!.name : c.company || [c.first_name, c.last_name].filter(Boolean).join(" ") || c.email;
   return (
     <SuggestionCard
-      s={s} brief={`${name || "(ohne Projektname)"}${who ? ` · ${who}${fromExisting ? " (bestehender Kunde)" : " (neuer Kontakt)"}` : ""}`}
+      s={s} embedded={embedded} brief={`${name || "(ohne Projektname)"}${who ? ` · ${who}${fromExisting ? " (bestehender Kunde)" : " (neuer Kontakt)"}` : ""}`}
       actions={
         <Buttons
           s={s} busy={decide.isPending}
@@ -169,7 +174,7 @@ function ProjectCard({ s, gewerke }: { s: Suggestion; gewerke: Gewerk[] }) {
             ? `Neues Projekt ${quoted(name)} beim bestehenden Kunden ${who} in HERO anlegen`
             : `Neuen Kontakt${who ? ` ${who}` : ""} und Projekt ${quoted(name)} in HERO anlegen`}
           onAccept={() => decide.mutate({ decision: "accept", edits: { contact: c, useExisting: fromExisting, project: { name, notes, gewerk: gewerke.find((g) => g.short === gw) ?? null } } })}
-          onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
+          onReject={onSkip ?? ((reason) => decide.mutate({ decision: "reject", edits: { reason } }))}
         />
       }
     >
@@ -240,7 +245,9 @@ export default function Decide() {
       <DigestCard />
       {q.data && !q.data.length && <Card><CardContent className="p-6 text-sm text-muted-foreground">Keine offenen Vorschläge. 🎉</CardContent></Card>}
       <div className="space-y-4">
-        {q.data?.map((s) => {
+        {groupAlternatives(q.data ?? []).map((g) => {
+          if (Array.isArray(g)) return <ProjectChoice key={g.map((s) => s.id).join()} items={g} gewerke={gewerke} />;
+          const s = g;
           switch (s.type) {
             case "link_project": return <LinkCard key={s.id} s={s} />;
             case "log_entry": return <LogCard key={s.id} s={s} />;
@@ -264,5 +271,36 @@ function GenericCard({ s }: { s: Suggestion }) {
     <SuggestionCard s={s} actions={<Buttons s={s} busy={decide.isPending} acceptLabel="Annehmen" onAccept={() => decide.mutate({ decision: "accept" })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}>
         <pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-xs">{JSON.stringify(s.payload, null, 2)}</pre>
     </SuggestionCard>
+  );
+}
+
+const ALTERNATIVES = ["create_project", "link_project"];
+
+/** Offene „Projekt anlegen“ + „Projekt zuordnen“ derselben Mail zu einer Gruppe zusammenfassen (an der Stelle des ersten). */
+function groupAlternatives(list: Suggestion[]): (Suggestion | Suggestion[])[] {
+  const byMsg = new Map<string, Suggestion[]>();
+  for (const s of list) if (ALTERNATIVES.includes(s.type)) (byMsg.get(s.message.id) ?? byMsg.set(s.message.id, []).get(s.message.id)!).push(s);
+  const out: (Suggestion | Suggestion[])[] = [];
+  const done = new Set<string>();
+  for (const s of list) {
+    const g = byMsg.get(s.message.id);
+    if (!g || g.length < 2 || !ALTERNATIVES.includes(s.type)) { out.push(s); continue; }
+    if (done.has(s.message.id)) continue;
+    done.add(s.message.id);
+    out.push([...g].sort((a, b) => ALTERNATIVES.indexOf(a.type) - ALTERNATIVES.indexOf(b.type)));
+  }
+  return out;
+}
+
+function ProjectChoice({ items, gewerke }: { items: Suggestion[]; gewerke: Gewerk[] }) {
+  const skip = useRejectAll(items.map((s) => s.id));
+  const onSkip = (reason: string) => skip.mutate(reason);
+  return (
+    <AlternativesCard
+      label="Neues Projekt oder bestehendes?"
+      items={items.map((s) => s.type === "create_project"
+        ? { s, title: "Neues Projekt anlegen", render: (e) => <ProjectCard s={s} gewerke={gewerke} embedded={e} onSkip={onSkip} /> }
+        : { s, title: `Zu bestehendem Projekt (${(s.payload.candidates ?? []).length || 1})`, render: (e) => <LinkCard s={s} embedded={e} onSkip={onSkip} /> })}
+    />
   );
 }

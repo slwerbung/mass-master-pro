@@ -186,6 +186,8 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
 - Bestellung → Projekt + AB: Vorschlag `create_confirmation` (`confirmation.ts`/`confirmationWiring.ts`). Grundlage ist die frühere AB des
   Kunden bzw. das Angebot im Projekt; Namen/Preise kommen aus HERO, die KI wählt nur Positionen und Mengen. HERO-Dokumente entstehen
   über `create_document(input, actions)` als ENTWURF (`publish: false`); danach Vorschlag `send_document` („Prüfen & versenden“).
+- „Nein, anders …“ = Anweisung (`instruct.ts`): KI-Plan (Projekt neu/zuordnen, Angebotsentwurf, HERO-Termin) → Vorschau → Klick führt
+  über `decideSuggestion` bzw. `heroCreateAppointment` aus. Anweisungen nie in die Wissensdatei (gelten nur für die eine Mail).
 - Referenzwissen (`email_reference_docs`, Einstellungen → Referenzwissen): Skill-Dateien/HERO-Doku je KI-Aufgabe, `loadReference()`.
 - Rechnungen nur im Kundenportal (z. B. Aral): Ordner „8 Belege abholen (Portal)“, `email_messages.beleg_state = 'portal_offen'` ist die
   Warteschlange für eine spätere Browser-Automatisierung.

@@ -109,9 +109,20 @@ Annehmen geht auch eingeklappt; dann gelten die Werte des Vorschlags.
 
 Ein bloßes „Ablehnen" gibt es nicht. An jedem Vorschlag stehen neben „Annehmen" zwei Wege:
 
-- **„Nein, anders …"**: Freitext, was Sache ist oder was stattdessen passieren soll, z. B. „gehört zu WER-1820, nur ins
-  Logbuch“. Das läuft wie eine Korrektur (`teach`): Der Vorschlag wird verworfen, die Mail mit dem Hinweis neu verarbeitet,
-  danach liegt der neue Vorschlag da. Auf Wunsch kommt der Satz in die Wissensdatei.
+- **„Nein, anders …"** = **Anweisung** (`instruct.ts`, `email-action` `instruct_plan`/`instruct_run`): in eigenen Worten, was
+  passieren soll, z. B. „Neues Projekt anlegen, Angebotsentwurf und morgen Büro-Termin“ oder „gehört zu WER-1820“. Die KI
+  (Aufgabe „Verstehen“) macht daraus einen Plan aus höchstens drei Bausteinen: Projekt (neu / zuordnen), Angebotsentwurf,
+  HERO-Termin (Kategorie aus `appointment_category` mit Quelle hero; ohne Uhrzeit 09:00, 30 Min., „morgen“ = nächster
+  Werktag). Der Plan wird gezeigt und ist bearbeitbar; erst „In HERO ausführen“ tut etwas – über dieselben Wege wie ein
+  angenommener Vorschlag. Was nicht geht, steht unter „Geht nicht automatisch“. Eine Anweisung wird **nicht** in die
+  Wissensdatei übernommen (sie gilt nur für diese Mail); protokolliert als `email_feedback.field = 'anweisung'`.
+- **„Stattdessen nur erklären“** (Link in der Anweisungsbox, und „Falsch? Erklären“ in der Mail-Ansicht): Korrektur (`teach`) –
+  Vorschläge verworfen, Mail mit dem Hinweis neu verarbeitet, auf Wunsch Eintrag in der Wissensdatei. Für Aufträge an HERO
+  nicht geeignet: dabei passiert in HERO nichts, die Mail kommt nur mit neuen Vorschlägen zurück.
+- In der Mail-Ansicht gibt es dieselbe Anweisung als **„In HERO erledigen …“**.
+- **Alternativen:** „Projekt zuordnen“ und „Projekt anlegen“ zur selben Mail stehen als EINE Karte („Neues Projekt oder
+  bestehendes?“) mit Umschalter. Wird eine Variante angenommen, schließt `email-action` die andere („Alternative gewählt“);
+  „Nicht nötig“ verwirft beide.
 - **„Nicht nötig"**: verwirft den Vorschlag ohne Folgen (HERO und Postfach bleiben unverändert). Der Grund
   („Schon erledigt“ o. Ä.) steht in `email_suggestions.result.reason` und als `abgelehnt: <Grund>` in `email_feedback`.
   Von dort fließt er als Korrekturbeispiel ins Verstehen ein.
