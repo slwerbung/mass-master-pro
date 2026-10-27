@@ -9,7 +9,7 @@
 // mit einem zweiten Klick ueber HERO (`send_document`).
 
 import { z } from "zod";
-import { fence } from "./classify.ts";
+import { fence } from "./fence.ts";
 import { runTask, type LlmDeps, type LlmRequest } from "./llm.ts";
 
 // ---------------------------------------------------------------------------

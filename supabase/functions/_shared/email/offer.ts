@@ -12,7 +12,7 @@
 
 import { z } from "zod";
 import { runTask, type LlmDeps, type LlmRequest } from "./llm.ts";
-import { fence } from "./classify.ts";
+import { fence } from "./fence.ts";
 
 export interface ServiceRow { id: number; name: string }
 
