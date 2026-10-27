@@ -190,7 +190,8 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
 - Bestellung → Projekt + AB: Vorschlag `create_confirmation` (`confirmation.ts`/`confirmationWiring.ts`). Grundlage ist die frühere AB des
   Kunden bzw. das Angebot im Projekt; Namen/Preise kommen aus HERO, die KI wählt nur Positionen und Mengen. HERO-Dokumente entstehen
   über `create_document(input, actions)` als ENTWURF (`publish: false`); danach Vorschlag `send_document` („Prüfen & versenden“).
-- „Nein, anders …“ = Anweisung (`instruct.ts`): KI-Plan (Projekt neu/zuordnen, Angebotsentwurf, HERO-Termin) → Vorschau → Klick führt
+- „Nein, anders …“ = Anweisung (`instruct.ts`): KI-Plan (Projekt neu/zuordnen, Angebotsentwurf, HERO-Termine – mehrere, je mit Mitarbeiter
+  als `partner_ids`; Mitarbeiterliste aus HERO-Terminen + `employees.hero_partner_id`) → Vorschau → Klick führt
   über `decideSuggestion` bzw. `heroCreateAppointment` aus. Anweisungen nie in die Wissensdatei (gelten nur für die eine Mail).
 - **Nie ein Dubletten-Kontakt in HERO:** gibt es die Absenderadresse schon (auch als Ansprechpartner), wird das Projekt dort angelegt
   (`createProject` in `action.ts`); bei mehreren Treffern gilt das ältere Original (`preferEstablished`). Sagt eine Anweisung
