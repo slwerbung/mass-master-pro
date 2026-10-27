@@ -7,11 +7,9 @@
 // Nur mit Admin-Sitzung. Antwort immer HTTP 200 mit { ok, data | error }.
 
 import { createClient } from "@supabase/supabase-js";
-import { simpleParser } from "mailparser";
-import { Buffer } from "node:buffer";
 import { fail, ok, preflight, readJson, requireAdmin } from "../_shared/email/http.ts";
 import { accountPassword } from "../_shared/email/config.ts";
-import { fetchSource, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
+import { fetchDisplay, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
 import { mailHtml, MAX_CACHE_CHARS } from "../_shared/email/mailHtml.ts";
 
 const MAX_IDS = 100;
@@ -44,14 +42,14 @@ const handlers: Record<string, (sb: any, body: any) => Promise<unknown>> = {
       const r = await withImap(creds, async (client) => {
         const at = await locate(client, m, [fm.inbox || "INBOX", fm.sent, ...Object.values(fm.folders || {})].filter(Boolean) as string[]);
         if (!at) return null;
-        const src = await fetchSource(client, at.folder, at.uid);
-        return src ? { at, src } : null;
+        const view = await fetchDisplay(client, at.folder, at.uid);
+        return view ? { at, view } : null;
       });
       if (!r) {
         // Nicht (mehr) im Postfach: der gespeicherte Text ist alles, was es gibt.
         return { html: null, kind: "missing", text: m.body_text, source: "none" };
       }
-      const view = mailHtml(await simpleParser(Buffer.from(r.src) as any));
+      const view = mailHtml({ html: r.view.html, text: r.view.text, attachments: r.view.images.map((i) => ({ cid: i.cid, contentType: i.mime, content: i.content })) });
       const patch: Record<string, unknown> = { current_folder: r.at.folder, current_uid: r.at.uid };
       if (view.html.length <= MAX_CACHE_CHARS) patch.body_html = view.html;
       await sb.from("email_messages").update(patch).eq("id", m.id);

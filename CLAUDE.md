@@ -173,7 +173,8 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
   keine Automatik im Postfach/HERO, nur `plan`. Vorschläge ändern nichts, bis jemand klickt.
 - **„Löschen“ in der Mail-App = in den Papierkorb des Postfachs VERSCHIEBEN** (IMAP MOVE, `email-mailbox` `trash`, `trashed_at`),
   wiederherstellbar. Endgültig gelöscht wird nie.
-- HTML-Ansicht: `email-mailbox` `body` holt die Mail per IMAP, bettet `cid:`-Bilder ein (`mailHtml.ts`) und speichert in `body_html`
+- HTML-Ansicht: `email-mailbox` `body` holt per IMAP nur HTML/Text und eingebettete Bilder (BODYSTRUCTURE, `fetchDisplay` – nie die
+  ganze Mail durch mailparser: grosse Anhaenge sprengen das CPU-Limit), bettet `cid:`-Bilder ein (`mailHtml.ts`) und speichert in `body_html`
   (Aufbewahrungsfrist wie `body_text`). Angezeigt nur im iframe mit `sandbox` ohne Skripte und CSP; externe Bilder erst per Klick.
 - **Kein Versand, kein Löschen – drei Ausnahmen:** Der Assistent selbst schreibt Antworten nur als ENTWÜRFE in „Entwürfe“; kein Resend, kein
   `messageDelete`/`\Deleted`/expunge. Ausnahmen (ausdrücklich freigegeben): (1) Belege gehen automatisch per SMTP (Port 465) an die
