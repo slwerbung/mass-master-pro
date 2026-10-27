@@ -122,7 +122,7 @@ export async function contactsByEmail(apiKey: string, email: string, fetchImpl: 
   }`;
   const data = await heroGraphql(apiKey, q, { s: email }, fetchImpl);
   const want = email.trim().toLowerCase();
-  return (data?.contacts || [])
+  return preferEstablished((data?.contacts || [])
     .filter((c: any) => String(c.email || "").trim().toLowerCase() === want)
     .map((c: any) => ({
       id: Number(c.id),
@@ -130,7 +130,17 @@ export async function contactsByEmail(apiKey: string, email: string, fetchImpl: 
       name: String(c.full_name || c.company_name || [c.first_name, c.last_name].filter(Boolean).join(" ") || "").trim(),
       email: want,
       isContactPerson: !!c.is_contact_person,
-    }));
+    })));
+}
+
+/**
+ * Gleiche Adresse bei mehreren Kunden (Dublette): zuerst der Kunde mit den meisten Treffern, bei Gleichstand der
+ * aeltere (kleinere ID) – das ist das gepflegte Original, nicht die spaeter versehentlich angelegte Kopie.
+ */
+export function preferEstablished<T extends { customerId: number }>(list: T[]): T[] {
+  const n = new Map<number, number>();
+  for (const c of list) n.set(c.customerId, (n.get(c.customerId) ?? 0) + 1);
+  return [...list].sort((a, b) => (n.get(b.customerId)! - n.get(a.customerId)!) || a.customerId - b.customerId);
 }
 
 export interface HeroContactHit extends HeroContact { company: string | null }

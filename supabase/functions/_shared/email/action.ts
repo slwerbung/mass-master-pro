@@ -249,18 +249,27 @@ async function createProject(s: SuggestionRow, p: any, deps: ActionDeps, warning
   }
   const name = String(need(p.project?.name, "Projektname fehlt.")).trim().slice(0, 200);
 
-  const g = deps.config.gewerke.find((x) => x.short === p.project?.gewerk?.short) ?? null;
-  const measureId = g?.measure_id ?? p.project?.gewerk?.measure_id ?? null;
+  // Nur Gewerke aus der Konfiguration; unbekannt -> Standard-Gewerk (WER), nie eine frei gelieferte measure_id.
+  const g = deps.config.gewerke.find((x) => x.short === p.project?.gewerk?.short) ?? deps.config.gewerke.find((x) => x.default) ?? null;
+  const measureId = g?.measure_id ?? (deps.config.gewerke.length ? null : p.project?.gewerk?.measure_id ?? null);
 
-  // 1. Kontakt: bestehenden Kunden nehmen, sonst anlegen (`findExisting` verhindert Dubletten bei gleicher E-Mail).
+  // 1. Kontakt: bestehenden Kunden nehmen, sonst anlegen. Gibt es die E-Mail-Adresse in HERO schon, wird NIE ein
+  //    neuer Kontakt angelegt – `findExisting` von HERO erkennt Ansprechpartner eines Firmenkunden nicht (Dublette live
+  //    passiert: Firma neu angelegt, obwohl die Absenderin Ansprechpartnerin beim bestehenden Kunden war).
   let contactId: number | null = null;
   let customerId: number;
   if (existingId) {
     customerId = existingId;
   } else {
-    contactId = await hero!.createContact({ ...c, email }, "Mail-Assistent");
-    const found = await hero!.contactsByEmail(email).catch(() => [] as HeroContact[]);
-    customerId = found.find((x) => x.id === contactId)?.customerId ?? found[0]?.customerId ?? contactId;
+    const known = email ? await hero!.contactsByEmail(email).catch(() => [] as HeroContact[]) : [];
+    if (known.length) {
+      customerId = known[0].customerId;
+      warnings.push(`Den Kontakt ${email} gibt es in HERO schon – Projekt beim bestehenden Kunden ${known[0].name || customerId} angelegt, kein neuer Kontakt.`);
+    } else {
+      contactId = await hero!.createContact({ ...c, email }, "Mail-Assistent");
+      const found = await hero!.contactsByEmail(email).catch(() => [] as HeroContact[]);
+      customerId = found.find((x) => x.id === contactId)?.customerId ?? found[0]?.customerId ?? contactId;
+    }
   }
 
   // 2. Projekt (Startschritt „Anfragen")
