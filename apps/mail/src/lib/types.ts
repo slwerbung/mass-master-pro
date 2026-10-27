@@ -24,6 +24,10 @@ export interface MessageRow {
   beleg_vendor: string | null;
   correction_note: string | null;
   trashed_at: string | null;
+  /** Beantwortet (aus der Mail-App oder einem anderen Mailprogramm – erkannt an In-Reply-To) */
+  answered_at: string | null;
+  /** Vom Menschen weitergeleitet (nicht die Beleg-Weiterleitung an Lexware, die ist `forwarded_at`) */
+  user_forwarded_at: string | null;
 }
 
 export interface Account {
