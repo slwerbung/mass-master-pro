@@ -6,8 +6,10 @@ import { invokeFn } from "@/lib/api";
 import { Button, Input, Spinner, Textarea } from "@/components/ui";
 import { cn, errorText } from "@/lib/utils";
 
+interface CustomerOption { id: number; name: string }
+type NewProject = { mode: "new"; name: string; existingCustomer: CustomerOption | null; requireExisting: boolean; customerOptions: CustomerOption[] };
 type PlanProject =
-  | { mode: "new"; name: string; existingCustomer: { id: number; name: string } | null }
+  | NewProject
   | { mode: "link"; projectNr: string; projectId: number | null }
   | { mode: "keep" };
 interface Plan {
@@ -47,6 +49,8 @@ export function InstructBox({ messageId, onCancel, onExplain }: { messageId: str
   });
 
   const nothing = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointment;
+  // „Kontakt gibt es schon“: ohne gewaehlten Kunden wird nichts angelegt (nie ein neuer Kontakt).
+  const customerMissing = plan?.project.mode === "new" && plan.project.requireExisting && !plan.project.existingCustomer;
   const p = plan;
   return (
     <div className="space-y-3 rounded-md border border-sky-200 bg-sky-50/60 p-3">
@@ -63,10 +67,33 @@ export function InstructBox({ messageId, onCancel, onExplain }: { messageId: str
         <div className="space-y-2 rounded-md border bg-background p-3 text-sm">
           <div className="text-xs font-medium text-muted-foreground">Das würde passieren – bitte prüfen</div>
           {p.project.mode === "new" && (
-            <Row icon={<FolderPlus className="h-4 w-4" />} onRemove={() => setPlan({ ...p, project: { mode: "keep" } })}>
-              <span className="shrink-0">Neues Projekt{p.project.existingCustomer ? ` bei ${p.project.existingCustomer.name}` : " mit neuem Kontakt"}:</span>
-              <Input className="h-8 w-auto min-w-48 flex-1" value={p.project.name} onChange={(e) => setPlan({ ...p, project: { ...(p.project as Extract<PlanProject, { mode: "new" }>), name: e.target.value } })} />
-            </Row>
+            <>
+              <Row icon={<FolderPlus className="h-4 w-4" />} onRemove={() => setPlan({ ...p, project: { mode: "keep" } })}>
+                <span className="shrink-0">
+                  Neues Projekt{p.project.existingCustomer ? ` bei ${p.project.existingCustomer.name} (bestehender Kunde)` : p.project.requireExisting ? " beim bestehenden Kunden" : " mit neuem Kontakt"}:
+                </span>
+                <Input className="h-8 w-auto min-w-48 flex-1" value={p.project.name} onChange={(e) => setPlan({ ...p, project: { ...(p.project as NewProject), name: e.target.value } })} />
+              </Row>
+              {p.project.customerOptions.length > 0 && (
+                <label className="flex flex-wrap items-center gap-2 pl-6 text-sm">
+                  <span className="text-muted-foreground">Kunde in HERO:</span>
+                  <select
+                    className="h-8 min-w-48 flex-1 rounded-md border bg-background px-2"
+                    value={p.project.existingCustomer?.id ?? ""}
+                    onChange={(e) => {
+                      const np = p.project as NewProject;
+                      setPlan({ ...p, project: { ...np, existingCustomer: np.customerOptions.find((c) => c.id === Number(e.target.value)) ?? null } });
+                    }}
+                  >
+                    <option value="">– bitte wählen –</option>
+                    {p.project.customerOptions.map((c) => <option key={c.id} value={c.id}>{c.name} (Nr. {c.id})</option>)}
+                  </select>
+                </label>
+              )}
+              {customerMissing && p.project.customerOptions.length === 0 && (
+                <p className="pl-6 text-xs text-red-700">Den bestehenden Kunden hat HERO nicht gefunden. Bitte den Kundennamen in die Anweisung schreiben und den Plan neu zeigen lassen – ein neuer Kontakt wird nicht angelegt.</p>
+              )}
+            </>
           )}
           {p.project.mode === "link" && (
             <Row icon={<FolderPlus className="h-4 w-4" />} onRemove={() => setPlan({ ...p, project: { mode: "keep" } })}>
@@ -114,7 +141,7 @@ export function InstructBox({ messageId, onCancel, onExplain }: { messageId: str
           </Button>
         )}
         {!steps && p && (
-          <Button size="sm" onClick={() => run.mutate()} disabled={!!nothing || run.isPending}>
+          <Button size="sm" onClick={() => run.mutate()} disabled={!!nothing || customerMissing || run.isPending}>
             {run.isPending && <Spinner />} In HERO ausführen
           </Button>
         )}

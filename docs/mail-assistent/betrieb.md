@@ -116,6 +116,10 @@ Ein bloßes „Ablehnen" gibt es nicht. An jedem Vorschlag stehen neben „Anneh
   Werktag). Der Plan wird gezeigt und ist bearbeitbar; erst „In HERO ausführen“ tut etwas – über dieselben Wege wie ein
   angenommener Vorschlag. Was nicht geht, steht unter „Geht nicht automatisch“. Eine Anweisung wird **nicht** in die
   Wissensdatei übernommen (sie gilt nur für diese Mail); protokolliert als `email_feedback.field = 'anweisung'`.
+  Sagt die Anweisung, dass es den Kontakt schon gibt („Kontakt existiert“, „beim Kunden X“), ist das verbindlich: der Plan
+  sucht den Kunden in HERO (Adresse, genannter Name, Firma, Firmen-Domain), zeigt bei mehreren eine Auswahl und legt ohne
+  gewählten bestehenden Kunden nichts an. Ein neuer Kontakt entsteht ohnehin nie, wenn die Absenderadresse in HERO schon
+  existiert (auch als Ansprechpartner eines Firmenkunden – `findExisting` von HERO erkennt das nicht; live passiert beim VfR).
 - **„Stattdessen nur erklären“** (Link in der Anweisungsbox, und „Falsch? Erklären“ in der Mail-Ansicht): Korrektur (`teach`) –
   Vorschläge verworfen, Mail mit dem Hinweis neu verarbeitet, auf Wunsch Eintrag in der Wissensdatei. Für Aufträge an HERO
   nicht geeignet: dabei passiert in HERO nichts, die Mail kommt nur mit neuen Vorschlägen zurück.

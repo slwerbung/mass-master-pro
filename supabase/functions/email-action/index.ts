@@ -19,7 +19,9 @@ import { buildLlmDeps } from "../_shared/email/config.ts";
 import { offerSuggester } from "../_shared/email/offerWiring.ts";
 import type { Gewerk } from "../_shared/email/gewerke.ts";
 import { buildCreateProjectPayload } from "../_shared/email/act.ts";
-import { berlinToday, planInstruction, runInstruction, type InstructionContext, type InstructionPlan } from "../_shared/email/instruct.ts";
+import { berlinToday, planInstruction, runInstruction, type CustomerLookup, type CustomerOption, type InstructionContext, type InstructionPlan } from "../_shared/email/instruct.ts";
+import { emailDomain } from "../_shared/email/match.ts";
+import { FREEMAIL_DOMAINS } from "../_shared/email/types.ts";
 import { heroCreateAppointment } from "../_shared/booking/hero.ts";
 
 const INSTRUCT_MSG_COLS = "id, account_id, direction, category, subject, summary, from_name, from_addr, to_addrs, has_attachments, extracted, match_info, hero_project_match_id";
@@ -41,6 +43,26 @@ function instructionContext(m: any, categories: { id: number; label: string }[])
   };
 }
 
+/** HERO-Kundensuche fuer die Anweisung: Treffer je Kunde zusammengefasst, das Original vor Dubletten. */
+function customerLookup(key: string): CustomerLookup {
+  return {
+    async search(term) {
+      const hits = H.preferEstablished(await H.searchContacts(key, term));
+      const out = new Map<number, CustomerOption>();
+      for (const h of hits) {
+        const cur = out.get(h.customerId);
+        // Name des Kunden selbst bevorzugen; ein Ansprechpartner steht nur da, solange der Kunde nicht selbst getroffen ist.
+        if (!cur || (!h.isContactPerson && cur.name.endsWith("(Ansprechpartner)"))) {
+          out.set(h.customerId, { id: h.customerId, name: h.isContactPerson ? `${h.name} (Ansprechpartner)` : h.name });
+        }
+      }
+      return [...out.values()];
+    },
+  };
+}
+
+const optionOf = (v: any): CustomerOption | null => (Number(v?.id) > 0 ? { id: Number(v.id), name: String(v.name || "").slice(0, 200) } : null);
+
 /** Plan aus dem Client pruefen: nur bekannte Kategorien, gueltige Zeiten, Pflichtfelder. */
 function checkPlan(p: any, categories: { id: number; label: string }[]): InstructionPlan {
   if (!p || typeof p !== "object") throw new ActionError("Plan fehlt.");
@@ -49,7 +71,11 @@ function checkPlan(p: any, categories: { id: number; label: string }[]): Instruc
   if (mode === "new") {
     const name = String(p.project.name || "").trim();
     if (!name) throw new ActionError("Projektname fehlt.");
-    project = { mode: "new", name: name.slice(0, 200), existingCustomer: p.project.existingCustomer?.id ? { id: Number(p.project.existingCustomer.id), name: String(p.project.existingCustomer.name || "") } : null };
+    project = {
+      mode: "new", name: name.slice(0, 200), existingCustomer: optionOf(p.project.existingCustomer),
+      requireExisting: !!p.project.requireExisting,
+      customerOptions: (Array.isArray(p.project.customerOptions) ? p.project.customerOptions : []).map(optionOf).filter(Boolean).slice(0, 8) as CustomerOption[],
+    };
   } else if (mode === "link") {
     const nr = String(p.project.projectNr || "").trim();
     if (!nr) throw new ActionError("Projektnummer fehlt.");
@@ -134,7 +160,16 @@ Deno.serve(async (req) => {
       const categories = await heroCategories(sb);
       if (body.action === "instruct_plan") {
         const defaultName = String((buildCreateProjectPayload(m, { gewerke }) as any).project?.name || "");
-        return ok(await planInstruction(text, instructionContext(m, categories), defaultName, await buildLlmDeps(sb), m.id));
+        const ctx = instructionContext(m, categories);
+        // Aeltere Mails tragen den erkannten Kunden nicht in match_info: dann direkt in HERO nach der Adresse suchen.
+        if (!ctx.existingCustomer && key) {
+          const found = await H.contactsByEmail(key, m.from_addr).catch(() => []);
+          if (found.length) ctx.existingCustomer = { id: found[0].customerId, name: found[0].name };
+        }
+        // Sagt die Anweisung „Kontakt gibt es schon“, sucht der Plan den Kunden auch ueber Firma und Firmen-Domain.
+        const dom = emailDomain(m.from_addr);
+        const terms = [m.extracted?.contact?.company, dom && !FREEMAIL_DOMAINS.includes(dom) ? dom : null].filter(Boolean) as string[];
+        return ok(await planInstruction(text, ctx, defaultName, await buildLlmDeps(sb), m.id, key ? customerLookup(key) : undefined, terms));
       }
       if (!key || !hero) return fail("HERO ist nicht aktiviert (hero_enabled / hero_api_key).");
       const plan = checkPlan(body.plan, categories);

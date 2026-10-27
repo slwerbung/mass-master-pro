@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addLogbookEntry, contactsByEmail, createContact, createDocument, createEmptyDocument, documentsOfProjects, pickTemplate, sendDocumentMail, createProject, heroGraphql,
+  addLogbookEntry, contactsByEmail, preferEstablished, createContact, createDocument, createEmptyDocument, documentsOfProjects, pickTemplate, sendDocumentMail, createProject, heroGraphql,
   listServices, openProjectsOfCustomer, projectByNumber, setStep, toProject,
 } from "./hero.ts";
 
@@ -51,7 +51,13 @@ describe("Lesen", () => {
       { id: 3, email: "max@muster.de", is_contact_person: false, company_name: "Muster GmbH" },
     ] } })]);
     const r = await contactsByEmail("k", "max@muster.de", f);
-    expect(r.map((c) => [c.id, c.customerId])).toEqual([[1, 77], [3, 3]]);
+    expect(r.map((c) => [c.id, c.customerId])).toEqual([[3, 3], [1, 77]]);
+  });
+  it("Dublette: gleiche Adresse bei zwei Kunden -> das aeltere Original zuerst (live: VfR 1302092 vs. Kopie 8286198)", () => {
+    const r = preferEstablished([{ id: 8286198, customerId: 8286198 }, { id: 2460033, customerId: 1302092 }]);
+    expect(r.map((c) => c.customerId)).toEqual([1302092, 8286198]);
+    const many = preferEstablished([{ customerId: 5 }, { customerId: 9 }, { customerId: 9 }]);
+    expect(many[0].customerId).toBe(9);
   });
   it("openProjectsOfCustomer: ausgeschlossene Schritte und fremde Kunden raus", async () => {
     const mk = (id: number, step: number, cust: number) => ({ id, project_nr: `WER-${id}`, name: "", current_project_match_status: { step_id: step, step: { name: "s" } }, customer: { id: cust } });

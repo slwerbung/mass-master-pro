@@ -36,6 +36,9 @@ export const InstructionSchema = z.object({
     project_nr: z.string().nullish().transform((v) => v ?? null),
     name: z.string().nullish().transform((v) => v ?? null),
   }).catch({ action: "unveraendert", project_nr: null, name: null }),
+  /** Was die Anweisung ueber den Kontakt sagt: „vorhanden“ = gibt es in HERO schon (dann NIE ein neuer Kontakt). */
+  contact: z.enum(["vorhanden", "neu", "unklar"]).catch("unklar"),
+  customer_hint: z.string().nullish().transform((v) => v ?? null),
   offer: z.boolean().catch(false),
   appointment: z.object({
     category: z.string().nullish().transform((v) => v ?? null),
@@ -50,7 +53,7 @@ export const InstructionSchema = z.object({
 export type InstructionResult = z.infer<typeof InstructionSchema>;
 
 const JSON_SCHEMA = {
-  type: "object", additionalProperties: false, required: ["project", "offer", "appointment", "not_doable", "summary"],
+  type: "object", additionalProperties: false, required: ["project", "contact", "customer_hint", "offer", "appointment", "not_doable", "summary"],
   properties: {
     project: {
       type: "object", additionalProperties: false, required: ["action", "project_nr", "name"],
@@ -60,6 +63,8 @@ const JSON_SCHEMA = {
         name: { type: ["string", "null"] },
       },
     },
+    contact: { type: "string", enum: ["vorhanden", "neu", "unklar"] },
+    customer_hint: { type: ["string", "null"] },
     offer: { type: "boolean" },
     appointment: {
       type: ["object", "null"], additionalProperties: false, required: ["category", "date", "time", "duration_min", "title"],
@@ -86,6 +91,8 @@ export function buildInstructionRequest(text: string, c: InstructionContext): Ll
         "Regeln:",
         "- project.action: „neu“ nur, wenn die Anweisung ein neues Projekt verlangt; „bestehend“ mit project_nr (z. B. WER-1820), wenn sie ein Projekt nennt; sonst „unveraendert“.",
         "- project.name: Projektname, wenn die Anweisung einen nennt oder er sich klar aus Mail und Anweisung ergibt (kurz, z. B. „Anhänger Beschriftung“); sonst null.",
+        "- contact: „vorhanden“, wenn die Anweisung sagt, dass es den Kunden/Kontakt schon gibt (z. B. „Kontakt existiert“, „bestehender Kunde“, „beim Kunden X anlegen“, „nicht neu anlegen“); „neu“ nur, wenn ausdruecklich ein NEUER Kontakt verlangt wird; sonst „unklar“.",
+        "- customer_hint: Name des bestehenden Kunden, wenn die Anweisung einen nennt (z. B. „VfR Birkmannsweiler“); sonst null.",
         "- appointment: nur wenn die Anweisung einen Termin verlangt. category = eine Kategorie aus der Liste (genau so geschrieben) oder null.",
         `  date als YYYY-MM-DD. Heute ist ${wd}, ${c.today}. „morgen“/„kommenden Tag“ = naechster Tag; faellt er auf Samstag oder Sonntag, nimm den naechsten Montag.`,
         "  time als HH:MM nur, wenn eine Uhrzeit genannt ist, sonst null. duration_min nur, wenn genannt. title kurz (ohne Datum).",
@@ -116,8 +123,16 @@ export function buildInstructionRequest(text: string, c: InstructionContext): Ll
   };
 }
 
+export interface CustomerOption { id: number; name: string }
+
 export type PlanProject =
-  | { mode: "new"; name: string; existingCustomer: { id: number; name: string } | null }
+  | {
+    mode: "new"; name: string; existingCustomer: CustomerOption | null;
+    /** Die Anweisung sagt, den Kontakt gibt es schon: dann wird nur bei einem bestehenden Kunden angelegt, nie neu. */
+    requireExisting: boolean;
+    /** Kunden aus der HERO-Suche, wenn keiner eindeutig ist (Auswahl in der Mail-App) */
+    customerOptions: CustomerOption[];
+  }
   | { mode: "link"; projectNr: string; projectId: number | null }
   | { mode: "keep" };
 
@@ -145,7 +160,10 @@ export function toPlan(r: InstructionResult, c: InstructionContext, defaultName:
   const notDoable = [...r.not_doable];
   let project: PlanProject = { mode: "keep" };
   if (r.project.action === "neu") {
-    project = { mode: "new", name: (r.project.name || defaultName || c.subject || "Neue Anfrage").slice(0, 200), existingCustomer: c.existingCustomer };
+    project = {
+      mode: "new", name: (r.project.name || defaultName || c.subject || "Neue Anfrage").slice(0, 200), existingCustomer: c.existingCustomer,
+      requireExisting: r.contact === "vorhanden", customerOptions: [],
+    };
   } else if (r.project.action === "bestehend") {
     const nr = String(r.project.project_nr || "").trim().toUpperCase();
     const hit = c.candidates.find((p) => p.nr.toUpperCase() === nr);
@@ -171,9 +189,37 @@ export function toPlan(r: InstructionResult, c: InstructionContext, defaultName:
   return { project, offer: r.offer, appointment, notDoable, summary: r.summary };
 }
 
-export async function planInstruction(text: string, c: InstructionContext, defaultName: string, llm: LlmDeps, messageId: string): Promise<InstructionPlan> {
+export interface CustomerLookup {
+  /** Kunden zu einem Suchbegriff (Firmenname, Domain); Reihenfolge = Vorzug */
+  search(term: string): Promise<CustomerOption[]>;
+}
+
+/**
+ * Sagt die Anweisung „den Kontakt gibt es schon“ und kennt der Assistent den Kunden noch nicht, wird in HERO gesucht
+ * (genannter Name, Firma aus der Mail, Firmen-Domain). Genau ein Treffer -> dieser Kunde; mehrere -> Auswahl;
+ * keiner -> Hinweis, und ausgefuehrt wird erst, wenn ein Kunde gewaehlt ist. Ein neuer Kontakt entsteht dann nie.
+ */
+export async function resolveCustomer(plan: InstructionPlan, hint: string | null, terms: string[], lookup: CustomerLookup): Promise<InstructionPlan> {
+  const p = plan.project;
+  if (p.mode !== "new" || p.existingCustomer || !p.requireExisting) return plan;
+  const seen = new Map<number, CustomerOption>();
+  for (const t of [hint, ...terms]) {
+    const term = String(t || "").trim();
+    if (term.length < 3) continue;
+    for (const c of await lookup.search(term).catch(() => [] as CustomerOption[])) if (!seen.has(c.id)) seen.set(c.id, c);
+    if (seen.size) break;
+  }
+  const options = [...seen.values()].slice(0, 8);
+  const project = { ...p, existingCustomer: options.length === 1 ? options[0] : null, customerOptions: options.length > 1 ? options : [] };
+  const notDoable = options.length ? plan.notDoable
+    : [...plan.notDoable, "Bestehenden Kunden in HERO nicht gefunden – bitte Kundennamen in der Anweisung nennen (es wird kein neuer Kontakt angelegt)"];
+  return { ...plan, project, notDoable };
+}
+
+export async function planInstruction(text: string, c: InstructionContext, defaultName: string, llm: LlmDeps, messageId: string, lookup?: CustomerLookup, terms: string[] = []): Promise<InstructionPlan> {
   const r = await runTask("understand", buildInstructionRequest(text, c), InstructionSchema, llm, { messageId });
-  return toPlan(r.data, c, defaultName);
+  const plan = toPlan(r.data, c, defaultName);
+  return lookup ? await resolveCustomer(plan, r.data.customer_hint, terms, lookup) : plan;
 }
 
 /** Berliner Wanduhrzeit -> echter Zeitpunkt (ISO, UTC). */
@@ -212,10 +258,15 @@ export async function runInstruction(plan: InstructionPlan, text: string, d: Run
 
   // 1. Projekt
   if (plan.project.mode === "new") {
+    const ec = plan.project.existingCustomer;
+    if (!ec && plan.project.requireExisting) {
+      out.push({ step: "project", ok: false, text: "Projekt nicht angelegt: Der Kontakt soll schon existieren, aber kein bestehender Kunde ist gewählt – es wird kein neuer Kontakt angelegt." });
+      return out;
+    }
     const id = await d.ensureSuggestion("create_project", {});
     if (!id) throw new Error("Für diese Mail lässt sich kein Projekt-Vorschlag anlegen.");
     try {
-      const r = await d.decide(id, { project: { name: plan.project.name }, useExisting: !!plan.project.existingCustomer });
+      const r = await d.decide(id, { project: { name: plan.project.name }, useExisting: !!ec, ...(ec ? { existingCustomer: { id: ec.id, name: ec.name } } : {}) });
       project = { id: Number(r.projectId), nr: String(r.projectNr ?? "") };
       out.push({ step: "project", ok: true, text: withWarnings(`Projekt ${r.projectNr} „${plan.project.name}“ angelegt`, r) });
     } catch (e) {

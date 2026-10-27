@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { berlinToIso, buildInstructionRequest, InstructionSchema, nextWorkday, runInstruction, toPlan, type InstructionContext, type RunDeps } from "./instruct";
+import { berlinToIso, buildInstructionRequest, InstructionSchema, nextWorkday, resolveCustomer, runInstruction, toPlan, type InstructionContext, type RunDeps } from "./instruct";
 
 const ctx: InstructionContext = {
   subject: "WG: Anhänger", summary: "Anfrage Beschriftung Anhänger", fromName: "Peter Heinle", projectNr: null,
@@ -31,7 +31,7 @@ describe("toPlan", () => {
       appointment: { category: "büro", date: null, time: null, duration_min: null, title: null }, not_doable: [], summary: "x",
     });
     const p = toPlan(r, ctx, "Anhänger Beschriftung");
-    expect(p.project).toEqual({ mode: "new", name: "Anhänger Beschriftung", existingCustomer: { id: 4469248, name: "Firma Elektro Heinle" } });
+    expect(p.project).toEqual({ mode: "new", name: "Anhänger Beschriftung", existingCustomer: { id: 4469248, name: "Firma Elektro Heinle" }, requireExisting: false, customerOptions: [] });
     expect(p.offer).toBe(true);
     expect(p.appointment).toEqual({ categoryId: 32131, categoryLabel: "Büro", date: "2026-10-28", time: "09:00", durationMin: 30, title: "Büro: WG: Anhänger" });
   });
@@ -75,7 +75,7 @@ function deps(o: { failProject?: boolean; noOffer?: boolean; current?: { id: num
 }
 
 const plan = {
-  project: { mode: "new" as const, name: "Anhänger", existingCustomer: { id: 1, name: "K" } }, offer: true,
+  project: { mode: "new" as const, name: "Anhänger", existingCustomer: { id: 1, name: "K" }, requireExisting: false, customerOptions: [] }, offer: true,
   appointment: { categoryId: 32131, categoryLabel: "Büro", date: "2026-10-28", time: "09:00", durationMin: 30, title: "Büro: Anhänger" },
   notDoable: [], summary: "",
 };
@@ -85,7 +85,7 @@ describe("runInstruction", () => {
     const t = deps();
     const r = await runInstruction(plan, "Neues Projekt, Angebot, Büro morgen", t.d);
     expect(r.map((x) => [x.step, x.ok])).toEqual([["project", true], ["offer", true], ["appointment", true]]);
-    expect(t.log.decided[0]).toEqual(["S-create_project", { project: { name: "Anhänger" }, useExisting: true }]);
+    expect(t.log.decided[0]).toEqual(["S-create_project", { project: { name: "Anhänger" }, useExisting: true, existingCustomer: { id: 1, name: "K" } }]);
     expect(t.log.decided[1]).toEqual(["S-prepare_offer", { projectId: 555, projectNr: "WER-555", kind: "angebot" }]);
     expect(r[1].text).toContain("Hinweis: 1 Position ohne Leistung");
     expect(t.log.appts[0]).toMatchObject({ projectId: 555, categoryId: 32131, startIso: "2026-10-28T08:00:00.000Z", endIso: "2026-10-28T08:30:00.000Z" });
@@ -102,5 +102,49 @@ describe("runInstruction", () => {
     const r = await runInstruction({ ...plan, project: { mode: "link", projectNr: "WER-9", projectId: null }, offer: false, appointment: null }, "x", t.d);
     expect(r).toEqual([{ step: "project", ok: true, text: "Zu WER-1270 zugeordnet und ins Logbuch geschrieben" }]);
     expect(t.log.ensured[0]).toEqual(["link_project", { projectId: 9, manual: true }]);
+  });
+});
+
+describe("„Den Kontakt gibt es schon“", () => {
+  const unknown = { ...ctx, existingCustomer: null };
+  const said = InstructionSchema.parse({
+    project: { action: "neu", project_nr: null, name: "Weihnachtsgeschenke 26" }, contact: "vorhanden", customer_hint: "VfR Birkmannsweiler",
+    offer: false, appointment: null, not_doable: [], summary: "",
+  });
+  const lookup = (hits: Record<string, { id: number; name: string }[]>) => {
+    const asked: string[] = [];
+    return { asked, search: async (t: string) => (asked.push(t), hits[t] ?? []) };
+  };
+
+  it("die Anweisung wird erkannt und im Plan festgehalten", () => {
+    expect(toPlan(said, unknown, "").project).toMatchObject({ mode: "new", existingCustomer: null, requireExisting: true });
+    expect(buildInstructionRequest("x", ctx).system[0].text).toContain("contact: „vorhanden“");
+  });
+  it("genau ein Kunde gefunden -> der wird genommen (Name aus der Anweisung zuerst)", async () => {
+    const l = lookup({ "VfR Birkmannsweiler": [{ id: 1302092, name: "Firma VfR Birkmannsweiler e.V." }] });
+    const p = await resolveCustomer(toPlan(said, unknown, ""), said.customer_hint, ["vfr-bmw.de"], l);
+    expect(p.project).toMatchObject({ existingCustomer: { id: 1302092 }, customerOptions: [] });
+    expect(l.asked).toEqual(["VfR Birkmannsweiler"]);
+  });
+  it("mehrere Kunden -> Auswahl, nichts vorgewaehlt", async () => {
+    const l = lookup({ "vfr-bmw.de": [{ id: 1302092, name: "A" }, { id: 8286198, name: "B" }] });
+    const p = await resolveCustomer(toPlan(said, unknown, ""), null, ["", "vfr-bmw.de"], l);
+    expect(p.project).toMatchObject({ existingCustomer: null, customerOptions: [{ id: 1302092 }, { id: 8286198 }] });
+  });
+  it("kein Kunde gefunden -> Hinweis, und Ausfuehren legt NICHTS an (kein neuer Kontakt)", async () => {
+    const p = await resolveCustomer(toPlan(said, unknown, ""), said.customer_hint, [], lookup({}));
+    expect(p.notDoable.join()).toContain("kein neuer Kontakt");
+    const t = deps();
+    const r = await runInstruction({ ...p, appointment: null }, "x", t.d);
+    expect(r).toEqual([expect.objectContaining({ step: "project", ok: false })]);
+    expect(t.log.ensured).toEqual([]);
+    expect(t.log.decided).toEqual([]);
+  });
+  it("ohne diese Aussage wird nicht gesucht", async () => {
+    const r = InstructionSchema.parse({ ...said, contact: "unklar" });
+    const l = lookup({ "VfR Birkmannsweiler": [{ id: 1, name: "X" }] });
+    const p = await resolveCustomer(toPlan(r, unknown, ""), r.customer_hint, [], l);
+    expect(p.project).toMatchObject({ existingCustomer: null, requireExisting: false });
+    expect(l.asked).toEqual([]);
   });
 });

@@ -12,7 +12,7 @@ function row(o: Partial<SuggestionRow> & { payload?: any } = {}): SuggestionRow 
   };
 }
 
-function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; open?: number; claim?: boolean; offerFail?: boolean } = {}) {
+function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; open?: number; claim?: boolean; offerFail?: boolean; known?: boolean } = {}) {
   const log: any = { suggestions: [], released: [], sent: [], marked: [], offers: [], offerSuggest: [], uploaded: [], upsug: [], docs: [], claimed: [], finished: [], assigned: [], logged: [], feedback: [], status: [], logbook: [], steps: [], contacts: [], projects: [], dropped: [], alternatives: [] };
   const store: ActionStore = {
     getSuggestion: async () => s,
@@ -36,7 +36,8 @@ function setup(s: SuggestionRow | null, o: { hero?: Partial<ActionHero> | null; 
     setStep: async (id, st) => { log.steps.push([id, st]); },
     projectById: async (id) => (id === 404 ? null : { id, nr: `WER-${id}`, name: `P${id}`, stepId: 1, stepName: "x", customerId: 7, customerName: "K" }),
     createContact: async (c, src) => (log.contacts.push([c, src]), 900),
-    contactsByEmail: async () => [{ id: 900, customerId: 901, name: "Max", email: "kunde@x.de", isContactPerson: true }],
+    // Vor dem Anlegen unbekannt, danach gefunden – ausser der Test legt einen bestehenden Kontakt an (o.known).
+    contactsByEmail: async () => (o.known || log.contacts.length ? [{ id: 900, customerId: 901, name: "Max", email: "kunde@x.de", isContactPerson: true }] : []),
     createProject: async (p) => (log.projects.push(p), { id: 555, nr: "WER-555" }),
     createDocument: async (pid, dt, actions) => { if (o.offerFail) throw new Error("create_document passt nicht"); log.offers.push([pid, dt, actions]); return { id: 88, nr: null }; },
     documentById: async (id) => ({ id, nr: "AB-1", date: null, statusCode: 100, statusName: "Erstellt", value: 10, projectId: 5, projectNr: "WER-5", baseType: "confirmation", fileUuid: "uuid-1", draft: null }),
@@ -188,6 +189,13 @@ describe("create_project", () => {
     await decideSuggestion({ suggestionId: "S1", decision: "accept", edits: { useExisting: false } }, t.deps);
     expect(t.log.contacts).toHaveLength(1);
     expect(t.log.projects[0]).toMatchObject({ customerId: 901 });
+  });
+  it("E-Mail-Adresse gibt es in HERO schon: NIE ein neuer Kontakt (auch ohne erkannten Kunden im Vorschlag)", async () => {
+    const t = setup(s(), { known: true });
+    const r = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(t.log.contacts).toEqual([]);
+    expect(r).toMatchObject({ contactId: null, customerId: 901 });
+    expect(String((r as any).warnings?.[0])).toContain("gibt es in HERO schon");
   });
   it("Pflichtangaben werden vor dem Anlegen geprueft – nichts landet halb in HERO", async () => {
     const bad = s(); bad.payload.contact.last_name = null;

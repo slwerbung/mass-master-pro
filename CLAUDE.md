@@ -189,6 +189,10 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
   über `create_document(input, actions)` als ENTWURF (`publish: false`); danach Vorschlag `send_document` („Prüfen & versenden“).
 - „Nein, anders …“ = Anweisung (`instruct.ts`): KI-Plan (Projekt neu/zuordnen, Angebotsentwurf, HERO-Termin) → Vorschau → Klick führt
   über `decideSuggestion` bzw. `heroCreateAppointment` aus. Anweisungen nie in die Wissensdatei (gelten nur für die eine Mail).
+- **Nie ein Dubletten-Kontakt in HERO:** gibt es die Absenderadresse schon (auch als Ansprechpartner), wird das Projekt dort angelegt
+  (`createProject` in `action.ts`); bei mehreren Treffern gilt das ältere Original (`preferEstablished`). Sagt eine Anweisung
+  „Kontakt gibt es schon“ (`contact: vorhanden`), wird nur bei einem bestehenden Kunden angelegt – nicht gefunden = nichts anlegen.
+- Gewerk: alle Projekte sind **WER**. Unbekanntes/fehlendes Gewerk → Standard-Gewerk aus `email_config.gewerke`, nie eine freie `measure_id`.
 - Referenzwissen (`email_reference_docs`, Einstellungen → Referenzwissen): Skill-Dateien/HERO-Doku je KI-Aufgabe, `loadReference()`.
 - Rechnungen nur im Kundenportal (z. B. Aral): Ordner „8 Belege abholen (Portal)“, `email_messages.beleg_state = 'portal_offen'` ist die
   Warteschlange für eine spätere Browser-Automatisierung.
