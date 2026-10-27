@@ -98,3 +98,13 @@ describe("Sonstiges", () => {
     expect(t).not.toContain("color");
   });
 });
+
+describe("detectFormality", async () => {
+  const { detectFormality } = await import("./mail");
+  it("erkennt Duzen und Siezen im Kundentext", () => {
+    expect(detectFormality("Hallo Silas,\nkannst du mir da ein Angebot machen.\nVorlage stelle ich bereit.")).toBe("du");
+    expect(detectFormality("Sehr geehrte Damen und Herren, könnten Sie uns ein Angebot schicken? Vielen Dank für Ihre Mühe.")).toBe("sie");
+    expect(detectFormality("Sie haben recht.")).toBeNull(); // „Sie“ am Satzanfang zählt nicht
+    expect(detectFormality("Anbei die Rechnung.")).toBeNull();
+  });
+});

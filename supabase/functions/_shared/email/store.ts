@@ -305,6 +305,10 @@ export function draftStore(sb: any): DraftStore {
     async save(messageId, patch) {
       must(await sb.from("email_messages").update(patch).eq("id", messageId));
     },
+    async attachmentNames(messageId) {
+      const { data } = await sb.from("email_attachments").select("filename").eq("message_id", messageId).eq("is_ignored", false);
+      return (data || []).map((a: any) => String(a.filename)).slice(0, 20);
+    },
   };
 }
 

@@ -33,7 +33,7 @@ describe("Prompt", () => {
   it("enthaelt Regeln (du/sie, keine erfundenen Preise, Platzhalter), HERO-Kontext und den Verlauf", () => {
     const r = buildDraftRequest(base);
     const sys = r.system[0].text;
-    expect(sys).toMatch(/duzt/);
+    expect(sys).toMatch(/nie zwischen du und Sie wechseln/);
     expect(sys).toMatch(/NIE Preise/);
     expect(sys).toContain("[[Termin vorschlagen]]");
     expect(sys).toContain("Winnenden");
@@ -48,7 +48,7 @@ describe("Prompt", () => {
   it("Hinweis des Mitarbeiters und fehlende Signatur", () => {
     const r = buildDraftRequest({ ...base, hint: "kürzer", signatureHint: false, hero: null });
     expect(r.user).toContain("Hinweis des Mitarbeiters fuer diesen Entwurf: kürzer");
-    expect(r.system[0].text).toContain("Viele Gruesse");
+    expect(r.system[0].text).toContain("Viele Grüße");
     expect(r.user).not.toContain("HERO-Projekt");
   });
 });
@@ -116,5 +116,18 @@ describe("generateDraft", () => {
     const t = setup({ body: "" });
     await expect(generateDraft(msg(), t.deps, { write: true })).rejects.toThrow();
     expect(t.saved).toEqual([]);
+  });
+});
+
+describe("Entwurf: Anrede und Anhaenge im Prompt", async () => {
+  const { buildDraftRequest } = await import("./draft");
+  const base = { mail: { extracted: {} } as any, thread: [], hero: null, knowledge: "", replyRules: "", signatureHint: true };
+  it("gibt Du/Sie fest vor und nennt die Anhaenge", () => {
+    const r = buildDraftRequest({ ...base, formality: "du", attachments: ["entwurf_anhaenger.pdf"] });
+    expect(r.user).toContain("Anrede: DU");
+    expect(r.user).toContain("Anhänge der Kundenmail: entwurf_anhaenger.pdf");
+    expect(r.system[0].text).toContain("NIE erneut erfragen");
+    expect(buildDraftRequest({ ...base, formality: "sie" }).user).toContain("Anrede: SIE");
+    expect(buildDraftRequest({ ...base }).user).toContain("Anrede: unklar");
   });
 });
