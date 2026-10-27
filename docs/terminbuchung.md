@@ -181,11 +181,19 @@ Zwei Dinge, die den ersten Versuch scheitern ließen:
 Je Terminart eine Vorlage per Du und per Sie, Kontext `PARTNER_CUSTOMER`,
 Versand **aus dem Projekt** (sonst ist `{{ProjectMatch.display_id}}` leer):
 
-| id | Vorlage | Terminart |
-| --- | --- | --- |
-| 63591 / 63592 | Terminbuchung Kundentermin (PER SIE / PER DU) | `kundentermin_vor_ort` |
-| 63593 / 63594 | Terminbuchung Aufmaß vor Ort (PER SIE / PER DU) | `aufmass_vor_ort` |
-| 63595 / 63596 | Terminbuchung Montage vor Ort (PER SIE / PER DU) | `montage_vor_ort` |
+| id | Vorlage | Terminart | Dauer im Link |
+| --- | --- | --- | --- |
+| 63591 / 63592 | Terminbuchung Kundentermin (PER SIE / PER DU) | `kundentermin_vor_ort` | – (feste Dauer) |
+| 63593 / 63594 | Terminbuchung Aufmaß vor Ort (PER SIE / PER DU) | `aufmass_vor_ort` | – (feste Dauer) |
+| 66033 / 66034 | Terminbuchung Montage vor Ort 8 Std. | `montage_vor_ort` | `/d480` |
+| 66035 / 66036 | Terminbuchung Montage vor Ort 6 Std. | `montage_vor_ort` | `/d360` |
+| 66037 / 66038 | Terminbuchung Montage vor Ort 4 Std. | `montage_vor_ort` | `/d240` |
+| 66039 / 66040 | Terminbuchung Montage vor Ort 2 Std. | `montage_vor_ort` | `/d120` |
+| 66041 / 66042 | Terminbuchung Montage vor Ort 1 Std. | `montage_vor_ort` | `/d60` |
+
+Die Montage hat eine **einstellbare** Dauer, und HERO kann keine einsetzen —
+deshalb je Laenge eine eigene Vorlage (27.10.2026). Die fruehere Vorlage ohne
+Laenge (63595/63596) ist entfallen; sie tat dasselbe wie die 8-Std.-Variante.
 
 Angelegt per `create_email_template` (GraphQL v9, `file_upload_id: 0`). Über die
 API bleiben die Klammern unkodiert — nachgelesen und geprüft. **Wer eine dieser
