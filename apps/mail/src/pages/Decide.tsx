@@ -8,7 +8,8 @@ import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Fiel
 import { ProjectSearch } from "@/components/ProjectSearch";
 import { ConfirmationCard, SendDocumentCard } from "@/components/OrderCards";
 import {
-  AlternativesCard, Buttons, ExistingCustomerChoice, quoted, SuggestionCard, useDecide, useRejectAll, type ExistingCustomer,
+  AlternativesCard, AlternativesPicker, Buttons, ExistingCustomerChoice, MessageGroupCard, quoted, SuggestionCard, typeLabel, useDecide, useRejectAll,
+  type ExistingCustomer,
 } from "@/components/SuggestionParts";
 import { formatDateTime } from "@/lib/utils";
 
@@ -47,12 +48,12 @@ function LinkCard({ s, embedded, onSkip }: { s: Suggestion } & AltProps) {
   );
 }
 
-function LogCard({ s }: { s: Suggestion }) {
+function LogCard({ s, embedded }: { s: Suggestion } & AltProps) {
   const decide = useDecide(s);
   const [text, setText] = useState<string>(s.payload.text ?? "");
   return (
     <SuggestionCard
-      s={s} brief={`${s.payload.projectNr ?? s.payload.projectId}${s.payload.projectName ? ` ${s.payload.projectName}` : ""}`}
+      s={s} embedded={embedded} brief={`${s.payload.projectNr ?? s.payload.projectId}${s.payload.projectName ? ` ${s.payload.projectName}` : ""}`}
       actions={<Buttons s={s} busy={decide.isPending} acceptLabel={`Ins Logbuch von ${s.payload.projectNr ?? `#${s.payload.projectId}`} schreiben`} onAccept={() => decide.mutate({ decision: "accept", edits: { text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>{s.payload.projectName ? ` · ${s.payload.projectName}` : ""}</p>
@@ -61,14 +62,14 @@ function LogCard({ s }: { s: Suggestion }) {
   );
 }
 
-function StepCard({ s }: { s: Suggestion }) {
+function StepCard({ s, embedded }: { s: Suggestion } & AltProps) {
   const decide = useDecide(s);
   const alts = (s.payload.alternatives ?? []) as { key: string; stepId: number; label: string }[];
   const [stepId, setStepId] = useState<number>(s.payload.toStepId);
   const label = stepId === s.payload.toStepId ? s.payload.toLabel : alts.find((a) => a.stepId === stepId)?.label;
   return (
     <SuggestionCard
-      s={s} brief={`${s.payload.projectNr ?? s.payload.projectId} → ${label ?? "?"}`}
+      s={s} embedded={embedded} brief={`${s.payload.projectNr ?? s.payload.projectId} → ${label ?? "?"}`}
       actions={<Buttons s={s} busy={decide.isPending} acceptLabel={`${s.payload.projectNr ?? `#${s.payload.projectId}`}: Status auf ${quoted(label)} setzen`} onAccept={() => decide.mutate({ decision: "accept", edits: { toStepId: stepId } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>: {s.payload.reason}.</p>
@@ -83,7 +84,7 @@ function StepCard({ s }: { s: Suggestion }) {
   );
 }
 
-function UploadCard({ s }: { s: Suggestion }) {
+function UploadCard({ s, embedded }: { s: Suggestion } & AltProps) {
   const decide = useDecide(s);
   const [items, setItems] = useState<{ attachmentId: string; filename: string; mime: string; size: number; role: string; docKey: string; documentTypeId: number; selected: boolean }[]>(s.payload.items ?? []);
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api<{ hero: { document_types: Record<string, number> } | null }>("get_config") });
@@ -94,7 +95,7 @@ function UploadCard({ s }: { s: Suggestion }) {
   const n = items.filter((i) => i.selected).length;
   return (
     <SuggestionCard
-      s={s} brief={`${n} von ${items.length} Anhang/Anhänge → ${s.payload.projectNr ?? s.payload.projectId}`}
+      s={s} embedded={embedded} brief={`${n} von ${items.length} Anhang/Anhänge → ${s.payload.projectNr ?? s.payload.projectId}`}
       actions={<Buttons s={s} busy={decide.isPending} disabled={!n} acceptLabel={`${n} ${n === 1 ? "Anhang" : "Anhänge"} an ${s.payload.projectNr ?? `#${s.payload.projectId}`} hochladen`} onAccept={() => decide.mutate({ decision: "accept", edits: { items } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
         <p className="text-sm">Ans Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b> hochladen:</p>
@@ -114,7 +115,7 @@ function UploadCard({ s }: { s: Suggestion }) {
 
 interface OfferPos { serviceId: number | null; serviceName: string | null; description: string; quantity: number | null; unit: string | null; note: string | null }
 
-function OfferCard({ s }: { s: Suggestion }) {
+function OfferCard({ s, embedded }: { s: Suggestion } & AltProps) {
   const decide = useDecide(s);
   const [kind, setKind] = useState<"angebot" | "vor_ort">(s.payload.kind);
   const [positions, setPositions] = useState<OfferPos[]>(s.payload.positions ?? []);
@@ -122,7 +123,7 @@ function OfferCard({ s }: { s: Suggestion }) {
   const missing = (s.payload.missing ?? []) as string[];
   return (
     <SuggestionCard
-      s={s} brief={kind === "angebot" ? `Angebot mit ${positions.length} Position(en)` : "Vor-Ort-Termin"}
+      s={s} embedded={embedded} brief={kind === "angebot" ? `Angebot mit ${positions.length} Position(en)` : "Vor-Ort-Termin"}
       actions={<Buttons s={s} busy={decide.isPending} acceptLabel={kind === "angebot" ? `Angebotsentwurf in ${s.payload.projectNr ?? `#${s.payload.projectId}`} anlegen` : `${s.payload.projectNr ?? `#${s.payload.projectId}`}: Status auf „Vor-Ort-Termin“ setzen`} onAccept={() => decide.mutate({ decision: "accept", edits: { kind, positions } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
         <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>: {s.payload.summary}</p>
@@ -245,62 +246,82 @@ export default function Decide() {
       <DigestCard />
       {q.data && !q.data.length && <Card><CardContent className="p-6 text-sm text-muted-foreground">Keine offenen Vorschläge. 🎉</CardContent></Card>}
       <div className="space-y-4">
-        {groupAlternatives(q.data ?? []).map((g) => {
-          if (Array.isArray(g)) return <ProjectChoice key={g.map((s) => s.id).join()} items={g} gewerke={gewerke} />;
-          const s = g;
-          switch (s.type) {
-            case "link_project": return <LinkCard key={s.id} s={s} />;
-            case "log_entry": return <LogCard key={s.id} s={s} />;
-            case "change_step": return <StepCard key={s.id} s={s} />;
-            case "create_project": return <ProjectCard key={s.id} s={s} gewerke={gewerke} />;
-            case "upload_attachments": return <UploadCard key={s.id} s={s} />;
-            case "prepare_offer": return <OfferCard key={s.id} s={s} />;
-            case "create_confirmation": return <ConfirmationCard key={s.id} s={s} />;
-            case "send_document": return <SendDocumentCard key={s.id} s={s} />;
-            default: return <GenericCard key={s.id} s={s} />;
+        {groupByMessage(q.data ?? []).map((units) => {
+          const key = units.flat().map((s) => s.id).join();
+          if (units.length === 1) {
+            const u = units[0];
+            return Array.isArray(u) ? <ProjectChoice key={key} items={u} gewerke={gewerke} /> : <One key={key} s={u} gewerke={gewerke} />;
           }
+          // Mehrere Entscheidungen zur selben Mail: EINE Karte, Kopf und Mail einmal, darunter die Entscheidungen.
+          return (
+            <MessageGroupCard
+              key={key} s={units.flat()[0]}
+              sections={units.map((u) => Array.isArray(u)
+                ? { key: u.map((s) => s.id).join(), title: "Neues Projekt oder bestehendes?", node: <ProjectChoice items={u} gewerke={gewerke} embedded /> }
+                : { key: u.id, title: typeLabel(u), node: <One s={u} gewerke={gewerke} embedded /> })}
+            />
+          );
         })}
       </div>
     </div>
   );
 }
 
-function GenericCard({ s }: { s: Suggestion }) {
+function GenericCard({ s, embedded }: { s: Suggestion } & AltProps) {
   const decide = useDecide(s);
   return (
-    <SuggestionCard s={s} actions={<Buttons s={s} busy={decide.isPending} acceptLabel="Annehmen" onAccept={() => decide.mutate({ decision: "accept" })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}>
+    <SuggestionCard s={s} embedded={embedded} actions={<Buttons s={s} busy={decide.isPending} acceptLabel="Annehmen" onAccept={() => decide.mutate({ decision: "accept" })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}>
         <pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-xs">{JSON.stringify(s.payload, null, 2)}</pre>
     </SuggestionCard>
   );
 }
 
-const ALTERNATIVES = ["create_project", "link_project"];
-
-/** Offene „Projekt anlegen“ + „Projekt zuordnen“ derselben Mail zu einer Gruppe zusammenfassen (an der Stelle des ersten). */
-function groupAlternatives(list: Suggestion[]): (Suggestion | Suggestion[])[] {
-  const byMsg = new Map<string, Suggestion[]>();
-  for (const s of list) if (ALTERNATIVES.includes(s.type)) (byMsg.get(s.message.id) ?? byMsg.set(s.message.id, []).get(s.message.id)!).push(s);
-  const out: (Suggestion | Suggestion[])[] = [];
-  const done = new Set<string>();
-  for (const s of list) {
-    const g = byMsg.get(s.message.id);
-    if (!g || g.length < 2 || !ALTERNATIVES.includes(s.type)) { out.push(s); continue; }
-    if (done.has(s.message.id)) continue;
-    done.add(s.message.id);
-    out.push([...g].sort((a, b) => ALTERNATIVES.indexOf(a.type) - ALTERNATIVES.indexOf(b.type)));
+function One({ s, gewerke, embedded }: { s: Suggestion; gewerke: Gewerk[]; embedded?: boolean }) {
+  switch (s.type) {
+    case "link_project": return <LinkCard s={s} embedded={embedded} />;
+    case "log_entry": return <LogCard s={s} embedded={embedded} />;
+    case "change_step": return <StepCard s={s} embedded={embedded} />;
+    case "create_project": return <ProjectCard s={s} gewerke={gewerke} embedded={embedded} />;
+    case "upload_attachments": return <UploadCard s={s} embedded={embedded} />;
+    case "prepare_offer": return <OfferCard s={s} embedded={embedded} />;
+    case "create_confirmation": return <ConfirmationCard s={s} embedded={embedded} />;
+    case "send_document": return <SendDocumentCard s={s} embedded={embedded} />;
+    default: return <GenericCard s={s} embedded={embedded} />;
   }
-  return out;
 }
 
-function ProjectChoice({ items, gewerke }: { items: Suggestion[]; gewerke: Gewerk[] }) {
+const ALTERNATIVES = ["create_project", "link_project"];
+/** Reihenfolge der Entscheidungen in einer Karte: erst das Projekt, dann was daran haengt. */
+const ORDER = ["create_project", "link_project", "create_confirmation", "upload_attachments", "prepare_offer", "change_step", "log_entry", "send_document"];
+const rank = (t: string) => (ORDER.includes(t) ? ORDER.indexOf(t) : ORDER.length);
+
+/** Eine Entscheidung: ein einzelner Vorschlag oder die Wahl „Projekt anlegen“ / „Projekt zuordnen“. */
+type Unit = Suggestion | Suggestion[];
+
+/**
+ * Alle offenen Vorschlaege derselben Mail zusammenfassen (an der Stelle des ersten) – eine Mail = eine Karte.
+ * „Projekt anlegen“ + „Projekt zuordnen“ werden darin zu einer Wahl.
+ */
+function groupByMessage(list: Suggestion[]): Unit[][] {
+  const byMsg = new Map<string, Suggestion[]>();
+  for (const s of list) (byMsg.get(s.message.id) ?? byMsg.set(s.message.id, []).get(s.message.id)!).push(s);
+  return [...byMsg.values()].map((all) => {
+    const sorted = [...all].sort((a, b) => rank(a.type) - rank(b.type));
+    const alts = sorted.filter((s) => ALTERNATIVES.includes(s.type));
+    const units: Unit[] = [];
+    for (const s of sorted) {
+      if (alts.length > 1 && ALTERNATIVES.includes(s.type)) { if (s === alts[0]) units.push(alts); continue; }
+      units.push(s);
+    }
+    return units;
+  });
+}
+
+function ProjectChoice({ items, gewerke, embedded }: { items: Suggestion[]; gewerke: Gewerk[]; embedded?: boolean }) {
   const skip = useRejectAll(items.map((s) => s.id));
   const onSkip = (reason: string) => skip.mutate(reason);
-  return (
-    <AlternativesCard
-      label="Neues Projekt oder bestehendes?"
-      items={items.map((s) => s.type === "create_project"
-        ? { s, title: "Neues Projekt anlegen", render: (e) => <ProjectCard s={s} gewerke={gewerke} embedded={e} onSkip={onSkip} /> }
-        : { s, title: `Zu bestehendem Projekt (${(s.payload.candidates ?? []).length || 1})`, render: (e) => <LinkCard s={s} embedded={e} onSkip={onSkip} /> })}
-    />
-  );
+  const choices = items.map((s) => s.type === "create_project"
+    ? { s, title: "Neues Projekt anlegen", render: (e: true) => <ProjectCard s={s} gewerke={gewerke} embedded={e} onSkip={onSkip} /> }
+    : { s, title: `Zu bestehendem Projekt (${(s.payload.candidates ?? []).length || 1})`, render: (e: true) => <LinkCard s={s} embedded={e} onSkip={onSkip} /> });
+  return embedded ? <AlternativesPicker items={choices} /> : <AlternativesCard label="Neues Projekt oder bestehendes?" items={choices} />;
 }
