@@ -10,6 +10,7 @@ import {
 import { BudgetExceededError, LimitWaitError, runShadow, runTask, type LlmDeps } from "./llm.ts";
 import type { Category, Direction, MessageStatus } from "./types.ts";
 import { guidanceBlock, splitKnowledge, type KnowledgeEntry } from "./knowledge.ts";
+import { detectFormality } from "./mail.ts";
 
 export const UNDERSTAND_BATCH = 20;
 export const MAX_ATTEMPTS = 3;
@@ -115,6 +116,9 @@ export async function understandPending(
       );
       const r = await runTask("understand", req, UnderstandSchema, llm, { messageId: m.id });
       const u: Understanding = r.data;
+      // Du/Sie aus dem Text selbst ist verlaesslicher als das Modell (steuert Entwurf und HERO-Vorlage).
+      const formality = detectFormality(m.body_text ?? "");
+      if (formality) u.contact.formality = formality;
       await store.saveUnderstanding(m.id, {
         status: "klassifiziert",
         category: u.category,

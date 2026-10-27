@@ -133,3 +133,17 @@ export function displayName(name: string | undefined | null, addr: string): stri
   const n = String(name || "").trim().replace(/^["']|["']$/g, "");
   return n || addr;
 }
+
+/**
+ * Duzt oder siezt der Absender? Zaehlt Du- und Sie-Formen im eigenen Text (ohne Zitat). „Hallo Silas, kannst du …“
+ * ist eindeutig – das Modell lag hier oefter daneben. null, wenn nichts Eindeutiges drinsteht.
+ */
+export function detectFormality(text: string): "du" | "sie" | null {
+  const t = String(text || "").slice(0, 4000);
+  const du = (t.match(/\b(du|dich|dir|dein(e[mnrs]?)?|euch|euer|eure[mnrs]?|kannst|hast|bist|willst|machst|brauchst|schickst|meldest)\b/gi) ?? []).length;
+  // Sie-Formen nur gross geschrieben und nicht am Satzanfang (dort kann „Sie“ auch „sie“ = they sein).
+  const sie = (t.match(/(?<![.!?:]\s|^)\b(Sie|Ihnen|Ihr|Ihre[mnrs]?)\b/gm) ?? []).length;
+  if (du > 0 && du >= sie) return "du";
+  if (sie > 0) return "sie";
+  return null;
+}
