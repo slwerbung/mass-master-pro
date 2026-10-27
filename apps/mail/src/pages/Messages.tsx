@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  Calendar, GraduationCap, Inbox, Mail, Paperclip, PenLine, RefreshCw, Search, Send, Tag, Trash2, Undo2, X,
+  Calendar, Forward, GraduationCap, Inbox, Mail, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Tag, Trash2, Undo2, X,
 } from "lucide-react";
 import { api, invokeFn } from "@/lib/api";
 import type { Account, MessageRow } from "@/lib/types";
@@ -262,7 +262,10 @@ export default function Messages() {
                 <input type="checkbox" className="mt-1 h-4 w-4 shrink-0" checked={on} onChange={() => toggle(m.id)} aria-label={`${m.subject || "Mail"} auswählen`} />
                 <Link to={`/mails/${m.id}`} className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <div className="flex flex-wrap items-center gap-2">
-                    {m.direction === "out" ? <Send className="h-4 w-4 text-muted-foreground" aria-label="Ausgehend" /> : <Mail className="h-4 w-4 text-muted-foreground" aria-label="Eingehend" />}
+                    {m.direction === "out" ? <Send className="h-4 w-4 text-muted-foreground" aria-label="Ausgehend" />
+                      : m.answered_at ? <span title={`Beantwortet am ${formatDateTime(m.answered_at)}`}><Reply className="h-4 w-4 text-primary" aria-label="Beantwortet" /></span>
+                      : <Mail className="h-4 w-4 text-muted-foreground" aria-label="Eingehend" />}
+                    {m.user_forwarded_at && <span title={`Weitergeleitet am ${formatDateTime(m.user_forwarded_at)}`}><Forward className="h-4 w-4 text-primary" aria-label="Weitergeleitet" /></span>}
                     <span className="font-medium">{m.from_name || m.from_addr}</span>
                     <CategoryChip category={m.category} />
                     {m.confidence != null && m.confidence < 0.7 && <Badge variant="warn">unsicher {pct(m.confidence)}</Badge>}

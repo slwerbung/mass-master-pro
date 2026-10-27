@@ -147,10 +147,11 @@ const handlers: Record<string, (sb: any, body: any, user: AdminUser) => Promise<
           const res: any = await client.append(fm.sent, raw as any, ["\\Seen"]);
           sentUid = res?.uid ? Number(res.uid) : null;
         } else warnings.push("Kein Gesendet-Ordner bekannt – Kopie nicht abgelegt.");
-        if (orig && mode !== "forward") {
+        // Wie jedes Mailprogramm: Original als beantwortet bzw. weitergeleitet markieren (Thunderbird zeigt beides).
+        if (orig) {
           for (const f of [...new Set([orig.current_folder, orig.folder].filter(Boolean))] as string[]) {
             const uid = await findUidByMessageId(client, f, orig.message_id).catch(() => null);
-            if (uid != null) { await addKeywords(client, f, uid, ["\\Answered"]); break; }
+            if (uid != null) { await addKeywords(client, f, uid, [mode === "forward" ? "$Forwarded" : "\\Answered"]); break; }
           }
         }
         // Ein KI-Entwurf zu dieser Mail ist mit dem Versand ueberholt: in den Papierkorb (nie loeschen).

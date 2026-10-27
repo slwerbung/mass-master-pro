@@ -24,7 +24,7 @@ const CONFIG_KEYS = [
 
 const MESSAGE_LIST_COLUMNS =
   "id, account_id, thread_id, direction, from_addr, from_name, subject, sent_at, status, category, confidence, summary, " +
-  "hero_project_match_id, match_method, has_attachments, draft_message_id, current_folder, error, hero_logged_at, beleg_state, beleg_vendor, correction_note, trashed_at";
+  "hero_project_match_id, match_method, has_attachments, draft_message_id, current_folder, error, hero_logged_at, beleg_state, beleg_vendor, correction_note, trashed_at, answered_at, user_forwarded_at";
 
 const BELEG_STATES = ["weiterleiten_offen", "weitergeleitet", "portal_offen", "portal_erledigt"];
 

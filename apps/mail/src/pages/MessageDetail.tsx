@@ -197,6 +197,8 @@ export default function MessageDetail() {
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
           <span className="text-foreground">{m.direction === "out" ? "an" : "von"} {m.direction === "out" ? (m.to_addrs || []).join(", ") : <><b className="font-medium">{m.from_name || m.from_addr}</b>{m.from_name ? ` <${m.from_addr}>` : ""}</>}</span>
           <span>· {formatDateTime(m.sent_at)}</span>
+          {m.answered_at && <Badge variant="good"><Reply className="h-3 w-3" /> Beantwortet am {formatDateTime(m.answered_at)}</Badge>}
+          {m.user_forwarded_at && <Badge variant="good"><Forward className="h-3 w-3" /> Weitergeleitet am {formatDateTime(m.user_forwarded_at)}</Badge>}
           {m.hero_project_match_id && <Badge variant="outline">{m.match_info?.projectNr ?? `HERO #${m.hero_project_match_id}`}</Badge>}
           {openSuggestions > 0 && <Link to="/"><Badge variant="warn">{openSuggestions} Vorschlag/Vorschläge offen</Badge></Link>}
         </div>
