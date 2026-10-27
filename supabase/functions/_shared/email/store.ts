@@ -262,6 +262,10 @@ export function actionStore(sb: any): ActionStore {
         .eq("message_id", messageId).eq("status", "offen");
       return count ?? 0;
     },
+    async closeAlternatives(messageId, exceptId, types, reason) {
+      must(await sb.from("email_suggestions").update({ status: "abgelehnt", decided_at: new Date().toISOString(), result: { reason } })
+        .eq("message_id", messageId).eq("status", "offen").neq("id", exceptId).in("type", types));
+    },
     async setMessageStatus(messageId, status) {
       must(await sb.from("email_messages").update({ status }).eq("id", messageId));
     },

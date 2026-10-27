@@ -3,11 +3,12 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ArrowLeft, Cpu, Download, FolderKanban, Forward, GraduationCap, ListChecks, MessagesSquare, Paperclip, PenLine, Receipt, RefreshCw, Reply, ReplyAll, Scale, ScanText, Send, Trash2, Undo2,
+  ArrowLeft, Cpu, Download, FolderKanban, Forward, GraduationCap, ListChecks, MessagesSquare, Paperclip, PenLine, Receipt, RefreshCw, Reply, ReplyAll, Scale, ScanText, Send, Trash2, Undo2, Wand2,
 } from "lucide-react";
 import { api, invokeFn } from "@/lib/api";
 import { ProjectSearch } from "@/components/ProjectSearch";
 import { TeachBox } from "@/components/TeachBox";
+import { InstructBox } from "@/components/InstructBox";
 import { MailBody } from "@/components/MailBody";
 import { Section } from "@/components/Section";
 import { CATEGORIES, CATEGORY_LABELS, type Category } from "@/lib/shared";
@@ -98,6 +99,7 @@ export default function MessageDetail() {
   const q = useQuery({ queryKey: ["message", id], queryFn: () => api<Detail>("get_message", { id }) });
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [teach, setTeach] = useState(false);
+  const [instruct, setInstruct] = useState(false);
   const m = q.data?.message;
 
   useEffect(() => { setDraft({}); }, [id, m?.extracted]);
@@ -172,7 +174,8 @@ export default function MessageDetail() {
             <Link to={`/verfassen?reply=${m.id}&mode=replyAll`}><Button size="sm" variant="outline"><ReplyAll className="h-3.5 w-3.5" /> Allen antworten</Button></Link>
           )}
           <Link to={`/verfassen?reply=${m.id}&mode=forward`}><Button size="sm" variant="outline"><Forward className="h-3.5 w-3.5" /> Weiterleiten</Button></Link>
-          <Button size="sm" variant={teach ? "secondary" : "outline"} onClick={() => setTeach(!teach)}><GraduationCap className="h-3.5 w-3.5" /> Falsch? Erklären</Button>
+          <Button size="sm" variant={instruct ? "secondary" : "outline"} onClick={() => { setInstruct(!instruct); setTeach(false); }}><Wand2 className="h-3.5 w-3.5" /> In HERO erledigen …</Button>
+          <Button size="sm" variant={teach ? "secondary" : "outline"} onClick={() => { setTeach(!teach); setInstruct(false); }}><GraduationCap className="h-3.5 w-3.5" /> Falsch? Erklären</Button>
           <Button variant="outline" size="sm" onClick={() => reprocess.mutate()} disabled={reprocess.isPending}><RefreshCw className="h-3.5 w-3.5" /> Neu verarbeiten</Button>
           {m.trashed_at ? (
             <Button variant="outline" size="sm" onClick={() => mailbox.mutate("restore")} disabled={mailbox.isPending}><Undo2 className="h-3.5 w-3.5" /> Wiederherstellen</Button>
@@ -206,6 +209,7 @@ export default function MessageDetail() {
             {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
           </Select>
         </div>
+        {instruct && <InstructBox messageId={m.id} onCancel={() => setInstruct(false)} onExplain={() => { setInstruct(false); setTeach(true); }} />}
         {teach && <TeachBox messageId={m.id} fromAddr={m.from_addr} onCancel={() => setTeach(false)} onDone={() => setTeach(false)} />}
       </div>
 

@@ -336,7 +336,7 @@ export async function actPending(accountId: string, ctx: ActContext, deps: ActDe
 
 // ---------------------------------------------------------------------------
 
-export function buildCreateProjectPayload(m: ActMessage, ctx: Pick<ActContext, "gewerke">): Record<string, unknown> {
+export function buildCreateProjectPayload(m: Pick<ActMessage, "extracted" | "subject" | "from_addr" | "summary" | "match_info">, ctx: Pick<ActContext, "gewerke">): Record<string, unknown> {
   const ex = m.extracted ?? {};
   const contact = ex.contact ?? {};
   const req = ex.request ?? {};

@@ -247,10 +247,8 @@ export interface MailForPrompt {
   body: string;
 }
 
-/** `</mail>` im Mailtext entschaerfen, damit der Fremdtext die Abgrenzung nicht verlassen kann. */
-export function fence(text: string): string {
-  return String(text).replace(/<\s*\/?\s*mail\s*>/gi, (m) => m.replace("<", "‹").replace(">", "›"));
-}
+export { fence } from "./fence.ts";
+import { fence } from "./fence.ts";
 
 export function buildUserPrompt(m: MailForPrompt): string {
   const att = m.attachments.length

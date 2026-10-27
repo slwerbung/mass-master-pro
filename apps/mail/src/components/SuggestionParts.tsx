@@ -9,6 +9,7 @@ import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, Spinner
 import { MailBody } from "@/components/MailBody";
 import { CategoryChip } from "@/components/CategoryChip";
 import { TeachBox } from "@/components/TeachBox";
+import { InstructBox } from "@/components/InstructBox";
 import { cn, errorText, formatDateTime, pct } from "@/lib/utils";
 
 // Gemeinsame Bausteine der Vorschlagskarten („Zu entscheiden").
@@ -37,12 +38,25 @@ export function useDecide(s: Suggestion, successText?: (r: Record<string, any>) 
   return decide;
 }
 
-export function Header({ s }: { s: Suggestion }) {
+/** „Nicht nötig“ in einer Alternativen-Karte: alle Varianten verwerfen (es passiert nichts in HERO/Postfach). */
+export function useRejectAll(ids: string[]) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (reason: string) => {
+      for (const id of ids) await invokeFn("email-action", { action: "decide", suggestionId: id, decision: "reject", edits: { reason } });
+    },
+    onSuccess: () => toast("Verworfen – in HERO und im Postfach hat sich nichts geändert."),
+    onError: (e) => toast.error(errorText(e)),
+    onSettled: () => { ["suggestions", "overview", "messages"].forEach((k) => qc.invalidateQueries({ queryKey: [k] })); },
+  });
+}
+
+export function Header({ s, label }: { s: Suggestion; label?: string }) {
   const m = s.message;
   return (
     <CardHeader>
       <div className="flex flex-wrap items-center gap-2">
-        <Badge>{s.type === "create_project" && s.payload?.existingCustomer ? "Projekt anlegen (Kunde bekannt)" : TYPE_LABEL[s.type] ?? s.type}</Badge>
+        <Badge>{label ?? (s.type === "create_project" && s.payload?.existingCustomer ? "Projekt anlegen (Kunde bekannt)" : TYPE_LABEL[s.type] ?? s.type)}</Badge>
         <CategoryChip category={m.category} />
         {m.confidence != null && <span className="text-xs text-muted-foreground">Konfidenz {pct(m.confidence)}</span>}
         <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(m.sent_at)}</span>
@@ -72,9 +86,22 @@ function Toggle({ open, onClick, icon, label, hint }: { open: boolean; onClick: 
  * Rahmen jeder Vorschlagskarte: sichtbar sind nur Kopf (mit Kurzfassung der Mail) und die Knöpfe.
  * Die Mail selbst und die Felder des Vorschlags klappen bei Bedarf auf.
  */
-export function SuggestionCard({ s, brief, actions, children }: { s: Suggestion; brief?: ReactNode; actions: ReactNode; children: ReactNode }) {
+export function SuggestionCard({ s, brief, actions, children, embedded }: {
+  s: Suggestion; brief?: ReactNode; actions: ReactNode; children: ReactNode;
+  /** Teil einer Alternativen-Karte: ohne eigenen Rahmen, Kopf und Mail (die zeigt die umgebende Karte). */
+  embedded?: boolean;
+}) {
   const [details, setDetails] = useState(false);
   const [mail, setMail] = useState(false);
+  if (embedded) {
+    return (
+      <div className="space-y-3">
+        <Toggle open={details} onClick={() => setDetails(!details)} icon={<SlidersHorizontal className="h-3.5 w-3.5" />} label="Vorschlag" hint={brief} />
+        {details && <div className="space-y-3 rounded-md border bg-muted/20 p-3">{children}</div>}
+        {actions}
+      </div>
+    );
+  }
   return (
     <Card>
       <Header s={s} />
@@ -123,25 +150,26 @@ const SKIP_REASONS = ["Schon erledigt", "Brauchen wir nicht", "Mache ich selbst 
 export function Buttons({ s, onAccept, onReject, acceptLabel, busy, disabled }: {
   s: Suggestion; onAccept: () => void; onReject: (reason: string) => void; acceptLabel: string; busy: boolean; disabled?: boolean;
 }) {
-  const [panel, setPanel] = useState<null | "teach" | "skip">(null);
+  const [panel, setPanel] = useState<null | "instruct" | "teach" | "skip">(null);
   const [reason, setReason] = useState("");
-  const toggle = (p: "teach" | "skip") => setPanel(panel === p ? null : p);
+  const toggle = (p: "instruct" | "skip") => setPanel(panel === p || (p === "instruct" && panel === "teach") ? null : p);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
         <Button onClick={onAccept} disabled={busy || disabled} className="h-auto min-h-9 whitespace-normal py-2 text-left">{busy ? <Spinner /> : null} {acceptLabel}</Button>
-        <Button variant="outline" onClick={() => toggle("teach")} disabled={busy} className={panel === "teach" ? "bg-accent" : ""}>
+        <Button variant="outline" onClick={() => toggle("instruct")} disabled={busy} className={panel === "instruct" || panel === "teach" ? "bg-accent" : ""}>
           <MessageSquareText className="h-4 w-4" /> Nein, anders …
         </Button>
         <Button variant="ghost" onClick={() => toggle("skip")} disabled={busy} className={panel === "skip" ? "bg-accent" : ""}>
           <X className="h-4 w-4" /> Nicht nötig
         </Button>
       </div>
+      {panel === "instruct" && <InstructBox messageId={s.message.id} onCancel={() => setPanel(null)} onExplain={() => setPanel("teach")} />}
       {panel === "teach" && (
         <TeachBox
           messageId={s.message.id} fromAddr={s.message.from_addr} onCancel={() => setPanel(null)}
-          title="Was ist Sache – und was soll stattdessen passieren?"
-          placeholder="z. B. „Kein neues Projekt – gehört zu WER-1820, nur ins Logbuch.“ oder „Das ist eine Lieferantenrechnung, kein Kunde.“"
+          title="Was ist falsch? (Der Assistent lernt daraus und verarbeitet die Mail neu)"
+          placeholder="z. B. „Das ist eine Lieferantenrechnung, kein Kunde.“ – für Aufträge an HERO („Projekt anlegen …“) bitte „Nein, anders …“ nutzen."
           footnote="Dieser Vorschlag wird verworfen und die Mail mit deinem Hinweis neu verarbeitet – danach liegt hier der neue Vorschlag."
         />
       )}
@@ -165,5 +193,35 @@ export function Buttons({ s, onAccept, onReject, acceptLabel, busy, disabled }: 
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Mehrere Vorschlaege zur selben Frage (z. B. „Zu bestehendem Projekt zuordnen“ oder „Neues Projekt anlegen“) als EINE
+ * Karte: Kopf und Mail einmal, darunter die Wahl. Wird eine Variante angenommen, schliesst der Server die andere.
+ */
+export function AlternativesCard({ items, label }: {
+  items: { s: Suggestion; title: string; render: (embedded: true) => ReactNode }[]; label: string;
+}) {
+  const [mail, setMail] = useState(false);
+  const [pick, setPick] = useState(0);
+  const cur = items[Math.min(pick, items.length - 1)];
+  return (
+    <Card>
+      <Header s={cur.s} label={label} />
+      <CardContent className="space-y-3">
+        <div><Toggle open={mail} onClick={() => setMail(!mail)} icon={<Mail className="h-3.5 w-3.5" />} label="Mail" /></div>
+        {mail && <div className="rounded-md border p-2"><MailBody messageId={cur.s.message.id} fallbackText={null} /></div>}
+        <div className="inline-flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1" role="radiogroup">
+          {items.map((it, i) => (
+            <button
+              key={it.s.id} type="button" role="radio" aria-checked={i === pick} onClick={() => setPick(i)}
+              className={cn("rounded-md px-3 py-1.5 text-sm", i === pick ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            >{it.title}</button>
+          ))}
+        </div>
+        <div key={cur.s.id}>{cur.render(true)}</div>
+      </CardContent>
+    </Card>
   );
 }

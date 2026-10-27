@@ -1,6 +1,9 @@
 // Vorschlag ausfuehren (Klick in der Mail-App): HERO-Mutationen, Ergebnis zurueckschreiben.
 //
 //   { action: "decide", suggestionId, decision: "accept" | "reject", edits? }
+//   { action: "assign", messageId, projectId }                 manuelle Zuordnung aus der Mail-Ansicht
+//   { action: "instruct_plan", messageId, text }               Anweisung -> Plan (nur lesen, KI)
+//   { action: "instruct_run", messageId, text, plan }          Plan ausfuehren (Projekt / Angebot / Termin)
 //
 // Nur mit Admin-Sitzung. Schreibende HERO-Aufrufe passieren ausschliesslich hier und
 // nur nach einem Klick.
@@ -15,6 +18,56 @@ import { storageDownloader } from "../_shared/email/uploader.ts";
 import { buildLlmDeps } from "../_shared/email/config.ts";
 import { offerSuggester } from "../_shared/email/offerWiring.ts";
 import type { Gewerk } from "../_shared/email/gewerke.ts";
+import { buildCreateProjectPayload } from "../_shared/email/act.ts";
+import { berlinToday, planInstruction, runInstruction, type InstructionContext, type InstructionPlan } from "../_shared/email/instruct.ts";
+import { heroCreateAppointment } from "../_shared/booking/hero.ts";
+
+const INSTRUCT_MSG_COLS = "id, account_id, direction, category, subject, summary, from_name, from_addr, to_addrs, has_attachments, extracted, match_info, hero_project_match_id";
+
+/** HERO-Terminkategorien (aus der Terminbuchung, `appointment_category` mit Quelle hero). */
+async function heroCategories(sb: any): Promise<{ id: number; label: string }[]> {
+  const { data } = await sb.from("appointment_category").select("key, label").eq("source", "hero").order("label");
+  return (data || []).map((c: any) => ({ id: Number(String(c.key).replace(/^hero:/, "")), label: c.label })).filter((c: any) => c.id > 0);
+}
+
+function instructionContext(m: any, categories: { id: number; label: string }[]): InstructionContext {
+  const mi = m.match_info || {};
+  return {
+    subject: m.subject || "", summary: m.summary ?? null, fromName: m.from_name || m.from_addr,
+    projectNr: m.hero_project_match_id ? (mi.projectNr ?? `#${m.hero_project_match_id}`) : null,
+    candidates: (mi.candidates || []).map((c: any) => ({ id: Number(c.id), nr: String(c.nr), name: String(c.name || "") })),
+    existingCustomer: mi.customer?.id ? { id: Number(mi.customer.id), name: String(mi.customer.name || "") } : null,
+    categories, today: berlinToday(),
+  };
+}
+
+/** Plan aus dem Client pruefen: nur bekannte Kategorien, gueltige Zeiten, Pflichtfelder. */
+function checkPlan(p: any, categories: { id: number; label: string }[]): InstructionPlan {
+  if (!p || typeof p !== "object") throw new ActionError("Plan fehlt.");
+  const mode = p.project?.mode;
+  let project: InstructionPlan["project"] = { mode: "keep" };
+  if (mode === "new") {
+    const name = String(p.project.name || "").trim();
+    if (!name) throw new ActionError("Projektname fehlt.");
+    project = { mode: "new", name: name.slice(0, 200), existingCustomer: p.project.existingCustomer?.id ? { id: Number(p.project.existingCustomer.id), name: String(p.project.existingCustomer.name || "") } : null };
+  } else if (mode === "link") {
+    const nr = String(p.project.projectNr || "").trim();
+    if (!nr) throw new ActionError("Projektnummer fehlt.");
+    project = { mode: "link", projectNr: nr, projectId: Number(p.project.projectId) > 0 ? Number(p.project.projectId) : null };
+  }
+  let appointment: InstructionPlan["appointment"] = null;
+  if (p.appointment) {
+    const a = p.appointment;
+    const cat = categories.find((c) => c.id === Number(a.categoryId));
+    if (!cat) throw new ActionError("Unbekannte Terminkategorie.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.date)) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(a.time))) throw new ActionError("Datum oder Uhrzeit ungültig.");
+    appointment = {
+      categoryId: cat.id, categoryLabel: cat.label, date: String(a.date), time: String(a.time),
+      durationMin: Math.min(Math.max(Math.round(Number(a.durationMin) || 30), 5), 600), title: String(a.title || cat.label).slice(0, 200),
+    };
+  }
+  return { project, offer: !!p.offer, appointment, notDoable: [], summary: String(p.summary || "") };
+}
 
 /** Angebotsvorbereitung nach der Zuordnung – nur wenn HERO aktiv ist; die KI-Schicht wird dafuer erst jetzt aufgebaut. */
 async function offersFor(sb: any, key: string | null) {
@@ -30,7 +83,7 @@ Deno.serve(async (req) => {
   if (!(await requireAdmin(req, sb))) return fail("Nicht angemeldet oder keine Admin-Rolle.", { code: "unauthorized" });
 
   const body = await readJson(req);
-  if (body.action !== "decide" && body.action !== "assign") return fail("Unbekannte Aktion.");
+  if (!["decide", "assign", "instruct_plan", "instruct_run"].includes(body.action)) return fail("Unbekannte Aktion.");
   if (body.action === "decide" && !["accept", "reject"].includes(body.decision)) return fail("decision: accept oder reject.");
 
   try {
@@ -71,9 +124,65 @@ Deno.serve(async (req) => {
       suggestionId = ins.data.id;
       body.decision = "accept";
     }
+    const deps = { hero, store: actionStore(sb), files: { download: storageDownloader(sb) }, offers: await offersFor(sb, key), config: { steps: heroCfg.steps ?? {}, offerTypeId: heroCfg.offer_document_type_id ?? null, confirmationTypeId: heroCfg.confirmation_document_type_id ?? null, documentTypeIds: Object.values(heroCfg.document_types ?? {}).map(Number).filter((n) => Number.isFinite(n) && n > 0), stepIds, projectTypeId: heroCfg.project_type_id ?? null, startStepId: heroCfg.start_step_id ?? null, gewerke } };
+
+    if (body.action === "instruct_plan" || body.action === "instruct_run") {
+      const text = String(body.text || "").trim().slice(0, 1000);
+      if (text.length < 3) return fail("Bitte die Anweisung eintragen.");
+      const { data: m } = await sb.from("email_messages").select(INSTRUCT_MSG_COLS).eq("id", String(body.messageId || "")).maybeSingle();
+      if (!m) return fail("Mail nicht gefunden.");
+      const categories = await heroCategories(sb);
+      if (body.action === "instruct_plan") {
+        const defaultName = String((buildCreateProjectPayload(m, { gewerke }) as any).project?.name || "");
+        return ok(await planInstruction(text, instructionContext(m, categories), defaultName, await buildLlmDeps(sb), m.id));
+      }
+      if (!key || !hero) return fail("HERO ist nicht aktiviert (hero_enabled / hero_api_key).");
+      const plan = checkPlan(body.plan, categories);
+      const openOf = async (type: string) => {
+        const { data } = await sb.from("email_suggestions").select("id").eq("message_id", m.id).eq("type", type).eq("status", "offen").maybeSingle();
+        return data?.id as string | undefined;
+      };
+      const insert = async (type: string, payload: Record<string, unknown>) => {
+        const r = await sb.from("email_suggestions").insert({ message_id: m.id, type, payload }).select("id").single();
+        if (r.error) throw new Error(r.error.message);
+        return r.data.id as string;
+      };
+      const steps = await runInstruction(plan, text, {
+        async ensureSuggestion(type, extra) {
+          const open = await openOf(type);
+          if (open) return open;
+          if (type === "create_project") return await insert(type, buildCreateProjectPayload(m, { gewerke }));
+          if (type === "link_project") return await insert(type, extra);
+          const s = offerSuggester(sb, await buildLlmDeps(sb), key);
+          await s.suggest(m.id, Number(extra.projectId), (extra.projectNr as string) ?? null, { force: true });
+          return (await openOf(type)) ?? null;
+        },
+        decide: (id, edits) => decideSuggestion({ suggestionId: id, decision: "accept", edits }, deps),
+        async currentProject() {
+          const { data } = await sb.from("email_messages").select("hero_project_match_id, match_info").eq("id", m.id).maybeSingle();
+          return data?.hero_project_match_id ? { id: Number(data.hero_project_match_id), nr: data.match_info?.projectNr ?? null } : null;
+        },
+        async projectByNr(nr) {
+          const n = Number(String(nr).replace(/\D+/g, ""));
+          const p = n > 0 ? await H.projectByNumber(key, n) : null;
+          return p ? { id: p.id, nr: p.nr } : null;
+        },
+        createAppointment: (a) => heroCreateAppointment(key, { heroProjectId: a.projectId, title: a.title, startIso: a.startIso, endIso: a.endIso, categoryId: a.categoryId, description: a.description }),
+        async finish(note) {
+          const now = new Date().toISOString();
+          // Was die Anweisung entschieden hat, ist erledigt: offene Projekt-Vorschlaege dieser Mail schliessen.
+          await sb.from("email_suggestions").update({ status: "abgelehnt", decided_at: now, result: { reason: "Anweisung ausgeführt" } })
+            .eq("message_id", m.id).eq("status", "offen").in("type", ["link_project", "create_project"]);
+          await sb.from("email_feedback").insert({ message_id: m.id, field: "anweisung", old_value: null, new_value: `${text}\n---\n${note}`.slice(0, 2000), from_addr: m.from_addr });
+          const { count } = await sb.from("email_suggestions").select("id", { count: "exact", head: true }).eq("message_id", m.id).eq("status", "offen");
+          await sb.from("email_messages").update({ status: count ? "wartet" : "erledigt" }).eq("id", m.id);
+        },
+      });
+      return ok({ steps });
+    }
+
     const data = await decideSuggestion(
-      { suggestionId, decision: body.decision, edits: body.action === "assign" ? { projectId: Number(body.projectId) } : body.edits },
-      { hero, store: actionStore(sb), files: { download: storageDownloader(sb) }, offers: await offersFor(sb, key), config: { steps: heroCfg.steps ?? {}, offerTypeId: heroCfg.offer_document_type_id ?? null, confirmationTypeId: heroCfg.confirmation_document_type_id ?? null, documentTypeIds: Object.values(heroCfg.document_types ?? {}).map(Number).filter((n) => Number.isFinite(n) && n > 0), stepIds, projectTypeId: heroCfg.project_type_id ?? null, startStepId: heroCfg.start_step_id ?? null, gewerke } },
+      { suggestionId, decision: body.decision, edits: body.action === "assign" ? { projectId: Number(body.projectId) } : body.edits }, deps,
     );
     return ok(data);
   } catch (e) {

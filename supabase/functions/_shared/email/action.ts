@@ -36,6 +36,8 @@ export interface ActionStore {
   assignProject(messageId: string, threadId: string | null, projectId: number, info: Partial<MatchInfo>): Promise<void>;
   markLogged(messageId: string): Promise<void>;
   openCount(messageId: string): Promise<number>;
+  /** Andere offene Vorschlaege dieser Mail mit den genannten Arten schliessen (Alternative gewaehlt). */
+  closeAlternatives(messageId: string, exceptId: string, types: string[], reason: string): Promise<void>;
   setMessageStatus(messageId: string, status: "erledigt" | "wartet"): Promise<void>;
   addFeedback(messageId: string, field: string, oldValue: string | null, newValue: string | null): Promise<void>;
   dropContactCache(email: string): Promise<void>;
@@ -108,6 +110,12 @@ const need = <T>(v: T | null | undefined, msg: string): T => {
   if (v == null || (typeof v === "string" && !v.trim())) throw new ActionError(msg);
   return v;
 };
+
+/**
+ * „Zu bestehendem Projekt zuordnen“ und „Neues Projekt anlegen“ sind zwei Antworten auf dieselbe Frage. Die Mail-App
+ * zeigt sie als eine Karte; wird eine angenommen, ist die andere erledigt.
+ */
+export const PROJECT_ALTERNATIVES = ["link_project", "create_project"];
 
 async function settle(store: ActionStore, s: SuggestionRow) {
   const open = await store.openCount(s.message_id);
@@ -217,6 +225,9 @@ export async function decideSuggestion(input: DecideInput, deps: ActionDeps): Pr
         throw new ActionError(`Vorschlagsart „${s.type}“ wird noch nicht unterstützt.`);
     }
     await store.finish(s.id, "angenommen", { ...result, ...(warnings.length ? { warnings } : {}) });
+    if (PROJECT_ALTERNATIVES.includes(s.type)) {
+      await store.closeAlternatives(s.message_id, s.id, PROJECT_ALTERNATIVES, "Alternative gewählt").catch(() => {});
+    }
     await settle(store, s);
     return { status: "angenommen", ...result, ...(warnings.length ? { warnings } : {}) };
   } catch (e) {
