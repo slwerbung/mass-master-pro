@@ -10,6 +10,7 @@
 // `imapflow` kommt ueber die Import-Map der jeweiligen Function (`deno.json`).
 
 import { ImapFlow } from "imapflow";
+import { decodeCharset, decodeTransfer, pickDisplayParts, type PartRef } from "./mailHtml.ts";
 
 export interface ImapCreds {
   host: string;
@@ -238,6 +239,38 @@ export async function fetchSource(client: ImapFlow, folder: string, uid: number)
     // Den Buffer von imapflow unveraendert weitergeben: mailparser erkennt nur einen echten Buffer als Daten –
     // ein nacktes Uint8Array haelt er fuer einen Stream („input.once is not a function“).
     return msg?.source ? (msg.source as Uint8Array) : null;
+  } finally {
+    lock.release();
+  }
+}
+
+/**
+ * Nur das, was die Mail-Ansicht braucht: HTML/Text und eingebettete Bilder – ohne Anhaenge
+ * (eine ganze Mail mit grossem PDF durch mailparser sprengt das CPU-Limit der Edge Function).
+ * null, wenn es die UID im Ordner nicht (mehr) gibt.
+ */
+export async function fetchDisplay(client: ImapFlow, folder: string, uid: number): Promise<
+  { html: string | null; text: string | null; images: { cid: string; mime: string; content: Uint8Array }[] } | null
+> {
+  const lock = await client.getMailboxLock(folder, { readOnly: true });
+  try {
+    const head: any = await client.fetchOne(String(uid), { bodyStructure: true }, { uid: true });
+    if (!head?.bodyStructure) return null;
+    const pick = pickDisplayParts(head.bodyStructure);
+    const refs = [pick.html, pick.text, ...pick.images].filter(Boolean) as PartRef[];
+    if (!refs.length) return { html: null, text: null, images: [] };
+    const msg: any = await client.fetchOne(String(uid), { bodyParts: refs.map((r) => r.key) }, { uid: true });
+    const raw = (r: PartRef | null): Uint8Array | null => {
+      const b = r ? msg?.bodyParts?.get(r.key) : null;
+      return b ? decodeTransfer(new Uint8Array(b), r!.encoding) : null;
+    };
+    const h = raw(pick.html);
+    const t = raw(pick.text);
+    return {
+      html: h ? decodeCharset(h, pick.html!.charset) : null,
+      text: t ? decodeCharset(t, pick.text!.charset) : null,
+      images: pick.images.map((i) => ({ cid: i.cid, mime: i.mime, content: raw(i) })).filter((i) => i.content) as { cid: string; mime: string; content: Uint8Array }[],
+    };
   } finally {
     lock.release();
   }
