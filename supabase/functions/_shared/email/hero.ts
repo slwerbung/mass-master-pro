@@ -464,3 +464,82 @@ export async function setDocumentStatus(apiKey: string, documentId: number, stat
     { id: documentId, s: status }, fetchImpl,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Weitere HERO-Aktionen fuer Anweisungen (heroOps.ts). Schreibzugriffe – nur nach Klick.
+// ---------------------------------------------------------------------------
+
+export interface HeroCustomerContact { id: number; name: string; email: string; isCustomer: boolean }
+
+/** Kunde selbst und seine Ansprechpartner. */
+export async function customerContacts(apiKey: string, customerId: number, fetchImpl: F = fetch): Promise<HeroCustomerContact[]> {
+  const data = await heroGraphql(
+    apiKey, `query($ids: [Int]) { contacts(ids: $ids) { id full_name email contacts { id full_name email } } }`, { ids: [customerId] }, fetchImpl,
+  );
+  const c = data?.contacts?.[0];
+  if (!c?.id) return [];
+  const one = (x: any, isCustomer: boolean) => ({ id: Number(x.id), name: String(x.full_name || "").trim(), email: String(x.email || "").trim().toLowerCase(), isCustomer });
+  return [one(c, true), ...(c.contacts || []).filter((x: any) => x?.id).map((x: any) => one(x, false))];
+}
+
+/** Ansprechpartner beim (Firmen-)Kunden anlegen. */
+export async function createContactPerson(apiKey: string, customerId: number, c: Record<string, string | null>, fetchImpl: F = fetch): Promise<number> {
+  const contact = { ...c, type: "private", is_contact_person: true, parent_customer_id: customerId, category: "customer", source: "Mail-Assistent" };
+  const data = await heroGraphql(
+    apiKey, `mutation($contact: CustomerInput, $findExisting: Boolean) { create_contact(contact: $contact, findExisting: $findExisting) { id } }`,
+    { contact, findExisting: false }, fetchImpl,
+  );
+  const id = Number(data?.create_contact?.id);
+  if (!Number.isFinite(id) || id <= 0) throw new HeroError("HERO lieferte keine Kontakt-ID");
+  return id;
+}
+
+export async function updateContact(apiKey: string, contactId: number, patch: Record<string, unknown>, fetchImpl: F = fetch): Promise<void> {
+  await heroGraphql(apiKey, `mutation($contact: CustomerInput) { update_contact(contact: $contact) { id } }`, { contact: { ...patch, id: contactId } }, fetchImpl);
+}
+
+export async function createCustomerAddress(
+  apiKey: string, customerId: number, title: string, a: { street: string; zip: string; city: string }, fetchImpl: F = fetch,
+): Promise<number | null> {
+  const data = await heroGraphql(
+    apiKey, `mutation($ca: CustomerAddressInput, $findExisting: Boolean) { create_customer_address(customer_address: $ca, findExisting: $findExisting) { id } }`,
+    { ca: { customer_id: customerId, title, address: { street: a.street, zipcode: a.zip, city: a.city } }, findExisting: true }, fetchImpl,
+  );
+  return Number(data?.create_customer_address?.id) || null;
+}
+
+/** Felder am Projekt aendern (Name, Ansprechpartner, Schritt). */
+export async function updateProjectMatch(apiKey: string, projectMatchId: number, patch: Record<string, unknown>, fetchImpl: F = fetch): Promise<void> {
+  await heroGraphql(
+    apiKey, `mutation($pm: ProjectMatchInput) { update_project_match(project_match: $pm) { id } }`, { pm: { ...patch, id: projectMatchId } }, fetchImpl,
+  );
+}
+
+export async function addProjectAssignments(apiKey: string, projectMatchId: number, userIds: number[], fetchImpl: F = fetch): Promise<void> {
+  await heroGraphql(
+    apiKey, `mutation($pm: Int, $u: [Int]) { add_project_match_assignments(project_match_id: $pm, assigned_user_ids: $u) { id } }`,
+    { pm: projectMatchId, u: userIds }, fetchImpl,
+  );
+}
+
+/** Aufgabe anlegen: `update_task` ohne id legt neu an. */
+export async function createTask(
+  apiKey: string, t: { title: string; comment: string | null; target_user_id: number | null; target_project_match_id: number | null; due_date: string | null },
+  fetchImpl: F = fetch,
+): Promise<number | null> {
+  const task: Record<string, unknown> = { title: t.title };
+  if (t.comment) task.comment = t.comment;
+  if (t.target_user_id) task.target_user_id = t.target_user_id;
+  if (t.target_project_match_id) task.target_project_match_id = t.target_project_match_id;
+  if (t.due_date) task.due_date = t.due_date;
+  const data = await heroGraphql(apiKey, `mutation($task: TaskInput) { update_task(task: $task) { id } }`, { task }, fetchImpl);
+  return Number(data?.update_task?.id) || null;
+}
+
+/** Schritte eines Projekttyps (fuer „Status setzen“). */
+export async function projectSteps(apiKey: string, typeId: number | null, fetchImpl: F = fetch): Promise<{ id: number; name: string }[]> {
+  const data = await heroGraphql(apiKey, `query { project_types { id name project_status_steps { id name } } }`, {}, fetchImpl);
+  const types = data?.project_types || [];
+  const t = types.find((x: any) => Number(x.id) === Number(typeId)) ?? types.find((x: any) => /^projekt$/i.test(String(x.name).trim()));
+  return (t?.project_status_steps || []).map((s: any) => ({ id: Number(s.id), name: String(s.name || "").trim() })).filter((s: any) => s.id > 0);
+}
