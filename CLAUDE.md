@@ -193,6 +193,10 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
 - „Nein, anders …“ = Anweisung (`instruct.ts`): KI-Plan (Projekt neu/zuordnen, Angebotsentwurf, HERO-Termine – mehrere, je mit Mitarbeiter
   als `partner_ids`; Mitarbeiterliste aus HERO-Terminen + `employees.hero_partner_id`) → Vorschau → Klick führt
   über `decideSuggestion` bzw. `heroCreateAppointment` aus. Anweisungen nie in die Wissensdatei (gelten nur für die eine Mail).
+- Weitere HERO-Aktionen der Anweisung: `_shared/email/heroOps.ts` (Ansprechpartner anlegen, Kontaktdaten ändern, Kundenadresse, Projektname/
+  -ansprechpartner, Status, Mitarbeiter zuweisen, Aufgabe, Logbuch). Das Modell liefert Namen, der Code löst IDs auf und prüft vor dem
+  Schreiben gegen HERO (Kontakt gehört zum Kunden, Schritt zum Ablauf, Mitarbeiter bekannt). Bewusst nicht: Löschen, `send_mail`,
+  Zahlungen/Belege, Stammdaten-/Vorlagenpflege. Aufgaben entstehen über `update_task` ohne `id`.
 - **Nie ein Dubletten-Kontakt in HERO:** gibt es die Absenderadresse schon (auch als Ansprechpartner), wird das Projekt dort angelegt
   (`createProject` in `action.ts`); bei mehreren Treffern gilt das ältere Original (`preferEstablished`). Sagt eine Anweisung
   „Kontakt gibt es schon“ (`contact: vorhanden`), wird nur bei einem bestehenden Kunden angelegt – nicht gefunden = nichts anlegen.

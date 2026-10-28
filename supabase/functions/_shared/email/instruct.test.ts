@@ -198,3 +198,28 @@ describe("Mehrere Termine mit Mitarbeiter (Weihnachtsbanner aufhängen + abhäng
     expect(out[0].text).toContain("für Jens Langner");
   });
 });
+
+describe("Weitere HERO-Aktionen im Plan", () => {
+  it("Ansprechpartner + Status kommen in den Plan und laufen nach dem Projekt, vor dem Angebot", async () => {
+    const c = { ...ctx, people: [{ id: 33288, name: "Jens Langner", userId: 184738 }], ops: { contacts: [{ id: 1, name: "Firma X", email: "", isCustomer: true }], steps: [{ id: 266648, name: "⏳ Warten auf Auftrag" }], sender: "a@x.de" } };
+    const r = InstructionSchema.parse({
+      project: { action: "unveraendert" }, offer: true, appointments: [], not_doable: [], summary: "",
+      actions: [
+        { op: "ansprechpartner_anlegen", last_name: "Muster", email: "m@x.de" },
+        { op: "status_setzen", step: "Warten auf Auftrag" },
+        { op: "gibtsnicht" },
+      ],
+    });
+    const p = toPlan(r, c, "");
+    expect(p.ops.map((o) => o.op)).toEqual(["ansprechpartner_anlegen", "status_setzen"]);
+    expect(buildInstructionRequest("x", c).system[0].text).toContain("ansprechpartner_anlegen");
+    const t = deps({ current: { id: 5, nr: "WER-5" } });
+    const order: string[] = [];
+    t.d.heroOp = async (o) => (order.push(o.op), `ok ${o.op}`);
+    const decide = t.d.decide;
+    t.d.decide = async (id, e) => (order.push(id), decide(id, e));
+    const out = await runInstruction({ ...p, appointments: [] }, "x", t.d);
+    expect(order).toEqual(["ansprechpartner_anlegen", "status_setzen", "S-prepare_offer"]);
+    expect(out.map((o) => o.step)).toEqual(["hero", "hero", "offer"]);
+  });
+});

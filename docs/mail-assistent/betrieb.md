@@ -120,6 +120,10 @@ Ein bloßes „Ablehnen" gibt es nicht. An jedem Vorschlag stehen neben „Anneh
   sucht den Kunden in HERO (Adresse, genannter Name, Firma, Firmen-Domain), zeigt bei mehreren eine Auswahl und legt ohne
   gewählten bestehenden Kunden nichts an. Ein neuer Kontakt entsteht ohnehin nie, wenn die Absenderadresse in HERO schon
   existiert (auch als Ansprechpartner eines Firmenkunden – `findExisting` von HERO erkennt das nicht; live passiert beim VfR).
+  Außerdem versteht die Anweisung weitere HERO-Aktionen (`heroOps.ts`): Ansprechpartner anlegen, Kontaktdaten ändern, Adresse beim
+  Kunden anlegen, Projektname/Ansprechpartner am Projekt, Status setzen (alle Schritte des Projektablaufs), Mitarbeiter zuweisen,
+  Aufgabe anlegen, Logbuch-Notiz. Jede Aktion steht im Plan mit ihren Feldern und ist bearbeitbar. **Live zu prüfen:** Aufgaben
+  (`update_task` ohne `id`) und `add_project_match_assignments` sind nur per Introspection belegt, noch nicht in HERO ausprobiert.
 - **„Stattdessen nur erklären“** (Link in der Anweisungsbox, und „Falsch? Erklären“ in der Mail-Ansicht): Korrektur (`teach`) –
   Vorschläge verworfen, Mail mit dem Hinweis neu verarbeitet, auf Wunsch Eintrag in der Wissensdatei. Für Aufträge an HERO
   nicht geeignet: dabei passiert in HERO nichts, die Mail kommt nur mit neuen Vorschlägen zurück.

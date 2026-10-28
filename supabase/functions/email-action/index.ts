@@ -23,6 +23,7 @@ import { berlinToday, planInstruction, runInstruction, type CustomerLookup, type
 import { emailDomain } from "../_shared/email/match.ts";
 import { FREEMAIL_DOMAINS } from "../_shared/email/types.ts";
 import { heroCreateAppointment } from "../_shared/booking/hero.ts";
+import { runOp, sanitizeOps, type HeroOpsApi } from "../_shared/email/heroOps.ts";
 
 const INSTRUCT_MSG_COLS = "id, account_id, direction, category, subject, summary, body_text, from_name, from_addr, to_addrs, has_attachments, extracted, match_info, hero_project_match_id";
 
@@ -37,14 +38,30 @@ async function heroCategories(sb: any): Promise<{ id: number; label: string }[]>
  * (wie die Automationen in admin-manage), ergaenzt um die Zuordnung `employees.hero_partner_id`.
  */
 async function heroPeople(sb: any, key: string | null): Promise<InstructionPerson[]> {
-  const out = new Map<number, string>();
+  const out = new Map<number, InstructionPerson>();
   if (key) {
-    const data = await H.heroGraphql(key, `query { calendar_events(last: 300) { partners { id full_name } } }`).catch(() => null);
-    for (const e of data?.calendar_events ?? []) for (const p of e?.partners ?? []) if (Number(p?.id) > 0 && p.full_name) out.set(Number(p.id), String(p.full_name));
+    const data = await H.heroGraphql(key, `query { calendar_events(last: 300) { partners { id full_name user_id } } }`).catch(() => null);
+    for (const e of data?.calendar_events ?? []) for (const p of e?.partners ?? []) {
+      if (Number(p?.id) > 0 && p.full_name) out.set(Number(p.id), { id: Number(p.id), name: String(p.full_name), userId: Number(p.user_id) > 0 ? Number(p.user_id) : null });
+    }
   }
   const { data: emps } = await sb.from("employees").select("name, hero_partner_id").not("hero_partner_id", "is", null);
-  for (const e of emps || []) if (!out.has(Number(e.hero_partner_id))) out.set(Number(e.hero_partner_id), String(e.name));
-  return [...out].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  for (const e of emps || []) if (!out.has(Number(e.hero_partner_id))) out.set(Number(e.hero_partner_id), { id: Number(e.hero_partner_id), name: String(e.name), userId: null });
+  return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Die HERO-Aufrufe hinter den weiteren Aktionen der Anweisung (heroOps.ts). */
+function heroOpsApi(key: string): HeroOpsApi {
+  return {
+    customerContacts: (id) => H.customerContacts(key, id),
+    createContactPerson: (id, c) => H.createContactPerson(key, id, c),
+    updateContact: (id, patch) => H.updateContact(key, id, patch),
+    createCustomerAddress: (id, title, a) => H.createCustomerAddress(key, id, title, a),
+    updateProject: (id, patch) => H.updateProjectMatch(key, id, patch),
+    assignUsers: (id, users) => H.addProjectAssignments(key, id, users),
+    createTask: (t) => H.createTask(key, t),
+    addLogbook: (id, text) => H.addLogbookEntry(key, id, text),
+  };
 }
 
 function instructionContext(m: any, categories: { id: number; label: string }[], people: InstructionPerson[]): InstructionContext {
@@ -109,7 +126,7 @@ function checkPlan(p: any, categories: { id: number; label: string }[], people: 
       partnerId: person?.id ?? null, partnerName: person?.name ?? null,
     });
   }
-  return { project, offer: !!p.offer, appointments, notDoable: [], summary: String(p.summary || "") };
+  return { project, offer: !!p.offer, appointments, ops: sanitizeOps(p.ops), notDoable: [], summary: String(p.summary || "") };
 }
 
 /** Angebotsvorbereitung nach der Zuordnung – nur wenn HERO aktiv ist; die KI-Schicht wird dafuer erst jetzt aufgebaut. */
@@ -183,11 +200,18 @@ Deno.serve(async (req) => {
           const found = await H.contactsByEmail(key, m.from_addr).catch(() => []);
           if (found.length) ctx.existingCustomer = { id: found[0].customerId, name: found[0].name };
         }
+        // HERO-Lage fuer die weiteren Aktionen: Ansprechpartner des Kunden (Kunde aus der Zuordnung oder dem Projekt) und Schritte.
+        const customerId = ctx.existingCustomer?.id
+          ?? (m.hero_project_match_id && key ? (await H.projectById(key, Number(m.hero_project_match_id)).catch(() => null))?.customerId ?? null : null);
+        const [contacts, heroSteps] = key
+          ? await Promise.all([customerId ? H.customerContacts(key, customerId).catch(() => []) : [], H.projectSteps(key, heroCfg.project_type_id ?? null).catch(() => [])])
+          : [[], []];
+        ctx.ops = { contacts, steps: heroSteps, sender: String(m.from_addr || "") };
         // Sagt die Anweisung „Kontakt gibt es schon“, sucht der Plan den Kunden auch ueber Firma und Firmen-Domain.
         const dom = emailDomain(m.from_addr);
         const terms = [m.extracted?.contact?.company, dom && !FREEMAIL_DOMAINS.includes(dom) ? dom : null].filter(Boolean) as string[];
         const plan = await planInstruction(text, ctx, defaultName, await buildLlmDeps(sb), m.id, key ? customerLookup(key) : undefined, terms);
-        return ok({ ...plan, people });
+        return ok({ ...plan, people, contacts, steps: heroSteps });
       }
       if (!key || !hero) return fail("HERO ist nicht aktiviert (hero_enabled / hero_api_key).");
       const plan = checkPlan(body.plan, categories, people);
@@ -219,6 +243,18 @@ Deno.serve(async (req) => {
           const n = Number(String(nr).replace(/\D+/g, ""));
           const p = n > 0 ? await H.projectByNumber(key, n) : null;
           return p ? { id: p.id, nr: p.nr } : null;
+        },
+        async heroOp(op, project) {
+          // Kunde: der gewaehlte bestehende Kunde, sonst der Kunde des Projekts, sonst die Zuordnung der Mail.
+          let customerId: number | null = null;
+          if (plan.project.mode === "new" && plan.project.existingCustomer) customerId = plan.project.existingCustomer.id;
+          if (!customerId && project) customerId = (await H.projectById(key, project.id).catch(() => null))?.customerId ?? null;
+          if (!customerId) customerId = Number(m.match_info?.customer?.id) || null;
+          const heroSteps = op.op === "status_setzen" ? await H.projectSteps(key, heroCfg.project_type_id ?? null) : [];
+          return await runOp(op, {
+            projectId: project?.id ?? null, customerId,
+            allowedUserIds: people.map((p) => p.userId).filter((u): u is number => !!u), allowedStepIds: heroSteps.map((s) => s.id),
+          }, heroOpsApi(key));
         },
         createAppointment: (a) => heroCreateAppointment(key, { heroProjectId: a.projectId, title: a.title, startIso: a.startIso, endIso: a.endIso, categoryId: a.categoryId, description: a.description, partnerId: a.partnerId }),
         async finish(note) {
