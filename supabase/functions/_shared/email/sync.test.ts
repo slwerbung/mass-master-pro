@@ -157,6 +157,31 @@ describe("syncAccount", () => {
     expect(log.msgs[0].has_attachments).toBe(true);
   });
 
+  it("Umlaute im Dateinamen: Speicherschluessel nur ASCII; ein fehlgeschlagener Upload nimmt die anderen nicht mit", async () => {
+    const big = new Uint8Array(10);
+    const { deps, log } = fake({
+      11: mail({
+        attachments: [
+          { filename: "Auftragsbestätigung Größe.pdf", mime: "application/pdf", size: 200_000, inline: false, content: big },
+          { filename: "kaputt.pdf", mime: "application/pdf", size: 200_000, inline: false, content: big },
+          { filename: "Foto.jpg", mime: "image/jpeg", size: 200_000, inline: false, content: big },
+        ],
+      }),
+    }, { INBOX: { uids: [11] } });
+    const up = deps.store.uploadAttachment;
+    deps.store.uploadAttachment = async (p, b, m) => {
+      if (p.includes("kaputt")) throw new Error("Anhang-Upload: Invalid key");
+      return up(p, b, m);
+    };
+    const sum = await syncAccount(acc({ folder_map: { inbox: "INBOX" } }), deps);
+    expect(log.uploads).toEqual(["A1/M1/1-Auftragsbestaetigung Groesse.pdf", "A1/M1/3-Foto.jpg"]);
+    expect(log.atts.map((a) => [a.filename, a.storage_path !== null])).toEqual([
+      ["Auftragsbestätigung Größe.pdf", true], ["kaputt.pdf", false], ["Foto.jpg", true],
+    ]);
+    expect(sum.errors).toBe(1);
+    expect(sum.notes.join(" ")).toMatch(/kaputt\.pdf/);
+  });
+
   it("ohne Gesendet-Ordner nur Posteingang, mit Hinweis", async () => {
     const { deps } = fake({}, { INBOX: { uids: [11] } });
     const r = await syncAccount(acc({ folder_map: {} }), deps);
