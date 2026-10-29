@@ -12,7 +12,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { decideSuggestion, ActionError } from "../_shared/email/action.ts";
-import { fail, ok, preflight, readJson, requireAdmin } from "../_shared/email/http.ts";
+import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
+import { AccessError, assertMessages, assertSuggestion } from "../_shared/email/access.ts";
 import { getConfig } from "../_shared/email/config.ts";
 import * as H from "../_shared/email/hero.ts";
 import { actionStore } from "../_shared/email/store.ts";
@@ -153,13 +154,17 @@ Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  if (!(await requireAdmin(req, sb))) return fail("Nicht angemeldet oder keine Admin-Rolle.", { code: "unauthorized" });
+  const user = await requireMailUser(req, sb);
+  if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
 
   const body = await readJson(req);
   if (!["decide", "assign", "instruct_plan", "instruct_run", "dropbox_targets", "dropbox_save"].includes(body.action)) return fail("Unbekannte Aktion.");
   if (body.action === "decide" && !["accept", "reject"].includes(body.decision)) return fail("decision: accept oder reject.");
 
   try {
+    // Nur Mails/Vorschlaege der eigenen Postfaecher (Admin: alle).
+    await assertMessages(sb, user, [body.messageId]);
+    await assertSuggestion(sb, user, body.suggestionId);
     const [key, heroCfg, gewerke] = await Promise.all([
       H.loadHeroKey(sb), getConfig<any>(sb, "hero", {}), getConfig<Gewerk[]>(sb, "gewerke", []),
     ]);
@@ -306,6 +311,6 @@ Deno.serve(async (req) => {
     return ok(data);
   } catch (e) {
     const msg = String((e as Error)?.message || e).slice(0, 400);
-    return fail(e instanceof ActionError || e instanceof H.HeroError ? msg : `Fehler: ${msg}`);
+    return fail(e instanceof ActionError || e instanceof H.HeroError || e instanceof AccessError ? msg : `Fehler: ${msg}`);
   }
 });

@@ -159,7 +159,9 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 
 ## KI-Mail-Assistent (Okt. 2026, `docs/mail-assistent/`)
 Liest die Postfächer mit (IMAP), sortiert, ordnet HERO-Projekten zu, protokolliert im HERO-Logbuch und bereitet
-Antworten/Projekte/Angebote vor. Eigene Oberfläche: `apps/mail/` (eigenes Vercel-Projekt, Supabase Auth, Rolle `admin`).
+Antworten/Projekte/Angebote vor. Eigene Oberfläche: `apps/mail/` (eigenes Vercel-Projekt, Supabase Auth). Benutzer: Rolle `admin` sieht alles,
+`mitarbeiter` nur die zugeordneten Postfächer (`email_account_users`, Einstellungen → Benutzer). Jede Function prüft per `requireMailUser` +
+`_shared/email/access.ts` (`assertMessages`/`assertThread`/`assertSuggestion`/`scopeAccounts`); Einstellungen nur Admin (`ADMIN_ONLY` in email-api).
 Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-assistent/betrieb.md`.
 - Edge Functions: `email-sync` (IMAP holen, pg_cron 5 Min), `email-process` (Verstehen → Zuordnen → Handeln),
   `email-action` (Klick auf einen Vorschlag: einzige Stelle mit schreibenden HERO-Aufrufen), `email-draft` (Antwortentwürfe,

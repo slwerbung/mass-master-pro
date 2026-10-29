@@ -1,11 +1,14 @@
 // Schnittstelle der Mail-App. Die Oberflaeche greift NUR hierueber zu: alle
 // E-Mail-Tabellen sind nur fuer service_role lesbar. Jede Anfrage verlangt eine
-// Supabase-Auth-Sitzung mit Rolle `admin`.
+// Supabase-Auth-Sitzung: Admin sieht alles, ein Mitarbeiter nur die ihm zugeordneten Postfaecher
+// (access.ts); Einstellungen (ADMIN_ONLY) nur fuer Admins.
 //
 //   POST { action: "...", ...parameter }  ->  { ok: true, data } | { ok: false, error }
 
 import { createClient } from "@supabase/supabase-js";
-import { fail, ok, preflight, readJson, requireAdmin, type AdminUser } from "../_shared/email/http.ts";
+import { fail, ok, preflight, readJson, requireMailUser, type MailUser } from "../_shared/email/http.ts";
+import { AccessError, assertAccount, assertMessages, assertThread, isMailAdmin, scopeAccounts } from "../_shared/email/access.ts";
+import { listMailUsers, saveMailUser } from "../_shared/email/users.ts";
 import { encryptSecret } from "../_shared/email/crypto.ts";
 import { encryptionKey, getConfig, setConfig } from "../_shared/email/config.ts";
 import { normalizeAutopilot } from "../_shared/email/autopilot.ts";
@@ -40,8 +43,16 @@ const VIEWS: Record<string, (q: any) => any> = {
   fehler: (q) => q.eq("status", "fehler"),
 };
 
+/** Einstellungen und Betrieb: nur fuer Admins (Mitarbeiter arbeiten nur mit den Mails ihrer Postfaecher). */
+const ADMIN_ONLY = new Set([
+  "list_knowledge", "save_knowledge", "delete_knowledge", "save_account", "list_rules", "save_rule", "delete_rule", "save_config",
+  "list_ai", "save_provider", "save_ai_setting", "hero_reload", "hero_probe", "list_reference_docs", "save_reference_doc",
+  "delete_reference_doc", "list_runs", "list_users", "save_user",
+]);
+
 /** Filter der Mail-Liste; `skipCategory` fuer die Zaehler je Kategorie. */
-function applyMessageFilters(q: any, body: Record<string, any>, opts: { skipCategory?: boolean } = {}) {
+function applyMessageFilters(q: any, body: Record<string, any>, user: MailUser, opts: { skipCategory?: boolean } = {}) {
+  q = scopeAccounts(q, user);
   // Papierkorb: eigene Ansicht, sonst immer ausgeblendet.
   if (body.view === "papierkorb") q = q.not("trashed_at", "is", null);
   else q = q.is("trashed_at", null);
@@ -62,7 +73,7 @@ function applyMessageFilters(q: any, body: Record<string, any>, opts: { skipCate
   return q;
 }
 
-type Ctx = { sb: any; user: AdminUser; body: Record<string, any> };
+type Ctx = { sb: any; user: MailUser; body: Record<string, any> };
 type Handler = (c: Ctx) => Promise<unknown>;
 
 const must = <T>(r: { data: T; error: any }): T => {
@@ -75,17 +86,19 @@ const likeSafe = (q: string) => q.replace(/[%_,()\\]/g, " ").trim().slice(0, 80)
 
 const handlers: Record<string, Handler> = {
   async me({ user }) {
-    return { name: user.name, email: user.email };
+    return { name: user.name, email: user.email, role: user.role, admin: isMailAdmin(user), accountIds: user.accountIds };
   },
 
-  async overview({ sb }) {
+  async overview({ sb, user }) {
     const statuses = ["neu", "klassifiziert", "zugeordnet", "ohne_bezug", "erledigt", "wartet", "fehler"];
     const counts: Record<string, number> = {};
     await Promise.all(statuses.map(async (s) => {
-      const { count } = await sb.from("email_messages").select("id", { count: "exact", head: true }).eq("status", s);
+      const { count } = await scopeAccounts(sb.from("email_messages").select("id", { count: "exact", head: true }), user).eq("status", s);
       counts[s] = count ?? 0;
     }));
-    const { count: open } = await sb.from("email_suggestions").select("id", { count: "exact", head: true }).eq("status", "offen");
+    const { count: open } = await scopeAccounts(
+      sb.from("email_suggestions").select("id, email_messages!inner(account_id)", { count: "exact", head: true }), user, "email_messages.account_id",
+    ).eq("status", "offen");
     const start = new Date(); start.setUTCHours(0, 0, 0, 0);
     const monthStart = new Date(); monthStart.setUTCDate(1); monthStart.setUTCHours(0, 0, 0, 0);
     const { data: today } = await sb.from("email_ai_calls").select("neurons").eq("provider_type", "cloudflare").gte("created_at", start.toISOString());
@@ -95,7 +108,7 @@ const handlers: Record<string, Handler> = {
     const neuronsMonth = (month || []).reduce((n: number, r: any) => n + Number(r.neurons || 0), 0);
     const cost = (month || []).reduce((n: number, r: any) => n + Number(r.cost_usd || 0), 0) +
       (neuronsMonth / 1000) * Number(prices?._neuron_usd_per_1000 ?? 0.011);
-    const topics = await topicCounts(sb).catch(() => null);
+    const topics = await topicCounts(sb, undefined, user.accountIds).catch(() => null);
     return {
       statusCounts: counts,
       openSuggestions: open ?? 0,
@@ -107,30 +120,31 @@ const handlers: Record<string, Handler> = {
     };
   },
 
-  async list_messages({ sb, body }) {
+  async list_messages({ sb, user, body }) {
     const limit = Math.min(Math.max(Number(body.limit) || 50, 1), 200);
     const offset = Math.max(Number(body.offset) || 0, 0);
-    const q = applyMessageFilters(sb.from("email_messages").select(MESSAGE_LIST_COLUMNS, { count: "exact" }), body);
+    const q = applyMessageFilters(sb.from("email_messages").select(MESSAGE_LIST_COLUMNS, { count: "exact" }), body, user);
     const { data, error, count } = await q.order("sent_at", { ascending: false, nullsFirst: false }).range(offset, offset + limit - 1);
     if (error) throw new Error(error.message);
     return { messages: data || [], total: count ?? 0 };
   },
 
   /** Anzahl je Kategorie unter den uebrigen Filtern (fuer die Kategorie-Chips). */
-  async message_facets({ sb, body }) {
+  async message_facets({ sb, user, body }) {
     const categories: Record<string, number> = {};
     await Promise.all(CATEGORIES.map(async (c) => {
-      const q = applyMessageFilters(sb.from("email_messages").select("id", { count: "exact", head: true }), body, { skipCategory: true });
+      const q = applyMessageFilters(sb.from("email_messages").select("id", { count: "exact", head: true }), body, user, { skipCategory: true });
       const { count } = await q.eq("category", c);
       categories[c] = count ?? 0;
     }));
     return { categories };
   },
 
-  async get_message({ sb, body }) {
+  async get_message({ sb, user, body }) {
     const id = String(body.id || "");
     const { data: msg } = await sb.from("email_messages").select("*").eq("id", id).maybeSingle();
     if (!msg) throw new Error("Mail nicht gefunden.");
+    assertAccount(user, msg.account_id);
     const topicP = topicOfThread(sb, msg.thread_id).catch(() => null);
     const [{ data: thread }, { data: atts }, { data: shadow }, { data: suggestions }, { data: calls }] = await Promise.all([
       msg.thread_id
@@ -164,8 +178,9 @@ const handlers: Record<string, Handler> = {
   },
 
   /** Korrektur eines Menschen: wird gespeichert und fliesst als Beispiel in kuenftige Laeufe. */
-  async correct_message({ sb, body }) {
+  async correct_message({ sb, user, body }) {
     const id = String(body.id || "");
+    await assertMessages(sb, user, [id]);
     const { data: msg } = await sb.from("email_messages").select("id, from_addr, category, summary, extracted").eq("id", id).maybeSingle();
     if (!msg) throw new Error("Mail nicht gefunden.");
     const patch: Record<string, unknown> = {};
@@ -221,7 +236,8 @@ const handlers: Record<string, Handler> = {
   },
 
   /** Beleg-Stand von Hand setzen, z. B. „Im Portal abgeholt und verbucht“. */
-  async set_beleg_state({ sb, body }) {
+  async set_beleg_state({ sb, user, body }) {
+    await assertMessages(sb, user, [body.id]);
     const state = String(body.state || "");
     if (!BELEG_STATES.includes(state)) throw new Error("Unbekannter Stand.");
     must(await sb.from("email_messages").update({ beleg_state: state, ...(state === "weitergeleitet" ? { forwarded_at: new Date().toISOString() } : {}) }).eq("id", String(body.id || "")));
@@ -229,7 +245,8 @@ const handlers: Record<string, Handler> = {
   },
 
   /** Mail noch einmal durch die Pipeline schicken. */
-  async reprocess_message({ sb, body }) {
+  async reprocess_message({ sb, user, body }) {
+    await assertMessages(sb, user, [body.id]);
     must(await sb.from("email_messages").update({ status: "neu", attempts: 0, error: null }).eq("id", String(body.id || "")));
     return { ok: true };
   },
@@ -238,6 +255,7 @@ const handlers: Record<string, Handler> = {
   async bulk_messages({ sb, user, body }) {
     const ids: string[] = (Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 200);
     if (!ids.length) throw new Error("Keine Mails ausgewählt.");
+    await assertMessages(sb, user, ids);
     if (body.op === "reprocess") {
       must(await sb.from("email_messages").update({ status: "neu", attempts: 0, error: null }).in("id", ids).is("trashed_at", null));
       return { changed: ids.length };
@@ -261,8 +279,9 @@ const handlers: Record<string, Handler> = {
    * verworfen, die Mail laeuft mit dem Hinweis neu durch, und auf Wunsch entsteht ein Eintrag in
    * der Wissensdatei (fuer den Absender, die Domain oder alle Mails).
    */
-  async teach({ sb, body }) {
+  async teach({ sb, user, body }) {
     const id = String(body.id || "");
+    await assertMessages(sb, user, [id]);
     const note = String(body.text || "").trim();
     if (note.length < 3) throw new Error("Bitte kurz beschreiben, was richtig wäre.");
     if (note.length > KNOWLEDGE_TEXT_MAX) throw new Error(`Höchstens ${KNOWLEDGE_TEXT_MAX} Zeichen.`);
@@ -325,10 +344,12 @@ const handlers: Record<string, Handler> = {
   },
 
   // ------------------------------------------------------------------ Postfaecher
-  async list_accounts({ sb }) {
-    const { data } = await sb.from("email_accounts")
-      .select("id, label, address, imap_host, imap_port, smtp_host, smtp_port, username, password_enc, folder_map, signature, autopilot, shadow_mode, enabled, backfill, last_sync_at, last_error, locked_until")
+  async list_accounts({ sb, user }) {
+    const { data } = await scopeAccounts(sb.from("email_accounts")
+      .select("id, label, address, imap_host, imap_port, smtp_host, smtp_port, username, password_enc, folder_map, signature, autopilot, shadow_mode, enabled, backfill, last_sync_at, last_error, locked_until"), user, "id")
       .order("created_at");
+    // Mitarbeiter brauchen nur Name und Adresse (Filter, Absender) – Server, Benutzername und Automatik bleiben Admin-Sache.
+    if (!isMailAdmin(user)) return (data || []).map((a: any) => ({ id: a.id, label: a.label, address: a.address, enabled: a.enabled }));
     return (data || []).map((a: any) => ({ ...a, password_enc: undefined, has_password: !!a.password_enc, autopilot: normalizeAutopilot(a.autopilot) }));
   },
 
@@ -429,10 +450,10 @@ const handlers: Record<string, Handler> = {
   },
 
   // ------------------------------------------------------------------ Vorschlaege (Zu entscheiden)
-  async list_suggestions({ sb, body }) {
+  async list_suggestions({ sb, user, body }) {
     const status = ["offen", "angenommen", "abgelehnt", "fehlgeschlagen"].includes(body.status) ? body.status : "offen";
-    const { data, error } = await sb.from("email_suggestions")
-      .select("id, type, payload, status, result, created_at, decided_at, email_messages!inner(id, subject, from_addr, from_name, summary, category, confidence, sent_at, direction, hero_project_match_id, match_info, has_attachments, extracted)")
+    const { data, error } = await scopeAccounts(sb.from("email_suggestions")
+      .select("id, type, payload, status, result, created_at, decided_at, email_messages!inner(id, account_id, subject, from_addr, from_name, summary, category, confidence, sent_at, direction, hero_project_match_id, match_info, has_attachments, extracted)"), user, "email_messages.account_id")
       .eq("status", status).order("created_at", { ascending: false }).limit(100);
     if (error) throw new Error(error.message);
     const ids = [...new Set((data || []).map((r: any) => r.email_messages.id))];
@@ -453,14 +474,14 @@ const handlers: Record<string, Handler> = {
 
   // ------------------------------------------------------------------ Themen
   /** Themen einer Ansicht: entscheiden | laufend | wiedervorlage | erledigt (topics.ts). */
-  async list_topics({ sb, body }) {
+  async list_topics({ sb, user, body }) {
     const views: TopicView[] = ["entscheiden", "laufend", "wiedervorlage", "erledigt"];
     const view = views.includes(body.view) ? body.view as TopicView : "entscheiden";
-    return await listTopics(sb, view);
+    return await listTopics(sb, view, undefined, user.accountIds);
   },
 
   /** Thema entscheiden: weiter verfolgen, Wiedervorlage (until = YYYY-MM-DD, note), abschliessen, wieder oeffnen. */
-  async topic_decide({ sb, body }) {
+  async topic_decide({ sb, user, body }) {
     const decision = String(body.decision || "");
     if (!["weiter", "wiedervorlage", "erledigt", "oeffnen"].includes(decision)) throw new Error("decision: weiter, wiedervorlage, erledigt oder oeffnen.");
     let threadId = String(body.threadId || "");
@@ -468,6 +489,7 @@ const handlers: Record<string, Handler> = {
       const { data } = await sb.from("email_messages").select("thread_id").eq("id", String(body.messageId)).maybeSingle();
       threadId = data?.thread_id ?? "";
     }
+    await assertThread(sb, user, threadId);
     return await decideTopic(sb, threadId, {
       decision: decision as any, until: body.until ?? null, note: body.note ?? null,
       messageIds: Array.isArray(body.messageIds) ? body.messageIds.map(String) : null,
@@ -475,20 +497,22 @@ const handlers: Record<string, Handler> = {
   },
 
   /** Kurzuebersicht (fuer die Startseite und die optionale 7-Uhr-Push-Meldung). */
-  async digest({ sb }) {
+  async digest({ sb, user }) {
     const twoDays = new Date(Date.now() - 2 * 86400_000).toISOString();
-    const { count: open } = await sb.from("email_suggestions").select("id", { count: "exact", head: true }).eq("status", "offen");
+    const { count: open } = await scopeAccounts(
+      sb.from("email_suggestions").select("id, email_messages!inner(account_id)", { count: "exact", head: true }), user, "email_messages.account_id",
+    ).eq("status", "offen");
     const customerCats = ["anfrage_neu", "projekt_kommunikation", "layout_freigabe", "auftrag", "reklamation"];
-    const { data: unanswered } = await sb.from("email_messages")
-      .select("id, subject, from_name, from_addr, sent_at, category, email_threads!inner(answered)")
+    const { data: unanswered } = await scopeAccounts(sb.from("email_messages")
+      .select("id, subject, from_name, from_addr, sent_at, category, email_threads!inner(answered)"), user)
       .eq("direction", "in").in("category", customerCats).eq("email_threads.answered", false).lt("sent_at", twoDays).is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(20);
-    const { data: claims } = await sb.from("email_messages")
-      .select("id, subject, from_name, from_addr, sent_at, email_threads!inner(answered)")
+    const { data: claims } = await scopeAccounts(sb.from("email_messages")
+      .select("id, subject, from_name, from_addr, sent_at, email_threads!inner(answered)"), user)
       .eq("direction", "in").eq("category", "reklamation").eq("email_threads.answered", false).is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(20);
-    const { data: portal } = await sb.from("email_messages")
-      .select("id, subject, from_name, from_addr, sent_at, beleg_vendor").eq("beleg_state", "portal_offen").is("trashed_at", null)
+    const { data: portal } = await scopeAccounts(sb.from("email_messages")
+      .select("id, subject, from_name, from_addr, sent_at, beleg_vendor"), user).eq("beleg_state", "portal_offen").is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(50);
     const lines: string[] = [];
     if (portal?.length) lines.push(`${portal.length} Rechnung(en) im Portal abzuholen.`);
@@ -597,6 +621,14 @@ const handlers: Record<string, Handler> = {
     return { ok: true };
   },
 
+  // ------------------------------------------------------------------ Benutzer (nur Admin)
+  async list_users({ sb, user }) {
+    return await listMailUsers(sb, user);
+  },
+  async save_user({ sb, user, body }) {
+    return await saveMailUser(sb, user, body);
+  },
+
   // ------------------------------------------------------------------ Protokoll
   async list_runs({ sb, body }) {
     const limit = Math.min(Math.max(Number(body.limit) || 50, 1), 200);
@@ -610,15 +642,17 @@ Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const user = await requireAdmin(req, sb);
-  if (!user) return fail("Nicht angemeldet oder keine Admin-Rolle.", { code: "unauthorized" });
+  const user = await requireMailUser(req, sb);
+  if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App (Admin oder Mitarbeiter mit Postfach).", { code: "unauthorized" });
 
   const body = await readJson(req);
-  const h = handlers[String(body.action || "")];
+  const action = String(body.action || "");
+  const h = handlers[action];
   if (!h) return fail("Unbekannte Aktion.");
+  if (ADMIN_ONLY.has(action) && !isMailAdmin(user)) return fail("Nur für Admins.", { code: "forbidden" });
   try {
     return ok(await h({ sb, user, body }));
   } catch (e) {
-    return fail(String((e as Error)?.message || e).slice(0, 300));
+    return fail(String((e as Error)?.message || e).slice(0, 300), e instanceof AccessError ? { code: "forbidden" } : {});
   }
 });

@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 export default function Layout({ children }: { children: ReactNode }) {
   const loc = useLocation();
-  const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ name: string; email: string | null }>("me"), retry: false });
+  const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ name: string; email: string | null; admin: boolean }>("me"), retry: false });
   const overview = useQuery({ queryKey: ["overview"], queryFn: () => api<Overview>("overview"), refetchInterval: 60_000, enabled: me.isSuccess });
 
   if (me.isError) {
@@ -20,7 +20,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         <h1 className="text-xl font-semibold">Kein Zugriff</h1>
         <ErrorBox error={me.error} />
         <p className="text-sm text-muted-foreground">
-          Die Mail-App ist nur für Konten mit der Rolle „admin“. Konten legt Silas im Supabase-Dashboard an.
+          Zugang haben Admins und Mitarbeiter, denen ein Postfach zugeordnet ist (Einstellungen → Benutzer, nur für Admins).
         </p>
         <Button variant="outline" onClick={() => supabase.auth.signOut()}>Abmelden</Button>
       </div>
@@ -48,9 +48,11 @@ export default function Layout({ children }: { children: ReactNode }) {
           <ListTree className="h-4 w-4" /> Alle Mails
         </NavLink>
         <Folders enabled={me.isSuccess} />
-        <NavLink to="/einstellungen" className={({ isActive }) => cn(item, isActive && "bg-accent")}>
-          <Cog className="h-4 w-4" /> Einstellungen
-        </NavLink>
+        {me.data?.admin && (
+          <NavLink to="/einstellungen" className={({ isActive }) => cn(item, isActive && "bg-accent")}>
+            <Cog className="h-4 w-4" /> Einstellungen
+          </NavLink>
+        )}
         <div className="mt-auto hidden px-3 py-2 text-xs text-muted-foreground md:block">
           {me.data?.name}
           <Button variant="ghost" size="sm" className="mt-1 w-full justify-start" onClick={() => supabase.auth.signOut()}>
