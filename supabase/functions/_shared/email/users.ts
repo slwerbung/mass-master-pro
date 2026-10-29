@@ -6,6 +6,7 @@
 // den Zugang zur Mail-App regelt bei ihnen allein die Postfach-Zuordnung. Geloescht wird nie ein Konto.
 
 import type { MailUser } from "./http.ts";
+import type { AddresseeUser } from "./addressee.ts";
 
 export type MailRole = "admin" | "mitarbeiter";
 
@@ -153,4 +154,36 @@ export async function saveMailUser(sb: any, self: Pick<MailUser, "id">, body: Re
   }
   if (input.accountIds) await setAccounts(sb, input.id, input.accountIds);
   return { id: input.id, created: false };
+}
+
+// ---------------------------------------------------------------- Wer sieht welches Postfach (fuer „an wen gerichtet“)
+
+let audienceCache: { at: number; value: Map<string, AddresseeUser[]> } | null = null;
+
+/**
+ * Postfach -> Mitarbeiter mit Zugriff (aktive Admins sehen alle Postfaecher, Mitarbeiter die zugeordneten), je mit Namen
+ * und persoenlichen Adressen (Anmelde-Adresse, Mitarbeiter-Adresse aus CaptFix). 5 Minuten zwischengespeichert.
+ */
+export async function mailAudience(sb: any): Promise<Map<string, AddresseeUser[]>> {
+  if (audienceCache && Date.now() - audienceCache.at < 300_000) return audienceCache.value;
+  const [profiles, links, accounts, emails] = await Promise.all([
+    sb.from("profiles").select("id, display_name, role, is_active, employees(email)").in("role", ["admin", "mitarbeiter"]).eq("is_active", true),
+    sb.from("email_account_users").select("account_id, user_id"),
+    sb.from("email_accounts").select("id"),
+    authEmails(sb).catch(() => new Map<string, string | null>()),
+  ]);
+  const people = new Map<string, { user: AddresseeUser; admin: boolean }>();
+  for (const p of must(profiles) as any[]) {
+    const mails = [emails.get(p.id), p.employees?.email].filter(Boolean).map((e: any) => String(e).toLowerCase());
+    people.set(p.id, { user: { id: p.id, name: String(p.display_name || ""), emails: [...new Set(mails)] }, admin: p.role === "admin" });
+  }
+  const out = new Map<string, AddresseeUser[]>();
+  for (const a of must(accounts) as any[]) out.set(a.id, [...people.values()].filter((x) => x.admin).map((x) => x.user));
+  for (const l of must(links) as any[]) {
+    const p = people.get(l.user_id);
+    const list = out.get(l.account_id);
+    if (p && list && !list.some((u) => u.id === p.user.id)) list.push(p.user);
+  }
+  audienceCache = { at: Date.now(), value: out };
+  return out;
 }

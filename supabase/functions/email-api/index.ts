@@ -8,7 +8,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser, type MailUser } from "../_shared/email/http.ts";
 import { AccessError, assertAccount, assertMessages, assertThread, isMailAdmin, scopeAccounts } from "../_shared/email/access.ts";
-import { listMailUsers, saveMailUser } from "../_shared/email/users.ts";
+import { listMailUsers, mailAudience, saveMailUser } from "../_shared/email/users.ts";
 import { encryptSecret } from "../_shared/email/crypto.ts";
 import { encryptionKey, getConfig, setConfig } from "../_shared/email/config.ts";
 import { normalizeAutopilot } from "../_shared/email/autopilot.ts";
@@ -18,7 +18,7 @@ import { learnRule } from "../_shared/email/learn.ts";
 import { mapDocumentTypes, mapSteps } from "../_shared/email/heroReload.ts";
 import { matchesPattern } from "../_shared/email/mail.ts";
 import { normalizeTopicConfig } from "../_shared/email/topics.ts";
-import { decideTopic, listTopics, topicCounts, topicOfThread, type TopicView } from "../_shared/email/topicsDb.ts";
+import { decideTopic, listTopics, topicCounts, topicOfThread, type Topic, type TopicView, type Viewer } from "../_shared/email/topicsDb.ts";
 import { KNOWLEDGE_TEXT_MAX, normalizePattern, patternForScope, type KnowledgeScope } from "../_shared/email/knowledge.ts";
 
 // Nur diese Schluessel darf die Oberflaeche in email_config schreiben – der
@@ -74,6 +74,33 @@ function applyMessageFilters(q: any, body: Record<string, any>, user: MailUser, 
 }
 
 type Ctx = { sb: any; user: MailUser; body: Record<string, any> };
+
+/** Betrachter fuer die Themen: seine Postfaecher, und vorgelegt wird nur, was an ihn (oder an alle) gerichtet ist. */
+async function viewerOf(sb: any, user: MailUser): Promise<Viewer> {
+  return { accountIds: user.accountIds, userId: user.id, audience: await mailAudience(sb).catch(() => undefined) };
+}
+
+/** Anhaenge der vorgelegten Mails mit kurzlebigen Links (10 Minuten), damit sie direkt in „Zu entscheiden“ aufgehen. */
+async function withAttachments(sb: any, topics: Topic[]): Promise<Topic[]> {
+  const ids = topics.flatMap((t) => t.newMessages.filter((m) => m.has_attachments).map((m) => m.id));
+  if (!ids.length) return topics;
+  const { data } = await sb.from("email_attachments").select("id, message_id, filename, mime, size, storage_path")
+    .in("message_id", ids).eq("is_ignored", false).order("created_at");
+  const rows = (data || []) as any[];
+  const paths = rows.map((r) => r.storage_path).filter(Boolean);
+  const urls = new Map<string, string>();
+  if (paths.length) {
+    const { data: signed } = await sb.storage.from("email-attachments").createSignedUrls(paths, 600);
+    for (const x of signed || []) if (x?.path && x.signedUrl) urls.set(x.path, x.signedUrl);
+  }
+  const byMsg = new Map<string, NonNullable<Topic["newMessages"][number]["attachments"]>>();
+  for (const r of rows) {
+    (byMsg.get(r.message_id) ?? byMsg.set(r.message_id, []).get(r.message_id)!)
+      .push({ id: r.id, filename: r.filename, mime: r.mime, size: r.size, url: r.storage_path ? urls.get(r.storage_path) ?? null : null });
+  }
+  for (const t of topics) for (const m of t.newMessages) if (byMsg.has(m.id)) m.attachments = byMsg.get(m.id);
+  return topics;
+}
 type Handler = (c: Ctx) => Promise<unknown>;
 
 const must = <T>(r: { data: T; error: any }): T => {
@@ -108,7 +135,7 @@ const handlers: Record<string, Handler> = {
     const neuronsMonth = (month || []).reduce((n: number, r: any) => n + Number(r.neurons || 0), 0);
     const cost = (month || []).reduce((n: number, r: any) => n + Number(r.cost_usd || 0), 0) +
       (neuronsMonth / 1000) * Number(prices?._neuron_usd_per_1000 ?? 0.011);
-    const topics = await topicCounts(sb, undefined, user.accountIds).catch(() => null);
+    const topics = await topicCounts(sb, undefined, await viewerOf(sb, user)).catch(() => null);
     return {
       statusCounts: counts,
       openSuggestions: open ?? 0,
@@ -477,7 +504,8 @@ const handlers: Record<string, Handler> = {
   async list_topics({ sb, user, body }) {
     const views: TopicView[] = ["entscheiden", "laufend", "wiedervorlage", "erledigt"];
     const view = views.includes(body.view) ? body.view as TopicView : "entscheiden";
-    return await listTopics(sb, view, undefined, user.accountIds);
+    const topics = await listTopics(sb, view, undefined, await viewerOf(sb, user));
+    return view === "entscheiden" ? await withAttachments(sb, topics) : topics;
   },
 
   /** Thema entscheiden: weiter verfolgen, Wiedervorlage (until = YYYY-MM-DD, note), abschliessen, wieder oeffnen. */
@@ -529,6 +557,18 @@ const handlers: Record<string, Handler> = {
   },
 
   // ------------------------------------------------------------------ HERO (lesend)
+  /** Aktueller Status eines HERO-Projekts und die Schritte des Ablaufs (fuer „Projektstatus“ in Zu entscheiden). Nur lesend. */
+  async project_status({ sb, body }) {
+    const key = await H.loadHeroKey(sb);
+    if (!key) throw new Error("HERO ist nicht aktiviert.");
+    const id = Number(body.projectId);
+    if (!Number.isFinite(id) || id <= 0) throw new Error("Projekt fehlt.");
+    const cfg = (await getConfig<any>(sb, "hero", {})) ?? {};
+    const [p, steps] = await Promise.all([H.projectById(key, id), H.projectSteps(key, cfg.project_type_id ?? null)]);
+    if (!p) throw new Error("Projekt in HERO nicht gefunden.");
+    return { projectId: p.id, nr: p.nr, name: p.name, stepId: p.stepId, stepName: p.stepName, steps };
+  },
+
   async search_projects({ sb, body }) {
     const key = await H.loadHeroKey(sb);
     if (!key) throw new Error("HERO ist nicht aktiviert.");

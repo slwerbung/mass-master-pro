@@ -15,7 +15,7 @@ import { CategoryChip } from "@/components/CategoryChip";
 import { MailBody } from "@/components/MailBody";
 import { TopicActions } from "@/components/TopicActions";
 import { DropboxSave } from "@/components/DropboxSave";
-import { FolderInput, Mail, Paperclip, Receipt } from "lucide-react";
+import { FileText, FolderInput, Mail, Paperclip, Receipt, Signpost, UserRound } from "lucide-react";
 import type { Overview } from "@/lib/types";
 import type { Topic, TopicMail } from "@/lib/topics";
 import { TOPIC_REASON_LABELS } from "@/lib/shared";
@@ -260,9 +260,11 @@ function NewMail({ m }: { m: TopicMail }) {
         <span className="font-medium">{m.from_name || m.from_addr}</span>
         <CategoryChip category={m.category} />
         {m.has_attachments && <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />}
+        {m.addressedTo && <Badge variant="secondary" title="Ausdrücklich an diesen Mitarbeiter gerichtet – nur er bekommt sie zur Entscheidung"><UserRound className="h-3 w-3" /> an {m.addressedTo}</Badge>}
         <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(m.sent_at)}</span>
       </div>
       {m.summary ? <p className="text-sm">{m.summary}</p> : <p className="text-sm text-muted-foreground">{m.subject || "(ohne Betreff)"}</p>}
+      {!!m.attachments?.length && <AttachmentLinks items={m.attachments} />}
       <div className="flex gap-3 text-xs">
         <button type="button" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground" onClick={() => setOpen(!open)}>
           <Mail className="h-3.5 w-3.5" /> {open ? "Mail zuklappen" : "Mail lesen"}
@@ -286,6 +288,65 @@ function NewMail({ m }: { m: TopicMail }) {
   );
 }
 
+const kb = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1000))} KB`);
+
+/** Anhänge zum Öffnen (neuer Tab); Bilder als Vorschaubild. Links gelten 10 Minuten, danach Seite neu laden. */
+function AttachmentLinks({ items }: { items: NonNullable<TopicMail["attachments"]> }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {items.map((a) => a.url ? (
+        <a key={a.id} href={a.url} target="_blank" rel="noreferrer" title={`${a.filename} öffnen`}
+          className="inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-xs hover:bg-accent">
+          {/^image\//.test(a.mime) ? <img src={a.url} alt="" className="h-8 w-8 rounded object-cover" /> : <FileText className="h-3.5 w-3.5 shrink-0" />}
+          <span className="truncate">{a.filename}</span><span className="shrink-0 text-muted-foreground">{kb(a.size)}</span>
+        </a>
+      ) : (
+        <span key={a.id} className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-muted-foreground" title="Nicht gespeichert (zu groß) – im Postfach öffnen">
+          <Paperclip className="h-3.5 w-3.5" /> {a.filename}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+interface ProjectStatusData { projectId: number; nr: string; name: string; stepId: number | null; stepName: string | null; steps: { id: number; name: string }[] }
+
+/** Projektstatus in HERO: aktueller Schritt, mit einem Klick ändern (immer da, damit der Status stimmt). */
+function ProjectStatus({ projectId, messageId }: { projectId: number; messageId: string }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["project-status", projectId], queryFn: () => api<ProjectStatusData>("project_status", { projectId }), staleTime: 60_000, retry: false });
+  const [stepId, setStepId] = useState<number | null>(null);
+  const cur = q.data?.stepId ?? null;
+  const chosen = stepId ?? cur;
+  const set = useMutation({
+    mutationFn: () => invokeFn<{ projectNr: string; stepName: string; changed: boolean }>("email-action", { action: "set_step", messageId, projectId, stepId: chosen }),
+    onSuccess: (r) => {
+      toast.success(r.changed ? `${r.projectNr}: Status auf „${r.stepName}“ gesetzt` : `${r.projectNr} steht schon auf „${r.stepName}“`);
+      setStepId(null);
+      ["project-status", "suggestions", "topics"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  if (q.isError) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <Signpost className="h-4 w-4 text-muted-foreground" />
+      <span className="text-muted-foreground">Status {q.data?.nr ?? `#${projectId}`}:</span>
+      {q.isLoading ? <Spinner /> : (
+        <>
+          <Select className="h-8 w-auto max-w-full" value={chosen ?? ""} onChange={(e) => setStepId(Number(e.target.value))} aria-label="Projektstatus">
+            {cur == null && <option value="">(unbekannt)</option>}
+            {(q.data?.steps ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}{s.id === cur ? " (aktuell)" : ""}</option>)}
+          </Select>
+          {chosen != null && chosen !== cur && (
+            <Button size="sm" onClick={() => set.mutate()} disabled={set.isPending}>{set.isPending && <Spinner />} In HERO setzen</Button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 /**
  * Ein Thema = eine Karte: warum es vorliegt, die neuen Mails, die Vorschläge des Assistenten,
  * darunter die Entscheidung (antworten, Anweisung, weiter verfolgen, Wiedervorlage, abschließen).
@@ -304,7 +365,7 @@ function TopicCard({ topic, suggestions, gewerke }: { topic: Topic; suggestions:
         </div>
         <CardTitle className="pt-1"><Link className="hover:underline" to={`/mails/${topic.latestId}`}>{topic.subject}</Link></CardTitle>
         <p className="text-xs text-muted-foreground">
-          {topic.from && <>mit {topic.from} · </>}{topic.messageCount} {topic.messageCount === 1 ? "Mail" : "Mails"} im Thema
+          {topic.addressedTo && <>an {topic.addressedTo} · </>}{topic.from && <>mit {topic.from} · </>}{topic.messageCount} {topic.messageCount === 1 ? "Mail" : "Mails"} im Thema
           {topic.newMessages.length > 1 && <> · <b>{topic.newMessages.length} neue</b></>}
         </p>
       </CardHeader>
@@ -317,6 +378,9 @@ function TopicCard({ topic, suggestions, gewerke }: { topic: Topic; suggestions:
             </span>
             {topic.lastMail.summary || "(ohne Inhalt)"}
           </p>
+        )}
+        {topic.projectId && !suggestions.some((s) => s.type === "change_step") && (
+          <ProjectStatus projectId={topic.projectId} messageId={topic.newMessages[0]?.id ?? topic.latestId} />
         )}
         {units.map((u, i) => (
           <section key={Array.isArray(u) ? u.map((s) => s.id).join() : u.id} className="space-y-2 border-t pt-3">

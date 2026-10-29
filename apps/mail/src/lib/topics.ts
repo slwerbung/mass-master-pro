@@ -4,6 +4,10 @@ import type { Category, TopicReason, TopicState } from "./shared";
 export interface TopicMail {
   id: string; direction: "in" | "out"; from_name: string; from_addr: string; subject: string; sent_at: string | null;
   summary: string | null; category: Category | null; has_attachments: boolean; decided_at: string | null;
+  /** ausdruecklich an diesen Mitarbeiter gerichtet; null = an alle mit Zugriff */
+  addressedTo?: string | null;
+  /** Anhaenge mit kurzlebigem Link (nur in „Zu entscheiden“) */
+  attachments?: { id: string; filename: string; mime: string; size: number; url: string | null }[];
 }
 
 export interface Topic {
@@ -23,6 +27,8 @@ export interface Topic {
   latestId: string;
   lastMail?: { direction: "in" | "out"; from: string; sent_at: string | null; summary: string | null } | null;
   messageCount: number;
+  /** an wen das Thema gerichtet ist; null = an alle */
+  addressedTo?: string | null;
   newMessages: TopicMail[];
   suggestionIds: string[];
 }
