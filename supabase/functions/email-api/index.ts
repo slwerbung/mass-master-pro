@@ -9,6 +9,8 @@ import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser, type MailUser } from "../_shared/email/http.ts";
 import { AccessError, assertAccount, assertMessages, assertThread, isMailAdmin, scopeAccounts } from "../_shared/email/access.ts";
 import { listMailUsers, mailAudience, saveMailUser } from "../_shared/email/users.ts";
+import { DEFAULT_PREFS, loadPrefs, loadVapid, pushToUser } from "../_shared/email/push.ts";
+import { isPushEndpoint } from "../_shared/email/webpush.ts";
 import { encryptSecret } from "../_shared/email/crypto.ts";
 import { encryptionKey, getConfig, setConfig } from "../_shared/email/config.ts";
 import { normalizeAutopilot } from "../_shared/email/autopilot.ts";
@@ -114,6 +116,56 @@ const likeSafe = (q: string) => q.replace(/[%_,()\\]/g, " ").trim().slice(0, 80)
 const handlers: Record<string, Handler> = {
   async me({ user }) {
     return { name: user.name, email: user.email, role: user.role, admin: isMailAdmin(user), accountIds: user.accountIds };
+  },
+
+  // ---------------------------------------------------------------- Benachrichtigungen (jeder Benutzer fuer sich)
+
+  /** Oeffentlicher VAPID-Schluessel, eigene Einstellungen, ob dieses Geraet angemeldet ist. */
+  async push_status({ sb, user, body }) {
+    const keys = await loadVapid(sb);
+    const prefs = (await loadPrefs(sb, [user.id])).get(user.id) ?? DEFAULT_PREFS;
+    const { data: subs } = await sb.from("email_push_subscriptions").select("endpoint").eq("user_id", user.id);
+    const endpoint = String(body.endpoint || "");
+    return { publicKey: keys.publicKey, prefs, devices: (subs || []).length, subscribed: !!endpoint && (subs || []).some((x: any) => x.endpoint === endpoint) };
+  },
+
+  async push_subscribe({ sb, user, body }) {
+    const sub = body.subscription || {};
+    const endpoint = String(sub.endpoint || "");
+    const p256dh = String(sub.keys?.p256dh || "");
+    const auth = String(sub.keys?.auth || "");
+    if (!isPushEndpoint(endpoint)) throw new Error("Unbekannter Push-Dienst.");
+    if (!/^[A-Za-z0-9_-]{80,100}$/.test(p256dh) || !/^[A-Za-z0-9_-]{16,32}$/.test(auth)) throw new Error("Ungültiges Push-Abo.");
+    // Ein Geraet gehoert immer dem, der sich zuletzt darauf angemeldet hat.
+    const { error } = await sb.from("email_push_subscriptions").upsert({
+      user_id: user.id, endpoint, p256dh, auth, user_agent: String(body.userAgent || "").slice(0, 200) || null, failures: 0,
+    }, { onConflict: "endpoint" });
+    if (error) throw new Error(error.message);
+    return { subscribed: true };
+  },
+
+  async push_unsubscribe({ sb, user, body }) {
+    await sb.from("email_push_subscriptions").delete().eq("user_id", user.id).eq("endpoint", String(body.endpoint || ""));
+    return { subscribed: false };
+  },
+
+  async push_prefs({ sb, user, body }) {
+    const cur = (await loadPrefs(sb, [user.id])).get(user.id) ?? DEFAULT_PREFS;
+    const next = {
+      decide: typeof body.decide === "boolean" ? body.decide : cur.decide,
+      incoming: typeof body.incoming === "boolean" ? body.incoming : cur.incoming,
+    };
+    const { error } = await sb.from("email_user_prefs").upsert({
+      user_id: user.id, push_decide: next.decide, push_incoming: next.incoming, updated_at: new Date().toISOString(),
+    });
+    if (error) throw new Error(error.message);
+    return next;
+  },
+
+  async push_test({ sb, user }) {
+    const r = await pushToUser(sb, user.id, { title: "Mail-Assistent", body: "Benachrichtigungen funktionieren.", url: "/", tag: "test" }, await loadVapid(sb));
+    if (!r.sent) throw new Error(r.failed ? "Senden an dieses Gerät fehlgeschlagen – bitte Benachrichtigungen aus- und wieder einschalten." : "Kein Gerät angemeldet.");
+    return r;
   },
 
   async overview({ sb, user }) {

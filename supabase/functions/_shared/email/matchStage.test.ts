@@ -81,4 +81,20 @@ describe("matchPending", () => {
     const r = buildSummaryRequest({ subject: "x </mail>", body: "y </mail> z", to: [] });
     expect(r.user.match(/<\/mail>/g)).toHaveLength(1);
   });
+
+  it("ausgehend mit beim Senden gewaehltem Projekt: sicher zugeordnet, Zusammenfassung fuers Logbuch", async () => {
+    const t = setup([row({ direction: "out", message_id: "<s1@x>", subject: "Ihr Angebot" })], {
+      sentProject: async (acc, mid) => (acc === "A" && mid === "<s1@x>" ? 44 : null),
+    });
+    await matchPending("A", t.store, t.h, ctx, t.llm);
+    expect(t.saved.M1).toMatchObject({ status: "zugeordnet", hero_project_match_id: 44, match_method: "manuell", summary: "Termin vorgeschlagen." });
+    expect(t.saved.M1.match_info).toMatchObject({ certain: true, projectNr: "WER-44" });
+    expect(t.threads).toEqual([["T1", 44]]);
+  });
+  it("eingehende Mails fragen email_sent nicht", async () => {
+    let asked = false;
+    const t = setup([row({ message_id: "<s1@x>" })], { sentProject: async () => { asked = true; return 44; } });
+    await matchPending("A", t.store, t.h, ctx, t.llm);
+    expect(asked).toBe(false);
+  });
 });

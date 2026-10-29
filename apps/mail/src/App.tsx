@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { Spinner } from "@/components/ui";
@@ -14,6 +15,20 @@ import Topics from "@/pages/Topics";
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+
+  // Klick auf eine Benachrichtigung bei offener App: dorthin wechseln und frisch laden.
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type !== "open") return;
+      qc.invalidateQueries();
+      navigate(String(e.data.url || "/"));
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+  }, [navigate, qc]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));

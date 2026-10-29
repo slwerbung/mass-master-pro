@@ -14,6 +14,8 @@ export interface MatchMessageRow {
   id: string;
   account_id: string;
   thread_id: string | null;
+  /** Message-ID der Mail – bei ausgehenden Mails Schluessel zu `email_sent` (beim Senden gewaehltes Projekt). */
+  message_id?: string | null;
   direction: "in" | "out";
   from_addr: string;
   to_addrs: string[];
@@ -59,6 +61,8 @@ export interface MatchStore {
 
 export interface MatchHero {
   threadProject(threadId: string): Promise<number | null>;
+  /** Projekt, das der Mitarbeiter beim Senden aus der Mail-App gewaehlt hat (email_sent.project_id). */
+  sentProject?(accountId: string, messageId: string): Promise<number | null>;
   projectByNumber(rel: number): Promise<HeroProject | null>;
   projectById(id: number): Promise<HeroProject | null>;
   contactsByEmail: MatchDeps["contactsByEmail"];
@@ -143,7 +147,11 @@ export async function matchPending(
           }
         },
       };
-      const out: MatchOutcome = await matchMessage(input, deps);
+      // Beim Senden aus der Mail-App gewaehltes Projekt: der Mensch hat entschieden – sicher, wie eine Projektnummer.
+      const chosen = m.direction === "out" && m.message_id && hero.sentProject ? await hero.sentProject(m.account_id, m.message_id) : null;
+      const out: MatchOutcome = chosen
+        ? { method: "manuell", projectId: chosen, certain: true, candidates: [], knownContact: true, contactIds: [], reason: "Beim Senden gewählt" }
+        : await matchMessage(input, deps);
 
       let project: HeroProject | null = out.candidates.find((c) => c.id === out.projectId) ?? null;
       if (out.projectId && !project) project = await hero.projectById(out.projectId).catch(() => null);

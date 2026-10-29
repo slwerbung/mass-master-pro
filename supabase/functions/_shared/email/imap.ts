@@ -11,6 +11,7 @@
 
 import { ImapFlow } from "imapflow";
 import { decodeCharset, decodeTransfer, pickDisplayParts, type PartRef } from "./mailHtml.ts";
+import { attachmentParts, BIG_MAIL_BYTES, htmlToText, omittedNote, slimSource } from "./bigMail.ts";
 
 export interface ImapCreds {
   host: string;
@@ -95,6 +96,8 @@ export interface FetchResult {
   messages: RawMessage[];
   /** true, wenn noch mehr neue Mails warten (Limit erreicht). */
   more: boolean;
+  /** Bei `skipFirst`: UID der uebersprungenen Mail. */
+  skipped?: number;
 }
 
 /**
@@ -108,7 +111,7 @@ export interface FetchResult {
 export async function fetchNew(
   client: ImapFlow,
   folder: string,
-  opts: { lastUid: number | null; uidValidity: string | null; limit: number; backfill: number },
+  opts: { lastUid: number | null; uidValidity: string | null; limit: number; backfill: number; skipFirst?: boolean },
 ): Promise<FetchResult> {
   const lock = await client.getMailboxLock(folder, { readOnly: true });
   try {
@@ -142,28 +145,68 @@ export async function fetchNew(
       .sort((a: number, b: number) => a - b);
     const take = found.slice(0, opts.limit);
     if (!take.length) return { state, baseline, messages: [], more: false };
+    if (opts.skipFirst) return { state, baseline, messages: [], more: found.length > 1, skipped: take[0] };
 
     // In kleinen Paketen holen und bei MAX_BATCH_BYTES abbrechen: 50 Mails mit grossen
     // Anhaengen auf einmal sprengen den Speicher der Edge Runtime (HTTP 546). Der Rest
     // bleibt fuer den naechsten Lauf liegen (`more`).
+    // Erst die Groessen (billig), dann holen: sehr grosse Mails nur als Kopfzeilen + Text (bigMail.ts).
+    const sizes = new Map<number, number>();
+    for (const m of (await client.fetchAll(take.join(","), { uid: true, size: true }, { uid: true })) as any[]) sizes.set(Number(m.uid), Number(m.size ?? 0));
     const messages: RawMessage[] = [];
     let bytes = 0;
-    for (let i = 0; i < take.length; i += FETCH_CHUNK) {
-      const chunk = take.slice(i, i + FETCH_CHUNK);
-      const fetched = await client.fetchAll(chunk.join(","), { uid: true, flags: true, source: true }, { uid: true });
+    let small: number[] = [];
+    const flushSmall = async () => {
+      if (!small.length) return;
+      const fetched = await client.fetchAll(small.join(","), { uid: true, flags: true, source: true }, { uid: true });
+      small = [];
       for (const m of fetched as any[]) {
         if (!m.source) continue;
         bytes += (m.source as Uint8Array).byteLength;
         messages.push({ uid: Number(m.uid), flags: [...(m.flags ?? [])], source: m.source as Uint8Array });
       }
+    };
+    for (const uid of take) {
       if (bytes >= MAX_BATCH_BYTES) break;
+      const size = sizes.get(uid) ?? 0;
+      if (size > BIG_MAIL_BYTES) {
+        await flushSmall();
+        const slim = await fetchSlim(client, uid, size);
+        if (slim) { messages.push(slim); bytes += slim.source.byteLength; }
+        continue;
+      }
+      small.push(uid);
+      if (small.length >= FETCH_CHUNK) await flushSmall();
     }
+    if (bytes < MAX_BATCH_BYTES) await flushSmall();
+    else small = [];
     messages.sort((a, b) => a.uid - b.uid);
     const lastTaken = messages.length ? messages[messages.length - 1].uid : 0;
     return { state, baseline, messages, more: found.some((u) => u > lastTaken) };
   } finally {
     lock.release();
   }
+}
+
+/** Grosse Mail: Kopfzeilen + Textteil statt der ganzen Quelle (Mailbox-Lock haelt der Aufrufer). */
+async function fetchSlim(client: ImapFlow, uid: number, size: number): Promise<RawMessage | null> {
+  const head: any = await client.fetchOne(String(uid), { uid: true, flags: true, bodyStructure: true, headers: true }, { uid: true });
+  if (!head?.headers) return null;
+  let text = "";
+  if (head.bodyStructure) {
+    const pick = pickDisplayParts(head.bodyStructure);
+    const ref = pick.text ?? pick.html;
+    if (ref) {
+      const msg: any = await client.fetchOne(String(uid), { bodyParts: [ref.key] }, { uid: true });
+      const b = msg?.bodyParts?.get(ref.key);
+      if (b) {
+        const decoded = decodeCharset(decodeTransfer(new Uint8Array(b), ref.encoding), ref.charset);
+        text = ref === pick.text ? decoded : htmlToText(decoded);
+      }
+    }
+  }
+  const note = omittedNote(size, head.bodyStructure ? attachmentParts(head.bodyStructure) : []);
+  return { uid, flags: [...(head.flags ?? [])], source: slimSource(new Uint8Array(head.headers), `${text.trim()}\n\n${note}`) };
 }
 
 /** Legt fehlende Ordner an (idempotent). Gibt die neu angelegten zurueck. */

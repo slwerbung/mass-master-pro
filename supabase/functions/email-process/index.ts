@@ -1,4 +1,4 @@
-// Verarbeiten: Verstehen -> Zuordnen -> Handeln (pg_cron als Nachzuegler, und am Ende von email-sync).
+// Verarbeiten: Verstehen -> Zuordnen -> Handeln -> Benachrichtigen (pg_cron als Nachzuegler, und am Ende von email-sync).
 //
 // Jede Stufe schreibt ihren Stand in die Datenbank; ein Fehler haelt nur die eine
 // Mail an, der naechste Lauf macht dort weiter. Max. 20 Mails je Stufe und Aufruf
@@ -24,6 +24,7 @@ import {
   actStore, claimAccount, draftStore, loadExamples, loadKnowledge, loadReference, loadRules, matchStore, recordRun, releaseAccount, understandStore,
 } from "../_shared/email/store.ts";
 import { understandPending } from "../_shared/email/understand.ts";
+import { notifyNewMail } from "../_shared/email/push.ts";
 import type { Gewerk } from "../_shared/email/gewerke.ts";
 import type { StepIds } from "../_shared/email/steps.ts";
 
@@ -96,6 +97,9 @@ async function processOne(sb: any, id: string) {
       uploader: heroKey ? directUploader(sb, heroKey) : null,
     });
 
+    // 4. Benachrichtigen (Push) – ein Fehler hier haelt die Verarbeitung nicht an.
+    const pushed = await notifyNewMail(sb, id).catch((e) => ({ checked: 0, sent: 0, error: String((e as Error)?.message || e).slice(0, 120) }));
+
     await releaseAccount(sb, id);
     const waiting = u.waiting || t.waiting;
     await recordRun(sb, {
@@ -106,6 +110,8 @@ async function processOne(sb: any, id: string) {
         waiting ? "KI-Tageskontingent erschoepft – Rest wartet bis Mitternacht (UTC)" : null,
         `verstanden ${u.processed}, zugeordnet ${t.matched}/${t.processed}, gehandelt ${a.processed} (verschoben ${a.moved}, Logbuch ${a.logged}, Vorschlaege ${a.suggestions})`,
         heroKey ? null : "HERO nicht aktiv",
+        pushed.sent ? `Push ${pushed.sent}` : null,
+        "error" in pushed ? `Push-Fehler: ${pushed.error}` : null,
       ].filter(Boolean).join(" · "),
     });
     return { accountId: id, understood: u, matched: t, acted: a };

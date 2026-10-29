@@ -398,7 +398,7 @@ function TopicCard({ topic, suggestions, gewerke }: { topic: Topic; suggestions:
 }
 
 export default function Decide() {
-  const topics = useQuery({ queryKey: ["topics", "entscheiden"], queryFn: () => api<Topic[]>("list_topics", { view: "entscheiden" }), refetchInterval: 60_000 });
+  const topics = useQuery({ queryKey: ["topics", "entscheiden"], queryFn: () => api<Topic[]>("list_topics", { view: "entscheiden" }), refetchInterval: 60_000, refetchOnWindowFocus: true });
   const q = useQuery({ queryKey: ["suggestions"], queryFn: () => api<Suggestion[]>("list_suggestions", { status: "offen" }), refetchInterval: 60_000 });
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api<{ gewerke: Gewerk[] | null }>("get_config") });
   const gewerke = cfg.data?.gewerke ?? [];

@@ -1,4 +1,4 @@
-// Abholen (pg_cron alle 5 Minuten, ein Aufruf je aktivem Postfach; oder per Admin „Jetzt abrufen").
+// Abholen (pg_cron jede Minute, ein Aufruf je aktivem Postfach; oder per Admin „Jetzt abrufen").
 //
 // Postfach-Lock (`locked_until`) verhindert, dass zwei Laeufe dasselbe Postfach
 // gleichzeitig bearbeiten. Am Ende stoesst die Function email-process an.
@@ -31,7 +31,7 @@ async function syncOne(sb: any, id: string, origin: string, cronSecret: string |
           imap: {
             fetchNew: async (folder, o) => {
               const r = await fetchNew(client, folder, o);
-              return { state: r.state, baseline: r.baseline, messages: r.messages, more: r.more };
+              return { state: r.state, baseline: r.baseline, messages: r.messages, more: r.more, skipped: r.skipped ?? null };
             },
           },
         }),

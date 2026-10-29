@@ -3,10 +3,11 @@
 //   { action: "accounts" }                               Postfaecher zum Senden (Absender, Signatur, SMTP vorhanden?)
 //   { action: "signature_save", accountId, html }        HTML-Signatur eines Postfachs speichern
 //   { action: "prepare", replyTo, mode }                 Vorbelegung fuer Antworten / Allen antworten / Weiterleiten
-//   { action: "send", accountId, to, cc, bcc, subject, text, replyTo?, mode?, forwardAttachmentIds?, uploads?, discardDraft? }
+//   { action: "send", accountId, to, cc, bcc, subject, text, replyTo?, mode?, forwardAttachmentIds?, uploads?, discardDraft?, projectId? }
 //
 // Gesendet wird nur hier und nur per Klick (Admin-Sitzung) – siehe composeSend.ts. Die gesendete Mail wird in den
 // Gesendet-Ordner gelegt; der naechste Abruf uebernimmt sie von dort (Richtung „out“, HERO-Logbuch wie bei Thunderbird).
+// Mit `projectId` (beim Senden gewaehlt, bei Antworten aus dem Thread vorbelegt) landet sie sicher im Logbuch dieses Projekts.
 // Antwort immer HTTP 200 mit { ok, data | error }.
 
 import { createClient } from "@supabase/supabase-js";
@@ -23,7 +24,7 @@ import {
 import { buildComposedMime, sendComposed } from "../_shared/email/composeSend.ts";
 
 const COMPANY_NAME = "SL WERBUNG";
-const MSG_COLS = "id, account_id, thread_id, message_id, refs, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, body_text, folder, current_folder, draft_message_id, draft_uid, draft_text";
+const MSG_COLS = "id, account_id, thread_id, message_id, refs, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, body_text, folder, current_folder, draft_message_id, draft_uid, draft_text, hero_project_match_id, hero_logged_at, match_info";
 type Mode = "reply" | "replyAll" | "forward";
 const asMode = (m: unknown): Mode | null => (m === "reply" || m === "replyAll" || m === "forward" ? m : null);
 
@@ -49,6 +50,29 @@ function decodeBase64(b64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+/**
+ * Projekt der Originalmail fuers Logbuch der Antwort/Weiterleitung: das Projekt des Threads (sicher zugeordnet)
+ * oder das der Mail, wenn sie sicher zugeordnet bzw. schon im Logbuch ist. Vermutungen werden nicht vorbelegt.
+ */
+async function projectOf(sb: any, m: any): Promise<{ id: number; nr: string | null; name: string | null } | null> {
+  let id: number | null = null;
+  if (m.thread_id) {
+    const { data } = await sb.from("email_threads").select("hero_project_match_id").eq("id", m.thread_id).maybeSingle();
+    id = data?.hero_project_match_id ?? null;
+  }
+  if (id == null && m.hero_project_match_id && (m.match_info?.certain === true || m.hero_logged_at)) id = m.hero_project_match_id;
+  if (id == null) return null;
+  const { data } = await sb.from("email_messages").select("match_info").eq("hero_project_match_id", id)
+    .not("match_info->>projectNr", "is", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  return { id: Number(id), nr: data?.match_info?.projectNr ?? null, name: data?.match_info?.projectName ?? null };
+}
+
+/** Beim Senden gewaehltes Projekt (HERO project_match_id) – nur eine positive ganze Zahl, sonst keins. */
+function chosenProject(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
 const fromLabel = (m: any) => (m.from_name ? `${m.from_name} <${m.from_addr}>` : m.from_addr);
@@ -91,6 +115,7 @@ const handlers: Record<string, (sb: any, body: any, user: MailUser) => Promise<u
       subject: mode === "forward" ? forwardSubject(m.subject) : replySubject(m.subject),
       quoteText: quote.text,
       hasDraft: !!m.draft_message_id,
+      project: await projectOf(sb, m),
       // KI-Entwurf ohne Text-Signatur: beim Senden haengt die HTML-Signatur des Postfachs an.
       draftText: m.draft_text ? stripTrailingSignature(m.draft_text, (await loadAccount(sb, m.account_id)).signature || "") : null,
       attachments: (att || []).map((a: any) => ({
@@ -174,6 +199,8 @@ const handlers: Record<string, (sb: any, body: any, user: MailUser) => Promise<u
       account_id: acc.id, message_id: messageId, to_addrs: recipients.to, cc_addrs: recipients.cc, bcc_count: recipients.bcc.length,
       subject, reply_to: mode && mode !== "forward" ? orig?.id ?? null : null, forward_of: mode === "forward" ? orig?.id ?? null : null,
       attachment_count: files.length, sent_by: user.id, sent_folder_uid: sentUid, warnings,
+      // Logbuch: die Kopie kommt ueber den Gesendet-Ordner zurueck und wird diesem Projekt sicher zugeordnet (matchStage).
+      project_id: chosenProject(body.projectId),
     });
     if (orig && body.discardDraft) await sb.from("email_messages").update({ draft_message_id: null, draft_uid: null }).eq("id", orig.id);
     if (orig?.thread_id && mode !== "forward") {
