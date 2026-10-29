@@ -9,6 +9,9 @@ import { api, invokeFn } from "@/lib/api";
 import { ProjectSearch } from "@/components/ProjectSearch";
 import { TeachBox } from "@/components/TeachBox";
 import { InstructBox } from "@/components/InstructBox";
+import { TopicActions } from "@/components/TopicActions";
+import type { Topic } from "@/lib/topics";
+import { TOPIC_STATE_LABELS } from "@/lib/shared";
 import { MailBody } from "@/components/MailBody";
 import { Section } from "@/components/Section";
 import { CATEGORIES, CATEGORY_LABELS, type Category } from "@/lib/shared";
@@ -26,6 +29,8 @@ interface Detail {
   shadow: { id: string; task: string; provider_name: string; model: string; result: any; error: string | null }[];
   suggestions: { id: string; type: string; status: string }[];
   calls: { task: string; provider_type: string; model: string; tokens_in: number; tokens_out: number; neurons: number; cost_usd: number; ok: boolean; fallback: boolean; error: string | null }[];
+  /** Thema der Mail (fehlt bei einer aelteren email-api; null = gehoert zu keinem Thema, z. B. Werbung) */
+  topic?: Topic | null;
   /** fehlt bei einer aelteren email-api */
   knowledge?: { sender: { id: string; text: string; from_pattern: string; source: string }[]; general: number };
 }
@@ -190,6 +195,7 @@ export default function MessageDetail() {
 
       {m.trashed_at && <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Liegt im Papierkorb des Postfachs (seit {formatDateTime(m.trashed_at)}).</div>}
       {m.error && <ErrorBox error={m.error} />}
+      {d.topic && <TopicBar topic={d.topic} />}
 
       {/* Kopf: Betreff, Absender, KI-Einschaetzung */}
       <div className="space-y-3 rounded-lg border bg-card p-4">
@@ -404,6 +410,26 @@ export default function MessageDetail() {
           </div>
         </Section>
       )}
+    </div>
+  );
+}
+
+/** Zustand des Themas, zu dem die Mail gehoert, und die Entscheidung dazu. */
+function TopicBar({ topic }: { topic: Topic }) {
+  const info = topic.due ? topic.reasonText
+    : topic.state === "wiedervorlage" ? `bis ${formatDateTime(topic.snoozedUntil)}${topic.note ? ` – „${topic.note}“` : ""}`
+      : topic.state === "erledigt" ? (topic.closedAt ? `seit ${formatDateTime(topic.closedAt)}` : "")
+        : topic.nextCheck ? `wird überwacht, nächste Prüfung ${formatDateTime(topic.nextCheck)}` : "wird überwacht";
+  return (
+    <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <MessagesSquare className="h-4 w-4 text-muted-foreground" />
+        <span className="font-medium">Thema:</span>
+        <Badge variant={topic.due ? "danger" : topic.state === "erledigt" ? "good" : "secondary"}>{topic.due ? "Zu entscheiden" : TOPIC_STATE_LABELS[topic.state]}</Badge>
+        <span className="text-muted-foreground">{info}</span>
+        <Link to="/themen" className="ml-auto text-xs text-muted-foreground underline">Alle Themen</Link>
+      </div>
+      <TopicActions topic={topic} showDecide={topic.due} withReply={false} />
     </div>
   );
 }

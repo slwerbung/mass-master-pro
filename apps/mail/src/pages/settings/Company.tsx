@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
-import { DEFAULT_FOLDER_NAMES, FOLDER_KEYS, type FolderNames } from "@/lib/shared";
+import { CATEGORIES, CATEGORY_LABELS, DEFAULT_FOLDER_NAMES, FOLDER_KEYS, type FolderNames } from "@/lib/shared";
 import { Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Spinner, Switch, Textarea } from "@/components/ui";
 import { errorText } from "@/lib/utils";
 
@@ -15,7 +15,11 @@ interface Hero {
 interface Config {
   folders: Partial<FolderNames> | null; gewerke: Gewerk[] | null; hero: Hero | null; company_knowledge: string | null;
   reply_rules: string | null; lexoffice: { address: string } | null; budget: { monthly_usd: number | null } | null; retention_days: number | null;
+  topics: Topics | null;
 }
+/** Themen: was vorgelegt wird und wann laufende Themen wieder kommen (topics.ts) */
+interface Topics { skip_categories: string[]; unanswered_days: number; followup_days: number }
+const TOPIC_DEFAULTS: Topics = { skip_categories: ["werbung_spam", "newsletter"], unanswered_days: 2, followup_days: 7 };
 
 const STEP_LABELS: Record<string, string> = {
   angebot: "Angeboterstellung", vor_ort: "Vor-Ort-Termin", detailgespraech: "Detailgespräch", projektplanung: "Projektplanung",
@@ -73,6 +77,34 @@ export default function Company() {
       <Section title="Firmenwissen für Antwortentwürfe" onSave={saveKey("company_knowledge")} saving={save.isPending}>
         <Textarea rows={5} value={c.company_knowledge ?? ""} onChange={(e) => set("company_knowledge", e.target.value)} />
         <p className="text-xs text-muted-foreground">Leistungen, Standort, typische Abläufe. Kommt in jeden Prompt – kurz halten.</p>
+      </Section>
+
+      <Section title="Themen: was vorgelegt wird und wann es wiederkommt" onSave={saveKey("topics")} saving={save.isPending}>
+        <p className="text-sm text-muted-foreground">
+          Jede eingehende Mail wird einmal unter „Zu entscheiden“ vorgelegt – außer aus den angehakten Kategorien. Laufende Themen werden überwacht und kommen von selbst wieder.
+        </p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          {CATEGORIES.map((k) => {
+            const t = c.topics ?? TOPIC_DEFAULTS;
+            const on = t.skip_categories.includes(k);
+            return (
+              <label key={k} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={on} onChange={() => set("topics", { ...t, skip_categories: on ? t.skip_categories.filter((x) => x !== k) : [...t.skip_categories, k] })} />
+                {CATEGORY_LABELS[k]} nicht vorlegen
+              </label>
+            );
+          })}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Kundenmail unbeantwortet – wieder vorlegen nach (Tagen)">
+            <Input type="number" min={1} max={90} value={(c.topics ?? TOPIC_DEFAULTS).unanswered_days}
+              onChange={(e) => set("topics", { ...(c.topics ?? TOPIC_DEFAULTS), unanswered_days: num(e.target.value) })} />
+          </Field>
+          <Field label="Keine Bewegung im Thema – wieder vorlegen nach (Tagen)">
+            <Input type="number" min={1} max={90} value={(c.topics ?? TOPIC_DEFAULTS).followup_days}
+              onChange={(e) => set("topics", { ...(c.topics ?? TOPIC_DEFAULTS), followup_days: num(e.target.value) })} />
+          </Field>
+        </div>
       </Section>
 
       <Section title="Wann gibt es einen Antwortentwurf?" onSave={saveKey("reply_rules")} saving={save.isPending}>

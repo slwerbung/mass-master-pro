@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarPlus, Check, FileText, FolderPlus, Settings2, Wand2, X } from "lucide-react";
+import { AlarmClock, CalendarPlus, Check, CheckCheck, FileText, FolderPlus, Settings2, Wand2, X } from "lucide-react";
 import { invokeFn } from "@/lib/api";
 import { Button, Input, Spinner, Textarea } from "@/components/ui";
 import { cn, errorText } from "@/lib/utils";
@@ -12,8 +12,12 @@ type PlanProject =
   | NewProject
   | { mode: "link"; projectNr: string; projectId: number | null }
   | { mode: "keep" };
+/** Thema in der Mail-App: nichts (= weiter verfolgen), abschliessen oder Wiedervorlage */
+interface PlanTopic { mode: "keine" | "erledigt" | "wiedervorlage"; date: string | null; note: string | null }
 interface Plan {
   project: PlanProject;
+  /** fehlt bei einer aelteren email-action */
+  topic?: PlanTopic;
   offer: boolean;
   appointments: Appointment[];
   /** weitere HERO-Aktionen (Ansprechpartner, Kontaktdaten, Status, Aufgabe …) */
@@ -59,12 +63,12 @@ interface Appointment {
  * „Nein, anders …“: in eigenen Worten sagen, was passieren soll. Der Assistent macht daraus einen Plan
  * (Projekt anlegen/zuordnen, Angebotsentwurf, Termin in HERO), der hier geprüft und mit einem Klick ausgeführt wird.
  */
-export function InstructBox({ messageId, onCancel, onExplain }: { messageId: string; onCancel: () => void; onExplain: () => void }) {
+export function InstructBox({ messageId, onCancel, onExplain, title }: { messageId: string; onCancel: () => void; onExplain?: () => void; title?: string }) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [steps, setSteps] = useState<Step[] | null>(null);
-  const refresh = () => ["suggestions", "overview", "messages", "message"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  const refresh = () => ["suggestions", "overview", "messages", "message", "topics"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
 
   const makePlan = useMutation({
     mutationFn: () => invokeFn<Plan>("email-action", { action: "instruct_plan", messageId, text }),
@@ -82,18 +86,21 @@ export function InstructBox({ messageId, onCancel, onExplain }: { messageId: str
     onError: (e) => toast.error(errorText(e)),
   });
 
-  const nothing = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointments.length && !(plan.ops ?? []).length;
+  const topicMode = plan?.topic?.mode ?? "keine";
+  const nothing = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointments.length && !(plan.ops ?? []).length && topicMode === "keine";
+  const onlyTopic = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointments.length && !(plan.ops ?? []).length && topicMode !== "keine";
+  const noTopic: PlanTopic = { mode: "keine", date: null, note: null };
   // „Kontakt gibt es schon“: ohne gewaehlten Kunden wird nichts angelegt (nie ein neuer Kontakt).
   const customerMissing = plan?.project.mode === "new" && plan.project.requireExisting && !plan.project.existingCustomer;
   const p = plan;
   return (
     <div className="space-y-3 rounded-md border border-sky-200 bg-sky-50/60 p-3">
-      <div className="flex items-center gap-2 text-sm font-medium"><Wand2 className="h-4 w-4" /> Was soll stattdessen passieren?</div>
+      <div className="flex items-center gap-2 text-sm font-medium"><Wand2 className="h-4 w-4" /> {title ?? "Was soll stattdessen passieren?"}</div>
       {!steps && (
         <Textarea
           rows={3} maxLength={1000} value={text} autoFocus
           onChange={(e) => { setText(e.target.value); setPlan(null); }}
-          placeholder="z. B. „Neues Projekt anlegen, Angebotsentwurf vorbereiten und morgen einen Büro-Termin eintragen.“ oder „Gehört zu WER-1820.“"
+          placeholder="z. B. „Neues Projekt anlegen, Angebotsentwurf vorbereiten und morgen einen Büro-Termin eintragen.“, „Gehört zu WER-1820.“ oder „Wiedervorlage in 2 Wochen, ob die Freigabe da ist.“"
         />
       )}
 
@@ -207,7 +214,19 @@ export function InstructBox({ messageId, onCancel, onExplain }: { messageId: str
               </Row>
             );
           })}
-          {nothing && <p className="text-muted-foreground">Daraus ergibt sich nichts, was der Assistent in HERO tun kann.</p>}
+          {p.topic?.mode === "wiedervorlage" && (
+            <Row icon={<AlarmClock className="h-4 w-4" />} onRemove={() => setPlan({ ...p, topic: noTopic })}>
+              <span className="shrink-0">Thema auf Wiedervorlage bis</span>
+              <Input className="h-8 w-36" type="date" value={p.topic.date ?? ""} onChange={(e) => setPlan({ ...p, topic: { ...p.topic!, date: e.target.value } })} />
+              <Input className="h-8 min-w-40 flex-1" placeholder="Worauf achten? (optional)" value={p.topic.note ?? ""} onChange={(e) => setPlan({ ...p, topic: { ...p.topic!, note: e.target.value } })} />
+            </Row>
+          )}
+          {p.topic?.mode === "erledigt" && (
+            <Row icon={<CheckCheck className="h-4 w-4" />} onRemove={() => setPlan({ ...p, topic: noTopic })}>
+              Thema abschließen (wird nicht weiter verfolgt, bis eine neue Mail kommt)
+            </Row>
+          )}
+          {nothing && <p className="text-muted-foreground">Daraus ergibt sich nichts, was der Assistent tun kann.</p>}
           {p.notDoable.length > 0 && (
             <p className="text-xs text-amber-800">Geht nicht automatisch (bitte selbst erledigen): {p.notDoable.join(" · ")}</p>
           )}
@@ -232,7 +251,7 @@ export function InstructBox({ messageId, onCancel, onExplain }: { messageId: str
         )}
         {!steps && p && (
           <Button size="sm" onClick={() => run.mutate()} disabled={!!nothing || customerMissing || run.isPending}>
-            {run.isPending && <Spinner />} In HERO ausführen
+            {run.isPending && <Spinner />} {onlyTopic ? "Ausführen" : "In HERO ausführen"}
           </Button>
         )}
         {steps ? (
@@ -240,7 +259,7 @@ export function InstructBox({ messageId, onCancel, onExplain }: { messageId: str
         ) : (
           <Button size="sm" variant="ghost" onClick={onCancel}>Abbrechen</Button>
         )}
-        {!steps && (
+        {!steps && onExplain && (
           <button type="button" className="text-xs text-muted-foreground underline" onClick={onExplain}>
             Stattdessen nur erklären, was falsch ist (Mail neu verarbeiten)
           </button>

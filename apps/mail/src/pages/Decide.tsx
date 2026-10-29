@@ -8,10 +8,17 @@ import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Fiel
 import { ProjectSearch } from "@/components/ProjectSearch";
 import { ConfirmationCard, SendDocumentCard } from "@/components/OrderCards";
 import {
-  AlternativesCard, AlternativesPicker, Buttons, ExistingCustomerChoice, MessageGroupCard, quoted, SuggestionCard, typeLabel, useDecide, useRejectAll,
+  AlternativesCard, AlternativesPicker, Buttons, ExistingCustomerChoice, quoted, SuggestionCard, typeLabel, useDecide, useRejectAll,
   type ExistingCustomer,
 } from "@/components/SuggestionParts";
-import { formatDateTime } from "@/lib/utils";
+import { CategoryChip } from "@/components/CategoryChip";
+import { MailBody } from "@/components/MailBody";
+import { TopicActions } from "@/components/TopicActions";
+import { Mail, Paperclip } from "lucide-react";
+import type { Overview } from "@/lib/types";
+import type { Topic, TopicMail } from "@/lib/topics";
+import { TOPIC_REASON_LABELS } from "@/lib/shared";
+import { formatDate, formatDateTime } from "@/lib/utils";
 
 interface Gewerk { short: string; name: string; measure_id: number | null }
 
@@ -204,64 +211,126 @@ function ProjectCard({ s, gewerke, embedded, onSkip }: { s: Suggestion; gewerke:
   );
 }
 
-interface Digest { text: string; openSuggestions: number; portalOpen: { id: string; subject: string; from: string; sent_at: string | null }[]; unanswered: { id: string; subject: string; from: string; sent_at: string | null }[]; claims: { id: string; subject: string; from: string; sent_at: string | null }[] }
+interface Digest { portalOpen: { id: string }[]; claims: { id: string }[] }
 
-function DigestCard() {
-  const q = useQuery({ queryKey: ["digest"], queryFn: () => api<Digest>("digest"), refetchInterval: 300_000 });
-  const d = q.data;
-  if (!d || (!d.unanswered.length && !d.claims.length && !d.portalOpen.length)) return null;
-  const list = (title: string, rows: Digest["claims"], tone: "danger" | "warn") => rows.length > 0 && (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2 text-sm font-medium"><Badge variant={tone}>{rows.length}</Badge> {title}</div>
-      {rows.slice(0, 5).map((r) => (
-        <Link key={r.id} to={`/mails/${r.id}`} className="block truncate text-sm hover:underline">
-          {r.from} – {r.subject || "(ohne Betreff)"} <span className="text-xs text-muted-foreground">({formatDateTime(r.sent_at)})</span>
-        </Link>
-      ))}
-    </div>
+/** Kopfzeile: alles mit einem Klick erreichbar (Themen-Ansichten, Belege im Portal, Reklamationen). */
+function OverviewBar({ due }: { due: number }) {
+  const ov = useQuery({ queryKey: ["overview"], queryFn: () => api<Overview>("overview"), refetchInterval: 60_000 });
+  const dg = useQuery({ queryKey: ["digest"], queryFn: () => api<Digest>("digest"), refetchInterval: 300_000 });
+  const t = ov.data?.topics;
+  const chip = (to: string, label: string, n: number | undefined, tone?: "warn" | "danger") => (
+    <Link key={to} to={to} className="inline-flex items-center gap-2 rounded-full border bg-background px-3 py-1 text-sm hover:bg-accent">
+      {label}<Badge variant={n ? tone ?? "secondary" : "outline"}>{n ?? "–"}</Badge>
+    </Link>
   );
   return (
+    <div className="flex flex-wrap gap-2">
+      {chip("/", "Zu entscheiden", due, "danger")}
+      {chip("/themen?view=laufend", "Laufende Themen", t?.laufend)}
+      {chip("/themen?view=wiedervorlage", "Wiedervorlage", t?.wiedervorlage)}
+      {!!dg.data?.claims.length && chip("/mails?category=reklamation", "Reklamationen offen", dg.data.claims.length, "danger")}
+      {!!dg.data?.portalOpen.length && chip("/mails?belegState=portal_offen", "Belege im Portal abholen", dg.data.portalOpen.length, "warn")}
+    </div>
+  );
+}
+
+const REASON_TONE: Record<string, "default" | "warn" | "danger" | "secondary"> = {
+  neu: "default", wieder_offen: "warn", vorschlag: "default", wiedervorlage: "secondary", unbeantwortet: "danger", nachfassen: "warn",
+};
+
+/** Eine vorgelegte Mail im Thema: Kurzfassung, aufklappbar. */
+function NewMail({ m }: { m: TopicMail }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="space-y-2 rounded-md border p-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium">{m.from_name || m.from_addr}</span>
+        <CategoryChip category={m.category} />
+        {m.has_attachments && <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />}
+        <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(m.sent_at)}</span>
+      </div>
+      {m.summary ? <p className="text-sm">{m.summary}</p> : <p className="text-sm text-muted-foreground">{m.subject || "(ohne Betreff)"}</p>}
+      <div className="flex gap-3 text-xs">
+        <button type="button" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground" onClick={() => setOpen(!open)}>
+          <Mail className="h-3.5 w-3.5" /> {open ? "Mail zuklappen" : "Mail lesen"}
+        </button>
+        <Link to={`/mails/${m.id}`} className="text-muted-foreground underline hover:text-foreground">Öffnen</Link>
+      </div>
+      {open && <div className="rounded-md border p-2"><MailBody messageId={m.id} fallbackText={null} /></div>}
+    </div>
+  );
+}
+
+/**
+ * Ein Thema = eine Karte: warum es vorliegt, die neuen Mails, die Vorschläge des Assistenten,
+ * darunter die Entscheidung (antworten, Anweisung, weiter verfolgen, Wiedervorlage, abschließen).
+ */
+function TopicCard({ topic, suggestions, gewerke }: { topic: Topic; suggestions: Suggestion[]; gewerke: Gewerk[] }) {
+  const units = groupByMessage(suggestions).flat();
+  const cat = topic.newMessages[0]?.category ?? null;
+  return (
     <Card>
-      <CardHeader><CardTitle>Übersicht</CardTitle></CardHeader>
+      <CardHeader>
+        <div className="flex flex-wrap items-center gap-2">
+          {topic.reason && <Badge variant={REASON_TONE[topic.reason] ?? "default"}>{topic.reasonText || TOPIC_REASON_LABELS[topic.reason]}</Badge>}
+          {cat && <CategoryChip category={cat} />}
+          {topic.state === "wiedervorlage" && topic.snoozedUntil && <span className="text-xs text-muted-foreground">fällig seit {formatDate(topic.snoozedUntil)}</span>}
+          <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(topic.lastActivity)}</span>
+        </div>
+        <CardTitle className="pt-1"><Link className="hover:underline" to={`/mails/${topic.latestId}`}>{topic.subject}</Link></CardTitle>
+        <p className="text-xs text-muted-foreground">
+          {topic.from && <>mit {topic.from} · </>}{topic.messageCount} {topic.messageCount === 1 ? "Mail" : "Mails"} im Thema
+          {topic.newMessages.length > 1 && <> · <b>{topic.newMessages.length} neue</b></>}
+        </p>
+      </CardHeader>
       <CardContent className="space-y-3">
-        {list("Rechnungen im Portal abzuholen", d.portalOpen, "warn")}
-        {list("Offene Reklamationen", d.claims, "danger")}
-        {list("Kundenmails seit über 2 Tagen unbeantwortet", d.unanswered, "warn")}
+        {topic.newMessages.map((m) => <NewMail key={m.id} m={m} />)}
+        {!topic.newMessages.length && topic.lastMail && (
+          <p className="rounded-md bg-muted/40 p-3 text-sm">
+            <span className="text-xs text-muted-foreground">
+              Zuletzt {topic.lastMail.direction === "out" ? "wir" : topic.lastMail.from}, {formatDateTime(topic.lastMail.sent_at)}:{" "}
+            </span>
+            {topic.lastMail.summary || "(ohne Inhalt)"}
+          </p>
+        )}
+        {units.map((u, i) => (
+          <section key={Array.isArray(u) ? u.map((s) => s.id).join() : u.id} className="space-y-2 border-t pt-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs">{i + 1}</span>
+              Vorschlag: {Array.isArray(u) ? "Neues Projekt oder bestehendes?" : typeLabel(u)}
+            </div>
+            {Array.isArray(u) ? <ProjectChoice items={u} gewerke={gewerke} embedded /> : <One s={u} gewerke={gewerke} embedded />}
+          </section>
+        ))}
+        <div className="border-t pt-3"><TopicActions topic={topic} /></div>
       </CardContent>
     </Card>
   );
 }
 
 export default function Decide() {
+  const topics = useQuery({ queryKey: ["topics", "entscheiden"], queryFn: () => api<Topic[]>("list_topics", { view: "entscheiden" }), refetchInterval: 60_000 });
   const q = useQuery({ queryKey: ["suggestions"], queryFn: () => api<Suggestion[]>("list_suggestions", { status: "offen" }), refetchInterval: 60_000 });
   const cfg = useQuery({ queryKey: ["config"], queryFn: () => api<{ gewerke: Gewerk[] | null }>("get_config") });
   const gewerke = cfg.data?.gewerke ?? [];
+  const byId = new Map((q.data ?? []).map((s) => [s.id, s]));
+  const list = topics.data ?? [];
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Zu entscheiden</h1>
-        {q.isFetching && <Spinner />}
+        {(topics.isFetching || q.isFetching) && <Spinner />}
       </div>
-      <ErrorBox error={q.error} />
-      <DigestCard />
-      {q.data && !q.data.length && <Card><CardContent className="p-6 text-sm text-muted-foreground">Keine offenen Vorschläge. 🎉</CardContent></Card>}
+      <ErrorBox error={topics.error ?? q.error} />
+      <OverviewBar due={list.length} />
+      {topics.data && !list.length && (
+        <Card><CardContent className="p-6 text-sm text-muted-foreground">Nichts zu entscheiden – jede Mail ist bearbeitet. 🎉 Laufende Themen werden weiter überwacht.</CardContent></Card>
+      )}
       <div className="space-y-4">
-        {groupByMessage(q.data ?? []).map((units) => {
-          const key = units.flat().map((s) => s.id).join();
-          if (units.length === 1) {
-            const u = units[0];
-            return Array.isArray(u) ? <ProjectChoice key={key} items={u} gewerke={gewerke} /> : <One key={key} s={u} gewerke={gewerke} />;
-          }
-          // Mehrere Entscheidungen zur selben Mail: EINE Karte, Kopf und Mail einmal, darunter die Entscheidungen.
-          return (
-            <MessageGroupCard
-              key={key} s={units.flat()[0]}
-              sections={units.map((u) => Array.isArray(u)
-                ? { key: u.map((s) => s.id).join(), title: "Neues Projekt oder bestehendes?", node: <ProjectChoice items={u} gewerke={gewerke} embedded /> }
-                : { key: u.id, title: typeLabel(u), node: <One s={u} gewerke={gewerke} embedded /> })}
-            />
-          );
-        })}
+        {list.map((t) => (
+          <TopicCard key={t.id} topic={t} gewerke={gewerke}
+            suggestions={t.suggestionIds.map((id) => byId.get(id)).filter((s): s is Suggestion => !!s)} />
+        ))}
       </div>
     </div>
   );

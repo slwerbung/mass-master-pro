@@ -14,12 +14,14 @@ import * as H from "../_shared/email/hero.ts";
 import { learnRule } from "../_shared/email/learn.ts";
 import { mapDocumentTypes, mapSteps } from "../_shared/email/heroReload.ts";
 import { matchesPattern } from "../_shared/email/mail.ts";
+import { normalizeTopicConfig } from "../_shared/email/topics.ts";
+import { decideTopic, listTopics, topicCounts, topicOfThread, type TopicView } from "../_shared/email/topicsDb.ts";
 import { KNOWLEDGE_TEXT_MAX, normalizePattern, patternForScope, type KnowledgeScope } from "../_shared/email/knowledge.ts";
 
 // Nur diese Schluessel darf die Oberflaeche in email_config schreiben – der
 // Admin-Zugang ist kein Generalschluessel fuer die Tabelle.
 const CONFIG_KEYS = [
-  "folders", "gewerke", "hero", "company_knowledge", "reply_rules", "lexoffice", "budget", "retention_days", "llm_prices",
+  "folders", "gewerke", "hero", "company_knowledge", "reply_rules", "lexoffice", "budget", "retention_days", "llm_prices", "topics",
 ] as const;
 
 const MESSAGE_LIST_COLUMNS =
@@ -93,9 +95,11 @@ const handlers: Record<string, Handler> = {
     const neuronsMonth = (month || []).reduce((n: number, r: any) => n + Number(r.neurons || 0), 0);
     const cost = (month || []).reduce((n: number, r: any) => n + Number(r.cost_usd || 0), 0) +
       (neuronsMonth / 1000) * Number(prices?._neuron_usd_per_1000 ?? 0.011);
+    const topics = await topicCounts(sb).catch(() => null);
     return {
       statusCounts: counts,
       openSuggestions: open ?? 0,
+      topics,
       neuronsToday: (today || []).reduce((n: number, r: any) => n + Number(r.neurons || 0), 0),
       costMonthUsd: Math.round(cost * 10000) / 10000,
       budgetUsd: budget?.monthly_usd ?? null,
@@ -127,9 +131,10 @@ const handlers: Record<string, Handler> = {
     const id = String(body.id || "");
     const { data: msg } = await sb.from("email_messages").select("*").eq("id", id).maybeSingle();
     if (!msg) throw new Error("Mail nicht gefunden.");
+    const topicP = topicOfThread(sb, msg.thread_id).catch(() => null);
     const [{ data: thread }, { data: atts }, { data: shadow }, { data: suggestions }, { data: calls }] = await Promise.all([
       msg.thread_id
-        ? sb.from("email_messages").select("id, direction, from_addr, from_name, subject, sent_at, summary, category, body_text, status")
+        ? sb.from("email_messages").select("id, direction, from_addr, from_name, subject, sent_at, summary, category, body_text, status, decided_at, decision")
             .eq("thread_id", msg.thread_id).order("sent_at", { ascending: true })
         : Promise.resolve({ data: [] }),
       sb.from("email_attachments").select("*").eq("message_id", id).order("created_at"),
@@ -155,7 +160,7 @@ const handlers: Record<string, Handler> = {
       sender: (kn || []).filter((k: any) => k.from_pattern && matchesPattern(msg.from_addr, k.from_pattern)),
       general: (kn || []).filter((k: any) => !k.from_pattern).length,
     };
-    return { message: { ...msg, body_html: undefined }, thread: thread || [], attachments, shadow: shadow || [], suggestions: suggestions || [], calls: calls || [], knowledge };
+    return { message: { ...msg, body_html: undefined }, thread: thread || [], attachments, shadow: shadow || [], suggestions: suggestions || [], calls: calls || [], knowledge, topic: await topicP };
   },
 
   /** Korrektur eines Menschen: wird gespeichert und fliesst als Beispiel in kuenftige Laeufe. */
@@ -376,7 +381,7 @@ const handlers: Record<string, Handler> = {
     const key = String(body.key || "");
     if (!(CONFIG_KEYS as readonly string[]).includes(key)) throw new Error("Dieser Einstellungsschluessel ist nicht aenderbar.");
     if (body.value === undefined) throw new Error("Wert fehlt.");
-    await setConfig(sb, key, body.value);
+    await setConfig(sb, key, key === "topics" ? normalizeTopicConfig(body.value) : body.value);
     return { ok: true };
   },
 
@@ -444,6 +449,29 @@ const handlers: Record<string, Handler> = {
       }
     }
     return (data || []).map((r: any) => ({ ...r, message: r.email_messages, email_messages: undefined, attachments: atts[r.email_messages.id] || [] }));
+  },
+
+  // ------------------------------------------------------------------ Themen
+  /** Themen einer Ansicht: entscheiden | laufend | wiedervorlage | erledigt (topics.ts). */
+  async list_topics({ sb, body }) {
+    const views: TopicView[] = ["entscheiden", "laufend", "wiedervorlage", "erledigt"];
+    const view = views.includes(body.view) ? body.view as TopicView : "entscheiden";
+    return await listTopics(sb, view);
+  },
+
+  /** Thema entscheiden: weiter verfolgen, Wiedervorlage (until = YYYY-MM-DD, note), abschliessen, wieder oeffnen. */
+  async topic_decide({ sb, body }) {
+    const decision = String(body.decision || "");
+    if (!["weiter", "wiedervorlage", "erledigt", "oeffnen"].includes(decision)) throw new Error("decision: weiter, wiedervorlage, erledigt oder oeffnen.");
+    let threadId = String(body.threadId || "");
+    if (!threadId && body.messageId) {
+      const { data } = await sb.from("email_messages").select("thread_id").eq("id", String(body.messageId)).maybeSingle();
+      threadId = data?.thread_id ?? "";
+    }
+    return await decideTopic(sb, threadId, {
+      decision: decision as any, until: body.until ?? null, note: body.note ?? null,
+      messageIds: Array.isArray(body.messageIds) ? body.messageIds.map(String) : null,
+    });
   },
 
   /** Kurzuebersicht (fuer die Startseite und die optionale 7-Uhr-Push-Meldung). */

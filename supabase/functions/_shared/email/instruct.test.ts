@@ -223,3 +223,26 @@ describe("Weitere HERO-Aktionen im Plan", () => {
     expect(out.map((o) => o.step)).toEqual(["hero", "hero", "offer"]);
   });
 });
+
+describe("Thema per Anweisung", () => {
+  it("Wiedervorlage mit Datum und Notiz; ohne Datum eine Woche + Hinweis", () => {
+    const base = { project: { action: "unveraendert" }, offer: false, appointments: [], actions: [], not_doable: [], summary: "" };
+    const p = toPlan(InstructionSchema.parse({ ...base, topic: { action: "wiedervorlage", date: "2026-11-10", note: "Freigabe da?" } }), ctx, "");
+    expect(p.topic).toEqual({ mode: "wiedervorlage", date: "2026-11-10", note: "Freigabe da?" });
+    const q = toPlan(InstructionSchema.parse({ ...base, topic: { action: "wiedervorlage", date: null, note: null } }), ctx, "");
+    expect(q.topic.date).toBe("2026-11-03");
+    expect(q.notDoable.join()).toContain("Wiedervorlage");
+    expect(toPlan(InstructionSchema.parse(base), ctx, "").topic.mode).toBe("keine");
+    expect(buildInstructionRequest("x", ctx).system[0].text).toContain("wiedervorlage");
+  });
+
+  it("das Thema wird zuletzt entschieden – auch ohne Angabe (weiter verfolgen)", async () => {
+    const t = deps({ current: { id: 5, nr: "WER-5" } });
+    const seen: string[] = [];
+    t.d.topic = async (x) => (seen.push(x.mode), x.mode === "erledigt" ? "Thema abgeschlossen" : null);
+    const out = await runInstruction({ project: { mode: "keep" }, offer: false, appointments: [], ops: [], notDoable: [], summary: "", topic: { mode: "erledigt", date: null, note: null } }, "x", t.d);
+    expect(out).toEqual([{ step: "topic", ok: true, text: "Thema abgeschlossen" }]);
+    await runInstruction({ ...plan, ops: [], appointments: [], offer: false, project: { mode: "keep" } } as any, "x", t.d);
+    expect(seen).toEqual(["erledigt", "keine"]);
+  });
+});
