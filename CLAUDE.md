@@ -197,6 +197,8 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
   „Zu entscheiden“ vorgelegt (`email_messages.decided_at`), eine Karte pro Thema (= `email_threads`). Thema: läuft (überwacht:
   unbeantwortet/keine Bewegung → wieder vorlegen), Wiedervorlage (`snoozed_until`) oder abgeschlossen (`topic_state`). Antworten,
   Weiterleiten und ausgeführte Vorschläge entscheiden per Trigger mit. Eine neue Mail legt jedes Thema wieder vor. Ordner/Kategorien bleiben.
+- **Dropbox-Ablage** per Klick (`email-action` `dropbox_save`, `_shared/email/dropboxSave.ts`): Anhänge in den Projektordner der
+  Firmen-Dropbox (gleiche Ordnerlogik wie `_shared/automations.ts`), nur hinzufügen, nie überschreiben/löschen.
 - Weitere HERO-Aktionen der Anweisung: `_shared/email/heroOps.ts` (Ansprechpartner anlegen, Kontaktdaten ändern, Kundenadresse, Projektname/
   -ansprechpartner, Status, Mitarbeiter zuweisen, Aufgabe, Logbuch). Das Modell liefert Namen, der Code löst IDs auf und prüft vor dem
   Schreiben gegen HERO (Kontakt gehört zum Kunden, Schritt zum Ablauf, Mitarbeiter bekannt). Bewusst nicht: Löschen, `send_mail`,

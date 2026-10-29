@@ -7,7 +7,8 @@
 // Non-secret settings (base path, name patterns, subfolder template) live in
 // app_config under dropbox_* keys.
 
-import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+// Nur der Typ (zur Laufzeit entfernt); npm: statt esm.sh, damit auch die Mail-Functions den Code pruefen koennen.
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 const TOKEN_URL = "https://api.dropboxapi.com/oauth2/token";
 const API_BASE = "https://api.dropboxapi.com/2";

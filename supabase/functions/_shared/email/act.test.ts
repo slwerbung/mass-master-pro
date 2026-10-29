@@ -49,6 +49,13 @@ function mk(o: { openAfter?: boolean; earlier?: ActMessage[]; step?: number | nu
 }
 
 describe("Logbuch", () => {
+  it("ausgehende Mail mit nur vermuteter Zuordnung: kein Vorschlag, kein Logbuch (wird nie vorgelegt)", async () => {
+    const t = mk();
+    const r = await actOn(msg({ direction: "out", category: null, hero_project_match_id: 5, match_method: "ki", match_info: { certain: false, knownContact: false, reason: "", projectNr: "WER-753" } }), ctx(), t.deps);
+    expect(t.log.suggestions).toEqual([]);
+    expect(t.log.logbook).toEqual([]);
+    expect(r.plan.find((p) => p.action === "log")).toMatchObject({ decision: "skip", done: false });
+  });
   it("sichere Zuordnung (Thread/Nummer): automatisch, genau einmal, sofort festgehalten", async () => {
     const t = mk();
     const m = msg({ hero_project_match_id: 5, match_method: "nummer", match_info: { certain: true, knownContact: true, reason: "", projectNr: "WER-1744" } });

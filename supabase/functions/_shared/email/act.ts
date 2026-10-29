@@ -189,6 +189,9 @@ export async function actOn(m: ActMessage, ctx: ActContext, deps: ActDeps): Prom
         patch.hero_logged_at = (deps.now?.() ?? new Date()).toISOString();
         await deps.store.progress(m.id, { hero_logged_at: patch.hero_logged_at });
         note("log", d, true, `Logbuch ${m.match_info?.projectNr ?? projectId}`);
+      } else if (d === "suggest" && m.direction === "out") {
+        // Eigene Mails (auch aus Thunderbird/Handy) werden nie vorgelegt – ohne sichere Zuordnung kein Logbuch.
+        note("log", "skip", false, `Ausgehende Mail, Zuordnung zu ${m.match_info?.projectNr ?? projectId} nur vermutet – kein Logbuch, kein Vorschlag`);
       } else if (d === "suggest") {
         const created = await deps.store.createSuggestion(m.id, certain ? "log_entry" : "link_project", {
           projectId, projectNr: m.match_info?.projectNr ?? null, projectName: m.match_info?.projectName ?? null,
