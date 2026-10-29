@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { berlinToIso, buildInstructionRequest, findPerson, InstructionSchema, nextWorkday, resolveCustomer, runInstruction, toPlan, type InstructionContext, type RunDeps } from "./instruct";
+import { berlinToIso, buildInstructionRequest, defaultSubfolder, findPerson, InstructionSchema, matchSubfolder, nextWorkday, resolveCustomer, runInstruction, toPlan, type InstructionContext, type RunDeps } from "./instruct";
 
 const ctx: InstructionContext = {
   subject: "WG: Anhänger", summary: "Anfrage Beschriftung Anhänger", fromName: "Peter Heinle", projectNr: null,
@@ -221,6 +221,52 @@ describe("Weitere HERO-Aktionen im Plan", () => {
     const out = await runInstruction({ ...p, appointments: [] }, "x", t.d);
     expect(order).toEqual(["ansprechpartner_anlegen", "status_setzen", "S-prepare_offer"]);
     expect(out.map((o) => o.step)).toEqual(["hero", "hero", "offer"]);
+  });
+});
+
+describe("Anhänge in HERO und Dropbox", () => {
+  const subs = ["01 Gelieferte Daten", "02 Produktion/Druckdaten", "03 Layouts"];
+  const c = { ...ctx, dropboxSubfolders: subs, attachmentCount: 2, dropboxEnabled: true };
+  const base = { project: { action: "unveraendert" }, offer: false, appointments: [], actions: [], not_doable: [], summary: "" };
+
+  it("Unterordner: genannt (auch ohne Nummer) oder „Gelieferte Daten“", () => {
+    expect(defaultSubfolder(subs)).toBe("01 Gelieferte Daten");
+    expect(defaultSubfolder(["Daten", "Layout"])).toBe("Daten");
+    expect(matchSubfolder("Druckdaten", subs)).toBe("02 Produktion/Druckdaten");
+    expect(matchSubfolder("03 layouts", subs)).toBe("03 Layouts");
+    expect(matchSubfolder("Rechnungen", subs)).toBeNull();
+  });
+
+  it("„in HERO und Dropbox hochladen“ -> beides, Standard-Unterordner; Prompt kennt die Ordner", () => {
+    const p = toPlan(InstructionSchema.parse({ ...base, files: { hero: true, dropbox: true, subfolder: null } }), c, "");
+    expect(p.files).toEqual({ hero: true, dropbox: true, subfolder: "01 Gelieferte Daten" });
+    expect(buildInstructionRequest("x", c).system[0].text).toContain("Dropbox-Unterordner: 01 Gelieferte Daten, 02 Produktion/Druckdaten");
+    const q = toPlan(InstructionSchema.parse({ ...base, files: { hero: false, dropbox: true, subfolder: "Ablage" } }), c, "");
+    expect(q.files?.subfolder).toBe("01 Gelieferte Daten");
+    expect(q.notDoable.join()).toContain("Ablage");
+  });
+
+  it("ohne Anhänge oder ohne Dropbox-Anbindung: nichts davon, mit Hinweis", () => {
+    const p = toPlan(InstructionSchema.parse({ ...base, files: { hero: true, dropbox: true, subfolder: null } }), { ...c, attachmentCount: 0 }, "");
+    expect(p.files).toMatchObject({ hero: false, dropbox: false });
+    expect(p.notDoable.join()).toContain("keine gespeicherten Anhänge");
+    const q = toPlan(InstructionSchema.parse({ ...base, files: { hero: true, dropbox: true, subfolder: null } }), { ...c, dropboxEnabled: false }, "");
+    expect(q.files).toMatchObject({ hero: true, dropbox: false });
+  });
+
+  it("Ausführen: nach dem Projekt, HERO und Dropbox einzeln; ohne Projekt nichts", async () => {
+    const p = toPlan(InstructionSchema.parse({ ...base, files: { hero: true, dropbox: true, subfolder: "Druckdaten" } }), c, "");
+    const t = deps({ current: { id: 5, nr: "WER-5" } });
+    const calls: string[] = [];
+    t.d.uploadToHero = async (pr) => (calls.push(`hero ${pr.nr}`), "2 hochgeladen");
+    t.d.saveToDropbox = async (sf) => { calls.push(`dbx ${sf}`); throw new Error("Dropbox weg"); };
+    const out = await runInstruction(p, "x", t.d);
+    expect(calls).toEqual(["hero WER-5", "dbx 02 Produktion/Druckdaten"]);
+    expect(out.filter((o) => o.step === "files").map((o) => o.ok)).toEqual([true, false]);
+    const none = deps({ current: null });
+    none.d.uploadToHero = async () => "nie";
+    const o2 = await runInstruction(p, "x", none.d);
+    expect(o2.filter((o) => o.step === "files").every((o) => !o.ok && /kein Projekt/.test(o.text))).toBe(true);
   });
 });
 

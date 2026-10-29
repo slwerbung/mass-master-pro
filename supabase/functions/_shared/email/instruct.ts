@@ -36,6 +36,12 @@ export interface InstructionContext {
   bodyText?: string | null;
   /** HERO-Lage fuer weitere Aktionen: Ansprechpartner des Kunden, Projektschritte, Absender */
   ops?: Omit<OpContext, "people">;
+  /** Unterordner der Dropbox-Projektvorlage (Einstellung der Dropbox-Anbindung) */
+  dropboxSubfolders?: string[];
+  /** gespeicherte, nicht ausgeblendete Anhaenge der Mail */
+  attachmentCount?: number;
+  /** Dropbox-Anbindung an (CaptFix-Admin → Integrationen) */
+  dropboxEnabled?: boolean;
   /** „heute“ als YYYY-MM-DD (Berlin) */
   today: string;
 }
@@ -61,6 +67,12 @@ export const InstructionSchema = z.object({
     person: z.string().nullish().transform((v) => v ?? null),
   }).catch(null as never)).catch([]).transform((a) => a.filter(Boolean).slice(0, MAX_APPOINTMENTS)),
   actions: z.array(ActionSchema.catch(null as never)).catch([]).transform((a) => a.filter(Boolean).slice(0, MAX_OPS)),
+  /** Anhaenge der Mail ans HERO-Projekt und/oder in den Dropbox-Projektordner */
+  files: z.object({
+    hero: z.boolean().catch(false),
+    dropbox: z.boolean().catch(false),
+    subfolder: z.string().nullish().transform((v) => v ?? null),
+  }).catch({ hero: false, dropbox: false, subfolder: null }),
   /** Thema abschliessen oder auf Wiedervorlage legen */
   topic: z.object({
     action: z.enum(["keine", "erledigt", "wiedervorlage"]).catch("keine"),
@@ -73,7 +85,7 @@ export const InstructionSchema = z.object({
 export type InstructionResult = z.infer<typeof InstructionSchema>;
 
 const JSON_SCHEMA = {
-  type: "object", additionalProperties: false, required: ["project", "contact", "customer_hint", "offer", "appointments", "actions", "topic", "not_doable", "summary"],
+  type: "object", additionalProperties: false, required: ["project", "contact", "customer_hint", "offer", "appointments", "actions", "files", "topic", "not_doable", "summary"],
   properties: {
     project: {
       type: "object", additionalProperties: false, required: ["action", "project_nr", "name"],
@@ -97,6 +109,10 @@ const JSON_SCHEMA = {
       },
     },
     actions: { type: "array", items: ACTION_JSON_SCHEMA },
+    files: {
+      type: "object", additionalProperties: false, required: ["hero", "dropbox", "subfolder"],
+      properties: { hero: { type: "boolean" }, dropbox: { type: "boolean" }, subfolder: { type: ["string", "null"] } },
+    },
     topic: {
       type: "object", additionalProperties: false, required: ["action", "date", "note"],
       properties: {
@@ -119,7 +135,8 @@ export function buildInstructionRequest(text: string, c: InstructionContext): Ll
         "Moeglich sind: (1) Projekt – neu anlegen, einem bestehenden Projekt zuordnen oder unveraendert lassen;",
         "(2) offer = Angebotsentwurf im Projekt vorbereiten; (3) appointments = Kalendertermine in HERO (einer oder mehrere);",
         "(4) actions = weitere HERO-Aktionen (Ansprechpartner, Kontaktdaten, Adresse, Projektname/-status, Mitarbeiter zuweisen, Aufgabe, Logbuch);",
-        "(5) topic = das Mail-Thema in der Mail-App abschliessen oder auf Wiedervorlage legen.",
+        "(5) topic = das Mail-Thema in der Mail-App abschliessen oder auf Wiedervorlage legen;",
+        "(6) files = die Anhaenge der Mail ans HERO-Projekt hochladen und/oder in den Dropbox-Projektordner ablegen.",
         "Regeln:",
         "- project.action: „neu“ nur, wenn die Anweisung ein neues Projekt verlangt; „bestehend“ mit project_nr (z. B. WER-1820), wenn sie ein Projekt nennt; sonst „unveraendert“.",
         "- project.name: Projektname, wenn die Anweisung einen nennt oder er sich klar aus Mail und Anweisung ergibt (kurz, z. B. „Anhänger Beschriftung“); sonst null.",
@@ -133,6 +150,8 @@ export function buildInstructionRequest(text: string, c: InstructionContext): Ll
         "  time als HH:MM nur, wenn eine Uhrzeit genannt ist, sonst null. duration_min nur, wenn genannt. title kurz (ohne Datum, z. B. „Weihnachtsbanner aufhängen“).",
         "  person = Name eines Mitarbeiters aus der Liste, wenn die Anweisung jemanden nennt (auch nur Vor- oder Nachname, Kleinschreibung egal); sonst null.",
         OPS_PROMPT,
+        "- files.hero = true, wenn die Anhaenge (Dateien) der Mail in HERO / ans Projekt hochgeladen werden sollen; files.dropbox = true, wenn sie in die Dropbox / den Projektordner sollen.",
+        "  „in HERO und Dropbox hochladen“ = beides. files.subfolder = der genannte Dropbox-Unterordner (aus der Liste, genau so geschrieben), sonst null.",
         "- topic.action: „erledigt“, wenn die Anweisung das Thema abschliesst („erledigt“, „abschließen“, „nicht weiter verfolgen“);",
         "  „wiedervorlage“, wenn sie es spaeter wieder sehen will („Wiedervorlage in 2 Wochen“, „am 15.11. nochmal vorlegen“, „erinnere mich nach Ostern“)",
         "  – dann date als YYYY-MM-DD (ab morgen) und note = kurz, worauf zu achten ist (oder null); sonst „keine“. Das ist KEINE HERO-Aufgabe.",
@@ -143,6 +162,7 @@ export function buildInstructionRequest(text: string, c: InstructionContext): Ll
         `Terminkategorien: ${c.categories.map((x) => x.label).join(", ") || "(keine)"}`,
         `Mitarbeiter: ${(c.people ?? []).map((x) => x.name).join(", ") || "(keine)"}`,
         `Projektschritte: ${(c.ops?.steps ?? []).map((x) => x.name).join(", ") || "(unbekannt)"}`,
+        `Dropbox-Unterordner: ${(c.dropboxSubfolders ?? []).join(", ") || "(keine)"}`,
       ].join("\n"),
     }],
     user: [
@@ -186,6 +206,9 @@ export interface PlanAppointment {
   partnerId: number | null; partnerName: string | null;
 }
 
+/** Anhaenge ans HERO-Projekt (Dokumenttyp nach Rolle) und/oder in den Dropbox-Projektordner (Unterordner; leer = Projektordner) */
+export interface PlanFiles { hero: boolean; dropbox: boolean; subfolder: string }
+
 /** Thema in der Mail-App: nichts (= weiter verfolgen), abschliessen oder Wiedervorlage */
 export interface PlanTopic { mode: "keine" | "erledigt" | "wiedervorlage"; date: string | null; note: string | null }
 
@@ -196,6 +219,8 @@ export interface InstructionPlan {
   appointments: PlanAppointment[];
   /** weitere HERO-Aktionen (heroOps.ts) */
   ops: HeroOp[];
+  /** fehlt in Plaenen einer aelteren Mail-App */
+  files?: PlanFiles;
   notDoable: string[];
   summary: string;
 }
@@ -209,6 +234,20 @@ export function nextWorkday(day: string): string {
   const d = new Date(`${day}T12:00:00Z`);
   do d.setUTCDate(d.getUTCDate() + 1); while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
   return d.toISOString().slice(0, 10);
+}
+
+/** Standard-Unterordner fuer Dateien, die ein Kunde schickt: „Gelieferte Daten“, sonst der erste der Vorlage. */
+export function defaultSubfolder(list: string[]): string {
+  return list.find((x) => /geliefert/i.test(x)) ?? list[0] ?? "";
+}
+
+/** Genannten Unterordner in der Vorlage finden (auch ohne Nummer: „Druckdaten“ -> „02 Produktion/Druckdaten“). */
+export function matchSubfolder(name: string | null, list: string[]): string | null {
+  const n = String(name ?? "").trim().toLowerCase();
+  if (!n) return null;
+  const norm = (x: string) => x.toLowerCase().replace(/^\d+\s*/, "").trim();
+  return list.find((x) => x.toLowerCase() === n) ?? list.find((x) => norm(x) === norm(n))
+    ?? list.find((x) => x.toLowerCase().includes(norm(n))) ?? null;
 }
 
 /** Modellantwort -> pruefbarer Plan mit Voreinstellungen (Termin 09:00, 30 Min.; Datum = naechster Werktag). */
@@ -253,7 +292,21 @@ export function toPlan(r: InstructionResult, c: InstructionContext, defaultName:
     topic = { mode: "wiedervorlage", date: date ?? addDays(c.today, 7), note: r.topic.note };
   }
   const o = toOps(r.actions, { people: (c.people ?? []).map((p) => ({ ...p, userId: p.userId ?? null })), contacts: c.ops?.contacts ?? [], steps: c.ops?.steps ?? [], sender: c.ops?.sender ?? "" });
-  return { project, topic, offer: r.offer, appointments, ops: o.ops, notDoable: [...notDoable, ...o.notDoable], summary: r.summary };
+  const subs = c.dropboxSubfolders ?? [];
+  const wantsFiles = r.files.hero || r.files.dropbox;
+  let files: PlanFiles = { hero: r.files.hero, dropbox: r.files.dropbox, subfolder: matchSubfolder(r.files.subfolder, subs) ?? defaultSubfolder(subs) };
+  if (r.files.subfolder && r.files.dropbox && !matchSubfolder(r.files.subfolder, subs)) {
+    notDoable.push(`Dropbox-Unterordner „${r.files.subfolder}“ gibt es in der Vorlage nicht – „${files.subfolder || "Projektordner"}“ eingesetzt, bitte prüfen`);
+  }
+  if (r.files.dropbox && c.dropboxEnabled === false) {
+    notDoable.push("Anhänge in die Dropbox: die Dropbox-Anbindung ist aus (CaptFix-Admin → Integrationen)");
+    files = { ...files, dropbox: false };
+  }
+  if (wantsFiles && c.attachmentCount === 0) {
+    notDoable.push("Anhänge hochladen: die Mail hat keine gespeicherten Anhänge");
+    files = { ...files, hero: false, dropbox: false };
+  }
+  return { project, topic, offer: r.offer, appointments, ops: o.ops, files, notDoable: [...notDoable, ...o.notDoable], summary: r.summary };
 }
 
 export interface CustomerLookup {
@@ -315,7 +368,7 @@ export const berlinToday = (now = new Date()) => now.toLocaleDateString("sv-SE",
 
 // ---------------------------------------------------------------- Ausfuehren
 
-export interface StepResult { step: "project" | "offer" | "appointment" | "hero" | "topic"; ok: boolean; text: string }
+export interface StepResult { step: "project" | "offer" | "appointment" | "hero" | "files" | "topic"; ok: boolean; text: string }
 
 export interface RunDeps {
   /** Vorschlag dieser Art fuer die Mail holen oder anlegen; gibt die ID zurueck. */
@@ -329,6 +382,10 @@ export interface RunDeps {
   }): Promise<{ id: number | null; error?: string }>;
   /** weitere HERO-Aktion ausfuehren (heroOps.runOp); gibt den Ergebnistext zurueck oder wirft */
   heroOp(op: HeroOp, project: { id: number } | null): Promise<string>;
+  /** Anhaenge der Mail ans HERO-Projekt hochladen; gibt den Ergebnistext zurueck oder wirft */
+  uploadToHero?(project: { id: number; nr: string | null }): Promise<string>;
+  /** Anhaenge der Mail in den Dropbox-Projektordner (Unterordner) ablegen; gibt den Ergebnistext zurueck oder wirft */
+  saveToDropbox?(subfolder: string): Promise<string>;
   /** Thema in der Mail-App entscheiden (ohne Angabe: weiter verfolgen); gibt den Text fuer das Ergebnis zurueck oder null */
   topic?(t: PlanTopic): Promise<string | null>;
   finish(note: string): Promise<void>;
@@ -381,7 +438,24 @@ export async function runInstruction(plan: InstructionPlan, text: string, d: Run
     }
   }
 
-  // 3. Angebotsentwurf (braucht ein Projekt)
+  // 3. Anhaenge (brauchen ein Projekt): HERO und Dropbox unabhaengig voneinander
+  const files = plan.files;
+  if (files?.hero) {
+    if (!project) out.push({ step: "files", ok: false, text: "Anhänge in HERO: kein Projekt – erst Projekt anlegen oder zuordnen" });
+    else if (!d.uploadToHero) out.push({ step: "files", ok: false, text: "Anhänge in HERO: nicht verfügbar" });
+    else {
+      try { out.push({ step: "files", ok: true, text: await d.uploadToHero(project) }); } catch (e) { out.push({ step: "files", ok: false, text: `Anhänge in HERO: ${(e as Error).message}` }); }
+    }
+  }
+  if (files?.dropbox) {
+    if (!project) out.push({ step: "files", ok: false, text: "Anhänge in die Dropbox: kein Projekt – erst Projekt anlegen oder zuordnen" });
+    else if (!d.saveToDropbox) out.push({ step: "files", ok: false, text: "Anhänge in die Dropbox: nicht verfügbar" });
+    else {
+      try { out.push({ step: "files", ok: true, text: await d.saveToDropbox(files.subfolder) }); } catch (e) { out.push({ step: "files", ok: false, text: `Anhänge in die Dropbox: ${(e as Error).message}` }); }
+    }
+  }
+
+  // 4. Angebotsentwurf (braucht ein Projekt)
   if (plan.offer) {
     if (!project) out.push({ step: "offer", ok: false, text: "Angebot: kein Projekt – erst Projekt anlegen oder zuordnen" });
     else {
@@ -396,7 +470,7 @@ export async function runInstruction(plan: InstructionPlan, text: string, d: Run
     }
   }
 
-  // 4. Termine (jeder fuer sich: scheitert einer, entstehen die anderen trotzdem)
+  // 5. Termine (jeder fuer sich: scheitert einer, entstehen die anderen trotzdem)
   for (const a of plan.appointments) {
     const startIso = berlinToIso(a.date, a.time);
     const endIso = new Date(Date.parse(startIso) + a.durationMin * 60_000).toISOString();
@@ -410,7 +484,7 @@ export async function runInstruction(plan: InstructionPlan, text: string, d: Run
       : { step: "appointment", ok: false, text: `Termin „${a.title}“: ${r.error ?? "HERO hat keinen Termin angelegt"}` });
   }
 
-  // 5. Thema (zuletzt: die Mail ist damit entschieden)
+  // 6. Thema (zuletzt: die Mail ist damit entschieden)
   if (d.topic) {
     try {
       const t = await d.topic(plan.topic ?? { mode: "keine", date: null, note: null });

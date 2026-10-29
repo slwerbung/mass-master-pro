@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlarmClock, CalendarPlus, Check, CheckCheck, FileText, FolderPlus, Settings2, Wand2, X } from "lucide-react";
+import { AlarmClock, CalendarPlus, Check, CheckCheck, FileText, FolderInput, FolderPlus, Paperclip, Settings2, Wand2, X } from "lucide-react";
 import { invokeFn } from "@/lib/api";
 import { Button, Input, Spinner, Textarea } from "@/components/ui";
 import { cn, errorText } from "@/lib/utils";
@@ -28,6 +28,10 @@ interface Plan {
   contacts?: { id: number; name: string; email: string; isCustomer: boolean }[];
   /** Schritte des Projektablaufs */
   steps?: { id: number; name: string }[];
+  /** Anhaenge ans HERO-Projekt und/oder in den Dropbox-Projektordner (fehlt bei einer aelteren email-action) */
+  files?: { hero: boolean; dropbox: boolean; subfolder: string };
+  /** Unterordner der Dropbox-Projektvorlage */
+  dropboxSubfolders?: string[];
   notDoable: string[];
   summary: string;
 }
@@ -87,8 +91,9 @@ export function InstructBox({ messageId, onCancel, onExplain, title }: { message
   });
 
   const topicMode = plan?.topic?.mode ?? "keine";
-  const nothing = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointments.length && !(plan.ops ?? []).length && topicMode === "keine";
-  const onlyTopic = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointments.length && !(plan.ops ?? []).length && topicMode !== "keine";
+  const hasFiles = !!plan?.files && (plan.files.hero || plan.files.dropbox);
+  const nothing = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointments.length && !(plan.ops ?? []).length && !hasFiles && topicMode === "keine";
+  const onlyTopic = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointments.length && !(plan.ops ?? []).length && !hasFiles && topicMode !== "keine";
   const noTopic: PlanTopic = { mode: "keine", date: null, note: null };
   // „Kontakt gibt es schon“: ohne gewaehlten Kunden wird nichts angelegt (nie ein neuer Kontakt).
   const customerMissing = plan?.project.mode === "new" && plan.project.requireExisting && !plan.project.existingCustomer;
@@ -185,6 +190,21 @@ export function InstructBox({ messageId, onCancel, onExplain, title }: { message
               </Row>
             );
           })}
+          {p.files?.hero && (
+            <Row icon={<Paperclip className="h-4 w-4" />} onRemove={() => setPlan({ ...p, files: { ...p.files!, hero: false } })}>
+              Anhänge ans HERO-Projekt hochladen (Dokumenttyp je nach Art: Layout, Foto, Druckdaten …)
+            </Row>
+          )}
+          {p.files?.dropbox && (
+            <Row icon={<FolderInput className="h-4 w-4" />} onRemove={() => setPlan({ ...p, files: { ...p.files!, dropbox: false } })}>
+              <span className="shrink-0">Anhänge in den Dropbox-Projektordner, Unterordner</span>
+              <select aria-label="Dropbox-Unterordner" className="h-8 rounded-md border bg-background px-2 text-sm" value={p.files.subfolder}
+                onChange={(e) => setPlan({ ...p, files: { ...p.files!, subfolder: e.target.value } })}>
+                <option value="">(direkt in den Projektordner)</option>
+                {(p.dropboxSubfolders ?? []).map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </Row>
+          )}
           {p.offer && (
             <Row icon={<FileText className="h-4 w-4" />} onRemove={() => setPlan({ ...p, offer: false })}>
               Angebotsentwurf im Projekt anlegen (Positionen aus der Mail, Preise aus HERO)

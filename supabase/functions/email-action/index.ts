@@ -6,6 +6,7 @@
 //   { action: "instruct_run", messageId, text, plan }          Plan ausfuehren (Projekt / Angebot / Termin)
 //   { action: "dropbox_targets", messageId }                   wohin die Anhaenge in der Dropbox kaemen (nur lesen)
 //   { action: "dropbox_save", messageId, attachmentIds, subfolder }  Anhaenge in den Projektordner legen
+//   { action: "set_step", messageId, projectId, stepId }      Projektstatus in HERO setzen (aus „Zu entscheiden“)
 //
 // Nur mit Admin-Sitzung. Schreibende HERO-Aufrufe passieren ausschliesslich hier und
 // nur nach einem Klick.
@@ -30,6 +31,8 @@ import { runOp, sanitizeOps, type HeroOpsApi } from "../_shared/email/heroOps.ts
 import { decideTopic } from "../_shared/email/topicsDb.ts";
 import { dropboxSave, dropboxTargets } from "../_shared/email/dropboxWiring.ts";
 import { validSnoozeDate } from "../_shared/email/topics.ts";
+import { loadDropboxSettings } from "../_shared/dropbox.ts";
+import { buildUploadItems } from "../_shared/email/attachments.ts";
 
 const INSTRUCT_MSG_COLS = "id, account_id, thread_id, direction, category, subject, summary, body_text, from_name, from_addr, to_addrs, has_attachments, extracted, match_info, hero_project_match_id";
 
@@ -140,7 +143,9 @@ function checkPlan(p: any, categories: { id: number; label: string }[], people: 
     if (!date) throw new ActionError("Wiedervorlage: Datum ab morgen angeben.");
     topic = { mode: "wiedervorlage", date, note };
   }
-  return { project, topic, offer: !!p.offer, appointments, ops: sanitizeOps(p.ops), notDoable: [], summary: String(p.summary || "") };
+  const f = p.files && typeof p.files === "object" ? p.files : null;
+  const files = f ? { hero: f.hero === true, dropbox: f.dropbox === true, subfolder: String(f.subfolder ?? "").slice(0, 200) } : undefined;
+  return { project, topic, offer: !!p.offer, appointments, ops: sanitizeOps(p.ops), files, notDoable: [], summary: String(p.summary || "") };
 }
 
 /** Angebotsvorbereitung nach der Zuordnung – nur wenn HERO aktiv ist; die KI-Schicht wird dafuer erst jetzt aufgebaut. */
@@ -158,7 +163,7 @@ Deno.serve(async (req) => {
   if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
 
   const body = await readJson(req);
-  if (!["decide", "assign", "instruct_plan", "instruct_run", "dropbox_targets", "dropbox_save"].includes(body.action)) return fail("Unbekannte Aktion.");
+  if (!["decide", "assign", "instruct_plan", "instruct_run", "dropbox_targets", "dropbox_save", "set_step"].includes(body.action)) return fail("Unbekannte Aktion.");
   if (body.action === "decide" && !["accept", "reject"].includes(body.decision)) return fail("decision: accept oder reject.");
 
   try {
@@ -169,6 +174,23 @@ Deno.serve(async (req) => {
       H.loadHeroKey(sb), getConfig<any>(sb, "hero", {}), getConfig<Gewerk[]>(sb, "gewerke", []),
     ]);
     if (body.action === "dropbox_targets") return ok(await dropboxTargets(sb, key, String(body.messageId || "")));
+    if (body.action === "set_step") {
+      // Projektstatus direkt setzen: nur Schritte aus dem Ablauf des Projekttyps; offene Status-Vorschlaege der Mail sind damit erledigt.
+      if (!key) return fail("HERO ist nicht aktiviert.");
+      const projectId = Number(body.projectId), stepId = Number(body.stepId);
+      if (!(projectId > 0) || !(stepId > 0)) return fail("Projekt oder Schritt fehlt.");
+      const steps = await H.projectSteps(key, heroCfg.project_type_id ?? null);
+      const step = steps.find((s) => s.id === stepId);
+      if (!step) return fail("Diesen Schritt gibt es im Projektablauf nicht.");
+      const p = await H.projectById(key, projectId);
+      if (!p) return fail("Projekt in HERO nicht gefunden.");
+      if (p.stepId !== stepId) await H.setStep(key, projectId, stepId);
+      if (body.messageId) {
+        await sb.from("email_suggestions").update({ status: "abgelehnt", decided_at: new Date().toISOString(), result: { reason: `Status direkt gesetzt: ${step.name}` } })
+          .eq("message_id", String(body.messageId)).eq("type", "change_step").eq("status", "offen");
+      }
+      return ok({ projectId, projectNr: p.nr, stepId, stepName: step.name, changed: p.stepId !== stepId });
+    }
     if (body.action === "dropbox_save") {
       const ids = Array.isArray(body.attachmentIds) ? body.attachmentIds.map(String) : [];
       return ok(await dropboxSave(sb, key, String(body.messageId || ""), ids, String(body.subfolder ?? "")));
@@ -230,11 +252,19 @@ Deno.serve(async (req) => {
           ? await Promise.all([customerId ? H.customerContacts(key, customerId).catch(() => []) : [], H.projectSteps(key, heroCfg.project_type_id ?? null).catch(() => [])])
           : [[], []];
         ctx.ops = { contacts, steps: heroSteps, sender: String(m.from_addr || "") };
+        // Anhaenge: wie viele gespeichert sind und welche Dropbox-Unterordner die Projektvorlage hat.
+        const [{ count: attCount }, dbx] = await Promise.all([
+          sb.from("email_attachments").select("id", { count: "exact", head: true }).eq("message_id", m.id).eq("is_ignored", false).not("storage_path", "is", null),
+          loadDropboxSettings(sb).catch(() => null),
+        ]);
+        ctx.attachmentCount = attCount ?? 0;
+        ctx.dropboxEnabled = !!dbx?.enabled;
+        ctx.dropboxSubfolders = dbx?.enabled ? dbx.subfolders : [];
         // Sagt die Anweisung „Kontakt gibt es schon“, sucht der Plan den Kunden auch ueber Firma und Firmen-Domain.
         const dom = emailDomain(m.from_addr);
         const terms = [m.extracted?.contact?.company, dom && !FREEMAIL_DOMAINS.includes(dom) ? dom : null].filter(Boolean) as string[];
         const plan = await planInstruction(text, ctx, defaultName, await buildLlmDeps(sb), m.id, key ? customerLookup(key) : undefined, terms);
-        return ok({ ...plan, people, contacts, steps: heroSteps });
+        return ok({ ...plan, people, contacts, steps: heroSteps, dropboxSubfolders: ctx.dropboxSubfolders });
       }
       if (!key || !hero) return fail("HERO ist nicht aktiviert (hero_enabled / hero_api_key).");
       const plan = checkPlan(body.plan, categories, people);
@@ -278,6 +308,27 @@ Deno.serve(async (req) => {
             projectId: project?.id ?? null, customerId,
             allowedUserIds: people.map((p) => p.userId).filter((u): u is number => !!u), allowedStepIds: heroSteps.map((s) => s.id),
           }, heroOpsApi(key));
+        },
+        // Anhaenge ans Projekt: derselbe Weg wie der Vorschlag „Anhänge hochladen“ (Dokumenttyp nach Rolle des Anhangs).
+        async uploadToHero(project) {
+          let id = await openOf("upload_attachments");
+          if (!id) {
+            const { data: atts } = await sb.from("email_attachments")
+              .select("id, filename, mime, size, role, storage_path, is_ignored, hero_uploaded_at").eq("message_id", m.id);
+            const items = buildUploadItems(atts || [], heroCfg.document_types ?? {});
+            if (!items.length) throw new Error("keine passenden Anhänge (schon hochgeladen, ausgeblendet oder kein Dokumenttyp eingestellt)");
+            id = await insert("upload_attachments", { projectId: project.id, projectNr: project.nr, items });
+          }
+          const r = await decideSuggestion({ suggestionId: id, decision: "accept", edits: { projectId: project.id, projectNr: project.nr } }, deps);
+          const warn = Array.isArray(r.warnings) && r.warnings.length ? ` (Hinweis: ${r.warnings.join("; ")})` : "";
+          return `${r.uploaded} Anhang/Anhänge an ${project.nr ?? `#${project.id}`} in HERO hochgeladen${warn}`;
+        },
+        // Anhaenge in den Dropbox-Projektordner: nur hinzufuegen (dropboxSave), Unterordner aus der Vorlage.
+        async saveToDropbox(subfolder) {
+          const { data: atts } = await sb.from("email_attachments").select("id").eq("message_id", m.id).eq("is_ignored", false).not("storage_path", "is", null);
+          if (!atts?.length) throw new Error("die Mail hat keine gespeicherten Anhänge");
+          const r = await dropboxSave(sb, key, m.id, atts.map((a: any) => a.id), subfolder);
+          return `${r.files.length} Datei(en) in der Dropbox abgelegt: ${r.folder}${r.created ? " (Projektordner neu angelegt)" : ""}`;
         },
         // Die Anweisung ist die Entscheidung zur Mail: das Thema laeuft weiter, wird abgeschlossen oder ruht bis zum Datum.
         async topic(t) {

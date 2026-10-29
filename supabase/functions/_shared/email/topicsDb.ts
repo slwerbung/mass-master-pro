@@ -7,10 +7,15 @@ import {
   type TopicConfig, type TopicFacts, type TopicStatus,
 } from "./topics.ts";
 import type { TopicDecision, TopicReason, TopicState } from "./types.ts";
+import { addresseeOf, type AddresseeUser } from "./addressee.ts";
 
 export interface TopicMail {
   id: string; direction: "in" | "out"; from_name: string; from_addr: string; subject: string; sent_at: string | null;
   summary: string | null; category: string | null; has_attachments: boolean; decided_at: string | null;
+  /** ausdruecklich an diesen Mitarbeiter gerichtet (Name); null = an alle mit Zugriff auf das Postfach */
+  addressedTo?: string | null;
+  /** Anhaenge mit kurzlebigem Link (nur in list_topics) */
+  attachments?: { id: string; filename: string; mime: string; size: number; url: string | null }[];
 }
 
 export interface Topic {
@@ -33,6 +38,8 @@ export interface Topic {
   /** Kurzfassung der juengsten Mail (fuer Themen ohne neue Mail: woran haengt es?) */
   lastMail: { direction: "in" | "out"; from: string; sent_at: string | null; summary: string | null } | null;
   messageCount: number;
+  /** an wen das Thema gerichtet ist (Anrede der juengsten eingehenden Mail); null = an alle */
+  addressedTo?: string | null;
   /** relevante eingehende Mails ohne Entscheidung (die werden vorgelegt) */
   newMessages: TopicMail[];
   suggestionIds: string[];
@@ -40,7 +47,7 @@ export interface Topic {
 
 export type TopicView = "entscheiden" | "laufend" | "wiedervorlage" | "erledigt";
 
-const MSG_COLS = "id, thread_id, direction, from_name, from_addr, subject, sent_at, created_at, summary, category, status, beleg_state, has_attachments, decided_at, hero_project_match_id";
+const MSG_COLS = "id, account_id, thread_id, direction, from_name, from_addr, subject, sent_at, created_at, summary, category, status, beleg_state, has_attachments, decided_at, hero_project_match_id";
 const CHUNK = 80;
 
 function must<T>(r: { data: T; error: any }): T {
@@ -74,7 +81,33 @@ async function openSuggestions(sb: any): Promise<Map<string, string[]>> {
 /** Postfaecher, die ein Benutzer sieht; null = alle (Admin). */
 export type AccountScope = string[] | null;
 
-async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg: Map<string, string[]>, now: Date, scope: AccountScope = null): Promise<{ topics: Topic[]; irrelevant: string[] }> {
+/**
+ * Wer schaut: seine Postfaecher und – fuer „an wen gerichtet“ – er selbst und wer die Postfaecher sieht.
+ * Ohne `userId` wird nicht nach Empfaenger gefiltert.
+ */
+export interface Viewer {
+  accountIds: AccountScope;
+  userId?: string;
+  /** Postfach -> Mitarbeiter mit Zugriff (addressee.ts) */
+  audience?: Map<string, AddresseeUser[]>;
+}
+
+/** Empfaenger der genannten Mails (nur ausdruecklich gerichtete; sonst fehlt der Eintrag). */
+async function addressees(sb: any, ms: any[], audience: Map<string, AddresseeUser[]>): Promise<Map<string, AddresseeUser>> {
+  const out = new Map<string, AddresseeUser>();
+  const ids = [...new Set(ms.filter((m) => (audience.get(m.account_id) ?? []).length > 1).map((m) => m.id))];
+  for (const c of chunks(ids)) {
+    const rows = must(await sb.from("email_messages").select("id, account_id, to_addrs, subject, body_text").in("id", c)) as any[];
+    for (const r of rows) {
+      const a = addresseeOf({ to_addrs: r.to_addrs, subject: r.subject, body_text: String(r.body_text ?? "").slice(0, 1500) }, audience.get(r.account_id) ?? []);
+      if (a) out.set(r.id, a);
+    }
+  }
+  return out;
+}
+
+async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg: Map<string, string[]>, now: Date, viewer: Viewer | null = null): Promise<{ topics: Topic[]; irrelevant: string[] }> {
+  const scope = viewer?.accountIds ?? null;
   const threads: any[] = [];
   const msgs: any[] = [];
   for (const ids of chunks(threadIds)) {
@@ -88,6 +121,20 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
   const byThread = new Map<string, any[]>();
   for (const m of msgs) (byThread.get(m.thread_id) ?? byThread.set(m.thread_id, []).get(m.thread_id)!).push(m);
 
+  // An wen gerichtet: die offenen Mails und die juengste eingehende je Thema (bestimmt, wem das Thema gehoert).
+  let addr = new Map<string, AddresseeUser>();
+  if (viewer?.audience) {
+    const look: any[] = [];
+    for (const th of threads) {
+      if (scope && !scope.includes(th.account_id)) continue;
+      const rel = (byThread.get(th.id) ?? []).filter((m) => isRelevant(m, cfg));
+      look.push(...rel.filter((m) => !m.decided_at));
+      if (rel.length) look.push(rel[rel.length - 1]);
+    }
+    addr = await addressees(sb, look, viewer.audience);
+  }
+  const mine = (m: any) => !viewer?.userId || !addr.has(m.id) || addr.get(m.id)!.id === viewer.userId;
+
   const topics: Topic[] = [];
   const irrelevant: string[] = [];
   for (const th of threads) {
@@ -99,13 +146,18 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
     const when = (m: any) => m.sent_at ?? m.created_at ?? null;
     const lastOf = (xs: any[]) => xs.reduce<string | null>((a, m) => (when(m) && (!a || when(m) > a) ? when(m) : a), null);
     const outs = all.filter((m) => m.direction === "out");
-    const undecided = rel.filter((m) => !m.decided_at);
+    // Vorgelegt wird nur, was an den Betrachter gerichtet ist (oder an alle). Das Thema gehoert dem Empfaenger der
+    // juengsten eingehenden Mail: andere sehen es weiter unter „Laufend“, bekommen es aber nicht zur Entscheidung.
+    const owner = rel.length ? addr.get(rel[rel.length - 1].id) ?? null : null;
+    const othersTopic = !!owner && !!viewer?.userId && owner.id !== viewer.userId;
+    const undecided = rel.filter((m) => !m.decided_at && mine(m));
     const facts: TopicFacts = {
       state: th.topic_state, snoozedUntil: th.snoozed_until, reviewedAt: th.reviewed_at,
       lastIn: lastOf(rel), lastOut: lastOf(outs), undecided: undecided.length, hadDecided: rel.some((m) => !!m.decided_at),
       openSuggestions: sIds.length, customer: rel.some((m) => isCustomerCategory(m.category)),
     };
-    const st: TopicStatus = topicStatus(facts, cfg, now);
+    const raw: TopicStatus = topicStatus(facts, cfg, now);
+    const st: TopicStatus = othersTopic && raw.due && raw.reason !== "wiedervorlage" ? { ...raw, due: false, reason: null } : raw;
     const latest = all[all.length - 1] ?? rel[rel.length - 1];
     const lastInMail = [...rel].reverse()[0] ?? all.find((m) => m.direction === "in");
     topics.push({
@@ -119,9 +171,11 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
       latestId: latest?.id ?? "",
       lastMail: latest ? { direction: latest.direction, from: latest.from_name || latest.from_addr, sent_at: latest.sent_at, summary: latest.summary ?? latest.subject ?? null } : null,
       messageCount: all.length,
+      addressedTo: owner?.name ?? null,
       newMessages: undecided.map((m) => ({
         id: m.id, direction: m.direction, from_name: m.from_name, from_addr: m.from_addr, subject: m.subject, sent_at: m.sent_at,
         summary: m.summary, category: m.category, has_attachments: m.has_attachments, decided_at: m.decided_at,
+        addressedTo: addr.get(m.id)?.name ?? null,
       })),
       suggestionIds: sIds,
     });
@@ -130,7 +184,7 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
 }
 
 /** Alle nicht abgeschlossenen Themen + abgeschlossene mit neuer Mail. Raeumt Threads ohne relevante Mail ab (abgeschlossen). */
-async function currentTopics(sb: any, cfg: TopicConfig, now: Date, scope: AccountScope = null): Promise<Topic[]> {
+async function currentTopics(sb: any, cfg: TopicConfig, now: Date, viewer: Viewer | null = null): Promise<Topic[]> {
   const [open, undecided, sugg] = await Promise.all([
     sb.from("email_threads").select("id, last_activity_at").neq("topic_state", "erledigt").limit(3000),
     sb.from("email_messages").select("thread_id").eq("direction", "in").is("decided_at", null).is("trashed_at", null)
@@ -143,7 +197,7 @@ async function currentTopics(sb: any, cfg: TopicConfig, now: Date, scope: Accoun
     ...(must(undecided) as any[]).map((r) => r.thread_id),
     ...sugg.keys(),
   ]);
-  const { topics, irrelevant } = await buildTopics(sb, [...ids], cfg, sugg, now, scope);
+  const { topics, irrelevant } = await buildTopics(sb, [...ids], cfg, sugg, now, viewer);
 
   // Aufraeumen: Werbung, Newsletter, nur ausgehende Mails – nach einem Tag ohne Bewegung abgeschlossen (ohne closed_at:
   // erscheint nicht unter „Abgeschlossen“). Wird eine Mail spaeter umsortiert, legt sie sich als neue Mail wieder vor.
@@ -156,16 +210,17 @@ async function currentTopics(sb: any, cfg: TopicConfig, now: Date, scope: Accoun
 
 const byActivityDesc = (a: Topic, b: Topic) => String(b.lastActivity ?? "").localeCompare(String(a.lastActivity ?? ""));
 
-export async function listTopics(sb: any, view: TopicView, now = new Date(), scope: AccountScope = null): Promise<Topic[]> {
+export async function listTopics(sb: any, view: TopicView, now = new Date(), viewer: Viewer | null = null): Promise<Topic[]> {
+  const scope = viewer?.accountIds ?? null;
   const cfg = await loadTopicConfig(sb);
   if (view === "erledigt") {
     let q = sb.from("email_threads").select("id").eq("topic_state", "erledigt").not("closed_at", "is", null);
     if (scope) q = q.in("account_id", scope);
     const rows = must(await q.order("closed_at", { ascending: false }).limit(150)) as any[];
-    const { topics } = await buildTopics(sb, rows.map((r) => r.id), cfg, new Map(), now, scope);
+    const { topics } = await buildTopics(sb, rows.map((r) => r.id), cfg, new Map(), now, viewer);
     return topics.filter((x) => !x.due).sort((a, b) => String(b.closedAt ?? "").localeCompare(String(a.closedAt ?? ""))).slice(0, 100);
   }
-  const all = await currentTopics(sb, cfg, now, scope);
+  const all = await currentTopics(sb, cfg, now, viewer);
   if (view === "entscheiden") return all.filter((x) => x.due).sort(byActivityDesc);
   if (view === "wiedervorlage") {
     return all.filter((x) => !x.due && x.state === "wiedervorlage").sort((a, b) => String(a.snoozedUntil).localeCompare(String(b.snoozedUntil)));
@@ -173,8 +228,8 @@ export async function listTopics(sb: any, view: TopicView, now = new Date(), sco
   return all.filter((x) => !x.due && x.state === "aktiv").sort((a, b) => String(a.nextCheck ?? "").localeCompare(String(b.nextCheck ?? "")));
 }
 
-export async function topicCounts(sb: any, now = new Date(), scope: AccountScope = null): Promise<{ entscheiden: number; laufend: number; wiedervorlage: number }> {
-  const all = await currentTopics(sb, await loadTopicConfig(sb), now, scope);
+export async function topicCounts(sb: any, now = new Date(), viewer: Viewer | null = null): Promise<{ entscheiden: number; laufend: number; wiedervorlage: number }> {
+  const all = await currentTopics(sb, await loadTopicConfig(sb), now, viewer);
   return {
     entscheiden: all.filter((x) => x.due).length,
     laufend: all.filter((x) => !x.due && x.state === "aktiv").length,
