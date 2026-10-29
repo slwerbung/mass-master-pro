@@ -71,12 +71,15 @@ async function openSuggestions(sb: any): Promise<Map<string, string[]>> {
 }
 
 /** Themen zu den Thread-IDs aufbauen (Mails, Fakten, Status). Threads ohne relevante Mail und ohne Vorschlag fallen raus. */
-async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg: Map<string, string[]>, now: Date): Promise<{ topics: Topic[]; irrelevant: string[] }> {
+/** Postfaecher, die ein Benutzer sieht; null = alle (Admin). */
+export type AccountScope = string[] | null;
+
+async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg: Map<string, string[]>, now: Date, scope: AccountScope = null): Promise<{ topics: Topic[]; irrelevant: string[] }> {
   const threads: any[] = [];
   const msgs: any[] = [];
   for (const ids of chunks(threadIds)) {
     const [th, ms] = await Promise.all([
-      sb.from("email_threads").select("id, subject_norm, topic_state, snoozed_until, topic_note, reviewed_at, closed_at, hero_project_match_id, last_activity_at").in("id", ids),
+      sb.from("email_threads").select("id, account_id, subject_norm, topic_state, snoozed_until, topic_note, reviewed_at, closed_at, hero_project_match_id, last_activity_at").in("id", ids),
       sb.from("email_messages").select(MSG_COLS).in("thread_id", ids).is("trashed_at", null).order("sent_at", { ascending: true, nullsFirst: true }).limit(2000),
     ]);
     threads.push(...must(th) as any[]);
@@ -88,6 +91,7 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
   const topics: Topic[] = [];
   const irrelevant: string[] = [];
   for (const th of threads) {
+    if (scope && !scope.includes(th.account_id)) continue;
     const all = byThread.get(th.id) ?? [];
     const rel = all.filter((m) => isRelevant(m, cfg));
     const sIds = sugg.get(th.id) ?? [];
@@ -126,7 +130,7 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
 }
 
 /** Alle nicht abgeschlossenen Themen + abgeschlossene mit neuer Mail. Raeumt Threads ohne relevante Mail ab (abgeschlossen). */
-async function currentTopics(sb: any, cfg: TopicConfig, now: Date): Promise<Topic[]> {
+async function currentTopics(sb: any, cfg: TopicConfig, now: Date, scope: AccountScope = null): Promise<Topic[]> {
   const [open, undecided, sugg] = await Promise.all([
     sb.from("email_threads").select("id, last_activity_at").neq("topic_state", "erledigt").limit(3000),
     sb.from("email_messages").select("thread_id").eq("direction", "in").is("decided_at", null).is("trashed_at", null)
@@ -139,7 +143,7 @@ async function currentTopics(sb: any, cfg: TopicConfig, now: Date): Promise<Topi
     ...(must(undecided) as any[]).map((r) => r.thread_id),
     ...sugg.keys(),
   ]);
-  const { topics, irrelevant } = await buildTopics(sb, [...ids], cfg, sugg, now);
+  const { topics, irrelevant } = await buildTopics(sb, [...ids], cfg, sugg, now, scope);
 
   // Aufraeumen: Werbung, Newsletter, nur ausgehende Mails – nach einem Tag ohne Bewegung abgeschlossen (ohne closed_at:
   // erscheint nicht unter „Abgeschlossen“). Wird eine Mail spaeter umsortiert, legt sie sich als neue Mail wieder vor.
@@ -152,15 +156,16 @@ async function currentTopics(sb: any, cfg: TopicConfig, now: Date): Promise<Topi
 
 const byActivityDesc = (a: Topic, b: Topic) => String(b.lastActivity ?? "").localeCompare(String(a.lastActivity ?? ""));
 
-export async function listTopics(sb: any, view: TopicView, now = new Date()): Promise<Topic[]> {
+export async function listTopics(sb: any, view: TopicView, now = new Date(), scope: AccountScope = null): Promise<Topic[]> {
   const cfg = await loadTopicConfig(sb);
   if (view === "erledigt") {
-    const rows = must(await sb.from("email_threads").select("id").eq("topic_state", "erledigt").not("closed_at", "is", null)
-      .order("closed_at", { ascending: false }).limit(150)) as any[];
-    const { topics } = await buildTopics(sb, rows.map((r) => r.id), cfg, new Map(), now);
+    let q = sb.from("email_threads").select("id").eq("topic_state", "erledigt").not("closed_at", "is", null);
+    if (scope) q = q.in("account_id", scope);
+    const rows = must(await q.order("closed_at", { ascending: false }).limit(150)) as any[];
+    const { topics } = await buildTopics(sb, rows.map((r) => r.id), cfg, new Map(), now, scope);
     return topics.filter((x) => !x.due).sort((a, b) => String(b.closedAt ?? "").localeCompare(String(a.closedAt ?? ""))).slice(0, 100);
   }
-  const all = await currentTopics(sb, cfg, now);
+  const all = await currentTopics(sb, cfg, now, scope);
   if (view === "entscheiden") return all.filter((x) => x.due).sort(byActivityDesc);
   if (view === "wiedervorlage") {
     return all.filter((x) => !x.due && x.state === "wiedervorlage").sort((a, b) => String(a.snoozedUntil).localeCompare(String(b.snoozedUntil)));
@@ -168,8 +173,8 @@ export async function listTopics(sb: any, view: TopicView, now = new Date()): Pr
   return all.filter((x) => !x.due && x.state === "aktiv").sort((a, b) => String(a.nextCheck ?? "").localeCompare(String(b.nextCheck ?? "")));
 }
 
-export async function topicCounts(sb: any, now = new Date()): Promise<{ entscheiden: number; laufend: number; wiedervorlage: number }> {
-  const all = await currentTopics(sb, await loadTopicConfig(sb), now);
+export async function topicCounts(sb: any, now = new Date(), scope: AccountScope = null): Promise<{ entscheiden: number; laufend: number; wiedervorlage: number }> {
+  const all = await currentTopics(sb, await loadTopicConfig(sb), now, scope);
   return {
     entscheiden: all.filter((x) => x.due).length,
     laufend: all.filter((x) => !x.due && x.state === "aktiv").length,

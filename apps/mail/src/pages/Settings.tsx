@@ -7,9 +7,11 @@ import ReferenceDocs from "./settings/ReferenceDocs";
 import Company from "./settings/Company";
 import Ai from "./settings/Ai";
 import Log from "./settings/Log";
+import Users from "./settings/Users";
 
 const tabs = [
   { to: "postfaecher", label: "Postfächer" },
+  { to: "benutzer", label: "Benutzer" },
   { to: "wissen", label: "Wissen" },
   { to: "referenz", label: "Referenzwissen" },
   { to: "regeln", label: "Absenderregeln" },
@@ -32,6 +34,7 @@ export default function Settings() {
       <Routes>
         <Route index element={<Navigate to="postfaecher" replace />} />
         <Route path="postfaecher" element={<Accounts />} />
+        <Route path="benutzer" element={<Users />} />
         <Route path="wissen" element={<Knowledge />} />
         <Route path="referenz" element={<ReferenceDocs />} />
         <Route path="regeln" element={<Rules />} />

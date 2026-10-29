@@ -53,7 +53,7 @@ describe("Kein Versand, kein Loeschen", () => {
     expect(src.match(/sendComposed\s*\(/g)).toHaveLength(1);
     const i = src.indexOf("sendComposed(smtp");
     expect(src.lastIndexOf("async send(sb, body, user)", i)).toBeGreaterThan(-1);
-    expect(src.indexOf("requireAdmin(req, sb)")).toBeGreaterThan(-1);
+    expect(src.indexOf("requireMailUser(req, sb)")).toBeGreaterThan(-1);
   });
   it("lexwareSend.ts prueft den Empfaenger vor jedem Versand und hat genau einen Sendeaufruf", () => {
     const f = sources.find((x) => x.endsWith("lexwareSend.ts"))!;

@@ -10,7 +10,8 @@
 // Antwort immer HTTP 200 mit { ok, data | error }.
 
 import { createClient } from "@supabase/supabase-js";
-import { fail, ok, preflight, readJson, requireAdmin, type AdminUser } from "../_shared/email/http.ts";
+import { fail, ok, preflight, readJson, requireMailUser, type MailUser } from "../_shared/email/http.ts";
+import { AccessError, assertAccount, scopeAccounts } from "../_shared/email/access.ts";
 import { accountPassword } from "../_shared/email/config.ts";
 import { addKeywords, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
 import { newMessageId } from "../_shared/email/draftMime.ts";
@@ -52,16 +53,17 @@ function decodeBase64(b64: string): Uint8Array {
 
 const fromLabel = (m: any) => (m.from_name ? `${m.from_name} <${m.from_addr}>` : m.from_addr);
 
-const handlers: Record<string, (sb: any, body: any, user: AdminUser) => Promise<unknown>> = {
-  async accounts(sb) {
-    const { data } = await sb.from("email_accounts").select("id, label, address, signature_html, smtp_host, folder_map, enabled").order("created_at");
+const handlers: Record<string, (sb: any, body: any, user: MailUser) => Promise<unknown>> = {
+  async accounts(sb, _body, user) {
+    const { data } = await scopeAccounts(sb.from("email_accounts").select("id, label, address, signature_html, smtp_host, folder_map, enabled"), user, "id").order("created_at");
     return (data || []).map((a: any) => ({
       id: a.id, label: a.label, address: a.address, signatureHtml: a.signature_html ?? "", smtp: !!a.smtp_host,
       sentFolder: a.folder_map?.sent ?? null, enabled: a.enabled,
     }));
   },
 
-  async signature_save(sb, body) {
+  async signature_save(sb, body, user) {
+    assertAccount(user, String(body.accountId || ""));
     const html = String(body.html ?? "");
     if (html.length > MAX_SIGNATURE_CHARS) throw new ComposeError("Signatur zu groß (Bilder bitte verlinken statt einbetten).");
     await loadAccount(sb, String(body.accountId || ""));
@@ -70,10 +72,11 @@ const handlers: Record<string, (sb: any, body: any, user: AdminUser) => Promise<
     return { saved: true };
   },
 
-  async prepare(sb, body) {
+  async prepare(sb, body, user) {
     const mode = asMode(body.mode);
     if (!mode) throw new ComposeError("Unbekannte Art (reply, replyAll, forward).");
     const m = await loadMessage(sb, String(body.replyTo || ""));
+    assertAccount(user, m.account_id);
     const own = await ownAddresses(sb);
     const recipients = mode === "forward"
       ? { to: [], cc: [], bcc: [] }
@@ -100,6 +103,9 @@ const handlers: Record<string, (sb: any, body: any, user: AdminUser) => Promise<
     const acc = await loadAccount(sb, String(body.accountId || ""));
     const mode = body.replyTo ? asMode(body.mode) ?? "reply" : null;
     const orig = body.replyTo ? await loadMessage(sb, String(body.replyTo)) : null;
+    // Senden nur aus eigenen Postfaechern und nur zu Mails eigener Postfaecher.
+    assertAccount(user, acc.id);
+    if (orig) assertAccount(user, orig.account_id);
     const recipients = { to: parseAddressList(body.to), cc: parseAddressList(body.cc), bcc: parseAddressList(body.bcc) };
     checkRecipients(recipients);
     const subject = String(body.subject ?? "").trim().slice(0, 500);
@@ -181,14 +187,14 @@ Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const user = await requireAdmin(req, sb);
-  if (!user) return fail("Nicht angemeldet oder keine Admin-Rolle.", { code: "unauthorized" });
+  const user = await requireMailUser(req, sb);
+  if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
   const body = await readJson(req);
   const h = handlers[String(body.action || "")];
   if (!h) return fail("Unbekannte Aktion.");
   try {
     return ok(await h(sb, body, user));
   } catch (e) {
-    return fail(String((e as Error)?.message || e).slice(0, 300), e instanceof ComposeError ? { code: "invalid" } : {});
+    return fail(String((e as Error)?.message || e).slice(0, 300), e instanceof ComposeError ? { code: "invalid" } : e instanceof AccessError ? { code: "forbidden" } : {});
   }
 });

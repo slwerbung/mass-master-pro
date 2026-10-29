@@ -7,7 +7,8 @@
 // Nur mit Admin-Sitzung. Antwort immer HTTP 200 mit { ok, data | error }.
 
 import { createClient } from "@supabase/supabase-js";
-import { fail, ok, preflight, readJson, requireAdmin } from "../_shared/email/http.ts";
+import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
+import { assertMessages } from "../_shared/email/access.ts";
 import { accountPassword } from "../_shared/email/config.ts";
 import { fetchDisplay, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
 import { mailHtml, MAX_CACHE_CHARS } from "../_shared/email/mailHtml.ts";
@@ -123,11 +124,14 @@ Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  if (!(await requireAdmin(req, sb))) return fail("Nicht angemeldet oder keine Admin-Rolle.", { code: "unauthorized" });
+  const user = await requireMailUser(req, sb);
+  if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
   const body = await readJson(req);
   const h = handlers[String(body.action || "")];
   if (!h) return fail("Unbekannte Aktion.");
   try {
+    // Nur Mails der eigenen Postfaecher (Admin: alle).
+    await assertMessages(sb, user, [body.id, ...(Array.isArray(body.ids) ? body.ids : []).slice(0, MAX_IDS)]);
     return ok(await h(sb, body));
   } catch (e) {
     return fail(String((e as Error)?.message || e).slice(0, 300));

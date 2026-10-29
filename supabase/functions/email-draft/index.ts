@@ -9,7 +9,8 @@
 // wandert in den Papierkorb (kein Loeschen).
 
 import { createClient } from "@supabase/supabase-js";
-import { fail, ok, preflight, readJson, requireAdmin } from "../_shared/email/http.ts";
+import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
+import { canAccount } from "../_shared/email/access.ts";
 import { accountPassword, buildLlmDeps, getConfig } from "../_shared/email/config.ts";
 import { generateDraft, replySubject, type DraftMsg } from "../_shared/email/draft.ts";
 import { imapDraftWriter } from "../_shared/email/draftMime.ts";
@@ -24,7 +25,8 @@ Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  if (!(await requireAdmin(req, sb))) return fail("Nicht angemeldet oder keine Admin-Rolle.", { code: "unauthorized" });
+  const user = await requireMailUser(req, sb);
+  if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
 
   const body = await readJson(req);
   if (!["generate", "save", "write", "forward_beleg"].includes(body.action)) return fail("Unbekannte Aktion.");
@@ -35,6 +37,7 @@ Deno.serve(async (req) => {
       .select("id, account_id, thread_id, direction, from_addr, from_name, subject, message_id, refs, sent_at, body_text, category, summary, extracted, hero_project_match_id, draft_message_id, draft_text, draft_subject, draft_uid, plan")
       .eq("id", String(body.messageId || "")).maybeSingle();
     if (!m) return fail("Mail nicht gefunden.");
+    if (!canAccount(user, m.account_id)) return fail("Kein Zugriff auf dieses Postfach.", { code: "forbidden" });
     if (m.direction !== "in") return fail("Für ausgehende Mails gibt es keinen Entwurf.");
     if (body.action === "forward_beleg" && m.category !== "beleg" && !(m.extracted as any)?.beleg?.is_booking_document) return fail("Nur Belege lassen sich an Lexware weiterleiten.");
     const { data: acc } = await sb.from("email_accounts").select("*").eq("id", m.account_id).maybeSingle();

@@ -45,7 +45,11 @@ zwischengespeichert; nach dem Anlegen eines Kontakts werden Adresse und Domain v
    ```
 5. **Admin-Konto:** im Supabase-Dashboard (Authentication → Users) ein Konto mit E-Mail + Passwort anlegen, dann in
    `public.profiles` eine Zeile `(id = Auth-User-ID, display_name, role = 'admin')` eintragen (siehe `docs/auth-rollout.md`).
-   Keine Selbstregistrierung.
+   Keine Selbstregistrierung. Weitere Benutzer legt ein Admin danach in der Mail-App an: **Einstellungen → Benutzer**
+   (Name, E-Mail, Passwort, Rolle, Postfächer). Admin = alle Postfächer + Einstellungen; Mitarbeiter = nur die angehakten
+   Postfächer (`email_account_users`, Prüfung in `_shared/email/access.ts`), ohne Postfach kein Zugang. CaptFix-Mitarbeiter
+   stehen schon in der Liste – bei ihnen nur Postfächer zuordnen (Passwort/aktiv bleiben CaptFix-Sache). Ein Mitarbeiter-Profil
+   gilt auch in CaptFix als Personal (`is_staff()`).
 6. **Mail-App auf Vercel:** zweites Projekt auf dasselbe Repo, *Root Directory* `apps/mail`, Umgebungsvariablen
    `VITE_SUPABASE_URL` und `VITE_SUPABASE_PUBLISHABLE_KEY` (siehe `apps/mail/.env.example`). Empfohlen (Vercel → Settings → Git →
    *Ignored Build Step*): für `apps/mail` `git diff --quiet HEAD^ HEAD -- .`; für das CaptFix-Projekt `git diff --quiet HEAD^ HEAD -- . ':(exclude)apps/mail'`.

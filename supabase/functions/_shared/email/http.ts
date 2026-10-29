@@ -46,16 +46,44 @@ export async function isCronCall(req: Request, sb: any): Promise<boolean> {
 
 export interface AdminUser { id: string; email: string | null; name: string }
 
-/** Supabase-Auth-Sitzung mit Rolle `admin` (profiles.role, aktiv). */
-export async function requireAdmin(req: Request, sb: any): Promise<AdminUser | null> {
+export interface MailUser extends AdminUser {
+  role: "admin" | "mitarbeiter";
+  /** Postfaecher, die der Benutzer sieht; null = alle (Admin). */
+  accountIds: string[] | null;
+}
+
+/** Angemeldeter Benutzer mit aktivem Profil (Supabase-Auth-Sitzung im Authorization-Header). */
+async function sessionProfile(req: Request, sb: any) {
   const auth = req.headers.get("authorization") || "";
   const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
   if (!token) return null;
   const { data, error } = await sb.auth.getUser(token);
   if (error || !data?.user) return null;
   const { data: prof } = await sb.from("profiles").select("display_name, role, is_active").eq("id", data.user.id).maybeSingle();
-  if (!prof || prof.role !== "admin" || prof.is_active === false) return null;
-  return { id: data.user.id, email: data.user.email ?? null, name: prof.display_name };
+  if (!prof || prof.is_active === false) return null;
+  return { id: data.user.id as string, email: (data.user.email ?? null) as string | null, name: prof.display_name as string, role: String(prof.role) };
+}
+
+/** Supabase-Auth-Sitzung mit Rolle `admin` (profiles.role, aktiv). */
+export async function requireAdmin(req: Request, sb: any): Promise<AdminUser | null> {
+  const p = await sessionProfile(req, sb);
+  if (!p || p.role !== "admin") return null;
+  return { id: p.id, email: p.email, name: p.name };
+}
+
+/**
+ * Benutzer der Mail-App: Admin sieht alle Postfaecher, ein Mitarbeiter nur die ihm zugeordneten
+ * (email_account_users). Mitarbeiter ohne Postfach und alle anderen Rollen haben keinen Zugang.
+ */
+export async function requireMailUser(req: Request, sb: any): Promise<MailUser | null> {
+  const p = await sessionProfile(req, sb);
+  if (!p) return null;
+  if (p.role === "admin") return { id: p.id, email: p.email, name: p.name, role: "admin", accountIds: null };
+  if (p.role !== "mitarbeiter") return null;
+  const { data: rows } = await sb.from("email_account_users").select("account_id").eq("user_id", p.id);
+  const accountIds = (rows || []).map((r: any) => String(r.account_id));
+  if (!accountIds.length) return null;
+  return { id: p.id, email: p.email, name: p.name, role: "mitarbeiter", accountIds };
 }
 
 export async function readJson(req: Request): Promise<Record<string, any>> {
