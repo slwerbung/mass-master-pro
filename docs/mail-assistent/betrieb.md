@@ -117,6 +117,21 @@ Gearbeitet wird in **Themen** (= Gesprächsverläufe, `email_threads`), Logik in
 - Bestand beim Einführen: Mails älter als 3 Tage gelten als entschieden („altbestand“), Themen ohne Kundenkategorie als abgeschlossen;
   unbeantwortete Kundenthemen legt die Überwachung sofort vor.
 
+- Ausgehende Mails (auch aus Thunderbird/Handy) werden nie vorgelegt: bei nur vermuteter Projektzuordnung gibt es für sie weder
+  Vorschlag noch Logbuch (`act.ts`).
+
+### Anhänge in die Dropbox
+
+„In Dropbox …“ (Mail-Ansicht) bzw. „Anhänge in Dropbox“ (Themenkarte) legt Anhänge per Klick in den Projektordner der Firmen-Dropbox
+(`email-action` `dropbox_targets`/`dropbox_save`, `_shared/email/dropboxSave.ts` + `dropboxWiring.ts`). Nutzt die bestehende
+Dropbox-Anbindung (CaptFix-Admin → Integrationen, `dropbox_account`, Einstellungen `dropbox_*` in `app_config`).
+- Projektordner: gemerkter Pfad (`dropbox_synced`) → im Kundenordner ein Ordner, der mit der Projektnummer beginnt → sonst nach Muster
+  neu, mit Unterordner-Vorlage (wie die Automation beim Projektanlegen). Der Pfad wird danach gemerkt.
+- Ziel-Unterordner nur aus der Vorlage (`dropbox_project_subfolders`) oder der Projektordner selbst; eingehende Mails → erster
+  Unterordner („01 Gelieferte Daten“).
+- Nur hinzufügen (`mode: add`, `autorename`) – nie überschreiben oder löschen. Gemerkt in `email_attachments.dropbox_path`.
+- Die Mail muss einem HERO-Projekt zugeordnet sein. Ablegen entscheidet die Mail nicht (danach z. B. „Weiter verfolgen“).
+
 ### Ansicht „Zu entscheiden"
 
 Jede Karte zeigt nur den Kopf (Art des Vorschlags, Kategorie, Betreff, Absender, Kurzfassung der Mail) und die Knöpfe.

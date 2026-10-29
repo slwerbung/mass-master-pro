@@ -14,7 +14,8 @@ import {
 import { CategoryChip } from "@/components/CategoryChip";
 import { MailBody } from "@/components/MailBody";
 import { TopicActions } from "@/components/TopicActions";
-import { Mail, Paperclip } from "lucide-react";
+import { DropboxSave } from "@/components/DropboxSave";
+import { FolderInput, Mail, Paperclip } from "lucide-react";
 import type { Overview } from "@/lib/types";
 import type { Topic, TopicMail } from "@/lib/topics";
 import { TOPIC_REASON_LABELS } from "@/lib/shared";
@@ -241,6 +242,7 @@ const REASON_TONE: Record<string, "default" | "warn" | "danger" | "secondary"> =
 /** Eine vorgelegte Mail im Thema: Kurzfassung, aufklappbar. */
 function NewMail({ m }: { m: TopicMail }) {
   const [open, setOpen] = useState(false);
+  const [dropbox, setDropbox] = useState(false);
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -255,7 +257,13 @@ function NewMail({ m }: { m: TopicMail }) {
           <Mail className="h-3.5 w-3.5" /> {open ? "Mail zuklappen" : "Mail lesen"}
         </button>
         <Link to={`/mails/${m.id}`} className="text-muted-foreground underline hover:text-foreground">Öffnen</Link>
+        {m.has_attachments && (
+          <button type="button" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground" onClick={() => setDropbox(!dropbox)}>
+            <FolderInput className="h-3.5 w-3.5" /> Anhänge in Dropbox
+          </button>
+        )}
       </div>
+      {dropbox && <DropboxSave messageId={m.id} onClose={() => setDropbox(false)} />}
       {open && <div className="rounded-md border p-2"><MailBody messageId={m.id} fallbackText={null} /></div>}
     </div>
   );

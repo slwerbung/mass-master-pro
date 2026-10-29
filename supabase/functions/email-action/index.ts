@@ -4,6 +4,8 @@
 //   { action: "assign", messageId, projectId }                 manuelle Zuordnung aus der Mail-Ansicht
 //   { action: "instruct_plan", messageId, text }               Anweisung -> Plan (nur lesen, KI)
 //   { action: "instruct_run", messageId, text, plan }          Plan ausfuehren (Projekt / Angebot / Termin)
+//   { action: "dropbox_targets", messageId }                   wohin die Anhaenge in der Dropbox kaemen (nur lesen)
+//   { action: "dropbox_save", messageId, attachmentIds, subfolder }  Anhaenge in den Projektordner legen
 //
 // Nur mit Admin-Sitzung. Schreibende HERO-Aufrufe passieren ausschliesslich hier und
 // nur nach einem Klick.
@@ -25,6 +27,7 @@ import { FREEMAIL_DOMAINS } from "../_shared/email/types.ts";
 import { heroCreateAppointment } from "../_shared/booking/hero.ts";
 import { runOp, sanitizeOps, type HeroOpsApi } from "../_shared/email/heroOps.ts";
 import { decideTopic } from "../_shared/email/topicsDb.ts";
+import { dropboxSave, dropboxTargets } from "../_shared/email/dropboxWiring.ts";
 import { validSnoozeDate } from "../_shared/email/topics.ts";
 
 const INSTRUCT_MSG_COLS = "id, account_id, thread_id, direction, category, subject, summary, body_text, from_name, from_addr, to_addrs, has_attachments, extracted, match_info, hero_project_match_id";
@@ -153,13 +156,18 @@ Deno.serve(async (req) => {
   if (!(await requireAdmin(req, sb))) return fail("Nicht angemeldet oder keine Admin-Rolle.", { code: "unauthorized" });
 
   const body = await readJson(req);
-  if (!["decide", "assign", "instruct_plan", "instruct_run"].includes(body.action)) return fail("Unbekannte Aktion.");
+  if (!["decide", "assign", "instruct_plan", "instruct_run", "dropbox_targets", "dropbox_save"].includes(body.action)) return fail("Unbekannte Aktion.");
   if (body.action === "decide" && !["accept", "reject"].includes(body.decision)) return fail("decision: accept oder reject.");
 
   try {
     const [key, heroCfg, gewerke] = await Promise.all([
       H.loadHeroKey(sb), getConfig<any>(sb, "hero", {}), getConfig<Gewerk[]>(sb, "gewerke", []),
     ]);
+    if (body.action === "dropbox_targets") return ok(await dropboxTargets(sb, key, String(body.messageId || "")));
+    if (body.action === "dropbox_save") {
+      const ids = Array.isArray(body.attachmentIds) ? body.attachmentIds.map(String) : [];
+      return ok(await dropboxSave(sb, key, String(body.messageId || ""), ids, String(body.subfolder ?? "")));
+    }
     const hero = key
       ? {
         addLogbook: (id: number, t: string) => H.addLogbookEntry(key, id, t),

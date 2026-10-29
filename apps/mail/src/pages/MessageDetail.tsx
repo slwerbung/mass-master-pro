@@ -3,13 +3,14 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ArrowLeft, Cpu, Download, FolderKanban, Forward, GraduationCap, ListChecks, MessagesSquare, Paperclip, PenLine, Receipt, RefreshCw, Reply, ReplyAll, Scale, ScanText, Send, Trash2, Undo2, Wand2,
+  ArrowLeft, Cpu, Download, FolderInput, FolderKanban, Forward, GraduationCap, ListChecks, MessagesSquare, Paperclip, PenLine, Receipt, RefreshCw, Reply, ReplyAll, Scale, ScanText, Send, Trash2, Undo2, Wand2,
 } from "lucide-react";
 import { api, invokeFn } from "@/lib/api";
 import { ProjectSearch } from "@/components/ProjectSearch";
 import { TeachBox } from "@/components/TeachBox";
 import { InstructBox } from "@/components/InstructBox";
 import { TopicActions } from "@/components/TopicActions";
+import { DropboxSave } from "@/components/DropboxSave";
 import type { Topic } from "@/lib/topics";
 import { TOPIC_STATE_LABELS } from "@/lib/shared";
 import { MailBody } from "@/components/MailBody";
@@ -105,10 +106,11 @@ export default function MessageDetail() {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [teach, setTeach] = useState(false);
   const [instruct, setInstruct] = useState(false);
+  const [dropbox, setDropbox] = useState(false);
   const m = q.data?.message;
 
   useEffect(() => { setDraft({}); }, [id, m?.extracted]);
-  useEffect(() => { setTeach(false); }, [id]);
+  useEffect(() => { setTeach(false); setDropbox(false); }, [id]);
 
   const correct = useMutation({
     mutationFn: (body: Record<string, unknown>) => api<{ changed: number; learned: { pattern: string; category: string } | null }>("correct_message", { id, ...body }),
@@ -180,6 +182,9 @@ export default function MessageDetail() {
           )}
           <Link to={`/verfassen?reply=${m.id}&mode=forward`}><Button size="sm" variant="outline"><Forward className="h-3.5 w-3.5" /> Weiterleiten</Button></Link>
           <Button size="sm" variant={instruct ? "secondary" : "outline"} onClick={() => { setInstruct(!instruct); setTeach(false); }}><Wand2 className="h-3.5 w-3.5" /> In HERO erledigen …</Button>
+          {d.attachments.some((a) => !a.is_ignored) && (
+            <Button size="sm" variant={dropbox ? "secondary" : "outline"} onClick={() => setDropbox(!dropbox)}><FolderInput className="h-3.5 w-3.5" /> In Dropbox …</Button>
+          )}
           <Button size="sm" variant={teach ? "secondary" : "outline"} onClick={() => { setTeach(!teach); setInstruct(false); }}><GraduationCap className="h-3.5 w-3.5" /> Falsch? Erklären</Button>
           <Button variant="outline" size="sm" onClick={() => reprocess.mutate()} disabled={reprocess.isPending}><RefreshCw className="h-3.5 w-3.5" /> Neu verarbeiten</Button>
           {m.trashed_at ? (
@@ -195,6 +200,7 @@ export default function MessageDetail() {
 
       {m.trashed_at && <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Liegt im Papierkorb des Postfachs (seit {formatDateTime(m.trashed_at)}).</div>}
       {m.error && <ErrorBox error={m.error} />}
+      {dropbox && <DropboxSave messageId={m.id} onClose={() => setDropbox(false)} />}
       {d.topic && <TopicBar topic={d.topic} />}
 
       {/* Kopf: Betreff, Absender, KI-Einschaetzung */}
