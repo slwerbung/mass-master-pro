@@ -120,6 +120,16 @@ Gearbeitet wird in **Themen** (= Gesprächsverläufe, `email_threads`), Logik in
 - Ausgehende Mails (auch aus Thunderbird/Handy) werden nie vorgelegt: bei nur vermuteter Projektzuordnung gibt es für sie weder
   Vorschlag noch Logbuch (`act.ts`).
 
+### Belege an Lexware aus der Themenkarte
+
+Bei Belegen mit Anhang steht in der Themenkarte „An Lexware senden“ (derselbe Weg wie in der Mail-Ansicht: `email-draft`
+`forward_beleg` → `lexwareSend.ts`, nur an die hinterlegte Belegadresse). Danach gilt der Beleg als erledigt und verschwindet aus
+„Zu entscheiden“. Automatisch geht es bei neuen Belegen, sobald Belegadresse und SMTP hinterlegt sind (Autopilot `forward_beleg`).
+Eine Anweisung („An Lexware weiterleiten“) kann das NICHT – dafür ist der Knopf da.
+
+`current_uid` (Okt. 2026 behoben): Der Sync setzte sie bei neuen Mails nicht, dadurch konnte der Assistent nichts verschieben
+(„Kein IMAP-Zugriff / UID unbekannt“). Migration `20261029130000_email_current_uid.sql` (Trigger + Nachtrag) und `sync.ts`.
+
 ### Anhänge in die Dropbox
 
 „In Dropbox …“ (Mail-Ansicht) bzw. „Anhänge in Dropbox“ (Themenkarte) legt Anhänge per Klick in den Projektordner der Firmen-Dropbox

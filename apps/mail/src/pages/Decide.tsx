@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { api, invokeFn } from "@/lib/api";
 import type { Suggestion } from "@/lib/suggestions";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { ProjectSearch } from "@/components/ProjectSearch";
@@ -15,11 +15,11 @@ import { CategoryChip } from "@/components/CategoryChip";
 import { MailBody } from "@/components/MailBody";
 import { TopicActions } from "@/components/TopicActions";
 import { DropboxSave } from "@/components/DropboxSave";
-import { FolderInput, Mail, Paperclip } from "lucide-react";
+import { FolderInput, Mail, Paperclip, Receipt } from "lucide-react";
 import type { Overview } from "@/lib/types";
 import type { Topic, TopicMail } from "@/lib/topics";
 import { TOPIC_REASON_LABELS } from "@/lib/shared";
-import { formatDate, formatDateTime } from "@/lib/utils";
+import { errorText, formatDate, formatDateTime } from "@/lib/utils";
 
 interface Gewerk { short: string; name: string; measure_id: number | null }
 
@@ -243,6 +243,17 @@ const REASON_TONE: Record<string, "default" | "warn" | "danger" | "secondary"> =
 function NewMail({ m }: { m: TopicMail }) {
   const [open, setOpen] = useState(false);
   const [dropbox, setDropbox] = useState(false);
+  const qc = useQueryClient();
+  // Beleg an die Lexware-Belegadresse (derselbe Weg wie in der Mail-Ansicht; erledigt die Mail damit).
+  const lexware = useMutation({
+    mutationFn: () => invokeFn<{ files: number; how: "gesendet" | "entwurf"; fallbackReason: string | null }>("email-draft", { action: "forward_beleg", messageId: m.id, send: true }),
+    onSuccess: (r) => {
+      if (r.how === "gesendet") toast.success(`An Lexware gesendet (${r.files} Anhang/Anhänge).`);
+      else toast.warning(`Entwurf an Lexware liegt im Entwürfe-Ordner${r.fallbackReason ? ` (Senden nicht möglich: ${r.fallbackReason})` : ""} – bitte selbst senden.`);
+    },
+    onError: (e) => toast.error(errorText(e)),
+    onSettled: () => ["topics", "overview", "messages", "message"].forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
+  });
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -257,6 +268,12 @@ function NewMail({ m }: { m: TopicMail }) {
           <Mail className="h-3.5 w-3.5" /> {open ? "Mail zuklappen" : "Mail lesen"}
         </button>
         <Link to={`/mails/${m.id}`} className="text-muted-foreground underline hover:text-foreground">Öffnen</Link>
+        {m.category === "beleg" && m.has_attachments && (
+          <button type="button" className="inline-flex items-center gap-1 font-medium text-foreground hover:underline" disabled={lexware.isPending}
+            onClick={() => { if (confirm("Beleg jetzt an die Lexware-Belegadresse senden?")) lexware.mutate(); }}>
+            <Receipt className="h-3.5 w-3.5" /> {lexware.isPending ? "Sende …" : "An Lexware senden"}
+          </button>
+        )}
         {m.has_attachments && (
           <button type="button" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground" onClick={() => setDropbox(!dropbox)}>
             <FolderInput className="h-3.5 w-3.5" /> Anhänge in Dropbox

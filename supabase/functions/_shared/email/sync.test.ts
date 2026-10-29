@@ -64,6 +64,8 @@ describe("syncAccount", () => {
     expect(r).toMatchObject({ fetched: 3, stored: 3, errors: 0 });
     expect(log.msgs.map((m) => [m.folder, m.direction, m.uid])).toEqual([["INBOX", "in", 11], ["INBOX", "in", 12], ["Sent", "out", 6]]);
     expect(log.msgs.every((m) => m.status === "neu")).toBe(true);
+    // Ohne current_uid kann der Assistent die Mail spaeter nicht verschieben.
+    expect(log.msgs.map((m) => [m.current_folder, m.current_uid])).toEqual([["INBOX", 11], ["INBOX", 12], ["Sent", 6]]);
     // Fortschritt wird nach jeder Mail gesichert, am Ende je Ordner noch einmal.
     expect(log.cursors).toEqual([
       { id: "A1", inbox_uidvalidity: "7", inbox_last_uid: 11 },
