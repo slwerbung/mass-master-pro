@@ -62,6 +62,8 @@ export interface MessageInsert {
   status: "neu" | "fehler";
   error?: string | null;
   current_folder: string;
+  /** UID im aktuellen Ordner – ohne sie kann der Assistent die Mail nicht verschieben/markieren */
+  current_uid: number;
 }
 
 export interface SyncStore {
@@ -176,6 +178,7 @@ async function storeOne(
     has_attachments: m.attachments.length > 0,
     status: "neu",
     current_folder: folder,
+    current_uid: raw.uid,
   });
   if (!row) return "duplicate";
 
