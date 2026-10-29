@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AccountRow, type MessageInsert, type SyncDeps, type SyncStore, SYNC_LIMIT, syncAccount } from "./sync.ts";
+import { type AccountRow, type MessageInsert, type SyncDeps, type SyncStore, STUCK_SKIP, SYNC_LIMIT, syncAccount } from "./sync.ts";
 import type { ParsedMail } from "./parse.ts";
 
 const acc = (over: Partial<AccountRow> = {}): AccountRow => ({
@@ -15,7 +15,7 @@ function mail(over: Partial<ParsedMail> = {}): ParsedMail {
 }
 
 function fake(parsed: Record<number, ParsedMail | Error>, folders: Record<string, { uids: number[]; validity?: string; uidNext?: number; more?: boolean }>) {
-  const log = { threads: [] as any[], msgs: [] as MessageInsert[], atts: [] as any[], uploads: [] as string[], cursors: [] as any[], touched: [] as any[], fetchCalls: [] as any[] };
+  const log = { threads: [] as any[], msgs: [] as MessageInsert[], atts: [] as any[], uploads: [] as string[], cursors: [] as any[], touched: [] as any[], fetchCalls: [] as any[], stuck: [] as any[] };
   const known = new Set<string>();
   const threadByMsg = new Map<string, string>();
   const store: SyncStore = {
@@ -30,6 +30,7 @@ function fake(parsed: Record<number, ParsedMail | Error>, folders: Record<string
     async insertAttachment(r) { log.atts.push(r); },
     async uploadAttachment(p) { log.uploads.push(p); },
     async saveCursor(id, patch) { log.cursors.push({ id, ...patch }); },
+    async markStuck(_id, m) { log.stuck.push(m); },
   };
   const deps: SyncDeps = {
     store,
@@ -45,6 +46,9 @@ function fake(parsed: Record<number, ParsedMail | Error>, folders: Record<string
         const f = folders[folder] ?? { uids: [] };
         const from = o.lastUid == null ? 1 : o.lastUid + 1;
         const take = f.uids.filter((u) => u >= from).slice(0, o.limit);
+        if (o.skipFirst) {
+          return { state: { uidValidity: f.validity ?? "7", uidNext: 99, exists: f.uids.length }, baseline: 98, messages: [], more: true, skipped: take[0] ?? null };
+        }
         return {
           state: { uidValidity: f.validity ?? "7", uidNext: f.uidNext ?? Math.max(0, ...f.uids) + 1, exists: f.uids.length },
           baseline: (f.uidNext ?? Math.max(0, ...f.uids) + 1) - 1,
@@ -187,5 +191,44 @@ describe("syncAccount", () => {
     const r = await syncAccount(acc({ folder_map: {} }), deps);
     expect(r.notes[0]).toMatch(/Gesendet/);
     expect(r.fetched).toBe(1);
+  });
+
+  describe("Postfach haengt an einer Mail (harter Abbruch)", () => {
+    it("normaler Lauf: Markierung setzen und am Ende loeschen", async () => {
+      const { deps, log } = fake({}, { INBOX: { uids: [11] }, Sent: { uids: [], validity: "9" } });
+      await syncAccount(acc(), deps);
+      expect(log.stuck).toEqual([{ key: "INBOX#7#10", tries: 1 }, { key: "Sent#9#5", tries: 1 }, null]);
+    });
+
+    it("auch ein normaler Fehler loescht die Markierung (zaehlt nicht als Abbruch)", async () => {
+      const { deps, log } = fake({}, { INBOX: { uids: [11] } });
+      deps.imap.fetchNew = async () => { throw new Error("Netz weg"); };
+      await expect(syncAccount(acc(), deps)).rejects.toThrow("Netz weg");
+      expect(log.stuck.at(-1)).toBeNull();
+    });
+
+    it("2. Versuch an derselben Stelle holt nur eine Mail", async () => {
+      const { deps, log } = fake({}, { INBOX: { uids: [11, 12, 13] }, Sent: { uids: [], validity: "9" } });
+      await syncAccount(acc({ sync_stuck: { key: "INBOX#7#10", tries: 1 } }), deps);
+      expect(log.fetchCalls[0]).toMatchObject({ folder: "INBOX", limit: 1 });
+      expect(log.msgs.map((m) => m.uid)).toEqual([11]);
+    });
+
+    it("ab dem 3. Versuch wird die Mail uebersprungen und der Cursor weitergeschoben", async () => {
+      const { deps, log } = fake({}, { INBOX: { uids: [11, 12] }, Sent: { uids: [], validity: "9" } });
+      const r = await syncAccount(acc({ sync_stuck: { key: "INBOX#7#10", tries: STUCK_SKIP - 1 } }), deps);
+      expect(log.msgs).toEqual([]);
+      expect(log.cursors[0]).toEqual({ id: "A1", inbox_last_uid: 11 });
+      expect(r.errors).toBe(1);
+      expect(r.notes.join(" ")).toMatch(/UID 11 in INBOX übersprungen/);
+      expect(log.stuck.at(-1)).toBeNull();
+    });
+
+    it("andere Stelle (Fortschritt gemacht) = neuer Zaehler", async () => {
+      const { deps, log } = fake({}, { INBOX: { uids: [13] }, Sent: { uids: [], validity: "9" } });
+      await syncAccount(acc({ inbox_last_uid: 12, sync_stuck: { key: "INBOX#7#10", tries: 5 } }), deps);
+      expect(log.stuck[0]).toEqual({ key: "INBOX#7#12", tries: 1 });
+      expect(log.msgs.map((m) => m.uid)).toEqual([13]);
+    });
   });
 });

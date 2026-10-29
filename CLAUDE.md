@@ -163,7 +163,8 @@ Antworten/Projekte/Angebote vor. Eigene Oberfläche: `apps/mail/` (eigenes Verce
 `mitarbeiter` nur die zugeordneten Postfächer (`email_account_users`, Einstellungen → Benutzer). Jede Function prüft per `requireMailUser` +
 `_shared/email/access.ts` (`assertMessages`/`assertThread`/`assertSuggestion`/`scopeAccounts`); Einstellungen nur Admin (`ADMIN_ONLY` in email-api).
 Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-assistent/betrieb.md`.
-- Edge Functions: `email-sync` (IMAP holen, pg_cron 5 Min), `email-process` (Verstehen → Zuordnen → Handeln),
+- Edge Functions: `email-sync` (IMAP holen, pg_cron jede Minute; Mails > 8 MB nur Text, `sync_stuck` überspringt eine Mail, an der der
+  Abruf wiederholt hart abbricht), `email-process` (Verstehen → Zuordnen → Handeln → Push `push.ts`),
   `email-action` (Klick auf einen Vorschlag: einzige Stelle mit schreibenden HERO-Aufrufen), `email-draft` (Antwortentwürfe,
   Lexoffice-Entwurf), `email-account-test`, `email-api` (einzige Schnittstelle der Mail-App für Daten), `email-mailbox` (IMAP aus der
   Mail-App: HTML-Ansicht `body`, `trash`/`restore`), `email-send` (Verfassen/Antworten/Weiterleiten und Senden aus der Mail-App,
@@ -212,6 +213,10 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
 - Referenzwissen (`email_reference_docs`, Einstellungen → Referenzwissen): Skill-Dateien/HERO-Doku je KI-Aufgabe, `loadReference()`.
 - Rechnungen nur im Kundenportal (z. B. Aral): Ordner „8 Belege abholen (Portal)“, `email_messages.beleg_state = 'portal_offen'` ist die
   Warteschlange für eine spätere Browser-Automatisierung.
+- **Push** (`push.ts`, `webpush.ts` ohne Bibliothek, Service Worker `apps/mail/public/sw.js`): je Benutzer/Gerät, Einstellungen →
+  Benachrichtigungen. VAPID-Schlüssel erzeugt der Server in `email_config.push_vapid` – nie in `CONFIG_KEYS` aufnehmen (sonst liest das
+  Adminmenü den privaten Schlüssel). Jede Mail einmal (`pushed_at`).
+- Beim Senden gewähltes Projekt (`email_sent.project_id`) ordnet die zurückkommende Kopie sicher zu → Logbuch wie eingehend (`matchStage`).
 - `apps/mail/src/lib/shared.ts` ist eine Kopie von `_shared/email/types.ts` (`npm run sync-shared`; ein Test prüft die Gleichheit).
 - Tests: `npm run test:unit` (vitest) + `deno test` für `draftMime.deno_test.ts`; Typprüfung der Functions mit
   `deno check --config supabase/functions/<fn>/deno.json supabase/functions/<fn>/index.ts`, der App mit `npm run typecheck` in `apps/mail`.

@@ -160,6 +160,26 @@ export async function saveMailUser(sb: any, self: Pick<MailUser, "id">, body: Re
 
 let audienceCache: { at: number; value: Map<string, AddresseeUser[]> } | null = null;
 
+/** Sammeladressen sind nie persoenlich („info@“ gehoert allen). */
+const GENERIC_LOCAL = /^(info|kontakt|contact|office|post|mail|service|team|hallo|hello|buero|buchhaltung|rechnung|rechnungen|einkauf|verkauf|anfrage|anfragen|auftrag|bestellung|support|noreply|no-reply)$/;
+
+/**
+ * Persoenliche Adressen eines Mitarbeiters fuer „an wen gerichtet“: Anmelde- und CaptFix-Adresse – aber eine
+ * Postfach-Adresse nur, wenn er der einzige ist, dem dieses Postfach zugeordnet ist (jl@ gehoert Jonas; info@ gehoert
+ * allen, auch wenn sich ein Admin mit info@ anmeldet – sonst bekaeme nur er jede Mail an info@).
+ */
+export function personalEmails(userId: string, emails: string[], mailboxes: { address: string; assignees: string[] }[]): string[] {
+  const out = new Set<string>();
+  for (const raw of emails) {
+    const e = String(raw || "").trim().toLowerCase();
+    if (!e.includes("@") || GENERIC_LOCAL.test(e.split("@")[0])) continue;
+    const box = mailboxes.find((b) => b.address.toLowerCase() === e);
+    if (box && !(box.assignees.length === 1 && box.assignees[0] === userId)) continue;
+    out.add(e);
+  }
+  return [...out];
+}
+
 /**
  * Postfach -> Mitarbeiter mit Zugriff (aktive Admins sehen alle Postfaecher, Mitarbeiter die zugeordneten), je mit Namen
  * und persoenlichen Adressen (Anmelde-Adresse, Mitarbeiter-Adresse aus CaptFix). 5 Minuten zwischengespeichert.
@@ -169,17 +189,22 @@ export async function mailAudience(sb: any): Promise<Map<string, AddresseeUser[]
   const [profiles, links, accounts, emails] = await Promise.all([
     sb.from("profiles").select("id, display_name, role, is_active, employees(email)").in("role", ["admin", "mitarbeiter"]).eq("is_active", true),
     sb.from("email_account_users").select("account_id, user_id"),
-    sb.from("email_accounts").select("id"),
+    sb.from("email_accounts").select("id, address, username"),
     authEmails(sb).catch(() => new Map<string, string | null>()),
   ]);
+  const linkRows = must(links) as any[];
+  const mailboxes = (must(accounts) as any[]).flatMap((a) => {
+    const assignees = linkRows.filter((l) => l.account_id === a.id).map((l) => String(l.user_id));
+    return [a.address, a.username].filter((x) => x && String(x).includes("@")).map((address: string) => ({ address, assignees }));
+  });
   const people = new Map<string, { user: AddresseeUser; admin: boolean }>();
   for (const p of must(profiles) as any[]) {
-    const mails = [emails.get(p.id), p.employees?.email].filter(Boolean).map((e: any) => String(e).toLowerCase());
-    people.set(p.id, { user: { id: p.id, name: String(p.display_name || ""), emails: [...new Set(mails)] }, admin: p.role === "admin" });
+    const mails = personalEmails(p.id, [emails.get(p.id), p.employees?.email].filter(Boolean) as string[], mailboxes);
+    people.set(p.id, { user: { id: p.id, name: String(p.display_name || ""), emails: mails }, admin: p.role === "admin" });
   }
   const out = new Map<string, AddresseeUser[]>();
   for (const a of must(accounts) as any[]) out.set(a.id, [...people.values()].filter((x) => x.admin).map((x) => x.user));
-  for (const l of must(links) as any[]) {
+  for (const l of linkRows) {
     const p = people.get(l.user_id);
     const list = out.get(l.account_id);
     if (p && list && !list.some((u) => u.id === p.user.id)) list.push(p.user);

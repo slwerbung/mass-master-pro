@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Paperclip, Send, X } from "lucide-react";
+import { BookOpen, Paperclip, Send, X } from "lucide-react";
 import { invokeFn } from "@/lib/api";
-import type { ComposePrefill, SendAccount } from "@/lib/types";
+import type { ComposePrefill, ComposeProject, SendAccount } from "@/lib/types";
 import { Button, ErrorBox, Input, Select, Spinner, Switch, Textarea } from "@/components/ui";
 import { SignaturePreview } from "@/components/SignaturePreview";
+import { ProjectSearch } from "@/components/ProjectSearch";
 import { errorText } from "@/lib/utils";
 
 type Mode = "reply" | "replyAll" | "forward";
@@ -57,6 +58,8 @@ export default function Compose() {
   const [discardDraft, setDiscardDraft] = useState(true);
   const [fwd, setFwd] = useState<Set<string>>(new Set());
   const [uploads, setUploads] = useState<Upload[]>([]);
+  const [project, setProject] = useState<ComposeProject | null>(null);
+  const [pickProject, setPickProject] = useState(false);
 
   // Vorbelegung einmal uebernehmen (nie spaeter Eingaben ueberschreiben)
   const applied = useRef(false);
@@ -71,6 +74,7 @@ export default function Compose() {
     setSubject(p.subject);
     if (useDraft && p.draftText) setText(p.draftText);
     setFwd(new Set(p.attachments.filter((a) => a.available && !a.ignored).map((a) => a.id)));
+    if (p.project) setProject(p.project);
   }, [prefill.data, useDraft]);
   useEffect(() => {
     if (!accountId && !replyTo && accounts.data?.length) setAccountId((accounts.data.find((a) => a.enabled && a.smtp) ?? accounts.data[0]).id);
@@ -89,6 +93,7 @@ export default function Compose() {
       ...(replyTo ? { replyTo, mode, withQuote, discardDraft: p?.hasDraft ? discardDraft : false } : {}),
       forwardAttachmentIds: mode === "forward" ? [...fwd] : [],
       uploads: uploads.map(({ filename, mime, base64 }) => ({ filename, mime, base64 })),
+      ...(project ? { projectId: project.id } : {}),
     }),
     onSuccess: (r) => {
       toast.success("Gesendet.");
@@ -196,6 +201,20 @@ export default function Compose() {
             <input type="file" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
           </label>
           {tooBig && <p className="text-xs text-red-700">Anhänge zusammen {fmtSize(totalBytes)} – höchstens 15 MB.</p>}
+        </div>
+
+        <div className="space-y-2 rounded-md border bg-muted/30 p-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <BookOpen className="h-4 w-4 text-muted-foreground" />
+            {project
+              ? <span>Ins HERO-Logbuch von <b>{project.nr ?? `Projekt ${project.id}`}</b>{project.name ? ` · ${project.name}` : ""}</span>
+              : <span className="text-muted-foreground">Kein Projekt – nur im Logbuch, wenn der Assistent es sicher erkennt (Thread, Projektnummer)</span>}
+            <Button variant="ghost" size="sm" onClick={() => setPickProject(!pickProject)}>{project ? "ändern" : "Projekt wählen"}</Button>
+            {project && <Button variant="ghost" size="sm" onClick={() => setProject(null)}>entfernen</Button>}
+          </div>
+          {pickProject && (
+            <ProjectSearch selectedId={project?.id} onPick={(h) => { setProject({ id: h.id, nr: h.nr, name: h.name }); setPickProject(false); }} />
+          )}
         </div>
 
         {p?.hasDraft && (

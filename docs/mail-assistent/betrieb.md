@@ -238,9 +238,33 @@ an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorl
   SMTP Port 465 des Postfachs. Danach: Kopie in den Gesendet-Ordner (`\Seen`), Original bekommt `\Answered`, ein KI-Entwurf zur Mail
   wandert auf Wunsch in den Papierkorb (nie löschen), Protokoll in `email_sent`. Der nächste Abruf übernimmt die Kopie aus „Gesendet“
   wie eine in Thunderbird gesendete Mail (Richtung „out“, HERO-Logbuch). Bcc steht nur im Umschlag, nicht im Kopf.
+- **Projekt fürs Logbuch** (Okt. 2026): Beim Verfassen steht „Ins HERO-Logbuch von WER-…“. Vorbelegt bei Antwort/Weiterleitung mit dem
+  sicher zugeordneten Projekt des Threads bzw. der Originalmail, änderbar/entfernbar, bei neuen Mails per Projektsuche wählbar. Es landet in
+  `email_sent.project_id`; kommt die Kopie über „Gesendet“ zurück, ordnet `matchStage` sie diesem Projekt **sicher** zu (`manuell`,
+  „Beim Senden gewählt“) und das Logbuch bekommt den Eintrag wie bei eingehenden Mails („📤 Mail an … – Zusammenfassung“).
+  Ohne Gesendet-Ordner kommt keine Kopie zurück – dann auch kein Logbuch.
 - **Signatur:** je Postfach eine **HTML-Signatur** (Einstellungen → Postfächer, mit Vorschau). Sie hängt an jede gesendete Mail; im
   Text-Teil als Text nach „-- “. Bilder bitte als https-Link einbinden. Die Text-Signatur bleibt für die KI-Entwürfe.
 - Das Zitat stammt aus dem gespeicherten Text der Mail (bereinigt, ca. 6000 Zeichen); nach der Aufbewahrungsfrist fehlt es.
+
+## Abruf und Benachrichtigungen (Okt. 2026)
+
+- **Abruf jede Minute** (`email-sync`, pg_cron `* * * * *`). Ein Lauf ohne neue Mails ist ein IMAP-Login; die KI läuft nur für neue
+  Mails – mehr Takt kostet keine KI. `email-process` bleibt als Nachzügler alle 5 Minuten, nach neuen Mails startet ihn `email-sync` sofort.
+- **Große Mails** (> 8 MB, `bigMail.ts`): nur Kopfzeilen und Text werden geholt, die Anhänge stehen als Hinweis im Text („im Mailprogramm
+  öffnen“). Vorher sprengte so eine Mail die Edge Function (HTTP 546), und weil der nächste Lauf an derselben Stelle weitermachte, hing das
+  Postfach dauerhaft (sl@, 29.10.).
+- **Hängt ein Postfach doch an einer Mail** (`email_accounts.sync_stuck`): 2. Versuch an derselben Stelle holt nur eine Mail, ab dem 3. wird
+  sie übersprungen – Hinweis „Mail UID … übersprungen“ in `last_error`/Protokoll, die Mail im Mailprogramm ansehen.
+- **Push** (Einstellungen → *Benachrichtigungen*, jeder Benutzer für sich, je Gerät einschalten): „Zu entscheiden“ (Standard an; an einen
+  Mitarbeiter gerichtet = nur er) und optional „alle eingehenden Mails“ (ohne Werbung/Spam). Gesendet nach dem Verarbeiten
+  (`push.ts` → `notifyNewMail`, je Mail einmal: `email_messages.pushed_at`), Mails älter als 24 h nie. Web Push ohne Bibliothek
+  (`webpush.ts`, RFC 8291/8292, gegen `http_ece` geprüft). Die VAPID-Schlüssel erzeugt der Server selbst (`email_config.push_vapid`,
+  nur service_role; neu erzeugen = alle Geräte neu einschalten). Abos: `email_push_subscriptions` (404/410 → gelöscht), Einstellungen:
+  `email_user_prefs`. **iPhone/iPad:** nur aus der installierten App (Safari → Teilen → Zum Home-Bildschirm, iOS 16.4+).
+- **„An wen gerichtet“** (`addressee.ts`, `users.ts` `personalEmails`): eine Postfach-Adresse zählt nur für den, der diesem Postfach als
+  Einziger zugeordnet ist (jl@ → Jonas). Sammeladressen (info@, kontakt@ …) zählen nie – auch nicht, wenn sich ein Admin mit info@ anmeldet
+  (sonst bekäme nur er jede Mail an info@).
 
 ## Aufbewahrung
 

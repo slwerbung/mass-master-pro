@@ -48,7 +48,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           <ListTree className="h-4 w-4" /> Alle Mails
         </NavLink>
         <Folders enabled={me.isSuccess} />
-        {me.data?.admin && (
+        {me.isSuccess && (
           <NavLink to="/einstellungen" className={({ isActive }) => cn(item, isActive && "bg-accent")}>
             <Cog className="h-4 w-4" /> Einstellungen
           </NavLink>

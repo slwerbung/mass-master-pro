@@ -56,6 +56,9 @@ export function syncStore(sb: any): SyncStore {
     async saveCursor(accountId, patch) {
       must(await sb.from("email_accounts").update(patch).eq("id", accountId));
     },
+    async markStuck(accountId, marker) {
+      must(await sb.from("email_accounts").update({ sync_stuck: marker }).eq("id", accountId));
+    },
   };
 }
 
@@ -145,7 +148,7 @@ export function matchStore(sb: any): MatchStore {
   return {
     async loadForMatch(accountId, limit): Promise<MatchMessageRow[]> {
       const { data } = await sb.from("email_messages")
-        .select("id, account_id, thread_id, direction, from_addr, to_addrs, cc_addrs, subject, body_text, summary, attempts, correction_note, extracted")
+        .select("id, account_id, thread_id, message_id, direction, from_addr, to_addrs, cc_addrs, subject, body_text, summary, attempts, correction_note, extracted")
         .eq("account_id", accountId).eq("status", "klassifiziert")
         .order("sent_at", { ascending: true, nullsFirst: false }).limit(limit);
       return (data || []) as MatchMessageRow[];

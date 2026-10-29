@@ -57,7 +57,11 @@ export interface SendAccount { id: string; label: string; address: string; signa
 export interface ComposePrefill {
   accountId: string; to: string[]; cc: string[]; bcc: string[]; subject: string; quoteText: string; hasDraft: boolean; draftText: string | null;
   attachments: { id: string; filename: string; mime: string; size: number; available: boolean; ignored: boolean }[];
+  /** Projekt des Threads bzw. der Originalmail (sicher zugeordnet) – vorbelegt fuers Logbuch */
+  project?: ComposeProject | null;
 }
+
+export interface ComposeProject { id: number; nr: string | null; name: string | null }
 
 export interface Overview {
   statusCounts: Record<string, number>;

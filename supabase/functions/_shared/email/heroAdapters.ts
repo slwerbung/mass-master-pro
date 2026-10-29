@@ -13,6 +13,11 @@ export function matchHero(sb: any, apiKey: string, excludedSteps: number[]): Mat
       const { data } = await sb.from("email_threads").select("hero_project_match_id").eq("id", threadId).maybeSingle();
       return data?.hero_project_match_id ?? null;
     },
+    async sentProject(accountId, messageId) {
+      const { data } = await sb.from("email_sent").select("project_id").eq("account_id", accountId).eq("message_id", messageId)
+        .not("project_id", "is", null).limit(1).maybeSingle();
+      return data?.project_id != null ? Number(data.project_id) : null;
+    },
     projectByNumber: (rel) => H.projectByNumber(apiKey, rel),
     projectById: (id) => H.projectById(apiKey, id),
     async contactsByEmail(email) {

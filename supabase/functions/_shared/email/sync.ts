@@ -27,7 +27,18 @@ export interface AccountRow {
   sent_uidvalidity: string | null;
   sent_last_uid: number | null;
   backfill: number;
+  /** Wo der letzte Lauf angefangen hat und wie oft schon ohne Fortschritt (siehe STUCK_*). */
+  sync_stuck?: StuckMarker | null;
 }
+
+/**
+ * Bricht ein Lauf hart ab (Speicher/CPU der Edge Function, HTTP 546), bleibt die Markierung stehen. Startet der
+ * naechste Lauf an derselben Stelle, zaehlt er hoch: beim 2. Mal nur eine Mail holen, ab dem 3. Mal die Mail
+ * ueberspringen (mit Hinweis). Sonst haengt das Postfach an einer einzigen Mail fest.
+ */
+export interface StuckMarker { key: string; tries: number }
+export const STUCK_SINGLE = 2;
+export const STUCK_SKIP = 3;
 
 export interface RawFetched { uid: number; flags: string[]; source: Uint8Array }
 export interface FetchedFolder {
@@ -35,10 +46,12 @@ export interface FetchedFolder {
   baseline: number;
   messages: RawFetched[];
   more: boolean;
+  /** Bei `skipFirst`: UID der uebersprungenen Mail (nicht geholt). */
+  skipped?: number | null;
 }
 
 export interface SyncImap {
-  fetchNew(folder: string, o: { lastUid: number | null; uidValidity: string | null; limit: number; backfill: number }): Promise<FetchedFolder>;
+  fetchNew(folder: string, o: { lastUid: number | null; uidValidity: string | null; limit: number; backfill: number; skipFirst?: boolean }): Promise<FetchedFolder>;
 }
 
 export interface MessageInsert {
@@ -80,6 +93,7 @@ export interface SyncStore {
   saveCursor(accountId: string, patch: Partial<{
     inbox_uidvalidity: string; inbox_last_uid: number; sent_uidvalidity: string; sent_last_uid: number;
   }>): Promise<void>;
+  markStuck(accountId: string, marker: StuckMarker | null): Promise<void>;
 }
 
 export interface SyncDeps {
@@ -99,12 +113,35 @@ export async function syncAccount(acc: AccountRow, d: SyncDeps, limit = SYNC_LIM
   if (fm.sent) plan.push({ key: "sent", folder: fm.sent, direction: "out" });
   else sum.notes.push("Kein Gesendet-Ordner bekannt – ausgehende Mails werden nicht erfasst (Verbindung testen).");
 
-  for (const p of plan) {
+  let stuck = false;
+  // finally laeuft bei normalen Fehlern (Netz, Server) – nur ein harter Abbruch laesst die Markierung stehen.
+  try {
+    for (const p of plan) await syncFolder(p);
+  } finally {
+    if (stuck) await d.store.markStuck(acc.id, null);
+  }
+  return sum;
+
+  async function syncFolder(p: { key: "inbox" | "sent"; folder: string; direction: Direction }) {
     const room = limit - sum.fetched;
-    if (room <= 0) { sum.more = true; break; }
+    if (room <= 0) { sum.more = true; return; }
     const lastUid = p.key === "inbox" ? acc.inbox_last_uid : acc.sent_last_uid;
     const validity = p.key === "inbox" ? acc.inbox_uidvalidity : acc.sent_uidvalidity;
-    const res = await d.imap.fetchNew(p.folder, { lastUid, uidValidity: validity, limit: room, backfill: acc.backfill });
+    const key = `${p.folder}#${validity ?? "-"}#${lastUid ?? "-"}`;
+    const tries = acc.sync_stuck?.key === key ? acc.sync_stuck.tries + 1 : 1;
+    await d.store.markStuck(acc.id, { key, tries });
+    stuck = true;
+    if (tries >= STUCK_SKIP && lastUid != null) {
+      const res = await d.imap.fetchNew(p.folder, { lastUid, uidValidity: validity, limit: 1, backfill: acc.backfill, skipFirst: true });
+      if (res.skipped != null && res.state.uidValidity === validity) {
+        await d.store.saveCursor(acc.id, p.key === "inbox" ? { inbox_last_uid: res.skipped } : { sent_last_uid: res.skipped });
+        sum.errors++;
+        sum.notes.push(`Mail UID ${res.skipped} in ${p.folder} übersprungen – der Abruf ist daran ${tries - 1}× abgebrochen (im Mailprogramm ansehen)`);
+        sum.more = true;
+      }
+      return;
+    }
+    const res = await d.imap.fetchNew(p.folder, { lastUid, uidValidity: validity, limit: tries >= STUCK_SINGLE ? 1 : room, backfill: acc.backfill });
     sum.fetched += res.messages.length;
     sum.more = sum.more || res.more;
 
@@ -133,7 +170,6 @@ export async function syncAccount(acc: AccountRow, d: SyncDeps, limit = SYNC_LIM
       : { sent_uidvalidity: res.state.uidValidity, ...(cursor != null ? { sent_last_uid: cursor } : {}) };
     await d.store.saveCursor(acc.id, patch);
   }
-  return sum;
 }
 
 async function storeOne(

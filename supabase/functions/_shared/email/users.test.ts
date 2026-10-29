@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkUpdate, parseUserInput } from "./users.ts";
+import { checkUpdate, parseUserInput, personalEmails } from "./users.ts";
 
 const self = { id: "me" };
 const base = { id: null, name: null, email: null, password: null, role: null, active: null, accountIds: null };
@@ -45,3 +45,23 @@ describe("Benutzer aendern: Schutzregeln", () => {
     expect(() => checkUpdate({ ...base, id: "k" }, { ...user, id: "k", role: "kunde" }, self, 1)).toThrow(/kein Mitarbeiter-Konto/);
   });
 });
+
+describe("persoenliche Adressen (an wen gerichtet)", () => {
+  const boxes = [
+    { address: "info@slwerbung.de", assignees: ["jonas"] },
+    { address: "jl@slwerbung.de", assignees: ["jonas"] },
+    { address: "sl@slwerbung.de", assignees: [] },
+  ];
+  it("Admin mit Anmeldung info@: info@ ist eine Sammeladresse, nie persoenlich", () => {
+    expect(personalEmails("silas", ["info@slwerbung.de"], boxes)).toEqual([]);
+  });
+  it("eigenes Postfach (einziger Zugeordneter) zaehlt, fremdes oder geteiltes nicht", () => {
+    expect(personalEmails("jonas", ["JL@slwerbung.de", "jl@slwerbung.de"], boxes)).toEqual(["jl@slwerbung.de"]);
+    expect(personalEmails("max", ["sl@slwerbung.de"], boxes)).toEqual([]);
+    expect(personalEmails("jonas", ["jl@slwerbung.de"], [{ address: "jl@slwerbung.de", assignees: ["jonas", "max"] }])).toEqual([]);
+  });
+  it("Adressen ausserhalb der Postfaecher zaehlen, Sammeladressen nie", () => {
+    expect(personalEmails("max", ["max@slwerbung.de", "kontakt@andere.de", "x@captfix.invalid"], boxes)).toEqual(["max@slwerbung.de", "x@captfix.invalid"]);
+  });
+});
+
