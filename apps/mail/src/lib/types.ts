@@ -62,6 +62,8 @@ export interface ComposePrefill {
 export interface Overview {
   statusCounts: Record<string, number>;
   openSuggestions: number;
+  /** Themen je Zustand (fehlt bei einer aelteren email-api) */
+  topics?: { entscheiden: number; laufend: number; wiedervorlage: number } | null;
   neuronsToday: number;
   costMonthUsd: number;
   budgetUsd: number | null;

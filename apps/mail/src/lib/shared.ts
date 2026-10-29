@@ -143,3 +143,21 @@ export interface FolderMap {
   trash?: string;
   folders?: Partial<FolderNames>;
 }
+
+/** Themen (= Gespraechsverlaeufe): laufend, auf Wiedervorlage oder abgeschlossen (topics.ts). */
+export type TopicState = "aktiv" | "wiedervorlage" | "erledigt";
+export const TOPIC_STATE_LABELS: Record<TopicState, string> = { aktiv: "Läuft", wiedervorlage: "Wiedervorlage", erledigt: "Abgeschlossen" };
+
+/** Warum ein Thema „Zu entscheiden“ ist. */
+export type TopicReason = "neu" | "wieder_offen" | "vorschlag" | "wiedervorlage" | "unbeantwortet" | "nachfassen";
+export const TOPIC_REASON_LABELS: Record<TopicReason, string> = {
+  neu: "Neue Mail",
+  wieder_offen: "Neue Mail in abgeschlossenem Thema",
+  vorschlag: "Vorschlag offen",
+  wiedervorlage: "Wiedervorlage",
+  unbeantwortet: "Unbeantwortet",
+  nachfassen: "Keine Bewegung",
+};
+
+/** Entscheidung zu einem Thema: weiter verfolgen, auf Wiedervorlage legen, abschliessen, wieder oeffnen. */
+export type TopicDecision = "weiter" | "wiedervorlage" | "erledigt" | "oeffnen";

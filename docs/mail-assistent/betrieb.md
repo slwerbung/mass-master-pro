@@ -95,6 +95,28 @@ in der Mail-Ansicht bzw. „Falsch? Erklären“ an jedem Vorschlag (`email-api`
 - Einträge lassen sich in den Einstellungen bearbeiten, ausschalten und löschen; dort kann man auch von Hand Wissen anlegen.
   Feste „Absender → Kategorie“-Zuordnungen ohne KI bleiben Absenderregeln.
 
+### Themen (seit Okt. 2026)
+
+Gearbeitet wird in **Themen** (= Gesprächsverläufe, `email_threads`), Logik in `_shared/email/topics.ts` (rein, getestet) und
+`topicsDb.ts`, Migration `20261029090000_email_topics.sql`.
+- **Jede eingehende Mail wird einmal vorgelegt** (`email_messages.decided_at`), außer Kategorien aus `email_config.topics.skip_categories`
+  (Standard: Werbung/Spam, Newsletter; Einstellungen → Firma) und an Lexware weitergeleitete Belege. Unverarbeitete Mails erst nach dem
+  Klassifizieren, gescheiterte (ohne Kategorie) sofort.
+- Eine Karte pro Thema. Entscheidungen: **Antworten**, **Anweisung …** (HERO-Plan, auch „Wiedervorlage in 2 Wochen“ / „Thema erledigt“),
+  einen Vorschlag annehmen, **Weiter verfolgen** (gesehen, nichts zu tun), **Wiedervorlage …** (Schnellwahl/Datum + Notiz),
+  **Abschließen**.
+- Automatisch entschieden (Trigger): eine Antwort im Thema (aus der App ODER aus dem Gesendet-Ordner, z. B. Thunderbird/Handy),
+  Weiterleiten aus der App, ein erfolgreich ausgeführter Vorschlag.
+- Zustände `email_threads.topic_state`: `aktiv` (läuft, überwacht), `wiedervorlage` (`snoozed_until`, `topic_note`), `erledigt`.
+  **Überwachung** (bei jedem Aufruf gerechnet, kein Cron): Kundenmail unbeantwortet seit `unanswered_days` (2) bzw. keine Bewegung seit
+  `followup_days` (7) → wieder „Zu entscheiden“; jede Entscheidung setzt die Frist neu (`reviewed_at`). Abgeschlossen = nicht verfolgt,
+  eine neue Mail legt das Thema wieder vor. Threads ohne relevante Mail werden nach einem Tag still abgeschlossen (ohne `closed_at`).
+- „Weiter verfolgen“ und „Abschließen“ verwerfen offen gebliebene Vorschläge des Themas (ohne Folgen in HERO/Postfach); bei der
+  Wiedervorlage bleiben sie und kommen mit dem Thema wieder.
+- Seite **Themen** (`/themen`): Zu entscheiden / Laufend / Wiedervorlage / Abgeschlossen. In der Mail-Ansicht zeigt eine Leiste das Thema.
+- Bestand beim Einführen: Mails älter als 3 Tage gelten als entschieden („altbestand“), Themen ohne Kundenkategorie als abgeschlossen;
+  unbeantwortete Kundenthemen legt die Überwachung sofort vor.
+
 ### Ansicht „Zu entscheiden"
 
 Jede Karte zeigt nur den Kopf (Art des Vorschlags, Kategorie, Betreff, Absender, Kurzfassung der Mail) und die Knöpfe.

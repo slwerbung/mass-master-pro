@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Folder, Inbox, ListTree, LogOut, PenSquare, Send, Settings as Cog, Trash2 } from "lucide-react";
+import { Folder, Inbox, ListTree, LogOut, MessagesSquare, PenSquare, Send, Settings as Cog, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Overview } from "@/lib/types";
@@ -28,7 +28,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   }
 
   const item = "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium hover:bg-accent";
-  const open = overview.data?.openSuggestions ?? 0;
+  const open = overview.data?.topics?.entscheiden ?? overview.data?.openSuggestions ?? 0;
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-muted/40 p-2 md:w-56 md:flex-col md:border-b-0 md:border-r md:p-3">
@@ -39,6 +39,10 @@ export default function Layout({ children }: { children: ReactNode }) {
         <NavLink to="/" end className={({ isActive }) => cn(item, isActive && "bg-accent")}>
           <Inbox className="h-4 w-4" /> Zu entscheiden
           {open > 0 && <Badge variant="danger" className="ml-auto">{open}</Badge>}
+        </NavLink>
+        <NavLink to="/themen" className={({ isActive }) => cn(item, isActive && "bg-accent")}>
+          <MessagesSquare className="h-4 w-4" /> Themen
+          {!!overview.data?.topics?.wiedervorlage && <span className="ml-auto text-xs tabular-nums text-muted-foreground" title="auf Wiedervorlage">{overview.data.topics.wiedervorlage}</span>}
         </NavLink>
         <NavLink to="/mails" className={({ isActive }) => cn(item, isActive && !loc.search && "bg-accent")}>
           <ListTree className="h-4 w-4" /> Alle Mails

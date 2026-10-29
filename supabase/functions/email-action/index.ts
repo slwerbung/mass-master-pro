@@ -24,8 +24,10 @@ import { emailDomain } from "../_shared/email/match.ts";
 import { FREEMAIL_DOMAINS } from "../_shared/email/types.ts";
 import { heroCreateAppointment } from "../_shared/booking/hero.ts";
 import { runOp, sanitizeOps, type HeroOpsApi } from "../_shared/email/heroOps.ts";
+import { decideTopic } from "../_shared/email/topicsDb.ts";
+import { validSnoozeDate } from "../_shared/email/topics.ts";
 
-const INSTRUCT_MSG_COLS = "id, account_id, direction, category, subject, summary, body_text, from_name, from_addr, to_addrs, has_attachments, extracted, match_info, hero_project_match_id";
+const INSTRUCT_MSG_COLS = "id, account_id, thread_id, direction, category, subject, summary, body_text, from_name, from_addr, to_addrs, has_attachments, extracted, match_info, hero_project_match_id";
 
 /** HERO-Terminkategorien (aus der Terminbuchung, `appointment_category` mit Quelle hero). */
 async function heroCategories(sb: any): Promise<{ id: number; label: string }[]> {
@@ -126,7 +128,15 @@ function checkPlan(p: any, categories: { id: number; label: string }[], people: 
       partnerId: person?.id ?? null, partnerName: person?.name ?? null,
     });
   }
-  return { project, offer: !!p.offer, appointments, ops: sanitizeOps(p.ops), notDoable: [], summary: String(p.summary || "") };
+  let topic: InstructionPlan["topic"] = { mode: "keine", date: null, note: null };
+  const note = p.topic?.note ? String(p.topic.note).trim().slice(0, 300) || null : null;
+  if (p.topic?.mode === "erledigt") topic = { mode: "erledigt", date: null, note };
+  else if (p.topic?.mode === "wiedervorlage") {
+    const date = validSnoozeDate(p.topic.date, berlinToday());
+    if (!date) throw new ActionError("Wiedervorlage: Datum ab morgen angeben.");
+    topic = { mode: "wiedervorlage", date, note };
+  }
+  return { project, topic, offer: !!p.offer, appointments, ops: sanitizeOps(p.ops), notDoable: [], summary: String(p.summary || "") };
 }
 
 /** Angebotsvorbereitung nach der Zuordnung – nur wenn HERO aktiv ist; die KI-Schicht wird dafuer erst jetzt aufgebaut. */
@@ -255,6 +265,18 @@ Deno.serve(async (req) => {
             projectId: project?.id ?? null, customerId,
             allowedUserIds: people.map((p) => p.userId).filter((u): u is number => !!u), allowedStepIds: heroSteps.map((s) => s.id),
           }, heroOpsApi(key));
+        },
+        // Die Anweisung ist die Entscheidung zur Mail: das Thema laeuft weiter, wird abgeschlossen oder ruht bis zum Datum.
+        async topic(t) {
+          if (!m.thread_id) return null;
+          await decideTopic(sb, m.thread_id, t.mode === "erledigt"
+            ? { decision: "erledigt", note: t.note, label: "anweisung" }
+            : t.mode === "wiedervorlage"
+              ? { decision: "wiedervorlage", until: t.date, note: t.note, messageIds: [m.id], label: "anweisung" }
+              : { decision: "weiter", messageIds: [m.id], label: "anweisung" });
+          if (t.mode === "erledigt") return "Thema abgeschlossen";
+          if (t.mode === "wiedervorlage") return `Thema auf Wiedervorlage bis ${String(t.date).split("-").reverse().join(".")}${t.note ? ` („${t.note}“)` : ""}`;
+          return null;
         },
         createAppointment: (a) => heroCreateAppointment(key, { heroProjectId: a.projectId, title: a.title, startIso: a.startIso, endIso: a.endIso, categoryId: a.categoryId, description: a.description, partnerId: a.partnerId }),
         async finish(note) {
