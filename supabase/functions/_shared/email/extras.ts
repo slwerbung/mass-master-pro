@@ -1,5 +1,6 @@
 // Phase 3: Entwurf und Anhaenge als Erweiterung der Stufe „Handeln" (siehe act.ts, `extra`).
 
+import { isLexwareBeleg } from "./belegRule.ts";
 import { decide } from "./autopilot.ts";
 import { matchConfidence, type ActContext, type ActDeps, type ActMessage, type PlanEntry } from "./act.ts";
 import { buildUploadItems, type DocTypes } from "./attachments.ts";
@@ -64,7 +65,7 @@ export function buildExtra(cfg: ExtraConfig): NonNullable<ActContext["extra"]> {
     // ---------------------------------------------------------------- Beleg -> Lexware (echter Versand, siehe lexwareSend.ts)
     // Alle buchungsrelevanten Belege MIT Anhang. Rechnungen nur im Portal gehen nicht (sie landen im Abhol-Ordner).
     const bel = m.extracted?.beleg;
-    const isBeleg = m.category === "beleg" || bel?.is_booking_document === true;
+    const isBeleg = isLexwareBeleg(m);
     const fromSelf = !!cfg.forward?.address && m.from_addr.toLowerCase() === cfg.forward.address.toLowerCase();
     if (m.direction === "in" && isBeleg && m.has_attachments && bel?.delivery !== "portal" && cfg.forward?.address && !fromSelf) {
       const already = m.forwarded_at != null || m.beleg_state === "weitergeleitet" || m.plan.some((p) => p.action === "forward_beleg" && p.done);

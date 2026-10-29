@@ -8,6 +8,7 @@
 // Im Schattenmodus laeuft keine Automatik: der Assistent schreibt nur in `plan`, was er
 // tun WUERDE (die Mail-App zeigt es an). Nichts wird versendet, nichts geloescht.
 
+import { isLexwareBeleg } from "./belegRule.ts";
 import { decide, type Decision } from "./autopilot.ts";
 import type { MatchInfo } from "./matchStage.ts";
 import { pickGewerk, type Gewerk } from "./gewerke.ts";
@@ -162,7 +163,8 @@ export async function actOn(m: ActMessage, ctx: ActContext, deps: ActDeps): Prom
   // er aendert nichts im Postfach und gilt deshalb auch im Schattenmodus.
   const beleg = m.extracted?.beleg;
   if (m.direction === "in" && beleg?.is_booking_document === true && !m.beleg_state) {
-    const state = beleg.delivery === "portal" ? "portal_offen" : beleg.delivery === "anhang" && m.has_attachments ? "weiterleiten_offen" : null;
+    // Weiterleiten nur, was wirklich ein Beleg ist (keine AB, kein Lieferschein – belegRule.ts).
+    const state = beleg.delivery === "portal" ? "portal_offen" : beleg.delivery === "anhang" && m.has_attachments && isLexwareBeleg(m) ? "weiterleiten_offen" : null;
     if (state) {
       await deps.store.setBelegState(m.id, state, beleg.vendor ?? null);
       note("beleg", "auto", true, state === "portal_offen"

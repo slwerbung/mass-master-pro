@@ -150,8 +150,15 @@ describe("Beleg an Lexware (automatischer Versand)", () => {
   });
   it("auch wenn nur das Modell „buchungsrelevanter Beleg“ sagt (andere Kategorie)", async () => {
     const calls: any[] = [];
-    await run({ ...beleg, category: "lieferant" }, fwd(calls));
+    await run({ ...beleg, category: "lieferant", subject: "Ihre Rechnung 4711" }, fwd(calls));
     expect(calls).toHaveLength(1);
+  });
+  it("Auftragsbestaetigung oder Lieferschein: nie an Lexware, auch wenn das Modell „Beleg“ sagt", async () => {
+    const calls: any[] = [];
+    await run({ ...beleg, category: "lieferant", subject: "AB 82600491 / 20-10-2026 / KU 18820" }, fwd(calls));
+    await run({ ...beleg, subject: "Auftragsbestätigung für Bestellung B-261022CVPB" }, fwd(calls));
+    await run({ ...beleg, subject: "Ihr Lieferschein 4711" }, fwd(calls));
+    expect(calls).toHaveLength(0);
   });
   it("Senden scheitert -> Entwurf: der Plan sagt es deutlich", async () => {
     const plan = await run(beleg, fwd([], "entwurf"));

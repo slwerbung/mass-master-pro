@@ -126,6 +126,9 @@ Bei Belegen mit Anhang steht in der Themenkarte „An Lexware senden“ (derselb
 `forward_beleg` → `lexwareSend.ts`, nur an die hinterlegte Belegadresse). Danach gilt der Beleg als erledigt und verschwindet aus
 „Zu entscheiden“. Automatisch geht es bei neuen Belegen, sobald Belegadresse und SMTP hinterlegt sind (Autopilot `forward_beleg`).
 Eine Anweisung („An Lexware weiterleiten“) kann das NICHT – dafür ist der Knopf da.
+Was ein Beleg ist, entscheidet `belegRule.ts`: Rechnungen, Gutschriften, Quittungen, Abrechnungen – **nie** Auftragsbestätigungen,
+Bestell-/Versandbestätigungen oder Lieferscheine (Vorgabe Okt. 2026). Andere Kategorie als „Beleg“ nur mit ausdrücklicher Rechnung im Betreff.
+Automatisch an Lexware gesendete Belege werden nicht unter „Zu entscheiden“ vorgelegt (`isRelevant` in `topics.ts`).
 
 `current_uid` (Okt. 2026 behoben): Der Sync setzte sie bei neuen Mails nicht, dadurch konnte der Assistent nichts verschieben
 („Kein IMAP-Zugriff / UID unbekannt“). Migration `20261029130000_email_current_uid.sql` (Trigger + Nachtrag) und `sync.ts`.
