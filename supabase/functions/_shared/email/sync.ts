@@ -8,7 +8,7 @@
 // bricht ein Lauf ab, macht der naechste an derselben Stelle weiter. Doppelte
 // (gleiche Message-ID) fangen die Datenbank-Eindeutigkeit und `insertMessage` ab.
 
-import { isIgnorableAttachment, normalizeSubject, safeFilename } from "./mail.ts";
+import { isIgnorableAttachment, normalizeSubject, storageKeyName } from "./mail.ts";
 import type { ParsedMail } from "./parse.ts";
 import type { Direction, FolderMap } from "./types.ts";
 
@@ -183,17 +183,25 @@ async function storeOne(
   if (!row) return "duplicate";
 
   let n = 0;
+  const failed: string[] = [];
   for (const a of m.attachments) {
     n++;
     const ignored = isIgnorableAttachment(a);
     let path: string | null = null;
     if (!ignored && a.content && a.size <= MAX_ATTACHMENT_BYTES) {
-      path = `${acc.id}/${row.id}/${n}-${safeFilename(a.filename)}`;
-      await d.store.uploadAttachment(path, a.content, a.mime);
+      path = `${acc.id}/${row.id}/${n}-${storageKeyName(a.filename)}`;
+      try {
+        await d.store.uploadAttachment(path, a.content, a.mime);
+      } catch (e) {
+        // Ein Anhang, der sich nicht speichern laesst, darf die uebrigen nicht mitreissen: Zeile ohne Datei, Fehler melden.
+        path = null;
+        failed.push(`${a.filename}: ${(e as Error).message}`);
+      }
     }
     await d.store.insertAttachment({
       message_id: row.id, filename: a.filename, mime: a.mime, size: a.size, storage_path: path, is_ignored: ignored,
     });
   }
+  if (failed.length) throw new Error(`Anhang nicht gespeichert – ${failed.join(" | ")}`);
   return "stored";
 }

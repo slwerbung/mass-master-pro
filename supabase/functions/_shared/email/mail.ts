@@ -121,6 +121,17 @@ export function safeFilename(name: string, fallback = "datei"): string {
   return cleaned || fallback;
 }
 
+/**
+ * Dateiname als Teil eines Storage-Schlüssels: Supabase Storage lehnt Umlaute und andere Nicht-ASCII-Zeichen ab
+ * („Invalid key“). Der echte Dateiname bleibt in email_attachments.filename.
+ */
+export function storageKeyName(name: string, fallback = "datei"): string {
+  const t = safeFilename(name, fallback)
+    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/Ä/g, "Ae").replace(/Ö/g, "Oe").replace(/Ü/g, "Ue").replace(/ß/g, "ss")
+    .normalize("NFKD").replace(/[^A-Za-z0-9._\-() ]/g, "_");
+  return t.trim() || fallback;
+}
+
 /** Signaturbilder, Tracking-Pixel und Winzdateien kommen nie an HERO. */
 export function isIgnorableAttachment(a: { size: number; mime: string; inline?: boolean }): boolean {
   if (a.size < MIN_ATTACHMENT_BYTES) return true;

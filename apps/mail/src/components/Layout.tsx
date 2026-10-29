@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Folder, Inbox, ListTree, LogOut, MessagesSquare, PenSquare, Send, Settings as Cog, Trash2 } from "lucide-react";
+import { ChevronRight, Folder, Inbox, ListTree, LogOut, MessagesSquare, PenSquare, Send, Settings as Cog, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Overview } from "@/lib/types";
@@ -78,21 +78,72 @@ export default function Layout({ children }: { children: ReactNode }) {
   );
 }
 
-/** Kategorien als Ordner (nur Desktop). Zahlen = alle Mails der Kategorie ohne Papierkorb. */
+interface AccountLite { id: string; label: string; address: string }
+
+const OPEN_KEY = "mail.sidebar.open";
+function loadOpen(): Record<string, boolean> {
+  try { return JSON.parse(localStorage.getItem(OPEN_KEY) || "{}"); } catch { return {}; }
+}
+
+/**
+ * Kategorien als Ordner (nur Desktop). Zahlen = alle Mails der Kategorie ohne Papierkorb.
+ * Bei mehreren Postfächern: „Alle Postfächer“ und darunter je Postfach ein eigener Ordnerbaum (auf-/zuklappbar).
+ */
 function Folders({ enabled }: { enabled: boolean }) {
+  const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<AccountLite[]>("list_accounts"), enabled, staleTime: 300_000 });
+  const [open, setOpen] = useState<Record<string, boolean>>(loadOpen);
+  const toggle = (k: string, def: boolean) => setOpen((o) => {
+    const n = { ...o, [k]: !(o[k] ?? def) };
+    try { localStorage.setItem(OPEN_KEY, JSON.stringify(n)); } catch { /* ignore */ }
+    return n;
+  });
+  const list = accounts.data ?? [];
+  if (list.length <= 1) return <div className="hidden md:block"><FolderTree enabled={enabled} accountId={null} /><div className="border-b pt-2" /></div>;
+  const group = (key: string, label: string, title: string, accountId: string | null, def: boolean) => {
+    const isOpen = open[key] ?? def;
+    return (
+      <div key={key}>
+        <button type="button" title={title} onClick={() => toggle(key, def)}
+          className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-accent">
+          <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", isOpen && "rotate-90")} />
+          <span className="truncate">{label}</span>
+        </button>
+        {isOpen && <div className="pl-1"><FolderTree enabled={enabled} accountId={accountId} /></div>}
+      </div>
+    );
+  };
+  return (
+    <div className="hidden space-y-1 md:block">
+      {group("alle", "Alle Postfächer", "Alle Postfächer zusammen", null, true)}
+      {list.map((a) => group(a.id, a.label || a.address, a.address, a.id, false))}
+      <div className="border-b pt-2" />
+    </div>
+  );
+}
+
+/** Ordnerbaum eines Postfachs (accountId) oder aller Postfächer (null). */
+function FolderTree({ enabled, accountId }: { enabled: boolean; accountId: string | null }) {
   const loc = useLocation();
   const facets = useQuery({
-    queryKey: ["messages", "facets", "sidebar"],
-    queryFn: () => api<{ categories: Record<string, number> }>("message_facets", {}),
+    queryKey: ["messages", "facets", "sidebar", accountId ?? "alle"],
+    queryFn: () => api<{ categories: Record<string, number> }>("message_facets", accountId ? { accountId } : {}),
     enabled, staleTime: 60_000, refetchInterval: 120_000,
   });
   const counts = facets.data?.categories ?? {};
   const sp = new URLSearchParams(loc.search);
   const onMails = loc.pathname === "/mails";
-  const active = (k: string, v: string) => onMails && sp.get(k) === v && [...sp.keys()].every((x) => x === k);
+  const scope: Record<string, string> = accountId ? { accountId } : {};
+  const href = (k: string, v: string) => `/mails?${new URLSearchParams({ [k]: v, ...scope })}`;
+  // aktiv = genau dieser Filter (und dasselbe Postfach), sonst nichts
+  const active = (k: string, v: string) => {
+    if (!onMails) return false;
+    const want: Record<string, string> = { [k]: v, ...scope };
+    const keys = [...sp.keys()];
+    return keys.length === Object.keys(want).length && keys.every((x) => sp.get(x) === want[x]);
+  };
   const row = "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm hover:bg-accent";
-  const entry = (to: string, isActive: boolean, icon: ReactNode, label: string, count?: number) => (
-    <Link key={to} to={to} className={cn(row, isActive && "bg-accent font-medium")}>
+  const entry = (k: string, v: string, icon: ReactNode, label: string, count?: number) => (
+    <Link key={`${k}=${v}`} to={href(k, v)} className={cn(row, active(k, v) && "bg-accent font-medium")}>
       {icon}<span className="truncate">{label}</span>
       {!!count && <span className="ml-auto text-xs tabular-nums text-muted-foreground">{count.toLocaleString("de-DE")}</span>}
     </Link>
@@ -100,16 +151,15 @@ function Folders({ enabled }: { enabled: boolean }) {
   const folder = <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
   const other = CATEGORIES.filter((c) => !INBOX_CATEGORIES.includes(c));
   return (
-    <div className="hidden space-y-0.5 md:block">
-      {entry("/mails?direction=in", active("direction", "in"), <Inbox className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />, "Posteingang")}
-      <div className="pl-3">{INBOX_CATEGORIES.map((c) => entry(`/mails?category=${c}`, active("category", c), folder, CATEGORY_LABELS[c], counts[c]))}</div>
+    <div className="space-y-0.5">
+      {entry("direction", "in", <Inbox className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />, "Posteingang")}
+      <div className="pl-3">{INBOX_CATEGORIES.map((c) => entry("category", c, folder, CATEGORY_LABELS[c], counts[c]))}</div>
       <div className="px-3 pb-0.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Ablage</div>
-      <div className="pl-3">{other.map((c) => entry(`/mails?category=${c}`, active("category", c), folder, CATEGORY_LABELS[c], counts[c]))}</div>
+      <div className="pl-3">{other.map((c) => entry("category", c, folder, CATEGORY_LABELS[c], counts[c]))}</div>
       <div className="pt-2">
-        {entry("/mails?direction=out", active("direction", "out"), <Send className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />, "Gesendet")}
-        {entry("/mails?view=papierkorb", active("view", "papierkorb"), <Trash2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />, "Papierkorb")}
+        {entry("direction", "out", <Send className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />, "Gesendet")}
+        {entry("view", "papierkorb", <Trash2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />, "Papierkorb")}
       </div>
-      <div className="border-b pt-2" />
     </div>
   );
 }
