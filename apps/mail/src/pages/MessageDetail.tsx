@@ -65,6 +65,8 @@ function DraftCard({ m, onChanged }: { m: any; onChanged: () => void }) {
     onError: (e) => toast.error(errorText(e)),
   });
   const placeholders = (text.match(/\[\[[^\]]+\]\]/g) ?? []).length;
+  // Warum der Assistent keinen Entwurf geschrieben hat (aus dem Protokoll der Verarbeitung)
+  const noDraftWhy = ((Array.isArray(m.plan) ? m.plan : []) as { action: string; detail?: string }[]).find((p) => p.action === "draft")?.detail ?? null;
   const hasDraft = !!m.draft_text;
   return (
     <div className="space-y-3">
@@ -78,7 +80,9 @@ function DraftCard({ m, onChanged }: { m: any; onChanged: () => void }) {
           {placeholders > 0 && <p className="text-xs text-amber-800">{placeholders} Platzhalter in [[ ]] müssen noch ausgefüllt werden.</p>}
         </>
       ) : (
-        <p className="text-sm text-muted-foreground">Kein Entwurf. Der Assistent schreibt nur einen, wenn eine Antwort per Mail wirklich nötig ist – du kannst jederzeit einen anstoßen.</p>
+        <p className="text-sm text-muted-foreground">
+          Kein Entwurf{noDraftWhy ? ` – ${noDraftWhy.replace(/^Kein Entwurf:\s*/, "")}` : ""}. Du kannst jederzeit einen anstoßen, auch mit Hinweis (z. B. „per Du“).
+        </p>
       )}
       <div className="flex flex-wrap items-center gap-2">
         {hasDraft && (
@@ -89,7 +93,7 @@ function DraftCard({ m, onChanged }: { m: any; onChanged: () => void }) {
         )}
         {hasDraft && <Button size="sm" variant="outline" onClick={() => run.mutate({ action: "save", text, write: true })} disabled={run.isPending}>{m.draft_written_at ? "Speichern & im Postfach ersetzen" : "In Postfach legen"}</Button>}
         {hasDraft && text !== (m.draft_text ?? "") && <Button size="sm" variant="outline" onClick={() => run.mutate({ action: "save", text })} disabled={run.isPending}>Nur speichern</Button>}
-        <Input className="w-64" placeholder="Hinweis, z. B. „kürzer“" value={hint} onChange={(e) => setHint(e.target.value)} />
+        <Input className="w-64" placeholder="Hinweis, z. B. „kürzer, per Du“" value={hint} onChange={(e) => setHint(e.target.value)} />
         <Button size="sm" variant="outline" onClick={() => run.mutate({ action: "generate", hint: hint || undefined, write: !!m.draft_written_at })} disabled={run.isPending}>
           {run.isPending ? <Spinner /> : <RefreshCw className="h-3 w-3" />} {hasDraft ? "Neu erzeugen" : "Entwurf erzeugen"}
         </Button>
@@ -167,6 +171,15 @@ export default function MessageDetail() {
     if (Object.keys(extracted).length) correct.mutate({ extracted });
   };
 
+  const reloadAtt = useMutation({
+    mutationFn: () => invokeFn<{ found: number; saved: number; failed: string[] }>("email-mailbox", { action: "attachments_reload", id }),
+    onSuccess: (r) => {
+      r.failed.forEach((f) => toast.error(f));
+      toast.success(r.saved ? `${r.saved} Anhang/Anhänge nachgeladen.` : r.found ? "Alle Anhänge waren schon gespeichert." : "Die Mail hat keine Anhänge.");
+      qc.invalidateQueries({ queryKey: ["message"] });
+    },
+    onError: (e) => toast.error(errorText(e)),
+  });
   const plan = (Array.isArray(m.plan) ? m.plan : []) as PlanEntry[];
   const openSuggestions = d.suggestions.filter((sg) => sg.status === "offen").length;
   const attachments = d.attachments.filter((a) => !a.is_ignored);
@@ -230,13 +243,18 @@ export default function MessageDetail() {
       {/* Die Mail selbst */}
       <div className="rounded-lg border bg-card p-4">
         <MailBody messageId={m.id} fallbackText={m.body_text} />
-        {attachments.length > 0 && (
+        {(m.has_attachments || attachments.length > 0) && (
           <div className="mt-3 flex flex-wrap gap-2 border-t pt-3">
             {attachments.map((a) => (
               a.url
                 ? <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm hover:bg-accent"><Paperclip className="h-3.5 w-3.5" />{a.filename}<span className="text-xs text-muted-foreground">{Math.round(a.size / 1024)} KB</span></a>
                 : <span key={a.id} className="inline-flex items-center gap-1.5 rounded-md border border-dashed px-2.5 py-1 text-sm text-muted-foreground"><Paperclip className="h-3.5 w-3.5" />{a.filename} (nicht gespeichert)</span>
             ))}
+            {(attachments.length === 0 || attachments.some((a) => !a.url)) && (
+              <Button size="sm" variant="ghost" onClick={() => reloadAtt.mutate()} disabled={reloadAtt.isPending}>
+                {reloadAtt.isPending ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />} {attachments.length ? "Fehlende Anhänge nachladen" : "Anhänge aus dem Postfach laden"}
+              </Button>
+            )}
           </div>
         )}
       </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDraftRequest, DraftSchema, generateDraft, replySubject, shouldDraft, withSignature, type DraftDeps, type DraftMsg, type DraftStore, type DraftWriter } from "./draft.ts";
+import { buildDraftRequest, DraftSchema, generateDraft, hintFormality, replySubject, shouldDraft, withSignature, type DraftDeps, type DraftMsg, type DraftStore, type DraftWriter } from "./draft.ts";
 import type { LlmDeps, Provider, TaskSetting } from "./llm.ts";
 
 const msg = (o: Partial<DraftMsg> = {}): DraftMsg => ({
@@ -20,7 +20,11 @@ describe("shouldDraft – Tabelle aus dem Konzept", () => {
     expect(d("projekt_kommunikation", false)).toBe(false);
     expect(d("auftrag", true)).toBe(false);
     expect(d("layout_freigabe", true)).toBe(false);
-    for (const c of ["lieferant", "beleg", "newsletter", "system", "werbung_spam", "verwaltung", "ausschreibung", null]) expect(d(c, true)).toBe(false);
+    for (const c of ["beleg", "newsletter", "system", "werbung_spam"]) expect(d(c, true)).toBe(false);
+    for (const c of ["lieferant", "verwaltung", "ausschreibung", null]) expect(d(c, false)).toBe(false);
+  });
+  it("sagt das Verstehen „Antwort nötig“ (z. B. Bewerbung unter Verwaltung), gibt es auch einen Entwurf", () => {
+    for (const c of ["verwaltung", "lieferant", "ausschreibung"]) expect(d(c, true)).toBe(true);
   });
   it("nie fuer ausgehende oder schon beantwortete Mails", () => {
     expect(shouldDraft({ direction: "out", category: null, extracted: {} }).draft).toBe(false);
@@ -47,7 +51,7 @@ describe("Prompt", () => {
   });
   it("Hinweis des Mitarbeiters und fehlende Signatur", () => {
     const r = buildDraftRequest({ ...base, hint: "kürzer", signatureHint: false, hero: null });
-    expect(r.user).toContain("Hinweis des Mitarbeiters fuer diesen Entwurf: kürzer");
+    expect(r.user).toMatch(/Anweisung des Mitarbeiters fuer diesen Entwurf \(hat Vorrang vor allen Regeln oben\): kürzer$/);
     expect(r.system[0].text).toContain("Viele Grüße");
     expect(r.user).not.toContain("HERO-Projekt");
   });
@@ -130,4 +134,21 @@ describe("Entwurf: Anrede und Anhaenge im Prompt", async () => {
     expect(buildDraftRequest({ ...base, formality: "sie" }).user).toContain("Anrede: SIE");
     expect(buildDraftRequest({ ...base }).user).toContain("Anrede: unklar");
   });
+  it("„per Du“ im Hinweis schlaegt die Anrede aus der Kundenmail", () => {
+    const r = buildDraftRequest({ ...base, formality: "sie", hint: "bitte per Du" });
+    expect(r.user).toContain("Anrede: DU – so will es der Mitarbeiter");
+    expect(r.user).not.toContain("Anrede: SIE");
+  });
 });
+
+describe("Anrede aus dem Hinweis des Mitarbeiters", () => {
+  it("erkennt per Du / per Sie", () => {
+    expect(hintFormality("Bitte per Du formulieren")).toBe("du");
+    expect(hintFormality("duzen, kürzer")).toBe("du");
+    expect(hintFormality("in Sie-Form")).toBe("sie");
+    expect(hintFormality("Bitte siezen")).toBe("sie");
+    expect(hintFormality("kürzer")).toBeNull();
+    expect(hintFormality("Frag, ob du das Logo hast")).toBeNull();
+  });
+});
+

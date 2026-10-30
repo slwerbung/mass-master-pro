@@ -48,8 +48,14 @@ export function shouldDraft(m: Pick<DraftMsg, "direction" | "category" | "extrac
       return { draft: false, reason: "Reaktion ist die Auftragsbestätigung aus HERO" };
     case "layout_freigabe":
       return { draft: false, reason: "Reaktion läuft über Status/Layout in HERO" };
-    default:
+    case "newsletter":
+    case "werbung_spam":
+    case "system":
+    case "beleg":
       return { draft: false, reason: "Kategorie braucht keine Antwort" };
+    default:
+      // Verwaltung, Lieferant, Ausschreibung …: sagt das Verstehen „Antwort nötig“ (z. B. eine Bewerbung), dann auch ein Entwurf.
+      return needed ? { draft: true, reason: "Antwort nötig" } : { draft: false, reason: "keine Antwort nötig" };
   }
 }
 
@@ -87,6 +93,14 @@ export interface DraftPromptInput {
   attachments?: string[];
 }
 
+/** „per Du“, „duzen“, „Du-Form“ / „per Sie“, „siezen“ im Hinweis des Mitarbeiters. */
+export function hintFormality(hint: string | null | undefined): "du" | "sie" | null {
+  const h = String(hint ?? "").toLowerCase();
+  if (/\b(per|mit|im|in)\s+du\b|\bduzen\b|\bdu-form\b|\bgeduzt\b/.test(h)) return "du";
+  if (/\b(per|mit|im|in)\s+sie\b|\bsiezen\b|\bsie-form\b|\bgesiezt\b/.test(h)) return "sie";
+  return null;
+}
+
 export function buildDraftRequest(i: DraftPromptInput): LlmRequest {
   const system = [
     "Du schreibst fuer SL WERBUNG (Schilder- und Werbetechnik, Winnenden) den ENTWURF einer Antwort auf eine Kundenmail. Ein Mensch liest ihn, aendert ihn und sendet ihn selbst.",
@@ -122,10 +136,14 @@ export function buildDraftRequest(i: DraftPromptInput): LlmRequest {
       "",
     );
   }
-  if (i.hint) parts.push(`Hinweis des Mitarbeiters fuer diesen Entwurf: ${i.hint.slice(0, 300)}`, "");
+  // Eine Anrede im Hinweis des Mitarbeiters („per Du“) schlaegt die aus der Kundenmail erkannte.
+  const told = hintFormality(i.hint);
+  const formality = told ?? i.formality;
   parts.push(
-    i.formality === "du" ? "Anrede: DU – der Kunde duzt uns, also durchgehend duzen."
-      : i.formality === "sie" ? "Anrede: SIE – durchgehend siezen."
+    told === "du" ? "Anrede: DU – so will es der Mitarbeiter, durchgehend duzen."
+      : told === "sie" ? "Anrede: SIE – so will es der Mitarbeiter, durchgehend siezen."
+      : formality === "du" ? "Anrede: DU – der Kunde duzt uns, also durchgehend duzen."
+      : formality === "sie" ? "Anrede: SIE – durchgehend siezen."
       : "Anrede: unklar – spiegle die Kundenmail; im Zweifel siezen.",
     `Anhänge der Kundenmail: ${i.attachments?.length ? i.attachments.join(", ") : "keine"}`,
     "",
@@ -136,6 +154,8 @@ export function buildDraftRequest(i: DraftPromptInput): LlmRequest {
   }
   parts.push("", "Schreibe jetzt den Antwortentwurf auf die LETZTE Kundenmail.");
   if (i.mail.extracted?.reply?.reason) parts.push(`Grund fuer die Antwort: ${i.mail.extracted.reply.reason}`);
+  // Zuletzt, damit er nicht von Verlauf und Regeln ueberlagert wird.
+  if (i.hint) parts.push("", `WICHTIG – Anweisung des Mitarbeiters fuer diesen Entwurf (hat Vorrang vor allen Regeln oben): ${fence(i.hint.slice(0, 300))}`);
 
   return {
     system: [{ text: system, cache: true }],
