@@ -154,6 +154,15 @@ export default function MessageDetail() {
     onError: (e) => toast.error(errorText(e)),
   });
 
+  const reloadAtt = useMutation({
+    mutationFn: () => invokeFn<{ found: number; saved: number; failed: string[] }>("email-mailbox", { action: "attachments_reload", id }),
+    onSuccess: (r) => {
+      r.failed.forEach((f) => toast.error(f));
+      toast.success(r.saved ? `${r.saved} Anhang/Anhänge nachgeladen.` : r.found ? "Alle Anhänge waren schon gespeichert." : "Die Mail hat keine Anhänge.");
+      qc.invalidateQueries({ queryKey: ["message"] });
+    },
+    onError: (e) => toast.error(errorText(e)),
+  });
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorBox error={q.error} />;
   if (!m || !q.data) return null;
@@ -171,15 +180,6 @@ export default function MessageDetail() {
     if (Object.keys(extracted).length) correct.mutate({ extracted });
   };
 
-  const reloadAtt = useMutation({
-    mutationFn: () => invokeFn<{ found: number; saved: number; failed: string[] }>("email-mailbox", { action: "attachments_reload", id }),
-    onSuccess: (r) => {
-      r.failed.forEach((f) => toast.error(f));
-      toast.success(r.saved ? `${r.saved} Anhang/Anhänge nachgeladen.` : r.found ? "Alle Anhänge waren schon gespeichert." : "Die Mail hat keine Anhänge.");
-      qc.invalidateQueries({ queryKey: ["message"] });
-    },
-    onError: (e) => toast.error(errorText(e)),
-  });
   const plan = (Array.isArray(m.plan) ? m.plan : []) as PlanEntry[];
   const openSuggestions = d.suggestions.filter((sg) => sg.status === "offen").length;
   const attachments = d.attachments.filter((a) => !a.is_ignored);

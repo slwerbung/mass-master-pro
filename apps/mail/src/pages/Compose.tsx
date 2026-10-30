@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { BookOpen, Paperclip, Send, X } from "lucide-react";
+import { BookOpen, Paperclip, RefreshCw, Send, Sparkles, X } from "lucide-react";
 import { invokeFn } from "@/lib/api";
 import type { ComposePrefill, ComposeProject, SendAccount } from "@/lib/types";
 import { Button, ErrorBox, Input, Select, Spinner, Switch, Textarea } from "@/components/ui";
@@ -87,6 +87,18 @@ export default function Compose() {
   const tooBig = totalBytes > MAX_BYTES;
   const dirty = useMemo(() => !!(text.trim() || uploads.length), [text, uploads]);
 
+  // KI-Entwurf zur Mail erzeugen (email-draft) und ohne Text-Signatur uebernehmen (die HTML-Signatur haengt beim Senden an)
+  const [hint, setHint] = useState("");
+  const aiDraft = useMutation({
+    mutationFn: async () => {
+      await invokeFn("email-draft", { action: "generate", messageId: replyTo, ...(hint.trim() ? { hint: hint.trim() } : {}) });
+      const r = await prefill.refetch();
+      return r.data?.draftText ?? "";
+    },
+    onSuccess: (t) => { if (t) setText(t); else toast.error("Kein Entwurf erhalten."); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+
   const send = useMutation({
     mutationFn: () => invokeFn<{ messageId: string; warnings: string[] }>("email-send", {
       action: "send", accountId, to, cc, bcc, subject, text, allowEmptySubject: true, // leerer Betreff wurde im Dialog bestaetigt
@@ -156,8 +168,18 @@ export default function Compose() {
         <Textarea rows={14} value={text} onChange={(e) => setText(e.target.value)} className="font-sans" autoFocus={!!replyTo && mode !== "forward"}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit(); }} />
         {(text.match(/\[\[[^\]]+\]\]/g) ?? []).length > 0 && <p className="text-xs text-amber-800">Platzhalter in [[ ]] müssen noch ausgefüllt werden.</p>}
-        {p?.draftText && !useDraft && !text.trim() && (
-          <Button variant="outline" size="sm" onClick={() => setText(p.draftText ?? "")}>KI-Entwurf übernehmen</Button>
+        {replyTo && mode !== "forward" && (
+          <div className="flex flex-wrap items-center gap-2">
+            {p?.draftText && !useDraft && !text.trim() && (
+              <Button variant="outline" size="sm" onClick={() => setText(p.draftText ?? "")}>KI-Entwurf übernehmen</Button>
+            )}
+            <Input className="w-64" placeholder="Hinweis an die KI, z. B. „kürzer, per Du“" value={hint} onChange={(e) => setHint(e.target.value)} />
+            <Button variant="outline" size="sm" disabled={aiDraft.isPending}
+              onClick={() => { if (!text.trim() || confirm("Den bisherigen Text durch einen neuen KI-Entwurf ersetzen?")) aiDraft.mutate(); }}>
+              {aiDraft.isPending ? <Spinner /> : p?.draftText ? <RefreshCw className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+              {p?.draftText ? " Neuen KI-Entwurf erzeugen" : " KI-Entwurf erzeugen"}
+            </Button>
+          </div>
         )}
 
         <div className="space-y-1">
