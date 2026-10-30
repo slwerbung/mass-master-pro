@@ -16,10 +16,12 @@
  * `handleFileChange` is the same handler, exposed so a FileDropZone can feed
  * dropped files through it (`onFiles={dropToChange(handleFileChange)}`).
  */
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { readImageFileForEditor } from "./imageFile";
 import { startCapture } from "./captureSession";
 import { markCameraOpening } from "@/lib/cameraGuard";
+import { InAppCamera } from "@/components/InAppCamera";
+import { inAppCameraSupported } from "@/lib/inAppCamera";
 
 interface Options {
   /** Called with base64 imageData after the user picks/shoots an image */
@@ -37,18 +39,24 @@ interface Options {
 export function useDirectCamera({ onCapture, uploadMode = false, editorPath }: Options) {
   const inputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
+  const [inAppOpen, setInAppOpen] = useState(false);
 
-  const triggerCamera = () => {
+  const openSystemPicker = () => {
     if (inputRef.current) {
       inputRef.current.value = ""; // reset so same file can be re-selected
       inputRef.current.click();    // must be called from a user-gesture handler
     }
   };
 
-  const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Camera: inside the app whenever possible – the system camera app sends
+  // us to the background, where Android ends the app (see InAppCamera.tsx).
+  const triggerCamera = () => {
+    if (!uploadMode && inAppCameraSupported()) setInAppOpen(true);
+    else openSystemPicker();
+  };
+
+  const processFile = async (file: File) => {
     if (processingRef.current) return;
-    const file = e.target.files?.[0];
-    if (!file) return;
     processingRef.current = true;
     try {
       if (editorPath) await startCapture(file, editorPath());
@@ -61,16 +69,32 @@ export function useDirectCamera({ onCapture, uploadMode = false, editorPath }: O
     }
   };
 
+  const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processFile(file);
+  };
+
   const cameraInput = (
-    <input
-      ref={inputRef}
-      type="file"
-      accept="image/*"
-      {...(!uploadMode ? { capture: "environment" as const } : {})}
-      onClick={() => markCameraOpening("editor")}
-      onChange={handleChange}
-      className="hidden"
-    />
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        {...(!uploadMode ? { capture: "environment" as const } : {})}
+        onClick={() => markCameraOpening("editor")}
+        onChange={handleChange}
+        className="hidden"
+      />
+      {!uploadMode && (
+        <InAppCamera
+          open={inAppOpen}
+          onClose={() => setInAppOpen(false)}
+          onUseSystemCamera={() => { setInAppOpen(false); openSystemPicker(); }}
+          onCapture={(file) => { setInAppOpen(false); void processFile(file); }}
+        />
+      )}
+    </>
   );
 
   return { cameraInput, triggerCamera, handleFileChange: handleChange };

@@ -97,6 +97,13 @@ Kunden können Projekte online einsehen und freigeben.
   In-Memory-Übergabe (`editorHandoff.ts`) fehlt; `CameraInterruptNotice` führt
   beim App-Start dorthin zurück (mit „Verwerfen"). Jeder neue Einstieg in den
   Editor muss vorher `startCapture(file, editorPath)` aufrufen.
+- **Kamera läuft IN der App** (`src/components/InAppCamera.tsx`, Okt. 2026):
+  Die Kamera-Knöpfe (Aufmaß, Detailbilder, Grundriss, Fahrzeug) öffnen ein
+  getUserMedia-Vollbild statt der System-Kamera-App. Grund: Mit der
+  Kamera-App liegt die App im Hintergrund, und Android beendete sie dort
+  trotz aller Speicher-Sparmaßnahmen (Diagnose: viermal `stage = opened`
+  binnen 2 Min.). Die System-Kamera bleibt nur als Ausweg („Handy-Kamera“).
+  Neue Kamera-Einstiege nicht mehr direkt über `<input capture>` bauen.
 - Speicher beim Fotografieren (Messung Sept. 2026, Feld-Diagnose: Abbrüche
   immer bei `stage = opened`, meist ab dem 2. Foto):
   - Kamerafotos nur über `readImageFileForEditor` (`src/lib/imageFile.ts`)

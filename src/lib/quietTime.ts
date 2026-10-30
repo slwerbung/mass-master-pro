@@ -23,10 +23,18 @@ const POLL_MS = 1000;
 const PHOTO_ROUTE = /\/(camera|editor|edit-image|location-details)(\/|$)|\/details\/[^/]+\/edit$|\/locations\/[^/]+\/edit$/;
 
 let lastBusyAt = 0;
+// The in-app camera (InAppCamera.tsx) is an overlay, not a route.
+let inAppCameraOpen = false;
+
+export function setInAppCameraOpen(open: boolean) {
+  inAppCameraOpen = open;
+  lastBusyAt = Date.now();
+}
 
 function busyNow(): boolean {
   if (typeof document === "undefined") return false;
   return document.visibilityState !== "visible"
+    || inAppCameraOpen
     || cameraInProgress()
     || PHOTO_ROUTE.test(window.location.pathname);
 }
