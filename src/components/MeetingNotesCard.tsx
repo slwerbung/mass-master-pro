@@ -112,17 +112,17 @@ export function MeetingNotesCard({ projectId, projectNumber, expanded, onExpande
   return (
     <Card className="shadow-sm">
       <CardContent className="p-4 space-y-3">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           {collapsible ? (
             <button
               type="button"
               onClick={() => onExpandedChange!(!expanded)}
-              className="flex items-center gap-2 flex-1 min-w-0 text-left"
+              className="flex items-center gap-2 flex-[1_1_12rem] min-w-0 text-left"
               aria-expanded={expanded}
             >
               <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
               <span className="text-base font-semibold">Gesprächsnotizen</span>
-              {!loading && notes.length > 0 && <span className="text-xs text-muted-foreground">{notes.length}</span>}
+              {!loading && notes.length > 0 && <span className="text-xs text-muted-foreground shrink-0">{notes.length}</span>}
             </button>
           ) : (
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">

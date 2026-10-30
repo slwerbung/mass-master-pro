@@ -16,6 +16,8 @@ import { readImageFileForEditor } from "@/lib/imageFile";
 import { startCapture, getCapture, clearCapture, currentPath, blobToDataUrl } from "@/lib/captureSession";
 import { markCameraOpening, markUploadCameraOpening } from "@/lib/cameraGuard";
 import { FileDropZone, dropToChange } from "@/components/FileDropZone";
+import { InAppCamera } from "@/components/InAppCamera";
+import { inAppCameraSupported } from "@/lib/inAppCamera";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
@@ -94,10 +96,12 @@ function useSessionOpen(key: string) {
 // Header toggle shared by all sections on this page.
 const SectionToggle = ({ open, title, count }: { open: boolean; title: string; count?: number | string }) => (
   <CollapsibleTrigger asChild>
-    <button className="flex items-center gap-2 flex-1 min-w-0 text-left">
+    {/* Basis 12rem: neben den Knoepfen bleibt sonst auf dem Handy kein Platz,
+        der Titel wurde abgeschnitten statt die Knoepfe umzubrechen. */}
+    <button className="flex items-center gap-2 flex-[1_1_12rem] min-w-0 text-left">
       <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       <CardTitle className="text-base">{title}</CardTitle>
-      {count !== undefined && count !== 0 && count !== "" && <span className="text-xs text-muted-foreground">{count}</span>}
+      {count !== undefined && count !== 0 && count !== "" && <span className="text-xs text-muted-foreground shrink-0">{count}</span>}
     </button>
   </CollapsibleTrigger>
 );
@@ -149,6 +153,14 @@ const VehicleDetail = () => {
   // Touch devices get a dedicated camera button (capture input); on desktop it
   // is hidden since "capture" just opens the file dialog there anyway.
   const isMobile = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
+  // Which section the in-app camera shoots for (null = closed). The system
+  // camera app sent the app to the background, where Android ended it – the
+  // photo was lost before we ever saw it (see InAppCamera.tsx).
+  const [inAppCamera, setInAppCamera] = useState<"images" | "measured" | null>(null);
+  const openCamera = (target: "images" | "measured") => {
+    if (inAppCameraSupported()) setInAppCamera(target);
+    else (target === "images" ? imageCameraRef : measuredCameraRef).current?.click();
+  };
 
   useEffect(() => {
     if (!projectId) return;
@@ -297,6 +309,10 @@ const VehicleDetail = () => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    await openMeasuredInEditor(file);
+  };
+
+  const openMeasuredInEditor = async (file: File) => {
     // Downscale like every other photo that goes into the editor. Handing the
     // full-resolution camera photo on as a data URL (as before) meant a multi-
     // MB string plus a full-size decode in the editor – a memory spike right
@@ -612,6 +628,22 @@ const VehicleDetail = () => {
         </div>
       </div>
 
+      <InAppCamera
+        open={inAppCamera !== null}
+        onClose={() => setInAppCamera(null)}
+        onUseSystemCamera={() => {
+          const target = inAppCamera;
+          setInAppCamera(null);
+          (target === "images" ? imageCameraRef : measuredCameraRef).current?.click();
+        }}
+        onCapture={(file) => {
+          const target = inAppCamera;
+          setInAppCamera(null);
+          if (target === "images") void uploadFiles([file]);
+          else void openMeasuredInEditor(file);
+        }}
+      />
+
       <div className="container max-w-3xl mx-auto p-4 md:p-6 space-y-4 pb-10">
         {/* Project title + Freigabestatus (wie bei den anderen Projektarten) */}
         <div className="pt-1">
@@ -651,7 +683,7 @@ const VehicleDetail = () => {
                   {uploadingImage ? "Lädt..." : "Hochladen"}
                 </Button>
                 {isMobile && (
-                  <Button size="sm" variant="outline" onClick={() => imageCameraRef.current?.click()} disabled={uploadingImage}>
+                  <Button size="sm" variant="outline" onClick={() => openCamera("images")} disabled={uploadingImage}>
                     <Camera className="h-4 w-4 mr-1" /> Kamera
                   </Button>
                 )}
@@ -763,7 +795,7 @@ const VehicleDetail = () => {
                   {uploadingMeasured ? "Lädt..." : "Hochladen"}
                 </Button>
                 {isMobile && (
-                  <Button size="sm" variant="outline" onClick={() => measuredCameraRef.current?.click()} disabled={uploadingMeasured}>
+                  <Button size="sm" variant="outline" onClick={() => openCamera("measured")} disabled={uploadingMeasured}>
                     <Camera className="h-4 w-4 mr-1" /> Kamera
                   </Button>
                 )}
