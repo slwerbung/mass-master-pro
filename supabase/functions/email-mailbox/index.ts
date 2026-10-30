@@ -3,14 +3,22 @@
 //   { action: "body", id, refresh? }   HTML-Ansicht einer Mail (aus dem Postfach, zwischengespeichert in body_html)
 //   { action: "trash", ids }           in den Papierkorb des Postfachs VERSCHIEBEN (nie endgueltig loeschen)
 //   { action: "restore", ids }         aus dem Papierkorb zurueck in den Posteingang
+//   { action: "attachments_reload", id }  Anhaenge, die beim Abholen nicht gespeichert wurden, aus dem Postfach nachladen
 //
-// Nur mit Admin-Sitzung. Antwort immer HTTP 200 mit { ok, data | error }.
+// Mit Sitzung der Mail-App (eigene Postfaecher); `attachments_reload` auch per Cron-Secret (Betrieb/Wartung). Antwort immer HTTP 200 mit { ok, data | error }.
 
 import { createClient } from "@supabase/supabase-js";
-import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
+import { fail, isCronCall, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
 import { assertMessages } from "../_shared/email/access.ts";
 import { accountPassword } from "../_shared/email/config.ts";
-import { fetchDisplay, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
+import { fetchDisplay, fetchSource, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
+import { parseRaw } from "../_shared/email/parseRaw.ts";
+import { syncStore } from "../_shared/email/store.ts";
+import { MAX_ATTACHMENT_BYTES } from "../_shared/email/sync.ts";
+import { isIgnorableAttachment, storageKeyName } from "../_shared/email/mail.ts";
+
+/** Ganze Mail nur bis zu dieser Groesse durch mailparser (sonst CPU-Limit der Edge Function). */
+const MAX_RELOAD_BYTES = 20 * 1024 * 1024;
 import { mailHtml, MAX_CACHE_CHARS } from "../_shared/email/mailHtml.ts";
 
 const MAX_IDS = 100;
@@ -59,6 +67,48 @@ const handlers: Record<string, (sb: any, body: any) => Promise<unknown>> = {
       // Postfach nicht erreichbar o. Ae.: wenigstens den gespeicherten Text zeigen.
       return { html: null, kind: "missing", text: m.body_text, source: "none", error: String((e as Error).message).slice(0, 200) };
     }
+  },
+
+  /** Fehlende Anhaenge nachladen (z. B. nach einem Speicherfehler beim Abholen). Vorhandene Dateien bleiben unveraendert. */
+  async attachments_reload(sb, body) {
+    const { data: m } = await sb.from("email_messages").select(COLS).eq("id", String(body.id || "")).maybeSingle();
+    if (!m) throw new Error("Mail nicht gefunden.");
+    const { acc, creds } = await account(sb, m.account_id);
+    const fm = acc.folder_map || {};
+    const source = await withImap(creds, async (client) => {
+      const at = await locate(client, m, [fm.inbox || "INBOX", fm.sent, fm.trash, ...Object.values(fm.folders || {})].filter(Boolean) as string[]);
+      return at ? await fetchSource(client, at.folder, at.uid) : null;
+    });
+    if (!source) throw new Error("Die Mail liegt nicht mehr im Postfach.");
+    if (source.byteLength > MAX_RELOAD_BYTES) throw new Error("Die Mail ist zu groß zum Nachladen – Anhänge bitte im Mailprogramm öffnen.");
+    const parsed = await parseRaw(source);
+    const { data: have } = await sb.from("email_attachments").select("id, filename, storage_path").eq("message_id", m.id);
+    const rows = (have || []) as { id: string; filename: string; storage_path: string | null }[];
+    const store = syncStore(sb);
+    let saved = 0;
+    const failed: string[] = [];
+    let n = 0;
+    for (const a of parsed.attachments) {
+      n++;
+      const row = rows.find((r) => r.filename === a.filename);
+      if (row?.storage_path) continue;
+      const ignored = isIgnorableAttachment(a);
+      let path: string | null = null;
+      if (!ignored && a.content && a.size <= MAX_ATTACHMENT_BYTES) {
+        path = `${acc.id}/${m.id}/${n}-${storageKeyName(a.filename)}`;
+        try {
+          await store.uploadAttachment(path, a.content, a.mime);
+          saved++;
+        } catch (e) {
+          path = null;
+          failed.push(`${a.filename}: ${(e as Error).message}`.slice(0, 160));
+        }
+      }
+      if (row) await sb.from("email_attachments").update({ storage_path: path }).eq("id", row.id);
+      else await store.insertAttachment({ message_id: m.id, filename: a.filename, mime: a.mime, size: a.size, storage_path: path, is_ignored: ignored });
+    }
+    if (parsed.attachments.length) await sb.from("email_messages").update({ has_attachments: true }).eq("id", m.id);
+    return { found: parsed.attachments.length, saved, failed };
   },
 
   async trash(sb, body) {
@@ -124,14 +174,16 @@ Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const user = await requireMailUser(req, sb);
-  if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
   const body = await readJson(req);
+  const user = await requireMailUser(req, sb);
+  // Cron-Secret nur fuer das Nachladen von Anhaengen (Wartung), nie fuer Verschieben/Papierkorb.
+  const cron = !user && body.action === "attachments_reload" && (await isCronCall(req, sb));
+  if (!user && !cron) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
   const h = handlers[String(body.action || "")];
   if (!h) return fail("Unbekannte Aktion.");
   try {
     // Nur Mails der eigenen Postfaecher (Admin: alle).
-    await assertMessages(sb, user, [body.id, ...(Array.isArray(body.ids) ? body.ids : []).slice(0, MAX_IDS)]);
+    if (user) await assertMessages(sb, user, [body.id, ...(Array.isArray(body.ids) ? body.ids : []).slice(0, MAX_IDS)]);
     return ok(await h(sb, body));
   } catch (e) {
     return fail(String((e as Error)?.message || e).slice(0, 300));
