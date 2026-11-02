@@ -174,14 +174,20 @@ export async function addLogbookEntry(apiKey: string, projectMatchId: number, te
   );
 }
 
-/** Schritt wechseln (Pipeline). Schreibzugriff – nur nach Freigabe aufrufen. */
+/**
+ * Schritt wechseln (Pipeline). Schreibzugriff – nur nach Freigabe aufrufen.
+ * HERO nimmt ein `step_id` auf oberster Ebene an, ignoriert es beim Aendern aber stillschweigend – der Schritt gehoert
+ * in `current_project_match_status` (wie in CaptFix `automations.ts` / `hero_set_step`). Danach wird nachgeprueft.
+ */
 export async function setStep(apiKey: string, projectMatchId: number, stepId: number, fetchImpl: F = fetch): Promise<void> {
-  await heroGraphql(
+  const data = await heroGraphql(
     apiKey,
-    `mutation($pm: ProjectMatchInput) { update_project_match(project_match: $pm) { id } }`,
-    { pm: { id: projectMatchId, step_id: stepId } },
+    `mutation($pm: ProjectMatchInput) { update_project_match(project_match: $pm) { id current_project_match_status { step_id } } }`,
+    { pm: { id: projectMatchId, current_project_match_status: { step_id: stepId } } },
     fetchImpl,
   );
+  const now = data?.update_project_match?.current_project_match_status?.step_id;
+  if (now != null && Number(now) !== stepId) throw new HeroError("HERO hat den neuen Status nicht übernommen.");
 }
 
 export interface NewContact {

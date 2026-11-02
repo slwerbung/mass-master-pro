@@ -319,9 +319,11 @@ function ProjectStatus({ projectId, messageId }: { projectId: number; messageId:
   const cur = q.data?.stepId ?? null;
   const chosen = stepId ?? cur;
   const set = useMutation({
-    mutationFn: () => invokeFn<{ projectNr: string; stepName: string; changed: boolean }>("email-action", { action: "set_step", messageId, projectId, stepId: chosen }),
+    mutationFn: () => invokeFn<{ projectNr: string; stepId: number; stepName: string; changed: boolean }>("email-action", { action: "set_step", messageId, projectId, stepId: chosen }),
     onSuccess: (r) => {
       toast.success(r.changed ? `${r.projectNr}: Status auf „${r.stepName}“ gesetzt` : `${r.projectNr} steht schon auf „${r.stepName}“`);
+      // Sofort anzeigen; das Nachladen aus HERO bestaetigt es danach.
+      qc.setQueryData<ProjectStatusData>(["project-status", projectId], (old) => (old ? { ...old, stepId: r.stepId, stepName: r.stepName } : old));
       setStepId(null);
       ["project-status", "suggestions", "topics"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
     },

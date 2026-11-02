@@ -81,10 +81,14 @@ describe("Schreiben", () => {
     expect(calls[0].v.entry).toMatchObject({ target: "project_match", target_id: 5 });
     expect(calls[0].v.entry.custom_text).toHaveLength(5000);
   });
-  it("setStep: update_project_match mit step_id", async () => {
-    const { f, calls } = fakeFetch([() => ({ data: { update_project_match: { id: 5 } } })]);
+  it("setStep: Schritt in current_project_match_status (step_id oben ignoriert HERO beim Aendern)", async () => {
+    const { f, calls } = fakeFetch([() => ({ data: { update_project_match: { id: 5, current_project_match_status: { step_id: 266511 } } } })]);
     await setStep("k", 5, 266511, f);
-    expect(calls[0].v.pm).toEqual({ id: 5, step_id: 266511 });
+    expect(calls[0].v.pm).toEqual({ id: 5, current_project_match_status: { step_id: 266511 } });
+  });
+  it("setStep: meldet einen Fehler, wenn HERO den alten Schritt zurueckgibt", async () => {
+    const { f } = fakeFetch([() => ({ data: { update_project_match: { id: 5, current_project_match_status: { step_id: 2825 } } } })]);
+    await expect(setStep("k", 5, 266511, f)).rejects.toThrow("nicht übernommen");
   });
   it("createContact: findExisting, Firma -> commercial, Privatperson -> private", async () => {
     const { f, calls } = fakeFetch([() => ({ data: { create_contact: { id: "42" } } })]);
