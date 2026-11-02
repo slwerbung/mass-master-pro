@@ -96,7 +96,7 @@ describe("Schreiben", () => {
     expect(calls[0].v.findExisting).toBe(true);
     expect(calls[0].v.contact).toMatchObject({ type: "commercial", is_contact_person: false, company_name: "Muster GmbH", category: "customer" });
     await createContact("k", { first_name: "Max", last_name: "M", email: "m@b.de", street: "Weg 1", zip: "71332", city: "W" }, "Mail-Assistent", f);
-    expect(calls[1].v.contact).toMatchObject({ type: "private", is_contact_person: true, address: { street: "Weg 1", zip: "71332", city: "W" } });
+    expect(calls[1].v.contact).toMatchObject({ type: "private", is_contact_person: true, address: { street: "Weg 1", zipcode: "71332", city: "W" } });
   });
   it("createProject: bewaehrte verschachtelte Form; faellt bei abgelehnten Zusatzfeldern auf die Minimalform zurueck", async () => {
     const { f, calls } = fakeFetch([
