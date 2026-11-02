@@ -90,7 +90,7 @@ describe("runOp – schreibt nur Geprüftes", () => {
     await runOp(op({ op: "mitarbeiter_zuweisen", userId: 184738 }), t, a);
     await expect(runOp(op({ op: "mitarbeiter_zuweisen", userId: null }), t, a)).rejects.toThrow("Mitarbeiter");
     await expect(runOp(op({ op: "logbuch_notiz", fields: { note: "x" } }), { ...t, projectId: null }, a)).rejects.toThrow("kein Projekt");
-    expect(calls).toEqual([["updateProject", 12503890, { step_id: 266648 }], ["assignUsers", 12503890, [184738]]]);
+    expect(calls).toEqual([["updateProject", 12503890, { current_project_match_status: { step_id: 266648 } }], ["assignUsers", 12503890, [184738]]]);
   });
   it("Aufgabe: Fälligkeit mittags HERO-Ortszeit, am Projekt, für den Mitarbeiter", async () => {
     const { a, calls } = api();

@@ -276,7 +276,8 @@ export async function runOp(op: HeroOp, t: OpTarget, api: HeroOpsApi): Promise<s
     }
     case "status_setzen":
       if (!op.stepId || !t.allowedStepIds.includes(op.stepId)) throw new Error("Schritt gehört nicht zum Projektablauf");
-      await api.updateProject(needProject(t), { step_id: op.stepId });
+      // Der Schritt gehoert in current_project_match_status – ein step_id oben ignoriert HERO beim Aendern (hero.ts setStep).
+      await api.updateProject(needProject(t), { current_project_match_status: { step_id: op.stepId } });
       return describeOp(op);
     case "mitarbeiter_zuweisen":
       if (!op.userId || !t.allowedUserIds.includes(op.userId)) throw new Error("bitte einen Mitarbeiter wählen");
