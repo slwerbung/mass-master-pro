@@ -210,7 +210,7 @@ export async function createContact(apiKey: string, c: NewContact, source: strin
     category: "customer",
     source,
   };
-  if (c.street || c.zip || c.city) contact.address = { street: c.street || null, zip: c.zip || null, city: c.city || null };
+  if (c.street || c.zip || c.city) contact.address = { street: c.street || null, zipcode: c.zip || null, city: c.city || null };
   const data = await heroGraphql(
     apiKey,
     `mutation Create($contact: CustomerInput, $findExisting: Boolean) { create_contact(contact: $contact, findExisting: $findExisting) { id } }`,
