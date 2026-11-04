@@ -292,3 +292,35 @@ describe("Thema per Anweisung", () => {
     expect(seen).toEqual(["erledigt", "keine"]);
   });
 });
+
+describe("„AB aus Angebot erstellen“", () => {
+  it("Plan: confirmation statt Angebot; Prompt kennt den Baustein", () => {
+    const p = toPlan(InstructionSchema.parse({ project: { action: "unveraendert" }, offer: false, confirmation: true, appointments: [], not_doable: [], summary: "AB" }), ctx, "");
+    expect(p).toMatchObject({ offer: false, confirmation: true });
+    expect(buildInstructionRequest("Ab aus Angebot erstellen.", ctx).system[0].text).toMatch(/confirmation = true.*AB aus Angebot/s);
+    expect(toPlan(InstructionSchema.parse({}), ctx, "").confirmation).toBe(false);
+  });
+
+  const abPlan = { project: { mode: "keep" as const }, topic: { mode: "erledigt" as const, date: null, note: null }, offer: false, confirmation: true, appointments: [], ops: [], notDoable: [], summary: "" };
+
+  it("legt den AB-Vorschlag aus dem Angebot an und fuehrt ihn ueber decide aus (Entwurf)", async () => {
+    const t = deps({ current: { id: 12462788, nr: "WER-1941" } });
+    const made: any[] = [];
+    t.d.confirmationFromOffer = async (p) => (made.push(p), "S-ab");
+    const decide = t.d.decide;
+    t.d.decide = async (id, e) => (id === "S-ab" ? (t.log.decided.push([id, e]), { documentId: 99, positions: 7, warnings: [] }) : decide(id, e));
+    const r = await runInstruction(abPlan, "Ab aus Angebot erstellen.", t.d);
+    expect(made).toEqual([{ id: 12462788, nr: "WER-1941" }]);
+    expect(t.log.decided).toEqual([["S-ab", { projectId: 12462788, projectNr: "WER-1941" }]]);
+    expect(r).toEqual([{ step: "confirmation", ok: true, text: expect.stringMatching(/AB-Entwurf in WER-1941 angelegt \(mit 7 Position\(en\) aus dem Angebot\)/) }]);
+  });
+
+  it("ohne Projekt oder ohne Angebot: klarer Fehler, kein stilles „erledigt“", async () => {
+    const none = deps();
+    none.d.confirmationFromOffer = async () => "S-ab";
+    expect((await runInstruction(abPlan, "x", none.d))[0]).toMatchObject({ step: "confirmation", ok: false, text: expect.stringMatching(/kein Projekt/) });
+    const noOffer = deps({ current: { id: 5, nr: "WER-5" } });
+    noOffer.d.confirmationFromOffer = async () => { throw new Error("In WER-5 gibt es kein abgeschlossenes Angebot mit Positionen"); };
+    expect((await runInstruction(abPlan, "x", noOffer.d))[0]).toMatchObject({ ok: false, text: expect.stringMatching(/^AB: In WER-5 gibt es kein abgeschlossenes Angebot/) });
+  });
+});

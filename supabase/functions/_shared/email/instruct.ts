@@ -58,6 +58,8 @@ export const InstructionSchema = z.object({
   contact: z.enum(["vorhanden", "neu", "unklar"]).catch("unklar"),
   customer_hint: z.string().nullish().transform((v) => v ?? null),
   offer: z.boolean().catch(false),
+  /** Auftragsbestaetigung aus dem Angebot im Projekt („Angebot in AB wandeln“) */
+  confirmation: z.boolean().catch(false),
   appointments: z.array(z.object({
     category: z.string().nullish().transform((v) => v ?? null),
     date: z.string().nullish().transform((v) => v ?? null),
@@ -85,7 +87,7 @@ export const InstructionSchema = z.object({
 export type InstructionResult = z.infer<typeof InstructionSchema>;
 
 const JSON_SCHEMA = {
-  type: "object", additionalProperties: false, required: ["project", "contact", "customer_hint", "offer", "appointments", "actions", "files", "topic", "not_doable", "summary"],
+  type: "object", additionalProperties: false, required: ["project", "contact", "customer_hint", "offer", "confirmation", "appointments", "actions", "files", "topic", "not_doable", "summary"],
   properties: {
     project: {
       type: "object", additionalProperties: false, required: ["action", "project_nr", "name"],
@@ -98,6 +100,7 @@ const JSON_SCHEMA = {
     contact: { type: "string", enum: ["vorhanden", "neu", "unklar"] },
     customer_hint: { type: ["string", "null"] },
     offer: { type: "boolean" },
+    confirmation: { type: "boolean" },
     appointments: {
       type: "array",
       items: {
@@ -136,8 +139,11 @@ export function buildInstructionRequest(text: string, c: InstructionContext): Ll
         "(2) offer = Angebotsentwurf im Projekt vorbereiten; (3) appointments = Kalendertermine in HERO (einer oder mehrere);",
         "(4) actions = weitere HERO-Aktionen (Ansprechpartner, Kontaktdaten, Adresse, Projektname/-status, Mitarbeiter zuweisen, Aufgabe, Logbuch);",
         "(5) topic = das Mail-Thema in der Mail-App abschliessen oder auf Wiedervorlage legen;",
-        "(6) files = die Anhaenge der Mail ans HERO-Projekt hochladen und/oder in den Dropbox-Projektordner ablegen.",
+        "(6) files = die Anhaenge der Mail ans HERO-Projekt hochladen und/oder in den Dropbox-Projektordner ablegen;",
+        "(7) confirmation = Auftragsbestaetigung (AB) als Entwurf aus dem Angebot im Projekt erstellen (Angebot in AB wandeln).",
         "Regeln:",
+        "- offer = true nur fuer ein NEUES Angebot. confirmation = true, wenn eine AB / Auftragsbestaetigung verlangt wird („AB aus Angebot“, „Angebot in AB wandeln“,",
+        "  „Auftrag bestätigen“, „AB erstellen/schreiben“) – das ist KEIN neues Angebot (offer = false). Die AB uebernimmt alle Positionen des Angebots im Projekt.",
         "- project.action: „neu“ nur, wenn die Anweisung ein neues Projekt verlangt; „bestehend“ mit project_nr (z. B. WER-1820), wenn sie ein Projekt nennt; sonst „unveraendert“.",
         "- project.name: Projektname, wenn die Anweisung einen nennt oder er sich klar aus Mail und Anweisung ergibt (kurz, z. B. „Anhänger Beschriftung“); sonst null.",
         "- contact: „vorhanden“, wenn die Anweisung sagt, dass es den Kunden/Kontakt schon gibt (z. B. „Kontakt existiert“, „bestehender Kunde“, „beim Kunden X anlegen“, „nicht neu anlegen“); „neu“ nur, wenn ausdruecklich ein NEUER Kontakt verlangt wird; sonst „unklar“.",
@@ -216,6 +222,8 @@ export interface InstructionPlan {
   project: PlanProject;
   topic: PlanTopic;
   offer: boolean;
+  /** AB-Entwurf aus dem Angebot im Projekt (fehlt in Plaenen einer aelteren Mail-App) */
+  confirmation?: boolean;
   appointments: PlanAppointment[];
   /** weitere HERO-Aktionen (heroOps.ts) */
   ops: HeroOp[];
@@ -306,7 +314,7 @@ export function toPlan(r: InstructionResult, c: InstructionContext, defaultName:
     notDoable.push("Anhänge hochladen: die Mail hat keine gespeicherten Anhänge");
     files = { ...files, hero: false, dropbox: false };
   }
-  return { project, topic, offer: r.offer, appointments, ops: o.ops, files, notDoable: [...notDoable, ...o.notDoable], summary: r.summary };
+  return { project, topic, offer: r.offer, confirmation: r.confirmation, appointments, ops: o.ops, files, notDoable: [...notDoable, ...o.notDoable], summary: r.summary };
 }
 
 export interface CustomerLookup {
@@ -368,12 +376,14 @@ export const berlinToday = (now = new Date()) => now.toLocaleDateString("sv-SE",
 
 // ---------------------------------------------------------------- Ausfuehren
 
-export interface StepResult { step: "project" | "offer" | "appointment" | "hero" | "files" | "topic"; ok: boolean; text: string }
+export interface StepResult { step: "project" | "offer" | "confirmation" | "appointment" | "hero" | "files" | "topic"; ok: boolean; text: string }
 
 export interface RunDeps {
   /** Vorschlag dieser Art fuer die Mail holen oder anlegen; gibt die ID zurueck. */
   ensureSuggestion(type: "create_project" | "link_project" | "prepare_offer", payloadExtra: Record<string, unknown>): Promise<string | null>;
   decide(suggestionId: string, edits: Record<string, unknown>): Promise<Record<string, any>>;
+  /** Vorschlag „AB aus dem Angebot“ fuer das Projekt anlegen (ersetzt einen offenen AB-Vorschlag); gibt die ID zurueck oder wirft. */
+  confirmationFromOffer?(project: { id: number; nr: string | null }): Promise<string>;
   /** Projekt, dem die Mail (jetzt) zugeordnet ist */
   currentProject(): Promise<{ id: number; nr: string | null } | null>;
   projectByNr(nr: string): Promise<{ id: number; nr: string } | null>;
@@ -466,6 +476,25 @@ export async function runInstruction(plan: InstructionPlan, text: string, d: Run
         out.push({ step: "offer", ok: !!r.documentId, text: withWarnings(r.documentId ? `Angebotsentwurf in ${project.nr} angelegt (${r.positions} Position(en), Liste im Logbuch)` : "Angebot nicht angelegt – Positionsliste steht im Logbuch", r) });
       } catch (e) {
         out.push({ step: "offer", ok: false, text: `Angebot: ${(e as Error).message}` });
+      }
+    }
+  }
+
+  // 4b. Auftragsbestaetigung aus dem Angebot (braucht ein Projekt mit abgeschlossenem Angebot) – Entwurf, Versand erst per Klick
+  if (plan.confirmation) {
+    if (!project) out.push({ step: "confirmation", ok: false, text: "AB: kein Projekt – erst Projekt anlegen oder zuordnen" });
+    else if (!d.confirmationFromOffer) out.push({ step: "confirmation", ok: false, text: "AB: nicht verfügbar" });
+    else {
+      try {
+        const id = await d.confirmationFromOffer(project);
+        const r = await d.decide(id, { projectId: project.id, projectNr: project.nr });
+        const what = r.positions ? `mit ${r.positions} Position(en) aus dem Angebot` : "ohne Positionen";
+        out.push({
+          step: "confirmation", ok: !!r.documentId && !!r.positions,
+          text: withWarnings(r.documentId ? `AB-Entwurf in ${project.nr ?? `#${project.id}`} angelegt (${what}) – in HERO prüfen, abschließen, dann unter „Zu entscheiden“ versenden` : "AB nicht angelegt", r),
+        });
+      } catch (e) {
+        out.push({ step: "confirmation", ok: false, text: `AB: ${(e as Error).message}` });
       }
     }
   }

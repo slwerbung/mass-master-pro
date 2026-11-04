@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOfferRequest, OfferSchema, offerLogText, prepareOfferSuggestion, shouldPrepareOffer, toOfferPayload, type OfferDeps } from "./offer.ts";
+import { buildOfferAttempts, buildOfferRequest, OfferSchema, offerLogText, prepareOfferSuggestion, shouldPrepareOffer, toOfferPayload, type OfferDeps } from "./offer.ts";
 import type { LlmDeps, Provider, TaskSetting } from "./llm.ts";
 
 const services = [{ id: 11, name: "Fahrzeugbeschriftung Transporter" }, { id: 12, name: "Montage" }];
@@ -77,5 +77,37 @@ describe("prepareOfferSuggestion", () => {
     const r = await prepareOfferSuggestion("M", 5, "WER-5", deps);
     expect(r?.kind).toBe("vor_ort");
     expect(created[0][1]).toBe("prepare_offer");
+  });
+});
+
+describe("Angebot: Arbeit nach Aufwand und Aktionen", () => {
+  it("Montage nach Aufwand ohne Stunden macht aus einem klaren Angebot keinen Vor-Ort-Termin", () => {
+    const r = OfferSchema.parse({ enough_info: true, missing: [], summary: "", positions: [
+      { service_id: 11, description: "20 Hohlkammerplakate A1", quantity: 20, unit: "Stk", note: null },
+      { service_id: 12, description: "Plakatierung an Laternen", quantity: null, unit: "Std", note: "nach Aufwand" },
+    ] });
+    expect(toOfferPayload(r, services, 5, null).kind).toBe("angebot");
+    const r2 = OfferSchema.parse({ ...r, positions: [r.positions[0], { service_id: 11, description: "Plakate", quantity: null, unit: "Stk", note: null }] });
+    expect(toOfferPayload(r2, services, 5, null).kind).toBe("vor_ort");
+  });
+  it("Leistung ohne Menge: Menge 1 statt weglassen; ohne Leistung als Text; Rueckfall nur Leistungen", () => {
+    const a = buildOfferAttempts([
+      { serviceId: 11, serviceName: "Hohlkammerplakat", description: "A1", quantity: 20, unit: "Stk", note: null },
+      { serviceId: 12, serviceName: "Montage", description: "Laternen", quantity: null, unit: "Std", note: "nach Aufwand" },
+      { serviceId: null, serviceName: null, description: "Kabelbinder", quantity: null, unit: null, note: null },
+    ]);
+    expect(a[0].actions).toEqual([
+      { add_existing_service: { supplyServiceId: 11, quantity: 20 } },
+      { add_existing_service: { supplyServiceId: 12, quantity: 1 } },
+      { add_text: { text: "Noch zu kalkulieren: Kabelbinder" } },
+    ]);
+    expect(a[0].hints[0]).toMatch(/Menge 1 eingesetzt.*Montage/);
+    expect(a[1].actions).toEqual(a[0].actions.slice(0, 2));
+    expect(buildOfferAttempts([])).toEqual([]);
+  });
+  it("Prompt: keine projektbezogenen Katalogeintraege, Aufwand als Stunden", () => {
+    const t = buildOfferRequest({ id: "M", subject: "s", body_text: "", summary: null, category: null, extracted: {} }, services).system[0].text;
+    expect(t).toMatch(/Orts-, Kunden- oder Projektnamen/);
+    expect(t).toMatch(/nach Aufwand/);
   });
 });

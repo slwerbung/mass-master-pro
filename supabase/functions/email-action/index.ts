@@ -21,6 +21,7 @@ import { actionStore } from "../_shared/email/store.ts";
 import { storageDownloader } from "../_shared/email/uploader.ts";
 import { buildLlmDeps } from "../_shared/email/config.ts";
 import { offerSuggester } from "../_shared/email/offerWiring.ts";
+import { confirmationSuggester } from "../_shared/email/confirmationWiring.ts";
 import type { Gewerk } from "../_shared/email/gewerke.ts";
 import { buildCreateProjectPayload } from "../_shared/email/act.ts";
 import { berlinToday, planInstruction, runInstruction, type CustomerLookup, type CustomerOption, type InstructionContext, type InstructionPerson, type InstructionPlan } from "../_shared/email/instruct.ts";
@@ -145,7 +146,7 @@ function checkPlan(p: any, categories: { id: number; label: string }[], people: 
   }
   const f = p.files && typeof p.files === "object" ? p.files : null;
   const files = f ? { hero: f.hero === true, dropbox: f.dropbox === true, subfolder: String(f.subfolder ?? "").slice(0, 200) } : undefined;
-  return { project, topic, offer: !!p.offer, appointments, ops: sanitizeOps(p.ops), files, notDoable: [], summary: String(p.summary || "") };
+  return { project, topic, offer: !!p.offer, confirmation: p.confirmation === true, appointments, ops: sanitizeOps(p.ops), files, notDoable: [], summary: String(p.summary || "") };
 }
 
 /** Angebotsvorbereitung nach der Zuordnung – nur wenn HERO aktiv ist; die KI-Schicht wird dafuer erst jetzt aufgebaut. */
@@ -288,6 +289,14 @@ Deno.serve(async (req) => {
           return (await openOf(type)) ?? null;
         },
         decide: (id, edits) => decideSuggestion({ suggestionId: id, decision: "accept", edits }, deps),
+        // „AB aus Angebot“: Vorschlag mit allen Positionen des Angebots, dann derselbe Weg wie ein angenommener AB-Vorschlag.
+        async confirmationFromOffer(project) {
+          const c = confirmationSuggester(sb, await buildLlmDeps(sb), key, {
+            confirmationTypeId: heroCfg.confirmation_document_type_id ?? null, offerTypeId: heroCfg.offer_document_type_id ?? null,
+            steps: heroCfg.steps ?? {}, gewerke,
+          });
+          return await c.fromOffer(m.id, project.id, project.nr);
+        },
         async currentProject() {
           const { data } = await sb.from("email_messages").select("hero_project_match_id, match_info").eq("id", m.id).maybeSingle();
           return data?.hero_project_match_id ? { id: Number(data.hero_project_match_id), nr: data.match_info?.projectNr ?? null } : null;

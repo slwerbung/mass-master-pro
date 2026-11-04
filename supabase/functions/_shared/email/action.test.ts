@@ -333,9 +333,10 @@ describe("create_confirmation (Bestellung -> Projekt + AB)", () => {
     expect(r).toMatchObject({ status: "angenommen", projectId: 5, documentId: 88, positions: 2 });
     const [pid, type, actions] = t.log.offers[0];
     expect([pid, type]).toEqual([5, 171301]);
+    // Kopie aus der Vorlage (wie „Folgedokument“ in HERO), die geaenderte Menge danach per uid.
     expect(actions).toEqual([
-      { add_product_position: { name: "Aufkleber lockEX", description: null, nr: "211.7", unit_type: "Stk", quantity: 1000, net_price: 0.33, vat_percent: 19 } },
-      { add_positions_from_document: { documentId: 21, selectedPositions: ["u2"], flowType: "copy" } },
+      { add_positions_from_document: { documentId: 21, selectedPositions: ["u1", "u2"], flowType: "copy" } },
+      { update_supply_service: { uid: "u1", quantity: 1000 } },
     ]);
     expect(t.log.steps).toEqual([[5, 11]]);
     expect(t.log.logbook.some(([, x]: any) => /Auftragsbestätigung.*Entwurf/.test(x) && /Sonderfarbe/.test(x))).toBe(true);
@@ -349,15 +350,47 @@ describe("create_confirmation (Bestellung -> Projekt + AB)", () => {
       edits: { positions: [{ ...P(), quantity: 200, netPrice: 0.01, name: "billig" }, { ...P({ uid: "u2" }), include: false }] },
     }, t.deps);
     expect(t.log.offers[0][2]).toEqual([
-      { add_product_position: expect.objectContaining({ name: "Aufkleber lockEX", quantity: 200, net_price: 0.33 }) },
+      { add_positions_from_document: { documentId: 21, selectedPositions: ["u1"], flowType: "copy" } },
+      { update_supply_service: { uid: "u1", quantity: 200 } },
     ]);
   });
 
-  it("Leistung mit anderer Menge: feste Leistung zum Preis der Vorlage plus Hinweis", async () => {
-    const t = setup(s(payload({ positions: [P({ type: "service", quantity: 3, sourceQuantity: 1, netPrice: 82, name: "Montage" })] })));
+  it("HERO lehnt den ersten Weg ab (HTTP 500): naechster Versuch, Hinweis nennt Rueckfall und Mengen", async () => {
+    let calls = 0;
+    const t = setup(s(payload()), {
+      hero: {
+        createDocument: async (pid, dt, actions) => {
+          calls++;
+          if (calls === 1) throw new Error("HERO HTTP 500: <!DOCTYPE html><title>Es ist ein Fehler aufgetreten</title>");
+          t.log.offers.push([pid, dt, actions]);
+          return { id: 89, nr: null };
+        },
+      },
+    });
     const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
-    expect(t.log.offers[0][2][0].create_supply_service).toMatchObject({ name: "Montage", quantity: 3, net_price_per_unit: 82, is_fixed_net_price: true });
-    expect(r.warnings[0]).toMatch(/Menge 3 statt 1/);
+    expect(t.log.offers[0][2]).toEqual([{ add_positions_from_document: { documentId: 21, selectedPositions: ["u1", "u2"], flowType: "copy" } }]);
+    expect(r).toMatchObject({ documentId: 89, positions: 2 });
+    expect(r.warnings[0]).toMatch(/Mengen der Vorlage.*HTTP 500: Es ist ein Fehler aufgetreten/);
+    expect(r.warnings.join(" ")).toMatch(/Aufkleber lockEX“: Menge in HERO auf 1\.000 Stk ändern/);
+  });
+
+  it("alle Wege scheitern: leere AB, Positionen stehen im Logbuch, Versand-Vorschlag trotzdem", async () => {
+    const t = setup(s(payload({ sources: [{ id: 21, nr: "AG-1", kind: "angebot", date: null, projectNr: "WER-5" }],
+      positions: [P({ kind: "service", catalogId: "301906" })] })), {
+      hero: {
+        createDocument: async (pid, dt, actions) => {
+          if (actions.length) throw new Error(`HERO HTTP 500 (${Object.keys(actions[0])[0]})`);
+          t.log.offers.push([pid, dt, actions]);
+          return { id: 90, nr: null };
+        },
+      },
+    });
+    const r: any = await decideSuggestion({ suggestionId: "S1", decision: "accept" }, t.deps);
+    expect(t.log.offers).toEqual([[5, 171301, []]]);
+    expect(r).toMatchObject({ documentId: 90, positions: 0 });
+    // drei Versuche: Folgedokument, nur Kopie, Stammdaten
+    expect(r.warnings.join(" ")).toMatch(/add_positions_from_document.*add_positions_from_document.*add_existing_service/);
+    expect(t.log.suggestions[0][1]).toBe("send_document");
   });
 
   it("ohne Projekt: Kontakt + Projekt anlegen, dann die AB daran", async () => {
