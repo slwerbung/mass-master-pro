@@ -8,6 +8,8 @@ export interface AddresseeUser {
   name: string;
   /** Adressen, unter denen er persoenlich angeschrieben wird (klein geschrieben) */
   emails: string[];
+  /** Kategorien, die er nicht sieht (Einstellungen → Benutzer; nur Mitarbeiter) */
+  hiddenCategories?: string[];
 }
 
 export interface AddresseeMail { to_addrs?: string[] | null; subject?: string | null; body_text?: string | null }

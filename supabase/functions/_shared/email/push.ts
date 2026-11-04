@@ -8,6 +8,7 @@
 // damit Kategorie, Zusammenfassung und Entscheidung schon feststehen. Aeltere Mails (Rueckstand) werden nicht gemeldet.
 
 import { addresseeOf, type AddresseeUser } from "./addressee.ts";
+import { visibleTo } from "./access.ts";
 import { getConfig, setConfig } from "./config.ts";
 import { isRelevant, normalizeTopicConfig, type TopicConfig } from "./topics.ts";
 import { mailAudience } from "./users.ts";
@@ -45,7 +46,8 @@ export function planPushes(
   };
   for (const m of mails) {
     if (m.direction !== "in") continue;
-    const users = audience.get(m.account_id) ?? [];
+    // Wer die Kategorie gesperrt hat, bekommt dazu nichts (und ist auch nicht „Empfaenger“ der Mail).
+    const users = visibleTo(audience.get(m.account_id) ?? [], m.category);
     if (!users.length) continue;
     const decide = !m.decided_at && isRelevant(m, cfg);
     const to = decide ? addresseeOf(m, users) : null;

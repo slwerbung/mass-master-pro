@@ -8,8 +8,10 @@ import {
 import { api, invokeFn } from "@/lib/api";
 import type { Account, MessageRow } from "@/lib/types";
 import { CATEGORIES, CATEGORY_LABELS, type Category } from "@/lib/shared";
+import { useMe, visibleCategories } from "@/lib/me";
 import { Badge, Button, ErrorBox, Input, Spinner } from "@/components/ui";
 import { CategoryChip } from "@/components/CategoryChip";
+import { HeroLink } from "@/components/HeroLink";
 import { FilterMenu } from "@/components/FilterMenu";
 import { cn, errorText, formatDateTime, pct } from "@/lib/utils";
 
@@ -82,6 +84,7 @@ export default function Messages() {
   useEffect(() => { setSelected(new Set()); }, [queryKey, page]);
 
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("list_accounts") });
+  const me = useMe();
   const list = useQuery({
     queryKey: ["messages", query, page],
     queryFn: () => api<{ messages: MessageRow[]; total: number }>("list_messages", { ...query, limit: PAGE, offset: page * PAGE }),
@@ -231,7 +234,7 @@ export default function Messages() {
                 {!inTrash && (
                   <>
                     <FilterMenu align="right" label="Kategorie setzen" icon={<Tag className="h-3.5 w-3.5" />} value="" onChange={(v) => v && bulk.mutate({ op: "category", category: v as Category })}
-                      options={CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABELS[c] }))} />
+                      options={visibleCategories(me.data).map((c) => ({ value: c, label: CATEGORY_LABELS[c] }))} />
                     <Button size="sm" variant="outline" className="rounded-full" disabled={busy} onClick={() => bulk.mutate({ op: "reprocess" })}>
                       <RefreshCw className="h-3.5 w-3.5" /> Neu verarbeiten
                     </Button>
@@ -270,7 +273,7 @@ export default function Messages() {
                     <CategoryChip category={m.category} />
                     {m.confidence != null && m.confidence < 0.7 && <Badge variant="warn">unsicher {pct(m.confidence)}</Badge>}
                     {m.beleg_state === "portal_offen" && <Badge variant="warn">Portal{m.beleg_vendor ? `: ${m.beleg_vendor}` : ""}</Badge>}
-                    {m.hero_project_match_id && <Badge variant="outline">HERO #{m.hero_project_match_id}</Badge>}
+                    {m.hero_project_match_id && <HeroLink inLink id={m.hero_project_match_id} nr={m.hero_project_nr} />}
                     {m.has_attachments && <Paperclip className="h-3.5 w-3.5 text-muted-foreground" aria-label="Anhänge" />}
                     {m.draft_message_id && <PenLine className="h-3.5 w-3.5 text-muted-foreground" aria-label="Entwurf" />}
                     {m.correction_note && <GraduationCap className="h-3.5 w-3.5 text-amber-700" aria-label="Von dir korrigiert" />}

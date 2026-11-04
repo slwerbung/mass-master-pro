@@ -8,6 +8,7 @@ import type { ComposePrefill, ComposeProject, SendAccount } from "@/lib/types";
 import { Button, ErrorBox, Input, Select, Spinner, Switch, Textarea } from "@/components/ui";
 import { SignaturePreview } from "@/components/SignaturePreview";
 import { ProjectSearch } from "@/components/ProjectSearch";
+import { HeroLink } from "@/components/HeroLink";
 import { errorText } from "@/lib/utils";
 
 type Mode = "reply" | "replyAll" | "forward";
@@ -229,13 +230,13 @@ export default function Compose() {
           <div className="flex flex-wrap items-center gap-2">
             <BookOpen className="h-4 w-4 text-muted-foreground" />
             {project
-              ? <span>Ins HERO-Logbuch von <b>{project.nr ?? `Projekt ${project.id}`}</b>{project.name ? ` · ${project.name}` : ""}</span>
+              ? <span>Ins HERO-Logbuch von <b>{project.nr ?? `Projekt ${project.id}`}</b>{project.name ? ` · ${project.name}` : ""} <HeroLink id={project.id} label="HERO" className="align-middle" /></span>
               : <span className="text-muted-foreground">Kein Projekt – nur im Logbuch, wenn der Assistent es sicher erkennt (Thread, Projektnummer)</span>}
             <Button variant="ghost" size="sm" onClick={() => setPickProject(!pickProject)}>{project ? "ändern" : "Projekt wählen"}</Button>
             {project && <Button variant="ghost" size="sm" onClick={() => setProject(null)}>entfernen</Button>}
           </div>
           {pickProject && (
-            <ProjectSearch selectedId={project?.id} onPick={(h) => { setProject({ id: h.id, nr: h.nr, name: h.name }); setPickProject(false); }} />
+            <ProjectSearch selectedId={project?.id} autoFocus onPick={(h) => { setProject({ id: h.id, nr: h.nr, name: h.name }); setPickProject(false); }} />
           )}
         </div>
 

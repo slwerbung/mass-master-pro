@@ -5,6 +5,7 @@ import type { Topic, TopicView } from "@/lib/topics";
 import { TOPIC_REASON_LABELS } from "@/lib/shared";
 import { Badge, Card, CardContent, ErrorBox, Spinner } from "@/components/ui";
 import { TopicActions } from "@/components/TopicActions";
+import { HeroLink } from "@/components/HeroLink";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 
 const VIEWS: { key: TopicView; label: string; hint: string }[] = [
@@ -57,6 +58,7 @@ function TopicRow({ t, view }: { t: Topic; view: TopicView }) {
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {t.from && <span>mit {t.from}</span>}
+        {t.projectId && <HeroLink id={t.projectId} label="HERO-Projekt" />}
         <span>{t.messageCount} {t.messageCount === 1 ? "Mail" : "Mails"}</span>
         {when && <span>{when}</span>}
         {t.note && <span className="text-foreground">„{t.note}“</span>}

@@ -224,6 +224,10 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
   Benachrichtigungen. VAPID-Schlüssel erzeugt der Server in `email_config.push_vapid` – nie in `CONFIG_KEYS` aufnehmen (sonst liest das
   Adminmenü den privaten Schlüssel). Jede Mail einmal (`pushed_at`).
 - Beim Senden gewähltes Projekt (`email_sent.project_id`) ordnet die zurückkommende Kopie sicher zu → Logbuch wie eingehend (`matchStage`).
+- **Gesperrte Kategorien** je Mitarbeiter (`email_user_prefs.hidden_categories`, Einstellungen → Benutzer): `MailUser.hiddenCategories`;
+  jede neue Abfrage auf Mails/Vorschläge braucht neben `scopeAccounts` auch `scopeCategories`, Einzelmails `assertVisible`/`assertMessages`.
+- „Jetzt abrufen“: `email-sync`/`email-process` nehmen jeden Mail-App-Benutzer an, beschränkt auf seine Postfächer. HERO-Projektlink:
+  `login.hero-software.de/partner/Projects/view/<project_match.id>` (`HeroLink.tsx`).
 - `apps/mail/src/lib/shared.ts` ist eine Kopie von `_shared/email/types.ts` (`npm run sync-shared`; ein Test prüft die Gleichheit).
 - Tests: `npm run test:unit` (vitest) + `deno test` für `draftMime.deno_test.ts`; Typprüfung der Functions mit
   `deno check --config supabase/functions/<fn>/deno.json supabase/functions/<fn>/index.ts`, der App mit `npm run typecheck` in `apps/mail`.

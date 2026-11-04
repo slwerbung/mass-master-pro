@@ -10,7 +10,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
-import { canAccount } from "../_shared/email/access.ts";
+import { canAccount, seesCategory } from "../_shared/email/access.ts";
 import { accountPassword, buildLlmDeps, getConfig } from "../_shared/email/config.ts";
 import { generateDraft, replySubject, type DraftMsg } from "../_shared/email/draft.ts";
 import { imapDraftWriter } from "../_shared/email/draftMime.ts";
@@ -38,6 +38,7 @@ Deno.serve(async (req) => {
       .eq("id", String(body.messageId || "")).maybeSingle();
     if (!m) return fail("Mail nicht gefunden.");
     if (!canAccount(user, m.account_id)) return fail("Kein Zugriff auf dieses Postfach.", { code: "forbidden" });
+    if (user.accountIds !== null && !seesCategory(user, m.category)) return fail("Diese Kategorie ist für dich gesperrt.", { code: "forbidden" });
     if (m.direction !== "in") return fail("Für ausgehende Mails gibt es keinen Entwurf.");
     if (body.action === "forward_beleg" && m.category !== "beleg" && !(m.extracted as any)?.beleg?.is_booking_document) return fail("Nur Belege lassen sich an Lexware weiterleiten.");
     const { data: acc } = await sb.from("email_accounts").select("*").eq("id", m.account_id).maybeSingle();

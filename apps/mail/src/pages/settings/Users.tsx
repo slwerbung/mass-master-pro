@@ -5,13 +5,35 @@ import { UserPlus } from "lucide-react";
 import { api } from "@/lib/api";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Select, Spinner, Switch } from "@/components/ui";
 import { errorText } from "@/lib/utils";
+import { CATEGORIES, CATEGORY_LABELS } from "@/lib/shared";
 
 type Role = "admin" | "mitarbeiter";
-interface MailUserRow { id: string; name: string; email: string | null; role: Role; active: boolean; captfix: boolean; accountIds: string[]; self: boolean }
+interface MailUserRow { id: string; name: string; email: string | null; role: Role; active: boolean; captfix: boolean; accountIds: string[]; hiddenCategories?: string[]; self: boolean }
 interface AccountLite { id: string; label: string; address: string }
 
 const PASSWORD_MIN = 10;
-const empty = { name: "", email: "", password: "", role: "mitarbeiter" as Role, accountIds: [] as string[] };
+const empty = { name: "", email: "", password: "", role: "mitarbeiter" as Role, accountIds: [] as string[], hiddenCategories: [] as string[] };
+
+/** Gesperrte Kategorien als Haken: Mails darin sieht der Mitarbeiter nirgends und bekommt dafür keine Benachrichtigung. */
+function CategoryPicks({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        {CATEGORIES.map((c) => (
+          <label key={c} className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={value.includes(c)}
+              onChange={(e) => onChange(e.target.checked ? [...value, c] : value.filter((x) => x !== c))} />
+            {CATEGORY_LABELS[c]}
+          </label>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Angehakt = gesperrt: Mails dieser Kategorien erscheinen für ihn weder in den Listen noch unter „Zu entscheiden“, und er bekommt dafür keine
+        Push-Nachricht (z. B. „Beleg / Rechnung“ für Rechnungen und Gutschriften). Wird eine Mail erst später so einsortiert, verschwindet sie dann.
+      </p>
+    </div>
+  );
+}
 
 /** Postfaecher als Haken (Admins sehen ohnehin alle). */
 function AccountPicks({ accounts, value, onChange, disabled }: { accounts: AccountLite[]; value: string[]; onChange: (v: string[]) => void; disabled?: boolean }) {
@@ -66,7 +88,10 @@ export default function Users() {
             </Field>
           </div>
           {n.role === "mitarbeiter" && (
-            <Field label="Postfächer"><AccountPicks accounts={accs} value={n.accountIds} onChange={(v) => setN({ ...n, accountIds: v })} /></Field>
+            <>
+              <Field label="Postfächer"><AccountPicks accounts={accs} value={n.accountIds} onChange={(v) => setN({ ...n, accountIds: v })} /></Field>
+              <Field label="Gesperrte Kategorien"><CategoryPicks value={n.hiddenCategories} onChange={(v) => setN({ ...n, hiddenCategories: v })} /></Field>
+            </>
           )}
           <Button
             onClick={() => create.mutate()}
@@ -88,10 +113,10 @@ export default function Users() {
 
 function UserRow({ user, accounts, onSaved }: { user: MailUserRow; accounts: AccountLite[]; onSaved: () => void }) {
   const [edit, setEdit] = useState(false);
-  const [d, setD] = useState({ name: user.name, role: user.role, active: user.active, accountIds: user.accountIds, password: "" });
+  const [d, setD] = useState({ name: user.name, role: user.role, active: user.active, accountIds: user.accountIds, hiddenCategories: user.hiddenCategories ?? [], password: "" });
   const save = useMutation({
     mutationFn: () => api("save_user", {
-      id: user.id, name: d.name, role: d.role, accountIds: d.accountIds,
+      id: user.id, name: d.name, role: d.role, accountIds: d.accountIds, hiddenCategories: d.role === "mitarbeiter" ? d.hiddenCategories : [],
       ...(user.captfix ? {} : { active: d.active }), ...(d.password ? { password: d.password } : {}),
     }),
     onSuccess: () => { toast.success("Gespeichert"); setEdit(false); setD({ ...d, password: "" }); onSaved(); },
@@ -111,7 +136,10 @@ function UserRow({ user, accounts, onSaved }: { user: MailUserRow; accounts: Acc
         {user.self && <Badge variant="secondary">du</Badge>}
         <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setEdit(!edit)}>{edit ? "Schließen" : "Bearbeiten"}</Button>
       </div>
-      <div className="mt-1 text-xs text-muted-foreground">Zugang: {access}</div>
+      <div className="mt-1 text-xs text-muted-foreground">
+        Zugang: {access}
+        {user.role === "mitarbeiter" && !!user.hiddenCategories?.length && <> · gesperrt: {user.hiddenCategories.map((c) => CATEGORY_LABELS[c as keyof typeof CATEGORY_LABELS] ?? c).join(", ")}</>}
+      </div>
       {edit && (
         <div className="mt-3 space-y-3 border-t pt-3">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -132,7 +160,10 @@ function UserRow({ user, accounts, onSaved }: { user: MailUserRow; accounts: Acc
             )}
           </div>
           {d.role === "mitarbeiter" && (
-            <Field label="Postfächer"><AccountPicks accounts={accounts} value={d.accountIds} onChange={(v) => setD({ ...d, accountIds: v })} /></Field>
+            <>
+              <Field label="Postfächer"><AccountPicks accounts={accounts} value={d.accountIds} onChange={(v) => setD({ ...d, accountIds: v })} /></Field>
+              <Field label="Gesperrte Kategorien"><CategoryPicks value={d.hiddenCategories} onChange={(v) => setD({ ...d, hiddenCategories: v })} /></Field>
+            </>
           )}
           {user.captfix && <p className="text-xs text-muted-foreground">Passwort und Aktiv/Inaktiv dieses Mitarbeiters werden in CaptFix verwaltet. Zugang zur Mail-App entziehen: alle Postfächer abwählen.</p>}
           <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending || d.name.trim().length < 2 || (!!d.password && d.password.length < PASSWORD_MIN)}>

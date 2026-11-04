@@ -7,6 +7,8 @@
 
 import type { MailUser } from "./http.ts";
 import type { AddresseeUser } from "./addressee.ts";
+import { normalizeHidden } from "./access.ts";
+import { CATEGORIES } from "./types.ts";
 
 export type MailRole = "admin" | "mitarbeiter";
 
@@ -19,6 +21,8 @@ export interface MailUserRow {
   /** Konto gehoert zu einem CaptFix-Mitarbeiter (Passwort/aktiv dort verwalten) */
   captfix: boolean;
   accountIds: string[];
+  /** Kategorien, die er nicht sieht (nur Mitarbeiter) */
+  hiddenCategories: string[];
   self: boolean;
 }
 
@@ -30,6 +34,7 @@ export interface UserInput {
   role: MailRole | null;
   active: boolean | null;
   accountIds: string[] | null;
+  hiddenCategories: string[] | null;
 }
 
 export const PASSWORD_MIN = 10;
@@ -51,12 +56,13 @@ export function parseUserInput(body: Record<string, any>): UserInput {
   const accountIds = has("accountIds")
     ? [...new Set((Array.isArray(body.accountIds) ? body.accountIds : []).map(String).filter(Boolean))]
     : null;
+  const hiddenCategories = has("hiddenCategories") ? normalizeHidden(body.hiddenCategories, CATEGORIES) : null;
   if (!id) {
     if (!name) throw new Error("Bitte einen Namen eintragen.");
     if (!email) throw new Error("Bitte die E-Mail-Adresse für die Anmeldung eintragen.");
     if (!password) throw new Error(`Bitte ein Passwort mit mindestens ${PASSWORD_MIN} Zeichen vergeben.`);
   }
-  return { id, name, email: id ? null : email, password, role: role as MailRole | null, active, accountIds };
+  return { id, name, email: id ? null : email, password, role: role as MailRole | null, active, accountIds, hiddenCategories };
 }
 
 /** Was ein Admin an einem bestehenden Konto aendern darf (sich selbst nicht aussperren, CaptFix-Konten nicht umbauen). */
@@ -96,16 +102,18 @@ async function authEmails(sb: any): Promise<Map<string, string | null>> {
 }
 
 export async function listMailUsers(sb: any, self: Pick<MailUser, "id">): Promise<MailUserRow[]> {
-  const [profiles, links, emails] = await Promise.all([
+  const [profiles, links, emails, prefs] = await Promise.all([
     sb.from("profiles").select("id, display_name, role, is_active, employee_id").in("role", ["admin", "mitarbeiter"]).order("display_name"),
     sb.from("email_account_users").select("account_id, user_id"),
     authEmails(sb),
+    sb.from("email_user_prefs").select("user_id, hidden_categories"),
   ]);
+  const hidden = new Map<string, string[]>((must(prefs) as any[]).map((r) => [r.user_id, (r.hidden_categories ?? []).map(String)]));
   const byUser = new Map<string, string[]>();
   for (const l of must(links) as any[]) (byUser.get(l.user_id) ?? byUser.set(l.user_id, []).get(l.user_id)!).push(String(l.account_id));
   return (must(profiles) as any[]).map((p) => ({
     id: p.id, name: p.display_name, email: emails.get(p.id) ?? null, role: p.role, active: p.is_active !== false,
-    captfix: !!p.employee_id, accountIds: byUser.get(p.id) ?? [], self: p.id === self.id,
+    captfix: !!p.employee_id, accountIds: byUser.get(p.id) ?? [], hiddenCategories: hidden.get(p.id) ?? [], self: p.id === self.id,
   }));
 }
 
@@ -119,6 +127,11 @@ async function setAccounts(sb: any, userId: string, accountIds: string[]): Promi
   const add = accountIds.filter((a) => !current.includes(a));
   if (drop.length) must(await sb.from("email_account_users").delete().eq("user_id", userId).in("account_id", drop));
   if (add.length) must(await sb.from("email_account_users").insert(add.map((account_id) => ({ account_id, user_id: userId }))));
+}
+
+async function setHidden(sb: any, userId: string, hiddenCategories: string[]): Promise<void> {
+  must(await sb.from("email_user_prefs").upsert({ user_id: userId, hidden_categories: hiddenCategories, updated_at: new Date().toISOString() }, { onConflict: "user_id" }));
+  audienceCache = null;
 }
 
 /** Anlegen (ohne id) oder aendern. Gibt die id zurueck. */
@@ -135,6 +148,7 @@ export async function saveMailUser(sb: any, self: Pick<MailUser, "id">, body: Re
     const id = data.user.id as string;
     must(await sb.from("profiles").upsert({ id, display_name: input.name, role: input.role ?? "mitarbeiter", is_active: true }, { onConflict: "id" }));
     if (input.accountIds) await setAccounts(sb, id, input.accountIds);
+    if (input.hiddenCategories) await setHidden(sb, id, input.hiddenCategories);
     return { id, created: true };
   }
 
@@ -153,6 +167,7 @@ export async function saveMailUser(sb: any, self: Pick<MailUser, "id">, body: Re
     if (error) throw new Error(`Passwort: ${error.message}`);
   }
   if (input.accountIds) await setAccounts(sb, input.id, input.accountIds);
+  if (input.hiddenCategories) await setHidden(sb, input.id, input.hiddenCategories);
   return { id: input.id, created: false };
 }
 
@@ -186,12 +201,14 @@ export function personalEmails(userId: string, emails: string[], mailboxes: { ad
  */
 export async function mailAudience(sb: any): Promise<Map<string, AddresseeUser[]>> {
   if (audienceCache && Date.now() - audienceCache.at < 300_000) return audienceCache.value;
-  const [profiles, links, accounts, emails] = await Promise.all([
+  const [profiles, links, accounts, emails, prefs] = await Promise.all([
     sb.from("profiles").select("id, display_name, role, is_active, employees(email)").in("role", ["admin", "mitarbeiter"]).eq("is_active", true),
     sb.from("email_account_users").select("account_id, user_id"),
     sb.from("email_accounts").select("id, address, username"),
     authEmails(sb).catch(() => new Map<string, string | null>()),
+    sb.from("email_user_prefs").select("user_id, hidden_categories"),
   ]);
+  const hidden = new Map<string, string[]>(((prefs?.data ?? []) as any[]).map((r) => [r.user_id, (r.hidden_categories ?? []).map(String)]));
   const linkRows = must(links) as any[];
   const mailboxes = (must(accounts) as any[]).flatMap((a) => {
     const assignees = linkRows.filter((l) => l.account_id === a.id).map((l) => String(l.user_id));
@@ -200,7 +217,10 @@ export async function mailAudience(sb: any): Promise<Map<string, AddresseeUser[]
   const people = new Map<string, { user: AddresseeUser; admin: boolean }>();
   for (const p of must(profiles) as any[]) {
     const mails = personalEmails(p.id, [emails.get(p.id), p.employees?.email].filter(Boolean) as string[], mailboxes);
-    people.set(p.id, { user: { id: p.id, name: String(p.display_name || ""), emails: mails }, admin: p.role === "admin" });
+    const admin = p.role === "admin";
+    // Admins sehen immer alles; gesperrte Kategorien gelten nur fuer Mitarbeiter.
+    const user: AddresseeUser = { id: p.id, name: String(p.display_name || ""), emails: mails, hiddenCategories: admin ? [] : hidden.get(p.id) ?? [] };
+    people.set(p.id, { user, admin });
   }
   const out = new Map<string, AddresseeUser[]>();
   for (const a of must(accounts) as any[]) out.set(a.id, [...people.values()].filter((x) => x.admin).map((x) => x.user));

@@ -1,10 +1,12 @@
-// Abholen (pg_cron jede Minute, ein Aufruf je aktivem Postfach; oder per Admin „Jetzt abrufen").
+// Abholen (pg_cron jede Minute, ein Aufruf je aktivem Postfach; oder per Klick auf „Jetzt abrufen“ in der Mail-App:
+// Admin fuer alle Postfaecher, ein Mitarbeiter nur fuer seine eigenen).
 //
 // Postfach-Lock (`locked_until`) verhindert, dass zwei Laeufe dasselbe Postfach
 // gleichzeitig bearbeiten. Am Ende stoesst die Function email-process an.
 
 import { createClient } from "@supabase/supabase-js";
-import { fail, isCronCall, ok, preflight, readJson, requireAdmin } from "../_shared/email/http.ts";
+import { fail, isCronCall, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
+import { canAccount } from "../_shared/email/access.ts";
 import { accountPassword } from "../_shared/email/config.ts";
 import { fetchNew, withImap } from "../_shared/email/imap.ts";
 import { parseRaw } from "../_shared/email/parseRaw.ts";
@@ -63,12 +65,13 @@ Deno.serve(async (req) => {
   if (pre) return pre;
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const cron = await isCronCall(req, sb);
-  if (!cron && !(await requireAdmin(req, sb))) return fail("Nicht erlaubt.", { code: "unauthorized" });
+  const user = cron ? null : await requireMailUser(req, sb);
+  if (!cron && !user) return fail("Nicht erlaubt.", { code: "unauthorized" });
 
   const body = await readJson(req);
   const origin = Deno.env.get("SUPABASE_URL")!;
   const cronSecret = cron ? req.headers.get("x-cron-secret") : null;
-  // Dieselbe Berechtigung an email-process weitergeben (Cron-Secret oder Admin-Sitzung).
+  // Dieselbe Berechtigung an email-process weitergeben (Cron-Secret oder Sitzung des Benutzers).
   const authHeaders: Record<string, string> = cron
     ? { "x-cron-secret": cronSecret! }
     : { authorization: req.headers.get("authorization") || "" };
@@ -76,6 +79,11 @@ Deno.serve(async (req) => {
   if (!ids.length) {
     const { data } = await sb.from("email_accounts").select("id").eq("enabled", true);
     ids = (data || []).map((r: any) => r.id);
+  }
+  // Mitarbeiter: nur die eigenen Postfaecher.
+  if (user) {
+    if (body.accountId && !canAccount(user, String(body.accountId))) return fail("Kein Zugriff auf dieses Postfach.", { code: "forbidden" });
+    ids = ids.filter((id) => canAccount(user, id));
   }
   const results = [];
   for (const id of ids) results.push(await syncOne(sb, id, origin, cronSecret, authHeaders));

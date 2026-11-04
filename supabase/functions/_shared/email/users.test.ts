@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { checkUpdate, parseUserInput, personalEmails } from "./users.ts";
 
 const self = { id: "me" };
-const base = { id: null, name: null, email: null, password: null, role: null, active: null, accountIds: null };
+const base = { id: null, name: null, email: null, password: null, role: null, active: null, accountIds: null, hiddenCategories: null };
 
 describe("Benutzer anlegen/aendern: Eingaben", () => {
   it("Neues Konto braucht Name, E-Mail und Passwort", () => {
@@ -16,6 +16,7 @@ describe("Benutzer anlegen/aendern: Eingaben", () => {
   it("Aendern: fehlende Felder bleiben unveraendert, E-Mail ist fest", () => {
     expect(parseUserInput({ id: "u1", email: "neu@x.de" })).toEqual({ ...base, id: "u1" });
     expect(parseUserInput({ id: "u1", accountIds: [] }).accountIds).toEqual([]);
+    expect(parseUserInput({ id: "u1", hiddenCategories: ["beleg", "gibtsnicht", "beleg"] }).hiddenCategories).toEqual(["beleg"]);
     expect(() => parseUserInput({ id: "u1", role: "kunde" })).toThrow(/Rolle/);
   });
 });
