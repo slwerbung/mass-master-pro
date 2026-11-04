@@ -9,8 +9,10 @@
  * kein Sparen in der App etwas. Bleibt die Kamera IN der App, ist die App
  * im Vordergrund und wird nicht beendet.
  *
- * Die System-Kamera bleibt als Ausweg ("Handy-Kamera"), falls die
- * Kamera-Freigabe fehlt oder das Geraet getUserMedia nicht kann.
+ * Die System-Kamera bleibt nur als Ausweg ("Handy-Kamera"), wenn diese
+ * Kamera gar nicht startet (Freigabe fehlt, kein getUserMedia). Im normalen
+ * Betrieb wird sie nicht mehr angeboten (Nov. 2026): Im Feld verlor sie das
+ * Foto weiterhin ("Zu wenig Speicher fuer vorherige Operation").
  *
  * Weitwinkel (Nov. 2026): Browser liefern die Ultraweitwinkel-Kamera auf
  * zwei Wegen, je nach Geraet:
@@ -18,7 +20,7 @@
  *    kleiner als der Startwert, z. B. 0,5 – manche Android-Geraete, iPhone
  *    mit "Dual/Triple Camera") → Zoomknoepfe "0,5x / 1x / 2x";
  *  - als eigene Rueckkamera in enumerateDevices (iPhone "Ultraweitwinkel",
- *    Android mit mehreren "facing back") → Knopf "Objektiv wechseln".
+ *    Android mit mehreren "facing back") → Knopf "Kamera wechseln".
  * Die Wahl wird pro Geraet gemerkt (localStorage), damit Weitwinkel beim
  * naechsten Foto wieder da ist.
  */
@@ -77,13 +79,18 @@ async function listBackLenses(): Promise<Lens[]> {
   }
 }
 
-function lensName(lens: Lens, index: number): string {
+/**
+ * Zweite Zeile unter "Kamera wechseln". Nur wo der Browser es verraet
+ * (iPhone), steht dort "Weitwinkel"/"Tele"; Android nennt seine Kameras
+ * "camera2 2, facing back" – dann ehrlich "2 von 3" statt zu raten.
+ */
+function lensName(lens: Lens, index: number, count: number): string {
   if (TELE_RE.test(lens.label)) return "Tele";
   // iPhone: "Rückseitige Ultraweitwinkelkamera" / "Back Ultra Wide Camera".
   // "Dual Wide"/"Triple" sind virtuelle Kameras mit Zoom – die heissen "Auto".
-  if (/dual|triple|dreifach/i.test(lens.label)) return "Auto";
+  if (/dual|triple|dreifach/i.test(lens.label)) return "Automatik";
   if (ULTRA_RE.test(lens.label)) return "Weitwinkel";
-  return `Objektiv ${index + 1}`;
+  return `${index + 1} von ${count}`;
 }
 
 function formatZoom(z: number): string {
@@ -341,10 +348,7 @@ export function InAppCamera({ open, onCapture, onClose, onUseSystemCamera }: Pro
         </div>
       )}
       <div className="shrink-0 flex items-center justify-between px-6 py-5 safe-area-bottom">
-        <button type="button" onClick={onUseSystemCamera} className="text-white/70 text-xs flex flex-col items-center gap-1 w-16">
-          <Smartphone className="h-5 w-5" />
-          Handy-Kamera
-        </button>
+        <div className="w-20" />
         <button
           type="button"
           onClick={shoot}
@@ -357,17 +361,20 @@ export function InAppCamera({ open, onCapture, onClose, onUseSystemCamera }: Pro
             type="button"
             onClick={switchLens}
             disabled={busy}
-            className="text-white/80 text-xs flex flex-col items-center gap-1 w-16 disabled:opacity-40"
-            aria-label="Objektiv wechseln"
+            className="text-white text-xs flex flex-col items-center gap-1 w-20 leading-tight disabled:opacity-40"
+            aria-label="Kamera wechseln"
           >
-            <SwitchCamera className="h-5 w-5" />
+            <SwitchCamera className="h-6 w-6" />
+            <span>Kamera wechseln</span>
             {(() => {
               const idx = lenses.findIndex((l) => l.deviceId === lensId);
-              return idx >= 0 ? lensName(lenses[idx], idx) : "Objektiv";
+              return idx >= 0 ? (
+                <span className="text-white/60">{lensName(lenses[idx], idx, lenses.length)}</span>
+              ) : null;
             })()}
           </button>
         ) : (
-          <div className="w-16" />
+          <div className="w-20" />
         )}
       </div>
     </div>,
