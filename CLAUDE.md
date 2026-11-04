@@ -35,6 +35,13 @@ Kunden können Projekte online einsehen und freigeben.
 - Das HMAC-Token-System bleibt daneben bestehen; alle Edge Functions prüfen
   weiterhin dieses Token. `employee-auth`/`validate-customer` stellen beides aus.
 - Admin läuft weiterhin rein über Passwort + Edge Functions, ohne Auth-Konto.
+- **„Angemeldet bleiben“** (Mitarbeiter, Nov. 2026): Häkchen beim Passwort-Login
+  (Standard an). Gemerkt wird nur Mitarbeiter-ID/Name (`app_session_remember`),
+  kein Passwort. Läuft das 12-h-HMAC-Token ab bzw. bald ab, stellt
+  `employee-auth` `refresh` mit der im Browser gespeicherten Supabase-Session
+  (Bearer) ein neues aus (`renewEmployeeSession()` in `session.ts`; Aufruf aus
+  Login-Seite, `RoleGuard` und `SessionKeeper` in `App.tsx`). Deaktiviertes
+  Profil = kein neues Token. Abmelden (`clearSession`) vergisst beides.
 - Details: `docs/auth-rollout.md`, `docs/phase2-rls.md`.
 
 ## Auth-Modell (Stand Batch A+B, April 2026 – Grundlage)
@@ -104,6 +111,10 @@ Kunden können Projekte online einsehen und freigeben.
   trotz aller Speicher-Sparmaßnahmen (Diagnose: viermal `stage = opened`
   binnen 2 Min.). Die System-Kamera bleibt nur als Ausweg („Handy-Kamera“).
   Neue Kamera-Einstiege nicht mehr direkt über `<input capture>` bauen.
+  Weitwinkel: `InAppCamera` bietet Zoomstufen ab `capabilities.zoom.min`
+  (z. B. 0,5×) und „Objektiv wechseln“ zwischen allen Rückkameras aus
+  `enumerateDevices` (iPhone-Ultraweitwinkel, Android mit mehreren
+  Rückkameras); die Wahl bleibt pro Gerät gemerkt.
 - Speicher beim Fotografieren (Messung Sept. 2026, Feld-Diagnose: Abbrüche
   immer bei `stage = opened`, meist ab dem 2. Foto):
   - Kamerafotos nur über `readImageFileForEditor` (`src/lib/imageFile.ts`)

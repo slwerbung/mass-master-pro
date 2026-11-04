@@ -5,7 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Suspense, lazy, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { getSession, clearSession } from "@/lib/session";
+import { getSession, clearSession, getRememberedLogin, renewEmployeeSession, sessionNeedsRenewal } from "@/lib/session";
 import { toast } from "sonner";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
 import { startHeroUploadWorker } from "@/lib/heroUploadWorker";
@@ -92,7 +92,44 @@ function setCachedValidation(role: string, token: string, userId: string, valid:
   } catch {}
 }
 
+// "Angemeldet bleiben": Ist das App-Token abgelaufen, der Mitarbeiter wollte
+// aber angemeldet bleiben, erst still erneuern – sonst landete jeder direkt
+// geoeffnete Projektlink nach 12 h auf dem Login.
 const RoleGuard = ({ allowedRoles, children }: { allowedRoles: string[]; children: React.ReactNode }) => {
+  const [renewing, setRenewing] = useState(
+    () => !getSession() && !!getRememberedLogin() && allowedRoles.includes("employee"),
+  );
+  useEffect(() => {
+    if (!renewing) return;
+    let mounted = true;
+    renewEmployeeSession().finally(() => { if (mounted) setRenewing(false); });
+    return () => { mounted = false; };
+  }, [renewing]);
+  if (renewing) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Sitzung wird geprüft...</div>;
+  return <RoleGuardInner allowedRoles={allowedRoles}>{children}</RoleGuardInner>;
+};
+
+/** Erneuert das Token eines gemerkten Mitarbeiters rechtzeitig vor Ablauf. */
+function SessionKeeper() {
+  useEffect(() => {
+    const check = () => {
+      if (document.visibilityState !== "visible") return;
+      if (getSession() && sessionNeedsRenewal()) void renewEmployeeSession();
+    };
+    check();
+    const timer = window.setInterval(check, 10 * 60 * 1000);
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("online", check);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("online", check);
+    };
+  }, []);
+  return null;
+}
+
+const RoleGuardInner = ({ allowedRoles, children }: { allowedRoles: string[]; children: React.ReactNode }) => {
   const session = getSession();
 
   // Compute initial validation state synchronously to avoid flash of "Sitzung wird geprüft..."
@@ -188,6 +225,7 @@ const App = () => {
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <SessionKeeper />
         {/* Brings the user back if the phone restarted the app while the camera was open. */}
         <CameraInterruptNotice />
         <MeetingRecorderProvider>

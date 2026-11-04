@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Shield, User, Users, ArrowLeft, Lock, Car, Caravan, UserPlus } from "lucide-react";
 import { toast } from "sonner";
-import { setSession, getSession, applySupabaseSession } from "@/lib/session";
+import { setSession, getSession, applySupabaseSession, rememberLogin, forgetLogin, getRememberedLogin, renewEmployeeSession } from "@/lib/session";
+import { Checkbox } from "@/components/ui/checkbox";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
@@ -66,6 +67,10 @@ const Auth = () => {
   const [customerName, setCustomerName] = useState("");
   const [loading, setLoading] = useState(false);
   const [lockoutSeconds, setLockoutSeconds] = useState(0);
+  // "Angemeldet bleiben": standardmaessig an – Mitarbeiter arbeiten meist am
+  // eigenen Geraet. An fremden/gemeinsamen Geraeten abwaehlen.
+  const [stayLoggedIn, setStayLoggedIn] = useState(true);
+  const [renewing, setRenewing] = useState(() => !getSession() && !!getRememberedLogin());
 
   // Where to send the user after a successful login. Comes from the
   // ?next=... query parameter set by RoleGuard when an unauthenticated
@@ -94,7 +99,17 @@ const Auth = () => {
       if (session.role === "admin") navigate(getPostLoginTarget("/admin"));
       else if (session.role === "employee") navigate(getPostLoginTarget("/projects"));
       else if (session.role === "customer") navigate(getPostLoginTarget("/customer"));
+      return;
     }
+    // Sitzung abgelaufen, aber "Angemeldet bleiben" gewaehlt: still erneuern.
+    if (!getRememberedLogin()) return;
+    let mounted = true;
+    renewEmployeeSession().then((renewed) => {
+      if (!mounted) return;
+      setRenewing(false);
+      if (renewed) navigate(getPostLoginTarget("/projects"));
+    });
+    return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
 
@@ -139,11 +154,15 @@ const Auth = () => {
   };
 
   // Gemeinsamer Abschluss beider Mitarbeiter-Login-Wege.
-  const finishEmployeeLogin = async (emp: { id: string; name: string }, token: string, expiresAt?: string) => {
+  // `canRemember`: nur der Weg ueber employee-auth hat eine Supabase-Session,
+  // mit der sich das Token spaeter erneuern laesst.
+  const finishEmployeeLogin = async (emp: { id: string; name: string }, token: string, expiresAt?: string, canRemember = false) => {
     resetRateLimit();
     const prev = getSession();
     if (prev?.id && prev.id !== emp.id) await indexedDBStorage.clearAll();
     setSession({ role: "employee", id: emp.id, name: emp.name, authToken: token, expiresAt });
+    if (canRemember && stayLoggedIn) rememberLogin({ role: "employee", id: emp.id, name: emp.name });
+    else forgetLogin();
     setLoginCache("employee", token, emp.id);
     toast.success(`Angemeldet als ${emp.name}`);
     navigate(getPostLoginTarget("/projects"));
@@ -199,7 +218,12 @@ const Auth = () => {
             refresh_token: authData.session.refresh_token,
           });
         }
-        await finishEmployeeLogin(selectedEmployee, authData.token, authData.expiresAt);
+        await finishEmployeeLogin(
+          selectedEmployee,
+          authData.token,
+          authData.expiresAt,
+          !!(authData.session?.access_token && authData.session?.refresh_token),
+        );
         return;
       }
 
@@ -278,6 +302,10 @@ const Auth = () => {
   };
 
   const isLocked = lockoutSeconds > 0;
+
+  if (renewing) {
+    return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Anmeldung wird fortgesetzt...</div>;
+  }
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -426,6 +454,13 @@ const Auth = () => {
                     onChange={(e) => setEmployeePassword(e.target.value)}
                     placeholder="Passwort eingeben" autoFocus disabled={isLocked}
                     onKeyDown={(e) => e.key === "Enter" && handleEmployeePasswordLogin()} />
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <Checkbox id="stay-logged-in" checked={stayLoggedIn} onCheckedChange={(v) => setStayLoggedIn(v === true)} className="mt-0.5" />
+                <div className="grid gap-0.5 leading-tight">
+                  <Label htmlFor="stay-logged-in" className="font-normal cursor-pointer">Angemeldet bleiben</Label>
+                  <span className="text-xs text-muted-foreground">Auf diesem Gerät bis zum Abmelden. An fremden Geräten abwählen.</span>
                 </div>
               </div>
               {isLocked && <p className="text-sm text-destructive text-center">Login gesperrt – noch {lockoutSeconds} Sekunden</p>}
