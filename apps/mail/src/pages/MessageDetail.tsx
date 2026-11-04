@@ -6,7 +6,8 @@ import {
   ArrowLeft, Cpu, Download, FolderInput, FolderKanban, Forward, GraduationCap, ListChecks, MessagesSquare, Paperclip, PenLine, Receipt, RefreshCw, Reply, ReplyAll, Scale, ScanText, Send, Trash2, Undo2, Wand2,
 } from "lucide-react";
 import { api, invokeFn } from "@/lib/api";
-import { ProjectSearch } from "@/components/ProjectSearch";
+import { AssignProject } from "@/components/AssignProject";
+import { HeroLink } from "@/components/HeroLink";
 import { TeachBox } from "@/components/TeachBox";
 import { InstructBox } from "@/components/InstructBox";
 import { TopicActions } from "@/components/TopicActions";
@@ -15,7 +16,8 @@ import type { Topic } from "@/lib/topics";
 import { TOPIC_STATE_LABELS } from "@/lib/shared";
 import { MailBody } from "@/components/MailBody";
 import { Section } from "@/components/Section";
-import { CATEGORIES, CATEGORY_LABELS, type Category } from "@/lib/shared";
+import { CATEGORY_LABELS, type Category } from "@/lib/shared";
+import { useMe, visibleCategories } from "@/lib/me";
 import { Badge, Button, ErrorBox, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { CategoryChip } from "@/components/CategoryChip";
 import { errorText, formatDateTime, pct } from "@/lib/utils";
@@ -106,6 +108,7 @@ function DraftCard({ m, onChanged }: { m: any; onChanged: () => void }) {
 export default function MessageDetail() {
   const { id = "" } = useParams();
   const qc = useQueryClient();
+  const me = useMe();
   const q = useQuery({ queryKey: ["message", id], queryFn: () => api<Detail>("get_message", { id }) });
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [teach, setTeach] = useState(false);
@@ -120,11 +123,6 @@ export default function MessageDetail() {
     mutationFn: (body: Record<string, unknown>) => api<{ changed: number; learned: { pattern: string; category: string } | null }>("correct_message", { id, ...body }),
     onSuccess: (r) => {
       toast.success(r.learned ? `Gelernt: Mails von ${r.learned.pattern} sind künftig „${r.learned.category}“ (Regel angelegt).` : "Korrektur gespeichert – der Assistent lernt daraus."); qc.invalidateQueries({ queryKey: ["message", id] }); qc.invalidateQueries({ queryKey: ["messages"] }); },
-    onError: (e) => toast.error(errorText(e)),
-  });
-  const assign = useMutation({
-    mutationFn: (projectId: number) => invokeFn("email-action", { action: "assign", messageId: id, projectId }),
-    onSuccess: () => { toast.success("Zugeordnet und ins Logbuch geschrieben."); qc.invalidateQueries({ queryKey: ["message", id] }); qc.invalidateQueries({ queryKey: ["messages"] }); qc.invalidateQueries({ queryKey: ["overview"] }); },
     onError: (e) => toast.error(errorText(e)),
   });
   const forward = useMutation({
@@ -224,7 +222,7 @@ export default function MessageDetail() {
           <span>· {formatDateTime(m.sent_at)}</span>
           {m.answered_at && <Badge variant="good"><Reply className="h-3 w-3" /> Beantwortet am {formatDateTime(m.answered_at)}</Badge>}
           {m.user_forwarded_at && <Badge variant="good"><Forward className="h-3 w-3" /> Weitergeleitet am {formatDateTime(m.user_forwarded_at)}</Badge>}
-          {m.hero_project_match_id && <Badge variant="outline">{m.match_info?.projectNr ?? `HERO #${m.hero_project_match_id}`}</Badge>}
+          {m.hero_project_match_id && <HeroLink id={m.hero_project_match_id} nr={m.match_info?.projectNr} />}
           {openSuggestions > 0 && <Link to="/"><Badge variant="warn">{openSuggestions} Vorschlag/Vorschläge offen</Badge></Link>}
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/50 p-2.5">
@@ -233,7 +231,7 @@ export default function MessageDetail() {
           <p className="min-w-0 flex-1 basis-64 text-sm">{m.summary || "Noch keine Zusammenfassung."}</p>
           <Select className="h-8 w-52" value={m.category ?? ""} onChange={(e) => correct.mutate({ category: e.target.value })}>
             <option value="" disabled>Kategorie korrigieren …</option>
-            {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+            {visibleCategories(me.data).map((c) => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
           </Select>
         </div>
         {instruct && <InstructBox messageId={m.id} onCancel={() => setInstruct(false)} onExplain={() => { setInstruct(false); setTeach(true); }} />}
@@ -302,7 +300,8 @@ export default function MessageDetail() {
         <div className="space-y-3 text-sm">
           {m.hero_project_match_id ? (
             <p>
-              Projekt <b>{m.match_info?.projectNr ?? `#${m.hero_project_match_id}`}</b>{m.match_info?.projectName ? ` · ${m.match_info.projectName}` : ""}
+              Projekt <b>{m.match_info?.projectNr ?? `#${m.hero_project_match_id}`}</b>{m.match_info?.projectName ? ` · ${m.match_info.projectName}` : ""}{" "}
+              <HeroLink id={m.hero_project_match_id} label="in HERO öffnen" className="align-middle" />
               {m.match_method ? ` – ${m.match_method}${m.match_info?.certain ? " (sicher)" : " (vermutet)"}` : ""}
               {m.hero_logged_at ? ` · im Logbuch seit ${formatDateTime(m.hero_logged_at)}` : " · noch nicht im Logbuch"}
             </p>
@@ -311,7 +310,7 @@ export default function MessageDetail() {
           )}
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground">Projekt ändern / zuordnen</p>
-            <ProjectSearch selectedId={m.hero_project_match_id} onPick={(p) => { if (confirm(`Mail dem Projekt ${p.nr} zuordnen und ins HERO-Logbuch schreiben?`)) assign.mutate(p.id); }} />
+            <AssignProject messageId={m.id} selectedId={m.hero_project_match_id} />
             <p className="text-xs text-muted-foreground">Die Zuordnung wird als Korrektur gespeichert. Ein bereits geschriebener Logbuch-Eintrag bleibt am alten Projekt stehen (manuell in HERO prüfen).</p>
           </div>
           {d.suggestions.length > 0 && (

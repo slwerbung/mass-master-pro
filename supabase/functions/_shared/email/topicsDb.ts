@@ -8,6 +8,7 @@ import {
 } from "./topics.ts";
 import type { TopicDecision, TopicReason, TopicState } from "./types.ts";
 import { addresseeOf, type AddresseeUser } from "./addressee.ts";
+import { seesCategory, visibleTo } from "./access.ts";
 
 export interface TopicMail {
   id: string; direction: "in" | "out"; from_name: string; from_addr: string; subject: string; sent_at: string | null;
@@ -90,6 +91,8 @@ export interface Viewer {
   userId?: string;
   /** Postfach -> Mitarbeiter mit Zugriff (addressee.ts) */
   audience?: Map<string, AddresseeUser[]>;
+  /** Kategorien, die der Betrachter nicht sieht (Mails darin fallen aus seinen Themen) */
+  hiddenCategories?: string[];
 }
 
 /** Empfaenger der genannten Mails (nur ausdruecklich gerichtete; sonst fehlt der Eintrag). */
@@ -97,9 +100,10 @@ async function addressees(sb: any, ms: any[], audience: Map<string, AddresseeUse
   const out = new Map<string, AddresseeUser>();
   const ids = [...new Set(ms.filter((m) => (audience.get(m.account_id) ?? []).length > 1).map((m) => m.id))];
   for (const c of chunks(ids)) {
-    const rows = must(await sb.from("email_messages").select("id, account_id, to_addrs, subject, body_text").in("id", c)) as any[];
+    const rows = must(await sb.from("email_messages").select("id, account_id, category, to_addrs, subject, body_text").in("id", c)) as any[];
     for (const r of rows) {
-      const a = addresseeOf({ to_addrs: r.to_addrs, subject: r.subject, body_text: String(r.body_text ?? "").slice(0, 1500) }, audience.get(r.account_id) ?? []);
+      // Gerichtet sein kann eine Mail nur an jemanden, der ihre Kategorie sieht – sonst bliebe sie liegen.
+      const a = addresseeOf({ to_addrs: r.to_addrs, subject: r.subject, body_text: String(r.body_text ?? "").slice(0, 1500) }, visibleTo(audience.get(r.account_id) ?? [], r.category));
       if (a) out.set(r.id, a);
     }
   }
@@ -108,6 +112,7 @@ async function addressees(sb: any, ms: any[], audience: Map<string, AddresseeUse
 
 async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg: Map<string, string[]>, now: Date, viewer: Viewer | null = null): Promise<{ topics: Topic[]; irrelevant: string[] }> {
   const scope = viewer?.accountIds ?? null;
+  const hidden = viewer?.hiddenCategories ?? [];
   const threads: any[] = [];
   const msgs: any[] = [];
   for (const ids of chunks(threadIds)) {
@@ -127,7 +132,7 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
     const look: any[] = [];
     for (const th of threads) {
       if (scope && !scope.includes(th.account_id)) continue;
-      const rel = (byThread.get(th.id) ?? []).filter((m) => isRelevant(m, cfg));
+      const rel = (byThread.get(th.id) ?? []).filter((m) => isRelevant(m, cfg) && (!hidden.length || seesCategory({ hiddenCategories: hidden }, m.category)));
       look.push(...rel.filter((m) => !m.decided_at));
       if (rel.length) look.push(rel[rel.length - 1]);
     }
@@ -139,10 +144,14 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
   const irrelevant: string[] = [];
   for (const th of threads) {
     if (scope && !scope.includes(th.account_id)) continue;
-    const all = byThread.get(th.id) ?? [];
-    const rel = all.filter((m) => isRelevant(m, cfg));
+    const allRaw = byThread.get(th.id) ?? [];
     const sIds = sugg.get(th.id) ?? [];
-    if (!rel.length && !sIds.length) { irrelevant.push(th.id); continue; }
+    // „Irrelevant“ (wird abgeraeumt) entscheidet sich an allen Mails – nie an dem, was ein Betrachter sehen darf.
+    if (!allRaw.some((m) => isRelevant(m, cfg)) && !sIds.length) { irrelevant.push(th.id); continue; }
+    // Gesperrte Kategorien: diese Mails gibt es fuer den Betrachter nicht; bleibt nichts Relevantes, auch kein Thema.
+    const all = hidden.length ? allRaw.filter((m) => seesCategory({ hiddenCategories: hidden }, m.category)) : allRaw;
+    const rel = all.filter((m) => isRelevant(m, cfg));
+    if (hidden.length && !rel.length) continue;
     const when = (m: any) => m.sent_at ?? m.created_at ?? null;
     const lastOf = (xs: any[]) => xs.reduce<string | null>((a, m) => (when(m) && (!a || when(m) > a) ? when(m) : a), null);
     const outs = all.filter((m) => m.direction === "out");
@@ -238,11 +247,11 @@ export async function topicCounts(sb: any, now = new Date(), viewer: Viewer | nu
 }
 
 /** Thema einer einzelnen Mail (Detailansicht). null, wenn die Mail zu keinem Thema gehoert. */
-export async function topicOfThread(sb: any, threadId: string | null, now = new Date()): Promise<Topic | null> {
+export async function topicOfThread(sb: any, threadId: string | null, now = new Date(), viewer: Viewer | null = null): Promise<Topic | null> {
   if (!threadId) return null;
   const cfg = await loadTopicConfig(sb);
   const sugg = await openSuggestions(sb);
-  const { topics } = await buildTopics(sb, [threadId], cfg, new Map([[threadId, sugg.get(threadId) ?? []]]), now);
+  const { topics } = await buildTopics(sb, [threadId], cfg, new Map([[threadId, sugg.get(threadId) ?? []]]), now, viewer);
   return topics[0] ?? null;
 }
 

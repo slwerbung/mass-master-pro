@@ -10,8 +10,8 @@ import type { Gewerk } from "./gewerke.ts";
 import type { MatchInfo } from "./matchStage.ts";
 import { stepLabel } from "./steps.ts";
 import type { UploadItem } from "./attachments.ts";
-import { offerLogText, type OfferPayload } from "./offer.ts";
-import { buildConfirmationActions, confirmationLogText, type ConfirmationPayload, type ConfirmationPosition } from "./confirmation.ts";
+import { buildOfferAttempts, offerLogText, type OfferPayload } from "./offer.ts";
+import { buildConfirmationAttempts, confirmationLogText, type ConfirmationPayload, type ConfirmationPosition } from "./confirmation.ts";
 import type { DocumentKind, HeroDocument } from "./hero.ts";
 import type { StepIds } from "./steps.ts";
 
@@ -344,20 +344,27 @@ async function prepareOffer(s: SuggestionRow, p: OfferPayload, deps: ActionDeps,
   if (kind === "angebot") {
     if (!config.offerTypeId) warnings.push("Dokumenttyp „Angebot“ ist nicht konfiguriert – bitte das Angebot in HERO von Hand anlegen.");
     else {
-      const actions = (p.positions ?? []).filter((x) => x.serviceId != null && x.quantity != null && x.quantity > 0)
-        .map((x) => ({ add_existing_service: { supplyServiceId: Number(x.serviceId), quantity: Number(x.quantity) } }));
-      try {
-        documentId = (await hero!.createDocument(projectId, config.offerTypeId, actions)).id;
-      } catch (e) {
+      // Versuche der Reihe nach (ein gescheiterter Aufruf legt in HERO nichts an), zuletzt ein leeres Angebot.
+      const attempts = buildOfferAttempts(p.positions ?? []);
+      const errors: string[] = [];
+      for (const a of attempts) {
+        try {
+          documentId = (await hero!.createDocument(projectId, config.offerTypeId, a.actions)).id;
+          warnings.push(...a.hints);
+          break;
+        } catch (e) {
+          errors.push(String((e as Error).message).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120));
+        }
+      }
+      if (!documentId) {
         try {
           documentId = (await hero!.createDocument(projectId, config.offerTypeId, [])).id;
-          warnings.push(`Positionen konnten nicht ins Angebot übernommen werden (stehen im Logbuch): ${(e as Error).message}`.slice(0, 300));
+          if (errors.length) warnings.push(`Positionen konnten nicht ins Angebot übernommen werden (stehen im Logbuch): ${errors.join(" | ")}`.slice(0, 300));
+          else if ((p.positions ?? []).length) warnings.push("Keine Position mit HERO-Leistung – bitte im Angebot ergänzen (siehe Logbuch).");
         } catch (e2) {
           warnings.push(`Angebot konnte nicht angelegt werden (bitte in HERO von Hand): ${(e2 as Error).message}`.slice(0, 300));
         }
       }
-      const missing = (p.positions ?? []).length - actions.length;
-      if (documentId && missing > 0) warnings.push(`${missing} Position(en) ohne HERO-Leistung oder Menge – bitte im Angebot ergänzen (siehe Logbuch).`);
       if (documentId) {
         await deps.store.createSuggestion(s.message_id, "send_document", sendPayload("offer", documentId, null, projectId, project.nr, s, null)).catch(() => {});
       }
@@ -414,17 +421,7 @@ async function createConfirmation(s: SuggestionRow, p: any, deps: ActionDeps, wa
 
   // Ab hier existiert das Projekt: Fehler sind Hinweise (sonst entstuende beim Wiederholen ein zweites Projekt).
   const positions = mergePositions(orig.positions ?? [], p.positions);
-  const { actions, hints } = buildConfirmationActions(positions);
-  warnings.push(...hints);
-  let doc: { id: number | null; nr: string | null } = { id: null, nr: null };
-  try {
-    doc = await hero!.createDocument(projectId, Number(typeId), actions);
-  } catch (e) {
-    warnings.push(`Positionen konnten nicht in die AB übernommen werden (stehen im Logbuch): ${(e as Error).message}`.slice(0, 300));
-    try { doc = await hero!.createDocument(projectId, Number(typeId), []); } catch (e2) {
-      warnings.push(`AB konnte nicht angelegt werden – bitte in HERO von Hand: ${(e2 as Error).message}`.slice(0, 300));
-    }
-  }
+  const doc = await createConfirmationDocument(hero!, projectId, Number(typeId), positions, orig.sources ?? [], warnings);
 
   // 2. Schritt (nur freigegebene Ziele)
   const toStepId = Number(p.toStepId) || null;
@@ -436,7 +433,34 @@ async function createConfirmation(s: SuggestionRow, p: any, deps: ActionDeps, wa
   // 3. Logbuch + Folge-Vorschlag „AB versenden"
   await hero!.addLogbook(projectId, confirmationLogText({ ...orig, positions }, doc.nr)).catch((e) => warnings.push(`Logbuch: ${(e as Error).message}`));
   if (doc.id) await store.createSuggestion(s.message_id, "send_document", sendPayload("confirmation", doc.id, doc.nr, projectId, projectNr, s, { ...orig, ...p }));
-  return { projectId, projectNr, documentId: doc.id, positions: positions.filter((x) => x.include).length };
+  return { projectId, projectNr, documentId: doc.id, positions: doc.positions ? positions.filter((x) => x.include).length : 0 };
+}
+
+/**
+ * AB als Entwurf anlegen: Versuche aus `buildConfirmationAttempts` der Reihe nach (ein gescheiterter Aufruf legt in
+ * HERO nichts an), zuletzt eine leere AB. Jeder Rueckfall steht als Hinweis im Ergebnis.
+ */
+async function createConfirmationDocument(
+  hero: ActionHero, projectId: number, typeId: number, positions: ConfirmationPosition[], sources: ConfirmationPayload["sources"], warnings: string[],
+): Promise<{ id: number | null; nr: string | null; positions: boolean }> {
+  const errors: string[] = [];
+  for (const a of buildConfirmationAttempts(positions, sources)) {
+    try {
+      const doc = await hero.createDocument(projectId, typeId, a.actions);
+      if (errors.length) warnings.push(`Positionen ${a.label} (der direkte Weg scheiterte: ${errors[0]})`.slice(0, 300));
+      warnings.push(...a.hints);
+      return { ...doc, positions: true };
+    } catch (e) {
+      errors.push(String((e as Error).message).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120));
+    }
+  }
+  if (errors.length) warnings.push(`Positionen konnten nicht in die AB übernommen werden (stehen im Logbuch): ${errors.join(" | ")}`.slice(0, 300));
+  try {
+    return { ...(await hero.createDocument(projectId, typeId, [])), positions: false };
+  } catch (e2) {
+    warnings.push(`AB konnte nicht angelegt werden – bitte in HERO von Hand: ${(e2 as Error).message}`.slice(0, 300));
+    return { id: null, nr: null, positions: false };
+  }
 }
 
 const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;

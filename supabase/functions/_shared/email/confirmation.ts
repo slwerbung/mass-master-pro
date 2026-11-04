@@ -18,8 +18,16 @@ import { runTask, type LlmDeps, type LlmRequest } from "./llm.ts";
 
 export interface SourceItem {
   uid: string;
-  /** HERO-Knotentyp, z. B. „product" (Artikel) oder eine Leistung mit Unterpositionen. */
+  /** HERO-Knotentyp. Achtung: in echten Dokumenten steht hier IMMER „product" – auch bei Leistungen (siehe `kind`). */
   type: string;
+  /** Echte Art laut `atType`: „service" = Leistung (SupplyService, mit Lohn/Material), „product" = Artikel (SupplyProduct). */
+  kind?: "service" | "product" | null;
+  /** Stammdaten-ID (`id` des Knotens): Leistungs-ID bzw. Artikel-ID; null bei frei angelegten Positionen. */
+  catalogId?: string | null;
+  /** Titel (Abschnitt), unter dem die Position in der Vorlage steht – wird beim Kopieren mitgenommen. */
+  sectionUid?: string | null;
+  /** Reihenfolge in der Vorlage. */
+  index?: number;
   name: string;
   description: string;
   nr: string | null;
@@ -47,10 +55,14 @@ const clean = (s: unknown, max = 300) => String(s ?? "").replace(/<[^>]+>/g, " "
 /** Preisbehaftete Positionen aus `published_customer_document_draft.data` (Tabellen-Knoten, auch verschachtelt). */
 export function itemsFromDraft(data: any): SourceItem[] {
   const out: SourceItem[] = [];
+  let section: string | null = null;
+  let index = 0;
   const walk = (nodes: any[]) => {
     for (const n of nodes ?? []) {
       if (!n || typeof n !== "object") continue;
-      if (n.type === "table" && Array.isArray(n.items)) { walk(n.items); continue; }
+      if (n.type === "table" && Array.isArray(n.items)) { section = null; walk(n.items); continue; }
+      index++;
+      if (n.type === "title") { section = n.uid ? String(n.uid) : null; continue; }
       if (TEXT_TYPES.has(String(n.type)) || n.disabled === true || n.optional === true) continue;
       const qty = num(n.quantity);
       const price = num(n.net_price_per_unit);
@@ -60,6 +72,9 @@ export function itemsFromDraft(data: any): SourceItem[] {
         uid: String(n.uid), type: String(n.type || "product"), name, description: clean(n.description, 400),
         nr: n.nr ? String(n.nr) : null, unit: String(n.unit_type || "Stk"), quantity: qty, netPrice: price,
         vat: num(n.vat_percent) ?? 19, supplyServiceId: num(n.supply_service_id),
+        kind: n.atType === "SupplyService" ? "service" : n.atType === "SupplyProduct" ? "product" : null,
+        catalogId: n.id != null && String(n.id) !== "0" && String(n.id) !== "" ? String(n.id) : null,
+        sectionUid: section, index,
       });
     }
   };
@@ -164,6 +179,11 @@ export interface ConfirmationPosition {
   vat: number;
   note: string | null;
   include: boolean;
+  /** siehe SourceItem (fehlen in Vorschlaegen von vor Nov. 2026) */
+  kind?: "service" | "product" | null;
+  catalogId?: string | null;
+  sectionUid?: string | null;
+  index?: number;
 }
 
 export interface ConfirmationPayload {
@@ -181,6 +201,8 @@ export interface ConfirmationPayload {
   formality: "du" | "sie" | null;
   recipient: string;
   toStepId: number | null;
+  /** Auf Anweisung „AB aus dem Angebot": alle Positionen des Angebots, ohne KI-Auswahl. */
+  fromOffer?: boolean;
 }
 
 /** Modell-Ergebnis pruefen: nur Positionen, die es in den Vorlagen wirklich gibt; jede hoechstens einmal. */
@@ -198,41 +220,110 @@ export function toConfirmationPositions(r: ConfirmationResult, docs: SourceDoc[]
     out.push({
       sourceDocId: hit.d.id, sourceDocNr: hit.d.nr, uid: hit.i.uid, type: hit.i.type, name: hit.i.name, description: hit.i.description,
       nr: hit.i.nr, unit: hit.i.unit, quantity: q, sourceQuantity: hit.i.quantity, netPrice: hit.i.netPrice, vat: hit.i.vat,
-      note: p.note, include: true,
+      note: p.note, include: true, ...itemRefs(hit.i),
     });
   }
   return out;
 }
 
+const itemRefs = (i: SourceItem) => ({ kind: i.kind ?? null, catalogId: i.catalogId ?? null, sectionUid: i.sectionUid ?? null, index: i.index });
+
+/** Alle Positionen einer Vorlage unveraendert (AB aus dem Angebot – „Angebot in AB wandeln"). */
+export function positionsFromDoc(d: SourceDoc): ConfirmationPosition[] {
+  return d.items.map((i) => ({
+    sourceDocId: d.id, sourceDocNr: d.nr, uid: i.uid, type: i.type, name: i.name, description: i.description, nr: i.nr, unit: i.unit,
+    quantity: i.quantity, sourceQuantity: i.quantity, netPrice: i.netPrice, vat: i.vat, note: null, include: true, ...itemRefs(i),
+  }));
+}
+
+export interface ConfirmationAttempt {
+  /** kurz, fuer Hinweise: wie die Positionen in die AB kamen */
+  label: string;
+  actions: Record<string, unknown>[];
+  hints: string[];
+}
+
+type SourceRef = { id: number; nr: string; kind: "ab" | "angebot" };
+
+const fmtQ = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 3 });
+
 /**
- * Die Aktionen fuer `create_document`. Artikel werden mit Name, Nummer, Einheit und Preis der Vorlage
- * neu angelegt (Menge laut Bestellung). Leistungen mit Unterpositionen werden kopiert, damit die
- * Kalkulation erhalten bleibt; weicht die Menge ab, kommt eine Leistung mit festem Preis der Vorlage.
+ * Versuche fuer `create_document`, in dieser Reihenfolge. Scheitert ein Versuch, legt HERO nichts an (live geprueft:
+ * nach HTTP 500 gab es kein Dokument) und der naechste folgt; zuletzt legt action.ts eine leere AB an.
+ *
+ * Grundsatz – wie „Folgedokument" in der HERO-Oberflaeche: Positionen werden aus der Vorlage KOPIERT
+ * (`add_positions_from_document`), mit Kalkulation, Texten und Preisen. Frueher wurden Artikel per
+ * `add_product_position` neu angelegt: In echten HERO-Dokumenten traegt aber JEDE Position `type: "product"`
+ * (auch Leistungen mit Lohn/Material), und genau diese Aktion endete live mit HTTP 500 (29.10. und 02.11.2026).
+ *
+ * 1. Kopie + Mengenaenderung (`update_supply_service`/`update_supply_product` per uid) + Bezug aufs Angebot
+ *    (`set_reference_documents`) + Rabatt des Angebots (`copy_sales_metadata`, nur bei genau einem Angebot)
+ * 2. nur die Kopie (Mengen der Vorlage; abweichende Mengen als Hinweis)
+ * 3. Positionen aus den HERO-Stammdaten (`add_existing_service` – derselbe Weg wie beim Angebot – bzw.
+ *    `add_product_position_by_id`) mit der bestellten Menge; Texte/Preise dann aus den Stammdaten
  */
-export function buildConfirmationActions(positions: ConfirmationPosition[]): { actions: Record<string, unknown>[]; hints: string[] } {
-  const actions: Record<string, unknown>[] = [];
-  const hints: string[] = [];
-  for (const p of positions.filter((x) => x.include && x.quantity > 0)) {
-    if (p.type === "product") {
-      actions.push({
-        add_product_position: {
-          name: p.name, description: p.description || null, nr: p.nr, unit_type: p.unit,
-          quantity: p.quantity, net_price: p.netPrice, vat_percent: p.vat,
-        },
-      });
-    } else if (p.quantity === p.sourceQuantity) {
-      actions.push({ add_positions_from_document: { documentId: p.sourceDocId, selectedPositions: [p.uid], flowType: "copy" } });
-    } else {
-      actions.push({
-        create_supply_service: {
-          name: p.name, description: p.description || null, nr: p.nr, unit_type: p.unit, quantity: p.quantity,
-          net_price_per_unit: p.netPrice, vat_percent: p.vat, is_fixed_net_price: true,
-        },
-      });
-      hints.push(`„${p.name}“: Leistung mit festem Preis der Vorlage ${p.sourceDocNr} angelegt (Menge ${p.quantity} statt ${p.sourceQuantity}) – Kalkulation ggf. prüfen.`);
+export function buildConfirmationAttempts(positions: ConfirmationPosition[], sources: SourceRef[] = []): ConfirmationAttempt[] {
+  const inc = positions.filter((x) => x.include && x.quantity > 0);
+  if (!inc.length) return [];
+  const kindOf = new Map(sources.map((s) => [s.id, s.kind]));
+  const nrOf = new Map(sources.map((s) => [s.id, s.nr]));
+
+  // Je Vorlage eine Kopier-Aktion: Positionen in der Reihenfolge der Vorlage, jeweils mit ihrem Abschnittstitel.
+  const groups = new Map<number, ConfirmationPosition[]>();
+  for (const p of inc) groups.set(p.sourceDocId, [...(groups.get(p.sourceDocId) ?? []), p]);
+  const copies: Record<string, unknown>[] = [];
+  for (const [docId, list] of groups) {
+    const sorted = list.every((p) => typeof p.index === "number") ? [...list].sort((a, b) => a.index! - b.index!) : list;
+    const uids: string[] = [];
+    for (const p of sorted) {
+      if (p.sectionUid && !uids.includes(p.sectionUid)) uids.push(p.sectionUid);
+      if (!uids.includes(p.uid)) uids.push(p.uid);
     }
+    copies.push({ add_positions_from_document: { documentId: docId, selectedPositions: uids, flowType: kindOf.get(docId) === "angebot" ? "followup" : "copy" } });
   }
-  return { actions, hints };
+  const changed = inc.filter((p) => p.quantity !== p.sourceQuantity);
+  const updates = changed.map((p) => (p.kind === "product"
+    ? { update_supply_product: { uid: p.uid, quantity: p.quantity } }
+    : { update_supply_service: { uid: p.uid, quantity: p.quantity } }));
+  const offers = [...groups.keys()].filter((id) => kindOf.get(id) === "angebot");
+  const refs: Record<string, unknown>[] = offers.length
+    ? [{ set_reference_documents: { referenceDocumentIds: offers, referenceDocuments: offers.map((id) => nrOf.get(id) ?? String(id)).join(", ") } }]
+    : [];
+  const meta = groups.size === 1 && offers.length === 1 ? [{ copy_sales_metadata: { documentId: offers[0] } }] : [];
+
+  const attempts: ConfirmationAttempt[] = [];
+  attempts.push({ label: "aus der Vorlage kopiert", actions: [...copies, ...updates, ...refs, ...meta], hints: [] });
+  if (updates.length || refs.length || meta.length) {
+    attempts.push({
+      label: "aus der Vorlage kopiert (Mengen der Vorlage)", actions: copies,
+      hints: changed.map((p) => `„${p.name}“: Menge in HERO auf ${fmtQ(p.quantity)} ${p.unit} ändern (aus ${p.sourceDocNr} übernommen: ${fmtQ(p.sourceQuantity)}).`),
+    });
+  }
+  const catalog: Record<string, unknown>[] = [];
+  const missing: string[] = [];
+  for (const p of inc) {
+    const sid = Number(p.catalogId);
+    if (p.kind === "service" && Number.isInteger(sid) && sid > 0) catalog.push({ add_existing_service: { supplyServiceId: sid, quantity: p.quantity } });
+    else if (p.kind === "product" && p.catalogId) catalog.push({ add_product_position_by_id: { product_id: p.catalogId, quantity: p.quantity } });
+    else missing.push(p.name);
+  }
+  if (catalog.length) {
+    const docs = [...new Set(inc.map((p) => p.sourceDocNr))].join(", ");
+    attempts.push({
+      label: "aus den HERO-Stammdaten", actions: catalog,
+      hints: [
+        `Positionen aus den HERO-Stammdaten übernommen – Texte und Preise bitte mit ${docs} abgleichen.`,
+        ...(missing.length ? [`Nicht übernommen (bitte von Hand): ${missing.join(", ")}.`] : []),
+      ],
+    });
+  }
+  return attempts;
+}
+
+/** Erste Aktionsliste (Kompatibilitaet / Tests). */
+export function buildConfirmationActions(positions: ConfirmationPosition[], sources: SourceRef[] = []): { actions: Record<string, unknown>[]; hints: string[] } {
+  const a = buildConfirmationAttempts(positions, sources)[0];
+  return { actions: a?.actions ?? [], hints: a?.hints ?? [] };
 }
 
 export function confirmationLogText(p: Pick<ConfirmationPayload, "summary" | "positions" | "openPoints" | "sources">, docNr: string | null): string {

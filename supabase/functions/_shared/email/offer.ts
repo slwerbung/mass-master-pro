@@ -69,6 +69,8 @@ export function buildOfferRequest(m: OfferMsg, services: ServiceRow[], reference
         "",
         "Regeln:",
         "- Ordne jede angefragte Leistung einer Leistung aus dem Katalog zu (service_id). Passt keine, ist service_id null und description beschreibt die Leistung in eigenen Worten.",
+        "- Eine Katalogleistung nur, wenn sie inhaltlich wirklich passt (gleiches Produkt, gleiche Arbeit). Katalogeintraege mit Orts-, Kunden- oder Projektnamen (z. B. „… Winnenden“) sind Einzelfaelle eines anderen Auftrags – nicht verwenden.",
+        "- Arbeit nach Aufwand (Montage, Plakatierung, Demontage, Fahrt): die passende Arbeitsleistung aus dem Katalog (z. B. Montagearbeiten), unit „Std“; ohne genannte Stunden quantity null und note „nach Aufwand“.",
         "- Schaetze quantity und unit NUR aus den Angaben in der Mail (Stueckzahl, Quadratmeter, Meter). Steht nichts da, ist quantity null. Keine Preise, keine Zeiten, nichts erfinden.",
         "- enough_info = true NUR, wenn Leistung UND Umfang (Masse bzw. Stueckzahl) so klar sind, dass ein Angebot ohne Vor-Ort-Termin moeglich ist. Sonst false und missing nennt knapp, was fehlt (z. B. „Maße“, „Fotos vom Fahrzeug“, „Einsatzort“).",
         "- summary: ein Satz, was angefragt ist.",
@@ -103,6 +105,10 @@ export interface OfferPayload {
   positions: OfferPosition[];
 }
 
+/** Arbeit nach Aufwand: Stunden-Einheit oder ausdruecklich „nach Aufwand“. */
+export const byEffort = (p: { unit: string | null; note: string | null; description: string }) =>
+  /^(std|stunden?|h)\.?$/i.test(String(p.unit ?? "").trim()) || /aufwand|rapport/i.test(`${p.note ?? ""} ${p.description}`);
+
 /** Modell-Ergebnis in den Vorschlags-Payload uebersetzen; Leistungs-IDs, die es nicht gibt, werden verworfen. */
 export function toOfferPayload(r: OfferResult, services: ServiceRow[], projectId: number, projectNr: string | null): OfferPayload {
   const byId = new Map(services.map((s) => [s.id, s.name]));
@@ -113,11 +119,39 @@ export function toOfferPayload(r: OfferResult, services: ServiceRow[], projectId
       description: p.description.trim(), quantity: p.quantity != null && p.quantity > 0 ? p.quantity : null, unit: p.unit, note: p.note,
     };
   });
-  // Das Modell sagt „genug Angaben" – der Code prueft nach: mindestens eine Position, und jede mit Menge.
-  const enough = r.enough_info && positions.length > 0 && positions.every((p) => p.quantity != null);
+  // Das Modell sagt „genug Angaben" – der Code prueft nach: mindestens eine Position mit Menge, und jede mit Menge –
+  // ausser Arbeit nach Aufwand (Stunden): die wird nach Rapport abgerechnet und steht im Angebot mit Menge 1.
+  const enough = r.enough_info && positions.some((p) => p.quantity != null) && positions.every((p) => p.quantity != null || byEffort(p));
   const missing = [...r.missing];
   if (r.enough_info && !enough) missing.push("Mengen/Maße zu einzelnen Positionen");
   return { kind: enough ? "angebot" : "vor_ort", projectId, projectNr, summary: r.summary, missing, positions };
+}
+
+/**
+ * Aktionen fuer das Angebot (`create_document`), als Versuche in dieser Reihenfolge:
+ * 1. jede Position mit HERO-Leistung (`add_existing_service`, Preis/Text aus den Stammdaten) – ohne Menge mit
+ *    Menge 1 („nach Aufwand“, Stunden offen …) statt sie wegzulassen; Positionen ohne passende Leistung als
+ *    Hinweistext im Angebot (`add_text`), damit sie im Entwurf nicht fehlen;
+ * 2. nur die Leistungen (der seit Okt. 2026 live bewaehrte Weg).
+ * Hinweise sagen, was im Entwurf zu pruefen ist.
+ */
+export function buildOfferAttempts(positions: OfferPosition[]): { actions: Record<string, unknown>[]; hints: string[] }[] {
+  const services = positions.filter((x) => x.serviceId != null);
+  const rest = positions.filter((x) => x.serviceId == null && x.description.trim());
+  const qty = (x: OfferPosition) => (x.quantity != null && x.quantity > 0 ? x.quantity : 1);
+  const svc = services.map((x) => ({ add_existing_service: { supplyServiceId: Number(x.serviceId), quantity: qty(x) } }));
+  const guessed = services.filter((x) => !(x.quantity != null && x.quantity > 0)).map((x) => x.serviceName ?? x.description);
+  const qtyHint = guessed.length ? [`Menge 1 eingesetzt (bitte prüfen): ${guessed.join(", ")}.`] : [];
+  const restHint = rest.length ? [`Ohne passende HERO-Leistung – bitte im Angebot ergänzen: ${rest.map((x) => x.description).join(", ")}.`] : [];
+  const attempts: { actions: Record<string, unknown>[]; hints: string[] }[] = [];
+  if (rest.length) {
+    attempts.push({
+      actions: [...svc, ...rest.map((x) => ({ add_text: { text: `Noch zu kalkulieren: ${x.description}${x.quantity != null ? ` (${x.quantity}${x.unit ? ` ${x.unit}` : ""})` : ""}${x.note ? ` – ${x.note}` : ""}` } }))],
+      hints: [...qtyHint, ...(rest.length ? [`Als Text im Angebot, bitte kalkulieren: ${rest.map((x) => x.description).join(", ")}.`] : [])],
+    });
+  }
+  if (svc.length) attempts.push({ actions: svc, hints: [...qtyHint, ...restHint] });
+  return attempts;
 }
 
 export function offerLogText(p: OfferPayload): string {

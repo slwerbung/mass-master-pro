@@ -19,6 +19,8 @@ interface Plan {
   /** fehlt bei einer aelteren email-action */
   topic?: PlanTopic;
   offer: boolean;
+  /** AB-Entwurf aus dem Angebot im Projekt (fehlt bei einer aelteren email-action) */
+  confirmation?: boolean;
   appointments: Appointment[];
   /** weitere HERO-Aktionen (Ansprechpartner, Kontaktdaten, Status, Aufgabe …) */
   ops: HeroOp[];
@@ -92,8 +94,8 @@ export function InstructBox({ messageId, onCancel, onExplain, title }: { message
 
   const topicMode = plan?.topic?.mode ?? "keine";
   const hasFiles = !!plan?.files && (plan.files.hero || plan.files.dropbox);
-  const nothing = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointments.length && !(plan.ops ?? []).length && !hasFiles && topicMode === "keine";
-  const onlyTopic = plan && plan.project.mode === "keep" && !plan.offer && !plan.appointments.length && !(plan.ops ?? []).length && !hasFiles && topicMode !== "keine";
+  const nothing = plan && plan.project.mode === "keep" && !plan.offer && !plan.confirmation && !plan.appointments.length && !(plan.ops ?? []).length && !hasFiles && topicMode === "keine";
+  const onlyTopic = plan && plan.project.mode === "keep" && !plan.offer && !plan.confirmation && !plan.appointments.length && !(plan.ops ?? []).length && !hasFiles && topicMode !== "keine";
   const noTopic: PlanTopic = { mode: "keine", date: null, note: null };
   // „Kontakt gibt es schon“: ohne gewaehlten Kunden wird nichts angelegt (nie ein neuer Kontakt).
   const customerMissing = plan?.project.mode === "new" && plan.project.requireExisting && !plan.project.existingCustomer;
@@ -208,6 +210,11 @@ export function InstructBox({ messageId, onCancel, onExplain, title }: { message
           {p.offer && (
             <Row icon={<FileText className="h-4 w-4" />} onRemove={() => setPlan({ ...p, offer: false })}>
               Angebotsentwurf im Projekt anlegen (Positionen aus der Mail, Preise aus HERO)
+            </Row>
+          )}
+          {p.confirmation && (
+            <Row icon={<FileText className="h-4 w-4" />} onRemove={() => setPlan({ ...p, confirmation: false })}>
+              Auftragsbestätigung als Entwurf aus dem Angebot im Projekt (alle Positionen, Preise wie im Angebot)
             </Row>
           )}
           {p.appointments.map((a, i) => {

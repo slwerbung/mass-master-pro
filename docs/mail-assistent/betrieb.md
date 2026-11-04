@@ -198,19 +198,33 @@ Kommt eine Bestellung (Kategorie „Auftrag“ oder Signal „Angebot angenommen
    (höchstens 3) und das Angebot im Projekt (höchstens 2), jeweils mit Positionen aus `published_customer_document_draft.data`.
 2. **KI wählt** (Aufgabe `prepare_confirmation`, liest das Referenzwissen): welche Positionen bestellt sind und in welcher Menge.
    Namen, Artikelnummern, Einheiten und Preise kommen unverändert aus HERO. Was keiner Vorlage entspricht, steht als „Offen“ im Vorschlag.
-3. **Klick „(Projekt +) AB-Entwurf in HERO anlegen“**: ggf. Kontakt + Projekt; dann `create_document` (Typ Auftragsbestätigung, `publish: false`)
-   mit Aktionen – Artikel als `add_product_position` (Preis der Vorlage, Menge neu), Leistungen gleicher Menge per `add_positions_from_document`
-   (Kalkulation bleibt), Leistungen mit anderer Menge als `create_supply_service` mit festem Vorlagenpreis (Hinweis). Schritt nach Wahl
-   (Detailgespräch/Projektplanung, nur Whitelist), Logbuch-Eintrag mit Positionen und offenen Punkten.
+3. **Klick „(Projekt +) AB-Entwurf in HERO anlegen“**: ggf. Kontakt + Projekt; dann `create_document` (Typ Auftragsbestätigung, `publish: false`).
+   Die Positionen werden wie „Folgedokument“ in HERO aus der Vorlage **kopiert** (`add_positions_from_document`, je Vorlage einmal, mit
+   Abschnittstiteln; aus einem Angebot `flowType: "followup"` plus `set_reference_documents` und `copy_sales_metadata`), andere Mengen
+   danach per `update_supply_service`/`update_supply_product` (uid). Scheitert das, folgen Rückfälle: nur die Kopie (Mengen als Hinweis),
+   dann Stammdaten (`add_existing_service` / `add_product_position_by_id`), zuletzt eine leere AB. Ein gescheitertes `create_document` legt in
+   HERO nichts an (live gesehen). Schritt nach Wahl (Detailgespräch/Projektplanung, nur Whitelist), Logbuch-Eintrag mit Positionen und offenen Punkten.
+   *Warum (Nov. 2026):* früher wurde jede Position per `add_product_position` neu angelegt – live HTTP 500 (29.10. und 02.11.), die ABs blieben
+   leer. In echten HERO-Dokumenten trägt **jede** Position `type: "product"`; ob Leistung oder Artikel, steht nur in `atType`
+   (`SupplyService`/`SupplyProduct`), die Stammdaten-ID in `id` (`supply_service_id` ist 0).
 4. **In HERO prüfen und abschließen** (PDF erzeugen). Danach in der Mail-App die Karte **„Prüfen & versenden“** (`send_document`):
    Status wird live gelesen; versendet wird nur ein abgeschlossenes Dokument (Status ≥ 100, PDF da) desselben Projekts, mit einer HERO-Vorlage
    des passenden Kontexts (`CUSTOMER_DOCUMENT_CONFIRMATION`, PER DU/SIE nach Anrede) über HERO `send_mail` – Betreff und Text aus der Vorlage,
    PDF als Anhang. Danach Status „Versendet“ und Logbuch. Ist das Dokument noch Entwurf, bleibt die Karte offen.
 
-Auch **Angebote** profitieren: „Angebot vorbereiten“ legt das Angebot jetzt mit den HERO-Leistungen und Mengen an (`add_existing_service`,
-Preise aus den Stammdaten) und schlägt danach ebenfalls „Prüfen & versenden“ vor.
+**Angebot in AB wandeln per Anweisung** („Nein, anders …“, z. B. „AB aus Angebot erstellen“): der Plan bekommt den Baustein
+`confirmation`. Ausgeführt wird er über `confirmationSuggester.fromOffer`: neuestes abgeschlossenes Angebot im Projekt, **alle** Positionen,
+ohne KI; ein offener AB-Vorschlag der Mail wird ersetzt; danach derselbe Weg wie oben (Entwurf → „Prüfen & versenden“). Ohne Projekt oder ohne
+abgeschlossenes Angebot meldet die Anweisung das als Fehler.
 
-**Live noch zu prüfen** (aus der Entwicklungsumgebung nicht ohne echten Schreibzugriff möglich): erste AB anlegen und ansehen; ersten Versand
+Auch **Angebote** profitieren: „Angebot vorbereiten“ legt das Angebot jetzt mit den HERO-Leistungen und Mengen an (`add_existing_service`,
+Preise aus den Stammdaten) und schlägt danach ebenfalls „Prüfen & versenden“ vor. Leistungen ohne Menge (z. B. Montage nach Aufwand) kommen mit
+Menge 1 hinein (Hinweis) statt zu fehlen, Positionen ohne passende Leistung als Text „Noch zu kalkulieren: …“ (`add_text`; scheitert das, nur
+die Leistungen). Arbeit nach Aufwand (Einheit Std bzw. „nach Aufwand“) ohne Stunden macht aus einem sonst klaren Angebot keinen Vor-Ort-Termin mehr.
+
+**Live noch zu prüfen** (aus der Entwicklungsumgebung nicht ohne echten Schreibzugriff möglich): erste AB anlegen und ansehen – kam der
+erste Versuch durch (Folgedokument mit Bezug aufs Angebot) oder ein Rückfall (steht als Hinweis im Ergebnis)? Ob `add_positions_from_document`
+die Kunden-Dokument-ID (`customer_documents.id`) erwartet und die uids beim Kopieren erhalten bleiben, ist nur per Introspection belegt; ersten Versand
 an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorlage mit ersetzten Platzhaltern und PDF an?
 
 ## Mail-Liste und Mail-Ansicht
@@ -230,7 +244,8 @@ an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorl
 
 - **Seitenleiste:** „Neue Mail“, darunter die Kategorien als Ordner (Posteingang mit den Kundenkategorien, „Ablage“ mit dem Rest,
   dazu Gesendet und Papierkorb). Die Ordner sind Filter der Liste (`/mails?category=…`), die Zahl ist die Anzahl Mails ohne Papierkorb.
-  Am Handy bleiben die Kategorien im Filter „Kategorie“.
+  Am Handy (Hochformat) steckt die ganze Seitenleiste – Postfächer, Ordner, Einstellungen, Abmelden – hinter dem Menü-Knopf oben links
+  (Nov. 2026; vorher waren Postfächer und Einstellungen dort nicht erreichbar).
 - **Verfassen** (`/verfassen`): neu, **Antworten**, **Allen antworten** (alle Empfänger außer den eigenen Adressen), **Weiterleiten**
   (Originalanhänge wählbar, sofern noch gespeichert). Von (Postfach), An/Cc/Bcc, Betreff, Text, Dateien anhängen (zusammen höchstens
   15 MB), Zitat der Originalmail ein/aus. Aus dem Antwortentwurf: „Bearbeiten & senden“ übernimmt den KI-Text (ohne die Text-Signatur).
@@ -247,8 +262,32 @@ an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorl
   Text-Teil als Text nach „-- “. Bilder bitte als https-Link einbinden. Die Text-Signatur bleibt für die KI-Entwürfe.
 - Das Zitat stammt aus dem gespeicherten Text der Mail (bereinigt, ca. 6000 Zeichen); nach der Aufbewahrungsfrist fehlt es.
 
+## Gesperrte Kategorien je Benutzer (Nov. 2026)
+
+- Einstellungen → Benutzer → *Gesperrte Kategorien* (nur für Mitarbeiter; Admins sehen immer alles). Gespeichert in
+  `email_user_prefs.hidden_categories`, gelesen in `requireMailUser` (`MailUser.hiddenCategories`).
+- Wirkung: Mails dieser Kategorien fehlen in Liste, Ordnern, Zählern, „Zu entscheiden“, Themen, Vorschlägen und Verlauf; die Detailansicht,
+  Antworten/Weiterleiten, Entwürfe und alle Aktionen weisen sie ab (`assertMessages`/`assertVisible`, `scopeCategories` in `access.ts`).
+  Keine Push-Nachricht dafür (`planPushes` filtert mit `visibleTo`). Unklassifizierte Mails (Kategorie noch leer) sieht jeder, bis sie
+  einsortiert sind.
+- „An wen gerichtet“ zählt nur Benutzer, die die Kategorie sehen: Eine Rechnung „Hallo Jonas“ landet bei Jonas’ Sperre für Belege
+  trotzdem beim Admin unter „Zu entscheiden“ (sonst bliebe sie liegen). Das Abräumen irrelevanter Threads entscheidet nie nach Sicht
+  eines Betrachters.
+
+## HERO-Links und Projektsuche (Nov. 2026)
+
+- Überall, wo ein Projekt steht (Mail-Liste, Mail-Ansicht, Themen, Zu entscheiden, Projektsuche, Verfassen), öffnet ein Link das Projekt
+  in HERO (`https://login.hero-software.de/partner/Projects/view/<project_match.id>`, `components/HeroLink.tsx`).
+- Projektsuche (`ProjectSearch.tsx`): sucht beim Tippen, Enter/Lupe sofort; „WER-1234“, „wer 1234“ oder „1234“ setzt das exakte Projekt
+  (`relative_id`) an den Anfang. Zuordnen per Suche geht in der Mail-Ansicht (HERO-Zuordnung) und in jeder Themenkarte
+  („Projekt zuordnen …“, `AssignProject.tsx` → `email-action` `assign`). Im Vorschlag „Zu bestehendem Projekt“ zeigt eine Wahl aus der
+  Suche jetzt die richtige Nummer (vorher stand im Knopf weiter die ursprünglich vorgeschlagene).
+
 ## Abruf und Benachrichtigungen (Okt. 2026)
 
+- **„Jetzt abrufen“** (Nov. 2026, Seitenleiste bzw. Pfeil-Knopf oben am Handy): ruft `email-sync` sofort auf – Admin für alle
+  Postfächer, ein Mitarbeiter nur für seine eigenen. Läuft gerade der Minutentakt, meldet die App „Abruf läuft gerade schon“.
+  `email-sync` reicht die Sitzung an `email-process` weiter; beide akzeptieren dafür jetzt jeden Mail-App-Benutzer (vorher nur Admin).
 - **Abruf jede Minute** (`email-sync`, pg_cron `* * * * *`). Ein Lauf ohne neue Mails ist ein IMAP-Login; die KI läuft nur für neue
   Mails – mehr Takt kostet keine KI. `email-process` bleibt als Nachzügler alle 5 Minuten, nach neuen Mails startet ihn `email-sync` sofort.
 - **Große Mails** (> 8 MB, `bigMail.ts`): nur Kopfzeilen und Text werden geholt, die Anhänge stehen als Hinweis im Text („im Mailprogramm

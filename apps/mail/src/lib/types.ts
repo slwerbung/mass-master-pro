@@ -14,6 +14,8 @@ export interface MessageRow {
   confidence: number | null;
   summary: string | null;
   hero_project_match_id: number | null;
+  /** Projektnummer aus der Zuordnung (WER-1234), fehlt bei aelteren Zuordnungen */
+  hero_project_nr?: string | null;
   match_method: string | null;
   has_attachments: boolean;
   draft_message_id: string | null;

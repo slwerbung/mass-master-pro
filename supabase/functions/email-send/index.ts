@@ -12,7 +12,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser, type MailUser } from "../_shared/email/http.ts";
-import { AccessError, assertAccount, scopeAccounts } from "../_shared/email/access.ts";
+import { AccessError, assertAccount, assertVisible, scopeAccounts } from "../_shared/email/access.ts";
 import { accountPassword } from "../_shared/email/config.ts";
 import { addKeywords, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
 import { newMessageId } from "../_shared/email/draftMime.ts";
@@ -24,7 +24,7 @@ import {
 import { buildComposedMime, sendComposed } from "../_shared/email/composeSend.ts";
 
 const COMPANY_NAME = "SL WERBUNG";
-const MSG_COLS = "id, account_id, thread_id, message_id, refs, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, body_text, folder, current_folder, draft_message_id, draft_uid, draft_text, hero_project_match_id, hero_logged_at, match_info";
+const MSG_COLS = "id, account_id, category, thread_id, message_id, refs, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, body_text, folder, current_folder, draft_message_id, draft_uid, draft_text, hero_project_match_id, hero_logged_at, match_info";
 type Mode = "reply" | "replyAll" | "forward";
 const asMode = (m: unknown): Mode | null => (m === "reply" || m === "replyAll" || m === "forward" ? m : null);
 
@@ -100,7 +100,7 @@ const handlers: Record<string, (sb: any, body: any, user: MailUser) => Promise<u
     const mode = asMode(body.mode);
     if (!mode) throw new ComposeError("Unbekannte Art (reply, replyAll, forward).");
     const m = await loadMessage(sb, String(body.replyTo || ""));
-    assertAccount(user, m.account_id);
+    assertVisible(user, m);
     const own = await ownAddresses(sb);
     const recipients = mode === "forward"
       ? { to: [], cc: [], bcc: [] }
@@ -130,7 +130,7 @@ const handlers: Record<string, (sb: any, body: any, user: MailUser) => Promise<u
     const orig = body.replyTo ? await loadMessage(sb, String(body.replyTo)) : null;
     // Senden nur aus eigenen Postfaechern und nur zu Mails eigener Postfaecher.
     assertAccount(user, acc.id);
-    if (orig) assertAccount(user, orig.account_id);
+    if (orig) assertVisible(user, orig);
     const recipients = { to: parseAddressList(body.to), cc: parseAddressList(body.cc), bcc: parseAddressList(body.bcc) };
     checkRecipients(recipients);
     const subject = String(body.subject ?? "").trim().slice(0, 500);

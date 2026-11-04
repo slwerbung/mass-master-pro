@@ -50,6 +50,8 @@ export interface MailUser extends AdminUser {
   role: "admin" | "mitarbeiter";
   /** Postfaecher, die der Benutzer sieht; null = alle (Admin). */
   accountIds: string[] | null;
+  /** Kategorien, die er nicht sieht (Einstellungen → Benutzer); Admin: immer leer. */
+  hiddenCategories: string[];
 }
 
 /** Angemeldeter Benutzer mit aktivem Profil (Supabase-Auth-Sitzung im Authorization-Header). */
@@ -78,12 +80,16 @@ export async function requireAdmin(req: Request, sb: any): Promise<AdminUser | n
 export async function requireMailUser(req: Request, sb: any): Promise<MailUser | null> {
   const p = await sessionProfile(req, sb);
   if (!p) return null;
-  if (p.role === "admin") return { id: p.id, email: p.email, name: p.name, role: "admin", accountIds: null };
+  if (p.role === "admin") return { id: p.id, email: p.email, name: p.name, role: "admin", accountIds: null, hiddenCategories: [] };
   if (p.role !== "mitarbeiter") return null;
-  const { data: rows } = await sb.from("email_account_users").select("account_id").eq("user_id", p.id);
+  const [{ data: rows }, { data: prefs }] = await Promise.all([
+    sb.from("email_account_users").select("account_id").eq("user_id", p.id),
+    sb.from("email_user_prefs").select("hidden_categories").eq("user_id", p.id).maybeSingle(),
+  ]);
   const accountIds = (rows || []).map((r: any) => String(r.account_id));
   if (!accountIds.length) return null;
-  return { id: p.id, email: p.email, name: p.name, role: "mitarbeiter", accountIds };
+  const hiddenCategories = Array.isArray(prefs?.hidden_categories) ? prefs.hidden_categories.map(String) : [];
+  return { id: p.id, email: p.email, name: p.name, role: "mitarbeiter", accountIds, hiddenCategories };
 }
 
 export async function readJson(req: Request): Promise<Record<string, any>> {

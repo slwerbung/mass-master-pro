@@ -6,6 +6,7 @@ import { api, invokeFn } from "@/lib/api";
 import type { Suggestion } from "@/lib/suggestions";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { ProjectSearch } from "@/components/ProjectSearch";
+import { HeroLink } from "@/components/HeroLink";
 import { ConfirmationCard, SendDocumentCard } from "@/components/OrderCards";
 import {
   AlternativesCard, AlternativesPicker, Buttons, ExistingCustomerChoice, quoted, SuggestionCard, typeLabel, useDecide, useRejectAll,
@@ -32,7 +33,9 @@ function LinkCard({ s, embedded, onSkip }: { s: Suggestion } & AltProps) {
   const [projectId, setProjectId] = useState<number | null>(s.payload.projectId ?? null);
   const [text, setText] = useState<string>(s.payload.text ?? "");
   const [showSearch, setShowSearch] = useState(false);
-  const chosen = cands.find((c) => c.id === projectId);
+  // Aus der Suche gewaehlt (steht nicht unter den Kandidaten) – damit Knopf und Kurzinfo die richtige Nummer zeigen.
+  const [picked, setPicked] = useState<{ id: number; nr: string; name: string; stepName: string | null } | null>(null);
+  const chosen = cands.find((c) => c.id === projectId) ?? (picked?.id === projectId ? picked : undefined);
   return (
     <SuggestionCard
       s={s} embedded={embedded} brief={chosen ? `${chosen.nr} ${chosen.name || ""}` : projectId ? (s.payload.projectNr ?? `#${projectId}`) : `${cands.length} Projekte zur Auswahl`}
@@ -45,12 +48,21 @@ function LinkCard({ s, embedded, onSkip }: { s: Suggestion } & AltProps) {
               <input type="radio" name={s.id} checked={projectId === c.id} onChange={() => setProjectId(c.id)} />
               <b>{c.nr}</b> {c.name || "(ohne Name)"} <span className="text-xs text-muted-foreground">· {c.stepName ?? "?"}</span>
               {s.payload.projectId === c.id && <Badge variant="good" className="ml-auto">Vorschlag</Badge>}
+              <HeroLink id={c.id} label="HERO" className={s.payload.projectId === c.id ? "" : "ml-auto"} />
             </label>
           ))}
-          {!cands.length && projectId && <p className="text-sm">Projekt-ID {projectId}{s.payload.projectNr ? ` (${s.payload.projectNr})` : ""}</p>}
+          {picked && !cands.some((c) => c.id === picked.id) && (
+            <label className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm hover:bg-accent">
+              <input type="radio" name={s.id} checked={projectId === picked.id} onChange={() => setProjectId(picked.id)} />
+              <b>{picked.nr}</b> {picked.name || "(ohne Name)"} <span className="text-xs text-muted-foreground">· {picked.stepName ?? "?"}</span>
+              <Badge variant="secondary" className="ml-auto">aus der Suche</Badge>
+              <HeroLink id={picked.id} label="HERO" />
+            </label>
+          )}
+          {!cands.length && projectId && !picked && <p className="text-sm">Projekt-ID {projectId}{s.payload.projectNr ? ` (${s.payload.projectNr})` : ""}</p>}
         </div>
         <Button variant="ghost" size="sm" onClick={() => setShowSearch(!showSearch)}>{showSearch ? "Suche ausblenden" : "Anderes Projekt suchen"}</Button>
-        {showSearch && <ProjectSearch selectedId={projectId} onPick={(p) => { setProjectId(p.id); toast(`Gewählt: ${p.nr}`); }} />}
+        {showSearch && <ProjectSearch selectedId={projectId} autoFocus onPick={(p) => { setPicked(p); setProjectId(p.id); setShowSearch(false); toast(`Gewählt: ${p.nr}`); }} />}
         <Field label="Logbuch-Eintrag"><Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} /></Field>
     </SuggestionCard>
   );
@@ -64,7 +76,7 @@ function LogCard({ s, embedded }: { s: Suggestion } & AltProps) {
       s={s} embedded={embedded} brief={`${s.payload.projectNr ?? s.payload.projectId}${s.payload.projectName ? ` ${s.payload.projectName}` : ""}`}
       actions={<Buttons s={s} busy={decide.isPending} acceptLabel={`Ins Logbuch von ${s.payload.projectNr ?? `#${s.payload.projectId}`} schreiben`} onAccept={() => decide.mutate({ decision: "accept", edits: { text } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
-        <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>{s.payload.projectName ? ` · ${s.payload.projectName}` : ""}</p>
+        <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>{s.payload.projectName ? ` · ${s.payload.projectName}` : ""} <HeroLink id={s.payload.projectId} label="in HERO öffnen" className="align-middle" /></p>
         <Field label="Logbuch-Eintrag"><Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} /></Field>
     </SuggestionCard>
   );
@@ -80,7 +92,7 @@ function StepCard({ s, embedded }: { s: Suggestion } & AltProps) {
       s={s} embedded={embedded} brief={`${s.payload.projectNr ?? s.payload.projectId} → ${label ?? "?"}`}
       actions={<Buttons s={s} busy={decide.isPending} acceptLabel={`${s.payload.projectNr ?? `#${s.payload.projectId}`}: Status auf ${quoted(label)} setzen`} onAccept={() => decide.mutate({ decision: "accept", edits: { toStepId: stepId } })} onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })} />}
     >
-        <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>: {s.payload.reason}.</p>
+        <p className="text-sm">Projekt <b>{s.payload.projectNr ?? s.payload.projectId}</b>: {s.payload.reason}. <HeroLink id={s.payload.projectId} label="in HERO öffnen" className="align-middle" /></p>
         <Field label="Neuer Schritt">
           <Select value={stepId} onChange={(e) => setStepId(Number(e.target.value))}>
             <option value={s.payload.toStepId}>{s.payload.toLabel}</option>

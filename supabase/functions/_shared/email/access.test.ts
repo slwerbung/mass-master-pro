@@ -57,3 +57,45 @@ describe("Zugriff je Postfach", () => {
     await expect(assertMessages(sb, anna, ["gibtsnicht", null, undefined])).resolves.toBeUndefined();
   });
 });
+
+describe("Gesperrte Kategorien", () => {
+  it("seesCategory/visibleTo: Unklassifiziertes sieht jeder, gesperrte Kategorie niemand mit Sperre", async () => {
+    const { seesCategory, visibleTo } = await import("./access.ts");
+    const jonas = { hiddenCategories: ["beleg"] };
+    expect(seesCategory(jonas, "beleg")).toBe(false);
+    expect(seesCategory(jonas, "auftrag")).toBe(true);
+    expect(seesCategory(jonas, null)).toBe(true);
+    expect(seesCategory({}, "beleg")).toBe(true);
+    const users = [{ id: "s", hiddenCategories: [] }, { id: "j", hiddenCategories: ["beleg"] }];
+    expect(visibleTo(users, "beleg").map((u) => u.id)).toEqual(["s"]);
+    expect(visibleTo(users, "auftrag").map((u) => u.id)).toEqual(["s", "j"]);
+  });
+
+  it("normalizeHidden: nur bekannte Kategorien, keine Doppel", async () => {
+    const { normalizeHidden } = await import("./access.ts");
+    expect(normalizeHidden(["beleg", "beleg", "quatsch", 3], ["beleg", "auftrag"])).toEqual(["beleg"]);
+    expect(normalizeHidden("beleg", ["beleg"])).toEqual([]);
+  });
+
+  it("scopeCategories: Filter nur mit Sperre, unklassifizierte bleiben drin; eingebettet ueber referencedTable", async () => {
+    const { scopeCategories } = await import("./access.ts");
+    const calls: unknown[] = [];
+    const q: any = { or: (f: string, o?: unknown) => (calls.push(o ? [f, o] : [f]), q) };
+    scopeCategories(q, { hiddenCategories: [] });
+    expect(calls).toEqual([]);
+    scopeCategories(q, { hiddenCategories: ["beleg", "lieferant"] });
+    scopeCategories(q, { hiddenCategories: ["beleg"] }, "email_messages");
+    expect(calls).toEqual([
+      ["category.is.null,category.not.in.(beleg,lieferant)"],
+      ["category.is.null,category.not.in.(beleg)", { referencedTable: "email_messages" }],
+    ]);
+  });
+
+  it("assertMessages: Mail in gesperrter Kategorie wird abgewiesen, Admin nie", async () => {
+    const sb2 = fakeSb({ email_messages: [{ id: "b1", account_id: "a1", category: "beleg" }, { id: "k1", account_id: "a1", category: "auftrag" }] });
+    const jonas = { accountIds: ["a1"], hiddenCategories: ["beleg"] };
+    await expect(assertMessages(sb2, jonas, ["k1"])).resolves.toBeUndefined();
+    await expect(assertMessages(sb2, jonas, ["b1"])).rejects.toBeInstanceOf(AccessError);
+    await expect(assertMessages(sb2, { accountIds: null, hiddenCategories: ["beleg"] }, ["b1"])).resolves.toBeUndefined();
+  });
+});

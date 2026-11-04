@@ -52,3 +52,23 @@ describe("Zu entscheiden: nur was an mich (oder an alle) gerichtet ist", () => {
     expect(all.map((t) => t.id).sort()).toEqual(["t1", "t2"]);
   });
 });
+
+describe("Gesperrte Kategorien in den Themen", () => {
+  const sb2 = fakeSb({
+    email_config: [],
+    email_suggestions: [],
+    email_threads: [thread("t1"), thread("t2")],
+    email_messages: [
+      { ...mail("m1", "t1", "Hallo Jonas,\nanbei die Rechnung."), category: "beleg" },
+      mail("m2", "t2", "Hallo zusammen,\nwir brauchen ein Schild."),
+    ],
+  });
+  const aud = new Map([["a1", [{ id: "silas", name: "Silas Werner", emails: [] }, { id: "jonas", name: "Jonas Lang", emails: [], hiddenCategories: ["beleg"] }]]]);
+
+  it("Jonas sieht das Beleg-Thema nicht; Silas bekommt es zur Entscheidung, obwohl es an Jonas gerichtet ist", async () => {
+    const jonas = await listTopics(sb2, "entscheiden", now, { accountIds: ["a1"], userId: "jonas", audience: aud, hiddenCategories: ["beleg"] });
+    expect(jonas.map((t) => t.id)).toEqual(["t2"]);
+    const silas = await listTopics(sb2, "entscheiden", now, { accountIds: null, userId: "silas", audience: aud });
+    expect(silas.map((t) => t.id).sort()).toEqual(["t1", "t2"]);
+  });
+});

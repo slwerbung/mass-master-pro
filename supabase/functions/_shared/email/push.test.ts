@@ -37,6 +37,15 @@ describe("planPushes", () => {
   });
 });
 
+describe("planPushes: gesperrte Kategorien", () => {
+  const hidden = new Map([["A", [{ ...users[0], hiddenCategories: [] }, { ...users[1], hiddenCategories: ["beleg"] }]]]);
+  it("wer „Beleg“ gesperrt hat, bekommt dazu nichts – auch wenn die Mail an ihn gerichtet ist", () => {
+    const prefs = new Map([["j", { decide: true, incoming: true }], ["s", { decide: true, incoming: true }]]);
+    const r = planPushes([mail({ id: "B", category: "beleg", body_text: "Hallo Jonas,\nanbei die Rechnung." }), mail({ id: "K" })], hidden, prefs, TOPIC_DEFAULTS);
+    expect(ids(r)).toEqual({ s: { decide: ["B", "K"], incoming: [] }, j: { decide: ["K"], incoming: [] } });
+  });
+});
+
 describe("pushPayload", () => {
   it("eine Mail: Absender, Betreff, Zusammenfassung; mehrere: Liste", () => {
     expect(pushPayload("decide", [mail()])).toEqual({ title: "Zu entscheiden: Kunde GmbH", body: "Layout\nFragt nach dem Layout.", url: "/", tag: "mail-M1" });

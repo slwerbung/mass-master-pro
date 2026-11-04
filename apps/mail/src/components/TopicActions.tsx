@@ -2,12 +2,14 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlarmClock, CheckCheck, Eye, Reply, RotateCcw, Wand2 } from "lucide-react";
+import { AlarmClock, CheckCheck, Eye, FolderKanban, Reply, RotateCcw, Wand2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { inDays, SNOOZE_PRESETS, type Topic } from "@/lib/topics";
 import type { TopicDecision } from "@/lib/shared";
 import { Button, Input, Spinner } from "@/components/ui";
 import { InstructBox } from "@/components/InstructBox";
+import { AssignProject } from "@/components/AssignProject";
+import { HeroLink } from "@/components/HeroLink";
 import { cn, errorText, formatDate } from "@/lib/utils";
 
 const DONE_TEXT: Record<TopicDecision, string> = {
@@ -65,11 +67,11 @@ export function TopicActions({ topic, showDecide = true, withReply = true }: {
   withReply?: boolean;
 }) {
   const decide = useTopicDecide(topic.id);
-  const [panel, setPanel] = useState<null | "snooze" | "instruct">(null);
+  const [panel, setPanel] = useState<null | "snooze" | "instruct" | "project">(null);
   const shownIds = topic.newMessages.map((m) => m.id);
   const target = topic.newMessages[topic.newMessages.length - 1]?.id ?? topic.latestId;
   const busy = decide.isPending;
-  const toggle = (p: "snooze" | "instruct") => setPanel(panel === p ? null : p);
+  const toggle = (p: "snooze" | "instruct" | "project") => setPanel(panel === p ? null : p);
 
   if (topic.state === "erledigt" && !topic.due) {
     return (
@@ -89,6 +91,13 @@ export function TopicActions({ topic, showDecide = true, withReply = true }: {
             <Wand2 className="h-3.5 w-3.5" /> Anweisung …
           </Button>
         )}
+        {withReply && target && (
+          <Button size="sm" variant="outline" onClick={() => toggle("project")} className={panel === "project" ? "bg-accent" : ""}
+            title="Die Mail einem HERO-Projekt zuordnen (Suche nach Nummer, Name oder Kunde)">
+            <FolderKanban className="h-3.5 w-3.5" /> {topic.projectId ? "Anderes Projekt …" : "Projekt zuordnen …"}
+          </Button>
+        )}
+        {topic.projectId && <HeroLink id={topic.projectId} label="Projekt in HERO" className="h-8 px-2.5" />}
         {showDecide && topic.due && (
           <Button size="sm" variant="outline" onClick={() => decide.mutate({ decision: "weiter", messageIds: shownIds })} disabled={busy}
             title="Gesehen, nichts weiter zu tun – das Thema läuft weiter und wird überwacht">
@@ -106,6 +115,12 @@ export function TopicActions({ topic, showDecide = true, withReply = true }: {
       {panel === "snooze" && (
         <SnoozePanel busy={busy} onCancel={() => setPanel(null)}
           onSnooze={(until, note) => decide.mutate({ decision: "wiedervorlage", until, note, messageIds: shownIds }, { onSuccess: () => setPanel(null) })} />
+      )}
+      {panel === "project" && target && (
+        <div className="space-y-2 rounded-md border bg-muted/40 p-3">
+          <div className="text-sm font-medium">Mail einem HERO-Projekt zuordnen</div>
+          <AssignProject messageId={target} selectedId={topic.projectId} autoFocus onDone={() => setPanel(null)} />
+        </div>
       )}
       {panel === "instruct" && target && (
         <InstructBox messageId={target} title="Was soll passieren?" onCancel={() => setPanel(null)} />

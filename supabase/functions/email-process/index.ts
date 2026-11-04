@@ -5,7 +5,8 @@
 // (Laufzeitgrenze der Edge Function).
 
 import { createClient } from "@supabase/supabase-js";
-import { fail, isCronCall, ok, preflight, readJson, requireAdmin } from "../_shared/email/http.ts";
+import { fail, isCronCall, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
+import { canAccount } from "../_shared/email/access.ts";
 import { accountPassword, buildLlmDeps, getConfig } from "../_shared/email/config.ts";
 import { normalizeAutopilot } from "../_shared/email/autopilot.ts";
 import { actPending, type ActContext } from "../_shared/email/act.ts";
@@ -129,7 +130,10 @@ Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  if (!(await isCronCall(req, sb)) && !(await requireAdmin(req, sb))) return fail("Nicht erlaubt.", { code: "unauthorized" });
+  const cron = await isCronCall(req, sb);
+  // Ohne Cron: angestossen von „Jetzt abrufen“ (email-sync reicht die Sitzung weiter) – nur eigene Postfaecher.
+  const user = cron ? null : await requireMailUser(req, sb);
+  if (!cron && !user) return fail("Nicht erlaubt.", { code: "unauthorized" });
 
   const body = await readJson(req);
   let ids: string[] = body.accountId ? [String(body.accountId)] : [];
@@ -137,6 +141,7 @@ Deno.serve(async (req) => {
     const { data } = await sb.from("email_accounts").select("id").eq("enabled", true);
     ids = (data || []).map((r: any) => r.id);
   }
+  if (user) ids = ids.filter((id) => canAccount(user, id));
   const results = [];
   for (const id of ids) results.push(await processOne(sb, id));
   return ok(results);
