@@ -135,6 +135,48 @@ Deno.serve(async (req) => {
       });
     }
 
+    // -- refresh ----------------------------------------------------------
+    // "Angemeldet bleiben": Das HMAC-Token lebt nur 12 h. Statt es einfach
+    // langlebig zu machen, stellt diese Aktion ein neues aus – aber nur gegen
+    // eine gueltige Supabase-Session (Authorization: Bearer <access_token>).
+    // Die haelt der Browser selbst frisch (Refresh-Token, rotierend). Wer im
+    // Adminmenue deaktiviert wird (profiles.is_active = false), bekommt kein
+    // neues Token mehr; Abmelden beendet die Supabase-Session ganz.
+    if (action === "refresh") {
+      const jwt = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+      if (!jwt) return json({ valid: false, error: "Keine Sitzung" }, 401);
+      const { data: userRes, error: userErr } = await sb.auth.getUser(jwt);
+      const user = userRes?.user;
+      if (userErr || !user) return json({ valid: false, error: "Sitzung abgelaufen" }, 401);
+
+      const { data: profile } = await sb
+        .from("profiles")
+        .select("id, employee_id, is_active")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!profile?.employee_id) return json({ valid: false, error: "Kein Mitarbeiterkonto" }, 403);
+      if (!profile.is_active) return json({ valid: false, error: "Zugang deaktiviert" }, 403);
+
+      const { data: emp } = await sb
+        .from("employees")
+        .select("id, name")
+        .eq("id", profile.employee_id)
+        .maybeSingle();
+      if (!emp) return json({ valid: false, error: "Mitarbeiter nicht gefunden" }, 403);
+
+      const exp = Math.floor(Date.now() / 1000) + 60 * 60 * 12;
+      const token = await createSessionToken(
+        { role: "employee", userId: emp.id, exp },
+        getSessionSecret(),
+      );
+      return json({
+        valid: true,
+        token,
+        expiresAt: new Date(exp * 1000).toISOString(),
+        employee: { id: emp.id, name: emp.name },
+      });
+    }
+
     // -- create_login (admin) ---------------------------------------------
     if (action === "create_login") {
       if (!(await requireAdmin(body.token))) return json({ error: "Unauthorized" }, 401);
