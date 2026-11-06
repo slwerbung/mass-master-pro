@@ -347,6 +347,20 @@ kein Logbuch, kein Entwurf im Postfach); **Vorschläge** entstehen trotzdem, den
 * **Morgenübersicht:** API-Aktion `digest` + Karte „Übersicht“ auf der Startseite. Die 7-Uhr-Push-Meldung hängt an deinem bestehenden
   Morgen-Task und braucht dort nur einen Aufruf von `email-api` (`{"action":"digest"}`, Admin-Sitzung) – das lag außerhalb dieses Repos.
 
+## Deploy-Stand Nov. 2026: Lader für große Functions (Übergang)
+
+Am 06.11.2026 wurden die Functions ohne Supabase-CLI eingespielt (über das MCP-Werkzeug, jeweils `verify_jwt: false`).
+`email-send`, `email-sync` und `email-mailbox` liefen als gebündelter Code direkt hinein. `email-api`, `email-action`,
+`email-process` und `email-draft` waren dafür zu groß: Ihr gebündelter Code (esbuild, CJS) liegt in Teilen in
+`public.edge_code` (nur service_role, RLS ohne Policy, Migration `20261106084209_edge_code_blobs.sql`). Die deployte
+Function ist ein kleiner **Lader**: Er liest die Teile, prüft die SHA-256 gegen den fest eingetragenen Wert und führt
+den Code nur bei exakter Übereinstimmung aus (sonst Fehler, nichts läuft).
+
+* Ein normales `supabase functions deploy <name>` ersetzt den Lader durch den Quelltext – das ist der Weg zurück.
+* Sind alle vier so neu eingespielt, kann die Tabelle weg: `drop table public.edge_code;`
+* Wer an diesen vier Functions etwas ändert, muss sie per CLI einspielen – eine Änderung nur in `edge_code` greift
+  nicht (die Prüfsumme im Lader passt dann nicht mehr).
+
 ## Noch nicht live geprüft (kein Zugang aus der Entwicklungsumgebung)
 
 1. imapflow in der **Supabase Edge Runtime** und TLS zu **IONOS** (Test: „Verbindung testen“). Scheitert er, zieht nur `_shared/email/imap.ts` nach Vercel.
