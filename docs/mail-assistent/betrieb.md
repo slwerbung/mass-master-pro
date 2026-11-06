@@ -372,7 +372,10 @@ den Code nur bei exakter Übereinstimmung aus (sonst Fehler, nichts läuft).
 
 * Ein normales `supabase functions deploy <name>` ersetzt den Lader durch den Quelltext – das ist der Weg zurück.
 * Sind alle vier so neu eingespielt, kann die Tabelle weg: `drop table public.edge_code;`
-* Wer an diesen vier Functions etwas ändert, muss sie per CLI einspielen – eine Änderung nur in `edge_code` greift
+* Stand 06.11.2026 (Zuordnung an Mitarbeiter): auch `email-send` und `email-mailbox` laufen über den Lader. Der Code lag dafür kurz
+  unter `supabase/functions/.edge-bundles/` im Branch und wurde per `pg_net` von GitHub geholt (Commit fest, SHA-256 geprüft); die
+  Zeilen heißen `<function>@<commit>`. Ältere Zeilen ohne `@` werden nicht mehr gelesen.
+* Wer an diesen Functions etwas ändert, muss sie per CLI einspielen – eine Änderung nur in `edge_code` greift
   nicht (die Prüfsumme im Lader passt dann nicht mehr).
 
 ## Noch nicht live geprüft (kein Zugang aus der Entwicklungsumgebung)
