@@ -10,7 +10,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
-import { canAccount, seesAssigned, seesCategory } from "../_shared/email/access.ts";
+import { canAccount, seesCategory } from "../_shared/email/access.ts";
 import { accountPassword, buildLlmDeps, getConfig } from "../_shared/email/config.ts";
 import { generateDraft, replySubject, type DraftMsg } from "../_shared/email/draft.ts";
 import { imapDraftWriter } from "../_shared/email/draftMime.ts";
@@ -34,12 +34,11 @@ Deno.serve(async (req) => {
   let imap: LazyImap | null = null;
   try {
     const { data: m } = await sb.from("email_messages")
-      .select("id, account_id, thread_id, direction, from_addr, from_name, subject, message_id, refs, sent_at, body_text, category, summary, extracted, hero_project_match_id, draft_message_id, draft_text, draft_subject, draft_uid, plan, assigned_user_id")
+      .select("id, account_id, thread_id, direction, from_addr, from_name, subject, message_id, refs, sent_at, body_text, category, summary, extracted, hero_project_match_id, draft_message_id, draft_text, draft_subject, draft_uid, plan")
       .eq("id", String(body.messageId || "")).maybeSingle();
     if (!m) return fail("Mail nicht gefunden.");
     if (!canAccount(user, m.account_id)) return fail("Kein Zugriff auf dieses Postfach.", { code: "forbidden" });
     if (user.accountIds !== null && !seesCategory(user, m.category)) return fail("Diese Kategorie ist für dich gesperrt.", { code: "forbidden" });
-    if (!seesAssigned(user, m.assigned_user_id)) return fail("Diese Mail ist einem anderen Mitarbeiter zugeordnet.", { code: "forbidden" });
     if (m.direction !== "in") return fail("Für ausgehende Mails gibt es keinen Entwurf.");
     if (body.action === "forward_beleg" && m.category !== "beleg" && !(m.extracted as any)?.beleg?.is_booking_document) return fail("Nur Belege lassen sich an Lexware weiterleiten.");
     const { data: acc } = await sb.from("email_accounts").select("*").eq("id", m.account_id).maybeSingle();

@@ -9,8 +9,8 @@ import { errorText } from "@/lib/utils";
 interface Candidates { assignedUserId: string | null; candidates: { id: string; name: string }[] }
 
 /**
- * Thema (die Mail mit ihrem ganzen Verlauf, auch künftigen Antworten) einem Mitarbeiter zuordnen. Danach sieht es nur
- * noch er – unter „Zu entscheiden“, „Laufend“ und in der Wiedervorlage. Offene Mails entscheidet dann er.
+ * Thema (die Mail mit ihrem ganzen Verlauf, auch künftigen Antworten) einem Mitarbeiter zuordnen. Danach legt es nur noch
+ * ihm vor – unter „Zu entscheiden“, „Laufend“ und in der Wiedervorlage. Im Postfach bleiben die Mails für alle sichtbar.
  */
 export function AssignUser({ threadId, onDone }: { threadId: string; onDone?: () => void }) {
   const qc = useQueryClient();
@@ -19,7 +19,7 @@ export function AssignUser({ threadId, onDone }: { threadId: string; onDone?: ()
   const assign = useMutation({
     mutationFn: (userId: string | null) => api<{ assignedUserId: string | null; assignedTo?: string | null }>("assign_topic", { threadId, userId }),
     onSuccess: (r) => {
-      toast.success(r.assignedUserId ? `${r.assignedTo ?? "Mitarbeiter"} zugeordnet – nur er sieht das Thema jetzt.` : "Zuordnung aufgehoben – wieder für alle sichtbar.");
+      toast.success(r.assignedUserId ? `${r.assignedTo ?? "Mitarbeiter"} zugeordnet – nur er bekommt das Thema jetzt zur Entscheidung.` : "Zuordnung aufgehoben – das Thema geht wieder an alle.");
       onDone?.();
     },
     onError: (e) => toast.error(errorText(e)),
@@ -47,8 +47,8 @@ export function AssignUser({ threadId, onDone }: { threadId: string; onDone?: ()
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Das Thema mit allen Mails (auch späteren Antworten) sieht dann nur noch dieser Mitarbeiter – auch in der Wiedervorlage.
-        Andere Mitarbeiter sehen es nicht mehr; Admins finden die Mails weiter unter „Mails“.
+        Das Thema (auch spätere Antworten) bekommt dann nur noch dieser Mitarbeiter unter „Zu entscheiden“ und in der Wiedervorlage.
+        Im Postfach bzw. unter „Mails“ bleiben die Mails für alle mit Zugriff sichtbar.
       </p>
     </div>
   );

@@ -273,7 +273,7 @@ export default function Messages() {
                     <span className="font-medium">{m.from_name || m.from_addr}</span>
                     <CategoryChip category={m.category} />
                     {m.confidence != null && m.confidence < 0.7 && <Badge variant="warn">unsicher {pct(m.confidence)}</Badge>}
-                    {m.assigned_to && <Badge variant="secondary" title="Nur dieser Mitarbeiter sieht das Thema">→ {m.assigned_to}</Badge>}
+                    {m.assigned_to && <Badge variant="secondary" title="Thema diesem Mitarbeiter zugeordnet – nur er bekommt es zur Entscheidung">→ {m.assigned_to}</Badge>}
                     {m.beleg_state === "portal_offen" && <Badge variant="warn">Portal{m.beleg_vendor ? `: ${m.beleg_vendor}` : ""}</Badge>}
                     {m.hero_project_match_id && <HeroLink inLink id={m.hero_project_match_id} nr={m.hero_project_nr} />}
                     {m.has_attachments && <Paperclip className="h-3.5 w-3.5 text-muted-foreground" aria-label="Anhänge" />}

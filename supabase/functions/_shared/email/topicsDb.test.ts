@@ -106,8 +106,10 @@ describe("Zugeordnete Themen: nur noch der Zugeordnete", () => {
     expect(wv.map((t) => t.id)).toEqual(["t2"]);
   });
 
-  it("Detailansicht ohne Betrachter-ID (Admin): Thema mit Zuordnung sichtbar", async () => {
+  it("Detailansicht ohne Betrachter-ID: Thema mit Zuordnung sichtbar, auch fuer andere Mitarbeiter", async () => {
     const all = await listTopics(sb3, "entscheiden", now, { accountIds: null });
     expect(all.find((t) => t.id === "t1")?.assignedTo?.name).toBe("Jonas Lang");
+    const other = await listTopics(sb3, "entscheiden", now, { accountIds: ["a1"] });
+    expect(other.find((t) => t.id === "t1")?.assignedTo?.name).toBe("Jonas Lang");
   });
 });

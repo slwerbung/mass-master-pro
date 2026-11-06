@@ -87,7 +87,7 @@ export type AccountScope = string[] | null;
 /**
  * Wer schaut: seine Postfaecher und – fuer „an wen gerichtet“ – er selbst und wer die Postfaecher sieht.
  * Ohne `userId` wird nicht nach Empfaenger gefiltert; mit `userId` fallen Themen, die einem anderen zugeordnet sind,
- * ganz heraus (auch fuer Admins – sie finden die Mails in der Mail-Liste).
+ * aus den Themen-Ansichten heraus (auch fuer Admins). Die Mails bleiben in der Mail-Liste fuer alle sichtbar.
  */
 export interface Viewer {
   accountIds: AccountScope;
@@ -129,9 +129,9 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
   const byThread = new Map<string, any[]>();
   for (const m of msgs) (byThread.get(m.thread_id) ?? byThread.set(m.thread_id, []).get(m.thread_id)!).push(m);
 
-  // Zugeordnete Themen: nur der Zugeordnete sieht sie (Mitarbeiter ohnehin nie fremde, siehe access.ts).
-  const hiddenForViewer = (th: any) =>
-    !!th.assigned_user_id && ((!!viewer?.userId && th.assigned_user_id !== viewer.userId) || (scope !== null && th.assigned_user_id !== viewer?.userId));
+  // Zugeordnete Themen: in den Themen-Ansichten nur beim Zugeordneten (auch Admins sehen fremde dort nicht). Die Mails selbst
+  // bleiben fuer alle mit Zugriff aufs Postfach sichtbar (Mail-Liste, Detail) – dort wird ohne userId gefragt.
+  const hiddenForViewer = (th: any) => !!th.assigned_user_id && !!viewer?.userId && th.assigned_user_id !== viewer.userId;
   const assignedIds = [...new Set(threads.map((th) => th.assigned_user_id).filter(Boolean))] as string[];
   const names = new Map<string, string>();
   if (assignedIds.length) {

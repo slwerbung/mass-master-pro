@@ -7,7 +7,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser, type MailUser } from "../_shared/email/http.ts";
-import { AccessError, assertMessages, assertThread, assertVisible, isMailAdmin, scopeAccounts, scopeVisible, seesCategory } from "../_shared/email/access.ts";
+import { AccessError, assertMessages, assertThread, assertVisible, isMailAdmin, scopeAccounts, scopeCategories, seesCategory } from "../_shared/email/access.ts";
 import { listMailUsers, mailAudience, saveMailUser } from "../_shared/email/users.ts";
 import { DEFAULT_PREFS, loadPrefs, loadVapid, pushToUser } from "../_shared/email/push.ts";
 import { isPushEndpoint } from "../_shared/email/webpush.ts";
@@ -55,7 +55,7 @@ const ADMIN_ONLY = new Set([
 
 /** Filter der Mail-Liste; `skipCategory` fuer die Zaehler je Kategorie. */
 function applyMessageFilters(q: any, body: Record<string, any>, user: MailUser, opts: { skipCategory?: boolean } = {}) {
-  q = scopeVisible(scopeAccounts(q, user), user);
+  q = scopeCategories(scopeAccounts(q, user), user);
   // Papierkorb: eigene Ansicht, sonst immer ausgeblendet.
   if (body.view === "papierkorb") q = q.not("trashed_at", "is", null);
   else q = q.is("trashed_at", null);
@@ -208,10 +208,10 @@ const handlers: Record<string, Handler> = {
     const statuses = ["neu", "klassifiziert", "zugeordnet", "ohne_bezug", "erledigt", "wartet", "fehler"];
     const counts: Record<string, number> = {};
     await Promise.all(statuses.map(async (s) => {
-      const { count } = await scopeVisible(scopeAccounts(sb.from("email_messages").select("id", { count: "exact", head: true }), user), user).eq("status", s);
+      const { count } = await scopeCategories(scopeAccounts(sb.from("email_messages").select("id", { count: "exact", head: true }), user), user).eq("status", s);
       counts[s] = count ?? 0;
     }));
-    const { count: open } = await scopeVisible(scopeAccounts(
+    const { count: open } = await scopeCategories(scopeAccounts(
       sb.from("email_suggestions").select("id, email_messages!inner(account_id, category, assigned_user_id)", { count: "exact", head: true }), user, "email_messages.account_id",
     ), user, "email_messages").eq("status", "offen");
     const start = new Date(); start.setUTCHours(0, 0, 0, 0);
@@ -263,9 +263,8 @@ const handlers: Record<string, Handler> = {
     if (!msg) throw new Error("Mail nicht gefunden.");
     assertVisible(user, msg);
     const topicP = topicOfThread(sb, msg.thread_id, undefined, {
+      // Ohne userId: das Thema erscheint auch, wenn es einem anderen zugeordnet ist (mit „zugeordnet: …“).
       accountIds: user.accountIds, hiddenCategories: user.hiddenCategories,
-      // Mitarbeiter: sein eigenes zugeordnetes Thema; Admin: jedes (ohne userId wird nichts ausgeblendet).
-      userId: isMailAdmin(user) ? undefined : user.id,
     }).catch(() => null);
     const [{ data: thread }, { data: atts }, { data: shadow }, { data: suggestions }, { data: calls }] = await Promise.all([
       msg.thread_id
@@ -576,7 +575,7 @@ const handlers: Record<string, Handler> = {
   // ------------------------------------------------------------------ Vorschlaege (Zu entscheiden)
   async list_suggestions({ sb, user, body }) {
     const status = ["offen", "angenommen", "abgelehnt", "fehlgeschlagen"].includes(body.status) ? body.status : "offen";
-    const { data, error } = await scopeVisible(scopeAccounts(sb.from("email_suggestions")
+    const { data, error } = await scopeCategories(scopeAccounts(sb.from("email_suggestions")
       .select("id, type, payload, status, result, created_at, decided_at, email_messages!inner(id, account_id, assigned_user_id, subject, from_addr, from_name, summary, category, confidence, sent_at, direction, hero_project_match_id, match_info, has_attachments, extracted)"), user, "email_messages.account_id"), user, "email_messages")
       .eq("status", status).order("created_at", { ascending: false }).limit(100);
     if (error) throw new Error(error.message);
@@ -612,8 +611,8 @@ const handlers: Record<string, Handler> = {
   },
 
   /**
-   * Thema (mit allen Mails, auch kuenftigen) einem Mitarbeiter zuordnen – danach sieht es nur noch er, auch in der
-   * Wiedervorlage – oder mit userId = null die Zuordnung aufheben. Offene Mails bleiben offen: der Zugeordnete entscheidet.
+   * Thema (mit allen Mails, auch kuenftigen) einem Mitarbeiter zuordnen – danach legen die Themen-Ansichten es nur noch ihm
+   * vor, auch die Wiedervorlage; die Mails bleiben im Postfach fuer alle sichtbar – oder mit userId = null aufheben.
    */
   async assign_topic({ sb, user, body }) {
     const th = await threadFor(sb, user, body);
@@ -662,19 +661,19 @@ const handlers: Record<string, Handler> = {
   /** Kurzuebersicht (fuer die Startseite und die optionale 7-Uhr-Push-Meldung). */
   async digest({ sb, user }) {
     const twoDays = new Date(Date.now() - 2 * 86400_000).toISOString();
-    const { count: open } = await scopeVisible(scopeAccounts(
+    const { count: open } = await scopeCategories(scopeAccounts(
       sb.from("email_suggestions").select("id, email_messages!inner(account_id, category, assigned_user_id)", { count: "exact", head: true }), user, "email_messages.account_id",
     ), user, "email_messages").eq("status", "offen");
     const customerCats = ["anfrage_neu", "projekt_kommunikation", "layout_freigabe", "auftrag", "reklamation"];
-    const { data: unanswered } = await scopeVisible(scopeAccounts(sb.from("email_messages")
+    const { data: unanswered } = await scopeCategories(scopeAccounts(sb.from("email_messages")
       .select("id, subject, from_name, from_addr, sent_at, category, email_threads!inner(answered)"), user), user)
       .eq("direction", "in").in("category", customerCats).eq("email_threads.answered", false).lt("sent_at", twoDays).is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(20);
-    const { data: claims } = await scopeVisible(scopeAccounts(sb.from("email_messages")
+    const { data: claims } = await scopeCategories(scopeAccounts(sb.from("email_messages")
       .select("id, subject, from_name, from_addr, sent_at, category, email_threads!inner(answered)"), user), user)
       .eq("direction", "in").eq("category", "reklamation").eq("email_threads.answered", false).is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(20);
-    const { data: portal } = await scopeVisible(scopeAccounts(sb.from("email_messages")
+    const { data: portal } = await scopeCategories(scopeAccounts(sb.from("email_messages")
       .select("id, subject, from_name, from_addr, sent_at, beleg_vendor"), user), user).eq("beleg_state", "portal_offen").is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(50);
     const lines: string[] = [];

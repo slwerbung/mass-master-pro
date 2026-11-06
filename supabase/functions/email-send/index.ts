@@ -24,7 +24,7 @@ import {
 import { buildComposedMime, sendComposed } from "../_shared/email/composeSend.ts";
 
 const COMPANY_NAME = "SL WERBUNG";
-const MSG_COLS = "id, account_id, category, thread_id, message_id, refs, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, body_text, folder, current_folder, draft_message_id, draft_uid, draft_text, hero_project_match_id, hero_logged_at, match_info, assigned_user_id";
+const MSG_COLS = "id, account_id, category, thread_id, message_id, refs, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, body_text, folder, current_folder, draft_message_id, draft_uid, draft_text, hero_project_match_id, hero_logged_at, match_info";
 type Mode = "reply" | "replyAll" | "forward";
 const asMode = (m: unknown): Mode | null => (m === "reply" || m === "replyAll" || m === "forward" ? m : null);
 

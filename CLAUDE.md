@@ -238,10 +238,10 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
   Adminmenü den privaten Schlüssel). Jede Mail einmal (`pushed_at`).
 - Beim Senden gewähltes Projekt (`email_sent.project_id`) ordnet die zurückkommende Kopie sicher zu → Logbuch wie eingehend (`matchStage`).
 - **Gesperrte Kategorien** je Mitarbeiter (`email_user_prefs.hidden_categories`, Einstellungen → Benutzer): `MailUser.hiddenCategories`;
-  jede neue Abfrage auf Mails/Vorschläge braucht neben `scopeAccounts` auch `scopeVisible` (Kategorien + Zuordnung), Einzelmails
-  `assertVisible`/`assertMessages` (Mail-Spalte `assigned_user_id` mit auswählen).
-- **Themen einem Mitarbeiter zuordnen** (`email_threads.assigned_user_id`, Kopie per Trigger an `email_messages`): dann sieht es nur noch er,
-  auch in der Wiedervorlage; Admins nur noch unter „Mails“. Zuordnung schlägt Anrede, Push nur an ihn (`betrieb.md`).
+  jede neue Abfrage auf Mails/Vorschläge braucht neben `scopeAccounts` auch `scopeCategories`, Einzelmails `assertVisible`/`assertMessages`.
+- **Themen einem Mitarbeiter zuordnen** (`email_threads.assigned_user_id`, Kopie per Trigger an `email_messages`): wirkt NUR auf die
+  Themen-Ansichten (Zu entscheiden, Laufend, Wiedervorlage) – dort nur noch er, auch für Admins. Im Postfach/Mail-Liste bleibt die Mail
+  für alle sichtbar. Zuordnung schlägt Anrede, „Zu entscheiden“-Push nur an ihn (`betrieb.md`).
 - „Jetzt abrufen“: `email-sync`/`email-process` nehmen jeden Mail-App-Benutzer an, beschränkt auf seine Postfächer. HERO-Projektlink:
   `login.hero-software.de/partner/Projects/view/<project_match.id>` (`HeroLink.tsx`).
 - `apps/mail/src/lib/shared.ts` ist eine Kopie von `_shared/email/types.ts` (`npm run sync-shared`; ein Test prüft die Gleichheit).
