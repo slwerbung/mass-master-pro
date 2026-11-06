@@ -112,9 +112,11 @@ Kunden können Projekte online einsehen und freigeben.
   binnen 2 Min.). Die System-Kamera bleibt nur als Ausweg („Handy-Kamera“).
   Neue Kamera-Einstiege nicht mehr direkt über `<input capture>` bauen.
   Weitwinkel: `InAppCamera` bietet Zoomstufen ab `capabilities.zoom.min`
-  (z. B. 0,5×) und „Objektiv wechseln“ zwischen allen Rückkameras aus
+  (z. B. 0,5×) und „Kamera wechseln“ zwischen allen Rückkameras aus
   `enumerateDevices` (iPhone-Ultraweitwinkel, Android mit mehreren
   Rückkameras); die Wahl bleibt pro Gerät gemerkt.
+  „Handy-Kamera“ gibt es nur noch, wenn die In-App-Kamera nicht startet –
+  die System-Kamera verlor im Feld weiter Fotos (Nov. 2026).
 - Speicher beim Fotografieren (Messung Sept. 2026, Feld-Diagnose: Abbrüche
   immer bei `stage = opened`, meist ab dem 2. Foto):
   - Kamerafotos nur über `readImageFileForEditor` (`src/lib/imageFile.ts`)
