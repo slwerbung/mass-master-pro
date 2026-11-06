@@ -2,6 +2,7 @@
 //
 //  * „Zu entscheiden“ (Standard an): eine neue Mail, die unter „Zu entscheiden“ landet. Ist sie erkennbar an einen
 //    Mitarbeiter gerichtet (addressee.ts), bekommt nur er die Nachricht – sonst alle mit Zugriff aufs Postfach.
+//    Ist das Thema einem Mitarbeiter zugeordnet (assigned_user_id), bekommt NUR er Nachrichten dazu – beide Arten.
 //  * „Alle eingehenden Mails“ (Standard aus): zusaetzlich jede andere eingehende Mail (ohne Werbung/Spam).
 //
 // Jede eingehende Mail wird genau einmal geprueft (`email_messages.pushed_at`), nach dem Verarbeiten (email-process),
@@ -31,6 +32,8 @@ export interface PushMail {
   subject: string | null;
   summary: string | null;
   body_text: string | null;
+  /** Thema einem Mitarbeiter zugeordnet: nur er wird benachrichtigt */
+  assigned_user_id?: string | null;
 }
 
 export interface UserPushes { decide: PushMail[]; incoming: PushMail[] }
@@ -47,7 +50,8 @@ export function planPushes(
   for (const m of mails) {
     if (m.direction !== "in") continue;
     // Wer die Kategorie gesperrt hat, bekommt dazu nichts (und ist auch nicht „Empfaenger“ der Mail).
-    const users = visibleTo(audience.get(m.account_id) ?? [], m.category);
+    const all = visibleTo(audience.get(m.account_id) ?? [], m.category);
+    const users = m.assigned_user_id ? all.filter((u) => u.id === m.assigned_user_id) : all;
     if (!users.length) continue;
     const decide = !m.decided_at && isRelevant(m, cfg);
     const to = decide ? addresseeOf(m, users) : null;
@@ -128,7 +132,7 @@ export async function pushToUser(sb: any, userId: string, payload: PushPayload, 
   return { sent, failed };
 }
 
-const PUSH_COLS = "id, account_id, direction, status, category, beleg_state, decided_at, from_name, from_addr, to_addrs, subject, summary, body_text";
+const PUSH_COLS = "id, account_id, direction, status, category, beleg_state, decided_at, from_name, from_addr, to_addrs, subject, summary, body_text, assigned_user_id";
 
 /** Nach dem Verarbeiten eines Postfachs: neue eingehende Mails melden. Fehler hier halten nichts an. */
 export async function notifyNewMail(sb: any, accountId: string): Promise<{ checked: number; sent: number }> {

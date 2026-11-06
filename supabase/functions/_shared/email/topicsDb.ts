@@ -41,6 +41,8 @@ export interface Topic {
   messageCount: number;
   /** an wen das Thema gerichtet ist (Anrede der juengsten eingehenden Mail); null = an alle */
   addressedTo?: string | null;
+  /** ausdruecklich zugeordnet (Mail-App „Mitarbeiter zuordnen“): dann sieht es nur noch er; null = nicht zugeordnet */
+  assignedTo: { id: string; name: string } | null;
   /** relevante eingehende Mails ohne Entscheidung (die werden vorgelegt) */
   newMessages: TopicMail[];
   suggestionIds: string[];
@@ -84,7 +86,8 @@ export type AccountScope = string[] | null;
 
 /**
  * Wer schaut: seine Postfaecher und – fuer „an wen gerichtet“ – er selbst und wer die Postfaecher sieht.
- * Ohne `userId` wird nicht nach Empfaenger gefiltert.
+ * Ohne `userId` wird nicht nach Empfaenger gefiltert; mit `userId` fallen Themen, die einem anderen zugeordnet sind,
+ * ganz heraus (auch fuer Admins – sie finden die Mails in der Mail-Liste).
  */
 export interface Viewer {
   accountIds: AccountScope;
@@ -117,7 +120,7 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
   const msgs: any[] = [];
   for (const ids of chunks(threadIds)) {
     const [th, ms] = await Promise.all([
-      sb.from("email_threads").select("id, account_id, subject_norm, topic_state, snoozed_until, topic_note, reviewed_at, closed_at, hero_project_match_id, last_activity_at").in("id", ids),
+      sb.from("email_threads").select("id, account_id, subject_norm, topic_state, snoozed_until, topic_note, reviewed_at, closed_at, hero_project_match_id, last_activity_at, assigned_user_id").in("id", ids),
       sb.from("email_messages").select(MSG_COLS).in("thread_id", ids).is("trashed_at", null).order("sent_at", { ascending: true, nullsFirst: true }).limit(2000),
     ]);
     threads.push(...must(th) as any[]);
@@ -126,12 +129,23 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
   const byThread = new Map<string, any[]>();
   for (const m of msgs) (byThread.get(m.thread_id) ?? byThread.set(m.thread_id, []).get(m.thread_id)!).push(m);
 
+  // Zugeordnete Themen: nur der Zugeordnete sieht sie (Mitarbeiter ohnehin nie fremde, siehe access.ts).
+  const hiddenForViewer = (th: any) =>
+    !!th.assigned_user_id && ((!!viewer?.userId && th.assigned_user_id !== viewer.userId) || (scope !== null && th.assigned_user_id !== viewer?.userId));
+  const assignedIds = [...new Set(threads.map((th) => th.assigned_user_id).filter(Boolean))] as string[];
+  const names = new Map<string, string>();
+  if (assignedIds.length) {
+    const rows = must(await sb.from("profiles").select("id, display_name").in("id", assignedIds)) as any[];
+    for (const r of rows) names.set(r.id, String(r.display_name || "Mitarbeiter"));
+  }
+
   // An wen gerichtet: die offenen Mails und die juengste eingehende je Thema (bestimmt, wem das Thema gehoert).
   let addr = new Map<string, AddresseeUser>();
   if (viewer?.audience) {
     const look: any[] = [];
     for (const th of threads) {
       if (scope && !scope.includes(th.account_id)) continue;
+      if (th.assigned_user_id) continue; // Zuordnung schlaegt die Anrede
       const rel = (byThread.get(th.id) ?? []).filter((m) => isRelevant(m, cfg) && (!hidden.length || seesCategory({ hiddenCategories: hidden }, m.category)));
       look.push(...rel.filter((m) => !m.decided_at));
       if (rel.length) look.push(rel[rel.length - 1]);
@@ -144,6 +158,7 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
   const irrelevant: string[] = [];
   for (const th of threads) {
     if (scope && !scope.includes(th.account_id)) continue;
+    if (hiddenForViewer(th)) continue;
     const allRaw = byThread.get(th.id) ?? [];
     const sIds = sugg.get(th.id) ?? [];
     // „Irrelevant“ (wird abgeraeumt) entscheidet sich an allen Mails – nie an dem, was ein Betrachter sehen darf.
@@ -157,9 +172,10 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
     const outs = all.filter((m) => m.direction === "out");
     // Vorgelegt wird nur, was an den Betrachter gerichtet ist (oder an alle). Das Thema gehoert dem Empfaenger der
     // juengsten eingehenden Mail: andere sehen es weiter unter „Laufend“, bekommen es aber nicht zur Entscheidung.
-    const owner = rel.length ? addr.get(rel[rel.length - 1].id) ?? null : null;
+    const assignedTo = th.assigned_user_id ? { id: th.assigned_user_id, name: names.get(th.assigned_user_id) ?? "Mitarbeiter" } : null;
+    const owner = assignedTo ?? (rel.length ? addr.get(rel[rel.length - 1].id) ?? null : null);
     const othersTopic = !!owner && !!viewer?.userId && owner.id !== viewer.userId;
-    const undecided = rel.filter((m) => !m.decided_at && mine(m));
+    const undecided = rel.filter((m) => !m.decided_at && (!!assignedTo || mine(m)));
     const facts: TopicFacts = {
       state: th.topic_state, snoozedUntil: th.snoozed_until, reviewedAt: th.reviewed_at,
       lastIn: lastOf(rel), lastOut: lastOf(outs), undecided: undecided.length, hadDecided: rel.some((m) => !!m.decided_at),
@@ -180,7 +196,8 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
       latestId: latest?.id ?? "",
       lastMail: latest ? { direction: latest.direction, from: latest.from_name || latest.from_addr, sent_at: latest.sent_at, summary: latest.summary ?? latest.subject ?? null } : null,
       messageCount: all.length,
-      addressedTo: owner?.name ?? null,
+      addressedTo: assignedTo ? null : owner?.name ?? null,
+      assignedTo,
       newMessages: undecided.map((m) => ({
         id: m.id, direction: m.direction, from_name: m.from_name, from_addr: m.from_addr, subject: m.subject, sent_at: m.sent_at,
         summary: m.summary, category: m.category, has_attachments: m.has_attachments, decided_at: m.decided_at,

@@ -57,6 +57,7 @@ function TopicRow({ t, view }: { t: Topic; view: TopicView }) {
         <span className="text-xs text-muted-foreground">{formatDateTime(t.lastActivity)}</span>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {t.assignedTo && <span className="font-medium text-foreground">zugeordnet: {t.assignedTo.name}</span>}
         {t.from && <span>mit {t.from}</span>}
         {t.projectId && <HeroLink id={t.projectId} label="HERO-Projekt" />}
         <span>{t.messageCount} {t.messageCount === 1 ? "Mail" : "Mails"}</span>

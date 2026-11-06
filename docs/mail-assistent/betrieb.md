@@ -274,6 +274,20 @@ an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorl
   trotzdem beim Admin unter „Zu entscheiden“ (sonst bliebe sie liegen). Das Abräumen irrelevanter Threads entscheidet nie nach Sicht
   eines Betrachters.
 
+## Themen einem Mitarbeiter zuordnen (Nov. 2026)
+
+- Knopf „Mitarbeiter …“ an jedem Thema (Zu entscheiden, Themen, Mail-Ansicht). Zugeordnet wird das **Thema** (`email_threads.
+  assigned_user_id`, dazu `assigned_at`/`assigned_by`), also die Mail mit ihrem ganzen Verlauf; neue Mails im Thema erben die Zuordnung.
+  An jeder Mail steht eine Kopie (`email_messages.assigned_user_id`), gepflegt nur per Trigger (Migration `20261106130000`).
+- Wirkung: Das Thema sieht nur noch der Zugeordnete – unter „Zu entscheiden“, „Laufend“, „Wiedervorlage“ und „Abgeschlossen“. Andere
+  Mitarbeiter sehen die Mails nirgends (Liste, Zähler, Vorschläge, Detail, Antworten, Entwurf – `scopeVisible`/`assertVisible`/
+  `assertThread` in `access.ts`). Admins finden sie weiter unter „Mails“ (Hinweis „→ Name“, Schnellansicht „Zugeordnet“) und können
+  umhängen oder die Zuordnung aufheben; in ihren Themen-Ansichten erscheinen fremd zugeordnete Themen nicht.
+- Die Zuordnung schlägt „an wen gerichtet“ (Anrede). Push-Nachrichten zum Thema gehen nur an den Zugeordneten; beim Zuordnen bekommt er
+  eine („… hat dir eine Mail zugeordnet“, wenn „Zu entscheiden“-Benachrichtigungen an sind).
+- Zuordnen lässt sich nur an jemanden, der das Postfach sieht und keine Kategorie des Themas gesperrt hat (`assign_candidates`). Offene
+  Mails bleiben offen – der Zugeordnete entscheidet sie.
+
 ## HERO-Links und Projektsuche (Nov. 2026)
 
 - Überall, wo ein Projekt steht (Mail-Liste, Mail-Ansicht, Themen, Zu entscheiden, Projektsuche, Verfassen), öffnet ein Link das Projekt
@@ -358,7 +372,10 @@ den Code nur bei exakter Übereinstimmung aus (sonst Fehler, nichts läuft).
 
 * Ein normales `supabase functions deploy <name>` ersetzt den Lader durch den Quelltext – das ist der Weg zurück.
 * Sind alle vier so neu eingespielt, kann die Tabelle weg: `drop table public.edge_code;`
-* Wer an diesen vier Functions etwas ändert, muss sie per CLI einspielen – eine Änderung nur in `edge_code` greift
+* Stand 06.11.2026 (Zuordnung an Mitarbeiter): auch `email-send` und `email-mailbox` laufen über den Lader. Der Code lag dafür kurz
+  unter `supabase/functions/.edge-bundles/` im Branch und wurde per `pg_net` von GitHub geholt (Commit fest, SHA-256 geprüft); die
+  Zeilen heißen `<function>@<commit>`. Ältere Zeilen ohne `@` werden nicht mehr gelesen.
+* Wer an diesen Functions etwas ändert, muss sie per CLI einspielen – eine Änderung nur in `edge_code` greift
   nicht (die Prüfsumme im Lader passt dann nicht mehr).
 
 ## Noch nicht live geprüft (kein Zugang aus der Entwicklungsumgebung)

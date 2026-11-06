@@ -37,6 +37,20 @@ describe("planPushes", () => {
   });
 });
 
+describe("planPushes: zugeordnetes Thema", () => {
+  it("nur der Zugeordnete, auch wenn die Mail jemand anderen anredet", () => {
+    expect(ids(planPushes([mail({ assigned_user_id: "s", body_text: "Hallo Jonas,\n…" })], audience, new Map(), TOPIC_DEFAULTS)))
+      .toEqual({ s: { decide: ["M1"], incoming: [] } });
+  });
+  it("„alle eingehenden“ der anderen greift nicht", () => {
+    const prefs = new Map([["s", { decide: true, incoming: true }]]);
+    expect(ids(planPushes([mail({ assigned_user_id: "j", decided_at: "2026-11-06T10:00:00Z" })], audience, prefs, TOPIC_DEFAULTS))).toEqual({});
+  });
+  it("Zugeordneter ohne Zugriff aufs Postfach: niemand", () => {
+    expect(ids(planPushes([mail({ account_id: "B", assigned_user_id: "s" })], audience, new Map(), TOPIC_DEFAULTS))).toEqual({});
+  });
+});
+
 describe("planPushes: gesperrte Kategorien", () => {
   const hidden = new Map([["A", [{ ...users[0], hiddenCategories: [] }, { ...users[1], hiddenCategories: ["beleg"] }]]]);
   it("wer „Beleg“ gesperrt hat, bekommt dazu nichts – auch wenn die Mail an ihn gerichtet ist", () => {
