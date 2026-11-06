@@ -42,11 +42,12 @@ describe("planPushes: zugeordnetes Thema", () => {
     expect(ids(planPushes([mail({ assigned_user_id: "s", body_text: "Hallo Jonas,\n…" })], audience, new Map(), TOPIC_DEFAULTS)))
       .toEqual({ s: { decide: ["M1"], incoming: [] } });
   });
-  it("„alle eingehenden“ der anderen greift nicht", () => {
+  it("„alle eingehenden“ bekommen die anderen weiter (die Mail bleibt im Postfach sichtbar)", () => {
     const prefs = new Map([["s", { decide: true, incoming: true }]]);
-    expect(ids(planPushes([mail({ assigned_user_id: "j", decided_at: "2026-11-06T10:00:00Z" })], audience, prefs, TOPIC_DEFAULTS))).toEqual({});
+    expect(ids(planPushes([mail({ assigned_user_id: "j" })], audience, prefs, TOPIC_DEFAULTS)))
+      .toEqual({ s: { decide: [], incoming: ["M1"] }, j: { decide: ["M1"], incoming: [] } });
   });
-  it("Zugeordneter ohne Zugriff aufs Postfach: niemand", () => {
+  it("Zugeordneter ohne Zugriff aufs Postfach: keiner bekommt sie zur Entscheidung", () => {
     expect(ids(planPushes([mail({ account_id: "B", assigned_user_id: "s" })], audience, new Map(), TOPIC_DEFAULTS))).toEqual({});
   });
 });

@@ -450,7 +450,7 @@ function TopicBar({ topic }: { topic: Topic }) {
         <span className="font-medium">Thema:</span>
         <Badge variant={topic.due ? "danger" : topic.state === "erledigt" ? "good" : "secondary"}>{topic.due ? "Zu entscheiden" : TOPIC_STATE_LABELS[topic.state]}</Badge>
         <span className="text-muted-foreground">{info}</span>
-        {topic.assignedTo && <Badge variant="secondary" title="Nur dieser Mitarbeiter sieht das Thema">zugeordnet: {topic.assignedTo.name}</Badge>}
+        {topic.assignedTo && <Badge variant="secondary" title="Nur dieser Mitarbeiter bekommt das Thema zur Entscheidung">zugeordnet: {topic.assignedTo.name}</Badge>}
         <Link to="/themen" className="ml-auto text-xs text-muted-foreground underline">Alle Themen</Link>
       </div>
       <TopicActions topic={topic} showDecide={topic.due} withReply={false} />

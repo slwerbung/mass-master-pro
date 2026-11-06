@@ -2,7 +2,8 @@
 //
 //  * „Zu entscheiden“ (Standard an): eine neue Mail, die unter „Zu entscheiden“ landet. Ist sie erkennbar an einen
 //    Mitarbeiter gerichtet (addressee.ts), bekommt nur er die Nachricht – sonst alle mit Zugriff aufs Postfach.
-//    Ist das Thema einem Mitarbeiter zugeordnet (assigned_user_id), bekommt NUR er Nachrichten dazu – beide Arten.
+//    Ist das Thema einem Mitarbeiter zugeordnet (assigned_user_id), bekommt nur er „Zu entscheiden“; „Alle eingehenden“ bleibt
+//    fuer alle mit Zugriff aufs Postfach (die Mail ist dort ja weiter sichtbar).
 //  * „Alle eingehenden Mails“ (Standard aus): zusaetzlich jede andere eingehende Mail (ohne Werbung/Spam).
 //
 // Jede eingehende Mail wird genau einmal geprueft (`email_messages.pushed_at`), nach dem Verarbeiten (email-process),
@@ -50,14 +51,16 @@ export function planPushes(
   for (const m of mails) {
     if (m.direction !== "in") continue;
     // Wer die Kategorie gesperrt hat, bekommt dazu nichts (und ist auch nicht „Empfaenger“ der Mail).
-    const all = visibleTo(audience.get(m.account_id) ?? [], m.category);
-    const users = m.assigned_user_id ? all.filter((u) => u.id === m.assigned_user_id) : all;
+    const users = visibleTo(audience.get(m.account_id) ?? [], m.category);
     if (!users.length) continue;
     const decide = !m.decided_at && isRelevant(m, cfg);
-    const to = decide ? addresseeOf(m, users) : null;
+    // Zugeordnet: „Zu entscheiden“ nur an den Zugeordneten, „alle eingehenden“ weiter an alle. Sonst wie bisher: an den
+    // Angesprochenen (dann nur er) oder an alle.
+    const to = decide && !m.assigned_user_id ? addresseeOf(m, users) : null;
     for (const u of to ? [to] : users) {
       const p = prefs.get(u.id) ?? DEFAULT_PREFS;
-      if (decide && p.decide) add(u.id, "decide", m);
+      const decides = decide && (!m.assigned_user_id || m.assigned_user_id === u.id);
+      if (decides && p.decide) add(u.id, "decide", m);
       else if (p.incoming && m.category !== "werbung_spam") add(u.id, "incoming", m);
     }
   }
