@@ -72,3 +72,42 @@ describe("Gesperrte Kategorien in den Themen", () => {
     expect(silas.map((t) => t.id).sort()).toEqual(["t1", "t2"]);
   });
 });
+
+describe("Zugeordnete Themen: nur noch der Zugeordnete", () => {
+  const sb3 = fakeSb({
+    email_config: [],
+    email_suggestions: [],
+    profiles: [{ id: "jonas", display_name: "Jonas Lang" }],
+    email_threads: [
+      { ...thread("t1"), assigned_user_id: "jonas" },
+      { ...thread("t2"), assigned_user_id: "jonas", topic_state: "wiedervorlage", snoozed_until: "2026-11-20T05:00:00Z" },
+      thread("t3"),
+    ],
+    email_messages: [
+      mail("m1", "t1", "Hallo Silas,\nanbei die Maße."),
+      { ...mail("m2", "t2", "Hallo zusammen,\n…"), decided_at: "2026-10-29T09:00:00Z" },
+      mail("m3", "t3", "Hallo zusammen,\nwir brauchen ein Schild."),
+    ],
+  });
+
+  it("Jonas bekommt sein Thema zur Entscheidung, auch wenn die Mail Silas anredet", async () => {
+    const jonas = await listTopics(sb3, "entscheiden", now, { accountIds: ["a1"], userId: "jonas", audience });
+    expect(jonas.map((t) => t.id).sort()).toEqual(["t1", "t3"]);
+    expect(jonas.find((t) => t.id === "t1")?.assignedTo).toEqual({ id: "jonas", name: "Jonas Lang" });
+    expect(jonas.find((t) => t.id === "t1")?.newMessages.map((m) => m.id)).toEqual(["m1"]);
+  });
+
+  it("andere (auch Admins) sehen es in keiner Ansicht, auch nicht in der Wiedervorlage", async () => {
+    for (const view of ["entscheiden", "laufend", "wiedervorlage"] as const) {
+      const silas = await listTopics(sb3, view, now, { accountIds: null, userId: "silas", audience });
+      expect(silas.map((t) => t.id).filter((id) => id !== "t3")).toEqual([]);
+    }
+    const wv = await listTopics(sb3, "wiedervorlage", now, { accountIds: ["a1"], userId: "jonas", audience });
+    expect(wv.map((t) => t.id)).toEqual(["t2"]);
+  });
+
+  it("Detailansicht ohne Betrachter-ID (Admin): Thema mit Zuordnung sichtbar", async () => {
+    const all = await listTopics(sb3, "entscheiden", now, { accountIds: null });
+    expect(all.find((t) => t.id === "t1")?.assignedTo?.name).toBe("Jonas Lang");
+  });
+});

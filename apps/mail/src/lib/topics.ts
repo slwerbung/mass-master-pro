@@ -29,6 +29,8 @@ export interface Topic {
   messageCount: number;
   /** an wen das Thema gerichtet ist; null = an alle */
   addressedTo?: string | null;
+  /** ausdruecklich einem Mitarbeiter zugeordnet (dann sieht es nur noch er); null = nicht zugeordnet */
+  assignedTo?: { id: string; name: string } | null;
   newMessages: TopicMail[];
   suggestionIds: string[];
 }

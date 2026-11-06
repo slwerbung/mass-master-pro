@@ -379,6 +379,7 @@ function TopicCard({ topic, suggestions, gewerke }: { topic: Topic; suggestions:
         </div>
         <CardTitle className="pt-1"><Link className="hover:underline" to={`/mails/${topic.latestId}`}>{topic.subject}</Link></CardTitle>
         <p className="text-xs text-muted-foreground">
+          {topic.assignedTo && <><b>zugeordnet: {topic.assignedTo.name}</b> · </>}
           {topic.addressedTo && <>an {topic.addressedTo} · </>}{topic.from && <>mit {topic.from} · </>}{topic.messageCount} {topic.messageCount === 1 ? "Mail" : "Mails"} im Thema
           {topic.newMessages.length > 1 && <> · <b>{topic.newMessages.length} neue</b></>}
         </p>

@@ -99,3 +99,37 @@ describe("Gesperrte Kategorien", () => {
     await expect(assertMessages(sb2, { accountIds: null, hiddenCategories: ["beleg"] }, ["b1"])).resolves.toBeUndefined();
   });
 });
+
+describe("Zugeordnete Themen", () => {
+  const sb3 = fakeSb({
+    email_messages: [{ id: "x1", account_id: "a1", category: "auftrag", assigned_user_id: "jonas" }, { id: "x2", account_id: "a1", category: "auftrag", assigned_user_id: null }],
+    email_threads: [{ id: "tx", account_id: "a1", assigned_user_id: "jonas" }],
+  });
+  const jonas = { id: "jonas", accountIds: ["a1"] };
+  const silas = { id: "silas", accountIds: ["a1"] };
+
+  it("nur der Zugeordnete (und Admins) sehen Mail und Thema", async () => {
+    await expect(assertMessages(sb3, jonas, ["x1", "x2"])).resolves.toBeUndefined();
+    await expect(assertMessages(sb3, silas, ["x2"])).resolves.toBeUndefined();
+    await expect(assertMessages(sb3, silas, ["x1"])).rejects.toBeInstanceOf(AccessError);
+    await expect(assertThread(sb3, silas, "tx")).rejects.toBeInstanceOf(AccessError);
+    await expect(assertThread(sb3, jonas, "tx")).resolves.toBeUndefined();
+    await expect(assertThread(sb3, { id: "silas", accountIds: null }, "tx")).resolves.toBeUndefined();
+  });
+
+  it("scopeVisible: Kategorien UND Zuordnung, Admin ungefiltert", async () => {
+    const { scopeVisible, seesAssigned } = await import("./access.ts");
+    const calls: unknown[] = [];
+    const q: any = { or: (f: string, o?: unknown) => (calls.push(o ? [f, o] : [f]), q) };
+    scopeVisible(q, { id: "silas", accountIds: null, hiddenCategories: [] });
+    expect(calls).toEqual([]);
+    scopeVisible(q, { id: "silas", accountIds: ["a1"], hiddenCategories: ["beleg"] }, "email_messages");
+    expect(calls).toEqual([
+      ["category.is.null,category.not.in.(beleg)", { referencedTable: "email_messages" }],
+      ["assigned_user_id.is.null,assigned_user_id.eq.silas", { referencedTable: "email_messages" }],
+    ]);
+    expect(seesAssigned(silas, null)).toBe(true);
+    expect(seesAssigned(silas, "jonas")).toBe(false);
+    expect(seesAssigned({ accountIds: null }, "jonas")).toBe(true);
+  });
+});

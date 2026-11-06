@@ -7,7 +7,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser, type MailUser } from "../_shared/email/http.ts";
-import { AccessError, assertMessages, assertThread, assertVisible, isMailAdmin, scopeAccounts, scopeCategories, seesCategory } from "../_shared/email/access.ts";
+import { AccessError, assertMessages, assertThread, assertVisible, isMailAdmin, scopeAccounts, scopeVisible, seesCategory } from "../_shared/email/access.ts";
 import { listMailUsers, mailAudience, saveMailUser } from "../_shared/email/users.ts";
 import { DEFAULT_PREFS, loadPrefs, loadVapid, pushToUser } from "../_shared/email/push.ts";
 import { isPushEndpoint } from "../_shared/email/webpush.ts";
@@ -31,7 +31,7 @@ const CONFIG_KEYS = [
 
 const MESSAGE_LIST_COLUMNS =
   "id, account_id, thread_id, direction, from_addr, from_name, subject, sent_at, status, category, confidence, summary, " +
-  "hero_project_match_id, hero_project_nr:match_info->>projectNr, match_method, has_attachments, draft_message_id, current_folder, error, hero_logged_at, beleg_state, beleg_vendor, correction_note, trashed_at, answered_at, user_forwarded_at";
+  "hero_project_match_id, hero_project_nr:match_info->>projectNr, match_method, has_attachments, draft_message_id, current_folder, error, hero_logged_at, beleg_state, beleg_vendor, correction_note, trashed_at, answered_at, user_forwarded_at, assigned_user_id";
 
 const BELEG_STATES = ["weiterleiten_offen", "weitergeleitet", "portal_offen", "portal_erledigt"];
 
@@ -43,6 +43,7 @@ const VIEWS: Record<string, (q: any) => any> = {
   belege: (q) => q.eq("category", "beleg"),
   korrigiert: (q) => q.not("correction_note", "is", null),
   fehler: (q) => q.eq("status", "fehler"),
+  zugeordnet: (q) => q.not("assigned_user_id", "is", null),
 };
 
 /** Einstellungen und Betrieb: nur fuer Admins (Mitarbeiter arbeiten nur mit den Mails ihrer Postfaecher). */
@@ -54,7 +55,7 @@ const ADMIN_ONLY = new Set([
 
 /** Filter der Mail-Liste; `skipCategory` fuer die Zaehler je Kategorie. */
 function applyMessageFilters(q: any, body: Record<string, any>, user: MailUser, opts: { skipCategory?: boolean } = {}) {
-  q = scopeCategories(scopeAccounts(q, user), user);
+  q = scopeVisible(scopeAccounts(q, user), user);
   // Papierkorb: eigene Ansicht, sonst immer ausgeblendet.
   if (body.view === "papierkorb") q = q.not("trashed_at", "is", null);
   else q = q.is("trashed_at", null);
@@ -104,6 +105,41 @@ async function withAttachments(sb: any, topics: Topic[]): Promise<Topic[]> {
   return topics;
 }
 type Handler = (c: Ctx) => Promise<unknown>;
+
+/** Anzeigenamen zu Benutzer-IDs (fuer „zugeordnet an …“). */
+async function userNames(sb: any, ids: (string | null | undefined)[]): Promise<Map<string, string>> {
+  const list = [...new Set(ids.filter(Boolean).map(String))];
+  if (!list.length) return new Map();
+  const { data } = await sb.from("profiles").select("id, display_name").in("id", list);
+  return new Map((data || []).map((r: any) => [r.id, String(r.display_name || "Mitarbeiter")]));
+}
+
+/** Thema zu threadId oder messageId; prueft den Zugriff. */
+async function threadFor(sb: any, user: MailUser, body: Record<string, any>): Promise<{ id: string; account_id: string; assigned_user_id: string | null }> {
+  let threadId = String(body.threadId || "");
+  if (!threadId && body.messageId) {
+    const { data } = await sb.from("email_messages").select("thread_id").eq("id", String(body.messageId)).maybeSingle();
+    threadId = data?.thread_id ?? "";
+  }
+  if (!threadId) throw new Error("Thema fehlt.");
+  await assertThread(sb, user, threadId);
+  const { data: th } = await sb.from("email_threads").select("id, account_id, assigned_user_id").eq("id", threadId).maybeSingle();
+  if (!th) throw new Error("Thema nicht gefunden.");
+  return th;
+}
+
+/** Wem darf ein Thema zugeordnet werden: wer das Postfach sieht und keine der Kategorien im Thema gesperrt hat. */
+async function assignCandidates(sb: any, th: { id: string; account_id: string }): Promise<{ id: string; name: string }[]> {
+  const [audience, { data: cats }] = await Promise.all([
+    mailAudience(sb),
+    sb.from("email_messages").select("category").eq("thread_id", th.id).not("category", "is", null),
+  ]);
+  const used: string[] = [...new Set<string>((cats || []).map((r: any) => String(r.category)))];
+  return (audience.get(th.account_id) ?? [])
+    .filter((u) => used.every((c) => !(u.hiddenCategories ?? []).includes(c)))
+    .map((u) => ({ id: u.id, name: u.name }))
+    .sort((a, b) => a.name.localeCompare(b.name, "de"));
+}
 
 const must = <T>(r: { data: T; error: any }): T => {
   if (r.error) throw new Error(r.error.message);
@@ -172,11 +208,11 @@ const handlers: Record<string, Handler> = {
     const statuses = ["neu", "klassifiziert", "zugeordnet", "ohne_bezug", "erledigt", "wartet", "fehler"];
     const counts: Record<string, number> = {};
     await Promise.all(statuses.map(async (s) => {
-      const { count } = await scopeCategories(scopeAccounts(sb.from("email_messages").select("id", { count: "exact", head: true }), user), user).eq("status", s);
+      const { count } = await scopeVisible(scopeAccounts(sb.from("email_messages").select("id", { count: "exact", head: true }), user), user).eq("status", s);
       counts[s] = count ?? 0;
     }));
-    const { count: open } = await scopeCategories(scopeAccounts(
-      sb.from("email_suggestions").select("id, email_messages!inner(account_id, category)", { count: "exact", head: true }), user, "email_messages.account_id",
+    const { count: open } = await scopeVisible(scopeAccounts(
+      sb.from("email_suggestions").select("id, email_messages!inner(account_id, category, assigned_user_id)", { count: "exact", head: true }), user, "email_messages.account_id",
     ), user, "email_messages").eq("status", "offen");
     const start = new Date(); start.setUTCHours(0, 0, 0, 0);
     const monthStart = new Date(); monthStart.setUTCDate(1); monthStart.setUTCHours(0, 0, 0, 0);
@@ -205,7 +241,9 @@ const handlers: Record<string, Handler> = {
     const q = applyMessageFilters(sb.from("email_messages").select(MESSAGE_LIST_COLUMNS, { count: "exact" }), body, user);
     const { data, error, count } = await q.order("sent_at", { ascending: false, nullsFirst: false }).range(offset, offset + limit - 1);
     if (error) throw new Error(error.message);
-    return { messages: data || [], total: count ?? 0 };
+    const names = await userNames(sb, (data || []).map((m: any) => m.assigned_user_id));
+    const messages = (data || []).map((m: any) => ({ ...m, assigned_to: m.assigned_user_id ? names.get(m.assigned_user_id) ?? "Mitarbeiter" : null }));
+    return { messages, total: count ?? 0 };
   },
 
   /** Anzahl je Kategorie unter den uebrigen Filtern (fuer die Kategorie-Chips). */
@@ -224,7 +262,11 @@ const handlers: Record<string, Handler> = {
     const { data: msg } = await sb.from("email_messages").select("*").eq("id", id).maybeSingle();
     if (!msg) throw new Error("Mail nicht gefunden.");
     assertVisible(user, msg);
-    const topicP = topicOfThread(sb, msg.thread_id, undefined, { accountIds: user.accountIds, hiddenCategories: user.hiddenCategories }).catch(() => null);
+    const topicP = topicOfThread(sb, msg.thread_id, undefined, {
+      accountIds: user.accountIds, hiddenCategories: user.hiddenCategories,
+      // Mitarbeiter: sein eigenes zugeordnetes Thema; Admin: jedes (ohne userId wird nichts ausgeblendet).
+      userId: isMailAdmin(user) ? undefined : user.id,
+    }).catch(() => null);
     const [{ data: thread }, { data: atts }, { data: shadow }, { data: suggestions }, { data: calls }] = await Promise.all([
       msg.thread_id
         ? sb.from("email_messages").select("id, direction, from_addr, from_name, subject, sent_at, summary, category, body_text, status, decided_at, decision")
@@ -255,7 +297,8 @@ const handlers: Record<string, Handler> = {
     };
     // Gesperrte Kategorien auch im Verlauf ausblenden.
     const visibleThread = (thread || []).filter((t: any) => seesCategory(user, t.category));
-    return { message: { ...msg, body_html: undefined }, thread: visibleThread, attachments, shadow: shadow || [], suggestions: suggestions || [], calls: calls || [], knowledge, topic: await topicP };
+    const assignedName = msg.assigned_user_id ? (await userNames(sb, [msg.assigned_user_id])).get(msg.assigned_user_id) ?? "Mitarbeiter" : null;
+    return { message: { ...msg, body_html: undefined, assigned_to: assignedName }, thread: visibleThread, attachments, shadow: shadow || [], suggestions: suggestions || [], calls: calls || [], knowledge, topic: await topicP };
   },
 
   /** Korrektur eines Menschen: wird gespeichert und fliesst als Beispiel in kuenftige Laeufe. */
@@ -533,8 +576,8 @@ const handlers: Record<string, Handler> = {
   // ------------------------------------------------------------------ Vorschlaege (Zu entscheiden)
   async list_suggestions({ sb, user, body }) {
     const status = ["offen", "angenommen", "abgelehnt", "fehlgeschlagen"].includes(body.status) ? body.status : "offen";
-    const { data, error } = await scopeCategories(scopeAccounts(sb.from("email_suggestions")
-      .select("id, type, payload, status, result, created_at, decided_at, email_messages!inner(id, account_id, subject, from_addr, from_name, summary, category, confidence, sent_at, direction, hero_project_match_id, match_info, has_attachments, extracted)"), user, "email_messages.account_id"), user, "email_messages")
+    const { data, error } = await scopeVisible(scopeAccounts(sb.from("email_suggestions")
+      .select("id, type, payload, status, result, created_at, decided_at, email_messages!inner(id, account_id, assigned_user_id, subject, from_addr, from_name, summary, category, confidence, sent_at, direction, hero_project_match_id, match_info, has_attachments, extracted)"), user, "email_messages.account_id"), user, "email_messages")
       .eq("status", status).order("created_at", { ascending: false }).limit(100);
     if (error) throw new Error(error.message);
     const ids = [...new Set((data || []).map((r: any) => r.email_messages.id))];
@@ -562,6 +605,44 @@ const handlers: Record<string, Handler> = {
     return view === "entscheiden" ? await withAttachments(sb, topics) : topics;
   },
 
+  /** Wem das Thema (der Mail) zugeordnet werden kann, und wem es gerade zugeordnet ist. */
+  async assign_candidates({ sb, user, body }) {
+    const th = await threadFor(sb, user, body);
+    return { assignedUserId: th.assigned_user_id, candidates: await assignCandidates(sb, th) };
+  },
+
+  /**
+   * Thema (mit allen Mails, auch kuenftigen) einem Mitarbeiter zuordnen – danach sieht es nur noch er, auch in der
+   * Wiedervorlage – oder mit userId = null die Zuordnung aufheben. Offene Mails bleiben offen: der Zugeordnete entscheidet.
+   */
+  async assign_topic({ sb, user, body }) {
+    const th = await threadFor(sb, user, body);
+    const target = body.userId ? String(body.userId) : null;
+    if (target === th.assigned_user_id) return { assignedUserId: target };
+    let name: string | null = null;
+    if (target) {
+      const cand = (await assignCandidates(sb, th)).find((c) => c.id === target);
+      if (!cand) throw new Error("Dieser Mitarbeiter sieht das Postfach oder eine Kategorie dieses Themas nicht.");
+      name = cand.name;
+    }
+    must(await sb.from("email_threads").update({
+      assigned_user_id: target, assigned_at: target ? new Date().toISOString() : null, assigned_by: target ? user.id : null,
+    }).eq("id", th.id));
+    if (target && target !== user.id) {
+      const prefs = (await loadPrefs(sb, [target])).get(target) ?? DEFAULT_PREFS;
+      const { data: last } = await sb.from("email_messages").select("id, subject, from_name, from_addr").eq("thread_id", th.id)
+        .order("sent_at", { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
+      if (prefs.decide && last) {
+        await pushToUser(sb, target, {
+          title: `${user.name || "Jemand"} hat dir eine Mail zugeordnet`.slice(0, 80),
+          body: `${last.from_name || last.from_addr}: ${last.subject || "(ohne Betreff)"}`.slice(0, 240),
+          url: `/mails/${last.id}`, tag: `assign-${th.id}`,
+        }, await loadVapid(sb)).catch(() => null);
+      }
+    }
+    return { assignedUserId: target, assignedTo: name };
+  },
+
   /** Thema entscheiden: weiter verfolgen, Wiedervorlage (until = YYYY-MM-DD, note), abschliessen, wieder oeffnen. */
   async topic_decide({ sb, user, body }) {
     const decision = String(body.decision || "");
@@ -581,19 +662,19 @@ const handlers: Record<string, Handler> = {
   /** Kurzuebersicht (fuer die Startseite und die optionale 7-Uhr-Push-Meldung). */
   async digest({ sb, user }) {
     const twoDays = new Date(Date.now() - 2 * 86400_000).toISOString();
-    const { count: open } = await scopeCategories(scopeAccounts(
-      sb.from("email_suggestions").select("id, email_messages!inner(account_id, category)", { count: "exact", head: true }), user, "email_messages.account_id",
+    const { count: open } = await scopeVisible(scopeAccounts(
+      sb.from("email_suggestions").select("id, email_messages!inner(account_id, category, assigned_user_id)", { count: "exact", head: true }), user, "email_messages.account_id",
     ), user, "email_messages").eq("status", "offen");
     const customerCats = ["anfrage_neu", "projekt_kommunikation", "layout_freigabe", "auftrag", "reklamation"];
-    const { data: unanswered } = await scopeCategories(scopeAccounts(sb.from("email_messages")
+    const { data: unanswered } = await scopeVisible(scopeAccounts(sb.from("email_messages")
       .select("id, subject, from_name, from_addr, sent_at, category, email_threads!inner(answered)"), user), user)
       .eq("direction", "in").in("category", customerCats).eq("email_threads.answered", false).lt("sent_at", twoDays).is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(20);
-    const { data: claims } = await scopeCategories(scopeAccounts(sb.from("email_messages")
+    const { data: claims } = await scopeVisible(scopeAccounts(sb.from("email_messages")
       .select("id, subject, from_name, from_addr, sent_at, category, email_threads!inner(answered)"), user), user)
       .eq("direction", "in").eq("category", "reklamation").eq("email_threads.answered", false).is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(20);
-    const { data: portal } = await scopeCategories(scopeAccounts(sb.from("email_messages")
+    const { data: portal } = await scopeVisible(scopeAccounts(sb.from("email_messages")
       .select("id, subject, from_name, from_addr, sent_at, beleg_vendor"), user), user).eq("beleg_state", "portal_offen").is("trashed_at", null)
       .order("sent_at", { ascending: true }).limit(50);
     const lines: string[] = [];

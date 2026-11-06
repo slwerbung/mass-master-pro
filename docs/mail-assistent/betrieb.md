@@ -274,6 +274,20 @@ an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorl
   trotzdem beim Admin unter „Zu entscheiden“ (sonst bliebe sie liegen). Das Abräumen irrelevanter Threads entscheidet nie nach Sicht
   eines Betrachters.
 
+## Themen einem Mitarbeiter zuordnen (Nov. 2026)
+
+- Knopf „Mitarbeiter …“ an jedem Thema (Zu entscheiden, Themen, Mail-Ansicht). Zugeordnet wird das **Thema** (`email_threads.
+  assigned_user_id`, dazu `assigned_at`/`assigned_by`), also die Mail mit ihrem ganzen Verlauf; neue Mails im Thema erben die Zuordnung.
+  An jeder Mail steht eine Kopie (`email_messages.assigned_user_id`), gepflegt nur per Trigger (Migration `20261106130000`).
+- Wirkung: Das Thema sieht nur noch der Zugeordnete – unter „Zu entscheiden“, „Laufend“, „Wiedervorlage“ und „Abgeschlossen“. Andere
+  Mitarbeiter sehen die Mails nirgends (Liste, Zähler, Vorschläge, Detail, Antworten, Entwurf – `scopeVisible`/`assertVisible`/
+  `assertThread` in `access.ts`). Admins finden sie weiter unter „Mails“ (Hinweis „→ Name“, Schnellansicht „Zugeordnet“) und können
+  umhängen oder die Zuordnung aufheben; in ihren Themen-Ansichten erscheinen fremd zugeordnete Themen nicht.
+- Die Zuordnung schlägt „an wen gerichtet“ (Anrede). Push-Nachrichten zum Thema gehen nur an den Zugeordneten; beim Zuordnen bekommt er
+  eine („… hat dir eine Mail zugeordnet“, wenn „Zu entscheiden“-Benachrichtigungen an sind).
+- Zuordnen lässt sich nur an jemanden, der das Postfach sieht und keine Kategorie des Themas gesperrt hat (`assign_candidates`). Offene
+  Mails bleiben offen – der Zugeordnete entscheidet sie.
+
 ## HERO-Links und Projektsuche (Nov. 2026)
 
 - Überall, wo ein Projekt steht (Mail-Liste, Mail-Ansicht, Themen, Zu entscheiden, Projektsuche, Verfassen), öffnet ein Link das Projekt
