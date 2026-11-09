@@ -114,7 +114,7 @@ export function InviteCustomerDialog({ open, onOpenChange, projectId, projectNum
           <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground space-y-1">
             <p className="font-medium text-foreground">Vorschau der E-Mail</p>
             <p><span className="text-foreground">Betreff:</span> Korrektur / Freigabe – Einladung von SL WERBUNG · Projekt {projectNumber}</p>
-            <p>SL WERBUNG hat für Ihr Projekt {projectNumber} die Standorte zur Freigabe bereitgestellt. Die Prüfung läuft online über Captfix (captfix.app).</p>
+            <p>SL WERBUNG hat für Ihr Projekt {projectNumber} die Standorte zur Freigabe bereitgestellt. Die Prüfung läuft bequem online – ohne Registrierung.</p>
             {note.trim() && <p className="italic">„{note.trim()}"</p>}
             <p>So geht's: Link öffnen, Namen eingeben, dann Standorte freigeben oder Korrekturen hinterlassen.</p>
             <p className="text-foreground">[ Standorte ansehen &amp; freigeben ]</p>

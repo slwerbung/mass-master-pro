@@ -228,20 +228,24 @@ Deno.serve(async (req) => {
       return json({ skipped: true, reason: "event disabled in settings" });
     }
 
-    let recipientEmail: string | null = null;
-    if (eventSetting.target === "assigned_employee" && projectRow.data?.employee_id) {
-      const { data: emp } = await supabase
-        .from("employees")
-        .select("email")
-        .eq("id", projectRow.data.employee_id)
-        .maybeSingle();
-      recipientEmail = (emp?.email || "").trim() || null;
+    // Empfaenger: global, Hauptverantwortlicher (assigned_employee) oder ganzes Projektteam (project_team =
+    // Hauptverantwortlicher + project_employee_assignments). Ohne gueltige Adresse: globale Adresse.
+    let recipients: string[] = [];
+    const ownerId: string | null = projectRow.data?.employee_id ?? null;
+    if (eventSetting.target === "assigned_employee" || eventSetting.target === "project_team") {
+      const ids = new Set<string>(ownerId ? [ownerId] : []);
+      if (eventSetting.target === "project_team") {
+        const { data: team } = await supabase.from("project_employee_assignments").select("employee_id").eq("project_id", projectId);
+        for (const r of team || []) if (r.employee_id) ids.add(r.employee_id);
+      }
+      if (ids.size) {
+        const { data: emps } = await supabase.from("employees").select("email").in("id", [...ids]);
+        recipients = uniqueEmails((emps || []).map((e: any) => e.email));
+      }
     }
-    if (!recipientEmail) {
-      recipientEmail = globalEmail || null;
-    }
+    if (!recipients.length && globalEmail) recipients = [globalEmail];
 
-    if (!recipientEmail) {
+    if (!recipients.length) {
       return json({ skipped: true, reason: "no recipient configured" });
     }
 
@@ -257,7 +261,7 @@ Deno.serve(async (req) => {
       headers: { "Authorization": `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         from: "Captfix <notifications@captfix.app>",
-        to: [recipientEmail],
+        to: recipients,
         subject,
         html,
       }),
@@ -273,12 +277,17 @@ Deno.serve(async (req) => {
       ...updateFields,
     }, { onConflict: "assignment_id" });
 
-    return json({ sent: true, event, recipient: recipientEmail });
+    return json({ sent: true, event, recipients });
   } catch (e: any) {
     console.error(e);
     return json({ error: "Server error", details: e.message }, 500);
   }
 });
+
+/** Adressen bereinigen: leere weg, klein geschrieben, ohne Doppel. */
+function uniqueEmails(list: (string | null | undefined)[]): string[] {
+  return [...new Set(list.map((e) => String(e || "").trim().toLowerCase()).filter((e) => e.includes("@")))];
+}
 
 function buildMail(event: EventType, ctx: { customerName: string; projectNumber: string; projectId: string }): { subject: string; html: string } {
   const projectUrl = `https://captfix.app/projects/${ctx.projectId}`;

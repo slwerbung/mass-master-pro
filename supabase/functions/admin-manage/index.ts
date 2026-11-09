@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import bcrypt from "https://esm.sh/bcryptjs@3.0.2";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
+import { getPublicLinkConfig, validateBaseUrl, validateSlug } from "../_shared/publicLinks.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -34,7 +35,7 @@ Deno.serve(async (req) => {
     //   the URL still requires admin auth via set_privacy_url.
     // - get_legal_info returns the responsible-party data shown on the
     //   built-in /datenschutz page; it is meant to be public.
-    const publicActions = ["get_project_prefix", "get_integration_config", "get_logo", "get_privacy_url", "get_legal_info"];
+    const publicActions = ["get_project_prefix", "get_integration_config", "get_logo", "get_privacy_url", "get_legal_info", "get_public_link_config"];
     if (!publicActions.includes(action)) {
       const payload = adminToken ? await verifySessionToken(adminToken, getSessionSecret()) : null;
       if (!payload || payload.role !== "admin" || payload.userId !== "admin") {
@@ -467,6 +468,31 @@ Deno.serve(async (req) => {
           try { parsed = JSON.parse(data.value); } catch { parsed = null; }
         }
         return json({ info: parsed });
+      }
+      case "get_public_link_config": {
+        // Public: die Kundenseiten brauchen Slug + Basis-URL, um Firmen-Links zu bauen bzw. falsche Slugs umzuleiten.
+        const cfg = await getPublicLinkConfig(supabase);
+        const { data: raw } = await supabase.from("app_config").select("key, value").in("key", ["public_link_slug", "public_base_url"]);
+        const stored = new Map((raw || []).map((r: any) => [r.key, r.value]));
+        return json({ ...cfg, storedSlug: stored.get("public_link_slug") || "", storedBaseUrl: stored.get("public_base_url") || "" });
+      }
+      case "set_public_link_config": {
+        // Admin-only. Schreibt NUR public_link_slug und public_base_url (kein generischer app_config-Write).
+        const slug = String(params.slug ?? "").trim();
+        const baseUrl = String(params.baseUrl ?? "").trim();
+        if (slug) {
+          const err = validateSlug(slug);
+          if (err) return json({ error: err }, 400);
+        }
+        if (baseUrl) {
+          const err = validateBaseUrl(baseUrl);
+          if (err) return json({ error: err }, 400);
+        }
+        for (const u of [{ key: "public_link_slug", value: slug || null }, { key: "public_base_url", value: baseUrl || null }]) {
+          const { error } = await supabase.from("app_config").upsert(u);
+          if (error) return json({ error: error.message }, 500);
+        }
+        return json({ success: true, ...(await getPublicLinkConfig(supabase)) });
       }
       case "set_legal_info": {
         // Admin-only. Stores the responsible-party details as JSON.

@@ -250,6 +250,13 @@ der Nachname („Langner möchte…"), was befremdlich wirkte; es schreibt die
 Firma, nicht eine Einzelperson. Nur die interne Mail an uns nennt weiterhin
 den Kollegen.
 
+### Firmen-Links (Nov. 2026)
+Neue Terminlinks tragen den Firmennamen im Pfad: `https://captfix.app/sl-werbung/termin/...` (bzw. mit eigener Domain,
+Adminmenü → Kundenlinks; Bau nur über `_shared/publicLinks.ts` › `publicUrl()`). Alte Links ohne Firmennamen funktionieren
+unverändert weiter, die HERO-Vorlagen müssen also nicht angefasst werden. Wer eine Vorlage umstellen will, ersetzt im Link
+`https://captfix.app/termin/m/...` durch `https://captfix.app/sl-werbung/termin/m/...` (Rest gleich, weiter als reiner Text,
+Terminart als festes Segment hinten). `booking-invite` liefert die Vorlagenform schon im neuen Format.
+
 ## Adminmenü (`supabase/functions/booking-admin`)
 Admin-Token nötig, alle Writes laufen über diese Function — direkte
 Supabase-Writes gibt es im Adminbereich nicht. Geschrieben wird nur, was

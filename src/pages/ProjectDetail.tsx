@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import LocationCard from "@/components/LocationCard";
 import { supabase } from "@/integrations/supabase/client";
+import { buildPublicUrl, usePublicLinkConfig } from "@/lib/publicLinks";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { mergeWithDefaultProjectFields } from "@/lib/projectFields";
 import { naturalLocationSortDesc } from "@/lib/locationSorting";
@@ -36,6 +37,7 @@ import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import { BookingInviteDialog } from "@/components/BookingInviteDialog";
 import { SplitPdfDialog } from "@/components/SplitPdfDialog";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
+import ProjectTeam from "@/components/ProjectTeam";
 import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 
 
@@ -47,6 +49,8 @@ const LITE = { withOriginals: false } as const;
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
+  // Kundenlink mit Firmennamen (Spec B) – vorab laden, damit „Link kopieren“ synchron bleibt (Zwischenablage braucht die Klick-Geste).
+  const { config: linkConfig } = usePublicLinkConfig();
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -224,7 +228,7 @@ const ProjectDetail = () => {
   };
 
   const copyGuestLink = () => {
-    const guestUrl = `${window.location.origin}/guest/${projectId}`;
+    const guestUrl = buildPublicUrl(linkConfig, `/freigabe/${projectId}`);
     navigator.clipboard.writeText(guestUrl);
     toast.success("Gast-Link kopiert!");
   };
@@ -302,6 +306,7 @@ const ProjectDetail = () => {
             {(project as any).customerName && (
               <p className="text-xs text-muted-foreground truncate">{(project as any).customerName}</p>
             )}
+            {projectId && <div className="mt-1"><ProjectTeam projectId={projectId} /></div>}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
             <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setInviteOpen(true)} title="Kunde einladen">

@@ -16,6 +16,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { supabase } from "@/integrations/supabase/client";
+import { TeamBadge } from "@/components/ProjectTeam";
+import { loadEmployees, projectTeam } from "@/lib/projectTeam";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { formatDateTimeSafe } from "@/lib/dateUtils";
 import { HeroSyncIndicator } from "@/components/HeroSyncIndicator";
 import { UpcomingAppointments } from "@/components/UpcomingAppointments";
@@ -246,16 +249,44 @@ const Projects = () => {
   };
 
   const claimProject = async (id: string) => {
-    if (!session?.id) return;
+    if (session?.role !== "employee" || !session.id) return;
     try {
-      const { error } = await supabase.from("projects").update({ employee_id: session.id }).eq("id", id);
-      if (error) throw error;
+      // Gleicher Weg wie im Projektteam: project-team/set_owner (prüft Token, legt Team sauber an).
+      await projectTeam("set_owner", id, session.id);
       toast.success("Projekt übernommen");
       await loadProjects(false);
     } catch (e: any) {
       toast.error("Fehler beim Übernehmen: " + e.message);
     }
   };
+
+  // Projektteam je Karte: Hauptverantwortlicher + Zuordnungen, Namen aus employees_public (einmal für alle Projekte).
+  const [teamByProject, setTeamByProject] = useState<Record<string, { id: string; name: string; owner: boolean }[]>>({});
+  useEffect(() => {
+    const ids = projects.map((p) => p.id);
+    if (!ids.length) return;
+    let alive = true;
+    (async () => {
+      const assignments: { project_id: string; employee_id: string }[] = [];
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await (supabase as any).from("project_employee_assignments").select("project_id, employee_id").in("project_id", ids.slice(i, i + 200));
+        assignments.push(...(data || []));
+      }
+      const employees = await loadEmployees();
+      const names = new Map(employees.map((e) => [e.id, e.name]));
+      const out: Record<string, { id: string; name: string; owner: boolean }[]> = {};
+      for (const p of projects) {
+        const list: { id: string; name: string; owner: boolean }[] = [];
+        if (p.employeeId && names.has(p.employeeId)) list.push({ id: p.employeeId, name: names.get(p.employeeId)!, owner: true });
+        for (const a of assignments) {
+          if (a.project_id === p.id && a.employee_id !== p.employeeId && names.has(a.employee_id)) list.push({ id: a.employee_id, name: names.get(a.employee_id)!, owner: false });
+        }
+        if (list.length) out[p.id] = list;
+      }
+      if (alive) setTeamByProject(out);
+    })().catch(() => {});
+    return () => { alive = false; };
+  }, [projects]);
 
   const exitSelectionMode = () => { setSelectionMode(false); setSelectedIds(new Set()); };
 
@@ -486,10 +517,11 @@ const Projects = () => {
                       ))}
                     </div>
 
-                    {/* Action buttons */}
+                    {/* Action buttons + Team */}
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
                     {!selectionMode && (
                       <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
-                        {!project.archivedAt && !project.employeeId && session?.id && (
+                        {!project.archivedAt && !project.employeeId && session?.role === "employee" && (
                           <button
                             className="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
                             title="Übernehmen"
@@ -524,6 +556,19 @@ const Projects = () => {
                         </button>
                       </div>
                     )}
+                    {teamByProject[project.id]?.length ? (
+                      <TooltipProvider delayDuration={200}>
+                        <div className="flex -space-x-1.5">
+                          {teamByProject[project.id].slice(0, 3).map((m) => <TeamBadge key={m.id} name={m.name} owner={m.owner} />)}
+                          {teamByProject[project.id].length > 3 && (
+                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-background bg-muted text-[11px] font-medium text-muted-foreground">
+                              +{teamByProject[project.id].length - 3}
+                            </span>
+                          )}
+                        </div>
+                      </TooltipProvider>
+                    ) : null}
+                    </div>
                   </div>
 
                   {/* Footer meta */}

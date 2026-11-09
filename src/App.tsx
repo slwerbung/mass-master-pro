@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 // @ts-ignore - QueryClient export may not resolve during partial installs
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Suspense, lazy, useEffect, useState } from "react";
+import SlugRoute from "@/components/SlugRoute";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { getSession, clearSession, getRememberedLogin, renewEmployeeSession, sessionNeedsRenewal } from "@/lib/session";
 import { toast } from "sonner";
@@ -276,6 +277,23 @@ const App = () => {
           <Route path="/termin/:projectId" element={<BookingSuspense><BookingPage /></BookingSuspense>} />
           <Route path="/termin/absagen/:token" element={<BookingSuspense><BookingCancel /></BookingSuspense>} />
           <Route path="/termin/intern/:token" element={<BookingSuspense><BookingStaffAction /></BookingSuspense>} />
+          {/* Kundenlinks mit Firmennamen (Spec B): /<firma>/… – alle alten Pfade bleiben. SlugRoute leitet einen
+              falschen Firmennamen auf den eingestellten um. Neue Präfixe auch in vite.config.ts navigateFallbackDenylist. */}
+          <Route path="/freigabe/:projectId" element={<GuestAccess />} />
+          <Route path="/:firma/freigabe/:projectId" element={<SlugRoute><GuestAccess /></SlugRoute>} />
+          <Route path="/:firma/freigabe/:projectId/ansehen" element={<SlugRoute><GuestProject /></SlugRoute>} />
+          <Route path="/:firma/kunde" element={<SlugRoute><CustomerLogin /></SlugRoute>} />
+          <Route path="/:firma/termin/m/*" element={<SlugRoute><BookingSuspense><BookingPage /></BookingSuspense></SlugRoute>} />
+          <Route path="/:firma/termin/absagen/:token" element={<SlugRoute><BookingSuspense><BookingCancel /></BookingSuspense></SlugRoute>} />
+          <Route path="/:firma/termin/intern/:token" element={<SlugRoute><BookingSuspense><BookingStaffAction /></BookingSuspense></SlugRoute>} />
+          <Route path="/:firma/termin/:projectId" element={<SlugRoute><BookingSuspense><BookingPage /></BookingSuspense></SlugRoute>} />
+          <Route path="/:firma/hero-aktion" element={<SlugRoute><HeroOfferAction /></SlugRoute>} />
+          <Route path="/:firma/neukunde" element={<SlugRoute><NewCustomerSignup /></SlugRoute>} />
+          <Route path="/:firma/fahrzeug-anfrage" element={<SlugRoute><VehicleInquiry /></SlugRoute>} />
+          <Route path="/:firma/wohnmobil-reparatur" element={<SlugRoute><CamperRepairInquiry /></SlugRoute>} />
+          <Route path="/:firma/layout-upload" element={<SlugRoute><LayoutUpload /></SlugRoute>} />
+          <Route path="/:firma/gestaltung" element={<SlugRoute><Gestaltung /></SlugRoute>} />
+          <Route path="/:firma/datenschutz" element={<SlugRoute><PrivacyPolicy /></SlugRoute>} />
           {/* Internes Werkzeug: absichtlich nirgends verlinkt. Der Pfad steht
               zwar im JS-Bundle, aber Seite und Edge Function verlangen eine
               gueltige Mitarbeiter-/Admin-Sitzung. */}

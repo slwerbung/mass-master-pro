@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { resetPublicLinkConfig, slugify } from "@/lib/publicLinks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -85,11 +86,13 @@ const Admin = () => {
   const [savingLegalInfo, setSavingLegalInfo] = useState(false);
 
   // Notifications: global recipient + per-event { enabled, target }.
-  // Target is "global" (use globalEmail) or "assigned_employee" (use
-  // the project owner's email; if that employee has no email,
-  // server-side falls back to globalEmail).
+  // Target is "global" (use globalEmail), "assigned_employee" (the project
+  // owner's email) or "project_team" (owner + all team members). Without a
+  // usable address the server falls back to globalEmail.
   type NotificationEvent = "first_action" | "comment" | "completion";
-  type NotificationEventSetting = { enabled: boolean; target: "global" | "assigned_employee" };
+  type NotificationTarget = "global" | "assigned_employee" | "project_team";
+  type NotificationEventSetting = { enabled: boolean; target: NotificationTarget };
+  const asTarget = (t: unknown): NotificationTarget => (t === "assigned_employee" || t === "project_team" ? t : "global");
   const [notifGlobalEmail, setNotifGlobalEmail] = useState("");
   const [notifSettings, setNotifSettings] = useState<Record<NotificationEvent, NotificationEventSetting>>({
     first_action: { enabled: false, target: "global" },
@@ -229,7 +232,7 @@ const Admin = () => {
 
   useEffect(() => {
     if (!session || session.role !== "admin") { navigate("/"); return; }
-    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadNotifSettings(); loadReminderSettings(); loadVehicleFields(); loadIntegrations(); loadHeroDocTypeConfig(); loadHeroImgCatConfig(); }
+    if (adminToken) { loadAll(); loadFields(); loadProjectFields(); loadViewSettings(); loadLogo(); loadPrivacyUrl(); loadLegalInfo(); loadLinkConfig(); loadNotifSettings(); loadReminderSettings(); loadVehicleFields(); loadIntegrations(); loadHeroDocTypeConfig(); loadHeroImgCatConfig(); }
   }, [adminToken]);
 
   // Once we know HERO is enabled and has a key, auto-fetch the
@@ -377,6 +380,33 @@ const Admin = () => {
     setSavingLegalInfo(false);
   };
 
+  // Kundenlinks (Spec B): Firmenname im Link + optional eigene Domain.
+  const [linkSlug, setLinkSlug] = useState("");
+  const [linkBaseUrl, setLinkBaseUrl] = useState("");
+  const [savingLinks, setSavingLinks] = useState(false);
+  const loadLinkConfig = async () => {
+    try {
+      const data = await invoke("get_public_link_config");
+      setLinkSlug(data?.storedSlug || "");
+      setLinkBaseUrl(data?.storedBaseUrl || "");
+    } catch {}
+  };
+  const saveLinkConfig = async () => {
+    setSavingLinks(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-manage", {
+        body: { adminToken, action: "set_public_link_config", slug: linkSlug.trim(), baseUrl: linkBaseUrl.trim() },
+      });
+      // Validierungsfehler kommen als HTTP 400 – die Meldung des Servers anzeigen.
+      const msg = data?.error || (error ? await (error as any)?.context?.json?.().then((b: any) => b?.error).catch(() => null) : null);
+      if (error || data?.error) throw new Error(msg || error?.message || "Fehler beim Speichern");
+      resetPublicLinkConfig();
+      toast.success("Kundenlinks gespeichert");
+    } catch (e: any) { toast.error(e.message || "Fehler beim Speichern"); }
+    setSavingLinks(false);
+  };
+  const linkPreview = `${(linkBaseUrl.trim() || "https://captfix.app").replace(/\/+$/, "")}/${linkSlug.trim() || slugify(legalInfo.companyName) || "firma"}/freigabe/<projekt>`;
+
   const loadNotifSettings = async () => {
     try {
       const data = await invoke("get_notification_settings");
@@ -385,15 +415,15 @@ const Admin = () => {
       setNotifSettings({
         first_action: {
           enabled: !!s.first_action?.enabled,
-          target: (s.first_action?.target === "assigned_employee" ? "assigned_employee" : "global"),
+          target: asTarget(s.first_action?.target),
         },
         comment: {
           enabled: !!s.comment?.enabled,
-          target: (s.comment?.target === "assigned_employee" ? "assigned_employee" : "global"),
+          target: asTarget(s.comment?.target),
         },
         completion: {
           enabled: !!s.completion?.enabled,
-          target: (s.completion?.target === "assigned_employee" ? "assigned_employee" : "global"),
+          target: asTarget(s.completion?.target),
         },
       });
     } catch {}
@@ -420,7 +450,7 @@ const Admin = () => {
   // why nothing would arrive.
   const canEnableEvent = (s: NotificationEventSetting): boolean => {
     if (notifGlobalEmail.trim()) return true;
-    return s.target === "assigned_employee";
+    return s.target !== "global";
   };
 
   const updateEventSetting = (event: NotificationEvent, partial: Partial<NotificationEventSetting>) => {
@@ -1340,7 +1370,7 @@ const Admin = () => {
                           <Label className="text-xs">Empfänger</Label>
                           <Select
                             value={setting.target}
-                            onValueChange={(v) => updateEventSetting(ev.key, { target: v as "global" | "assigned_employee" })}
+                            onValueChange={(v) => updateEventSetting(ev.key, { target: asTarget(v) })}
                             disabled={!setting.enabled}
                           >
                             <SelectTrigger className="w-full">
@@ -1348,7 +1378,8 @@ const Admin = () => {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="global">Globale E-Mail-Adresse</SelectItem>
-                              <SelectItem value="assigned_employee">Projekt-zugeordneter Mitarbeiter</SelectItem>
+                              <SelectItem value="assigned_employee">Hauptverantwortlicher</SelectItem>
+                              <SelectItem value="project_team">Ganzes Projektteam</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -1598,6 +1629,29 @@ const Admin = () => {
                 <Button onClick={saveLegalInfo} disabled={savingLegalInfo}>
                   {savingLegalInfo ? "Speichert..." : "Speichern"}
                 </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Settings className="h-5 w-5" /> Kundenlinks</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Neue Links für Kunden (Freigabe, Termine) tragen den Firmennamen im Pfad. Alte Links funktionieren weiter.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="link-slug">Firmenname im Link</Label>
+                  <Input id="link-slug" value={linkSlug} onChange={(e) => setLinkSlug(e.target.value)} placeholder={slugify(legalInfo.companyName) || "sl-werbung"} />
+                  <p className="text-xs text-muted-foreground">Leer = aus dem Firmennamen oben. Nur Kleinbuchstaben, Ziffern und Bindestriche.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="link-base">Eigene Domain (optional)</Label>
+                  <Input id="link-base" value={linkBaseUrl} onChange={(e) => setLinkBaseUrl(e.target.value)} placeholder="https://freigabe.slwerbung.de" />
+                  <p className="text-xs text-muted-foreground">
+                    Domain zuerst in Vercel hinzufügen und beim Domain-Anbieter einen CNAME auf <code>cname.vercel-dns.com</code> setzen.
+                  </p>
+                </div>
+                <p className="rounded-md bg-muted/50 px-3 py-2 text-xs font-mono break-all">{linkPreview}</p>
+                <Button onClick={saveLinkConfig} disabled={savingLinks}>{savingLinks ? "Speichert..." : "Speichern"}</Button>
               </CardContent>
             </Card>
 

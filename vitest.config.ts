@@ -8,6 +8,8 @@ export default defineConfig({
       "supabase/functions/_shared/booking/**/*.test.ts",
       "supabase/functions/_shared/email/**/*.test.ts",
       "supabase/functions/email-*/**/*.test.ts",
+      "supabase/functions/project-team/**/*.test.ts",
+      "supabase/functions/_shared/publicLinks.test.ts",
     ],
     environment: "node",
   },

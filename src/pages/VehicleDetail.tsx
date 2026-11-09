@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock, Mail, Camera, ChevronDown } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { supabase } from "@/integrations/supabase/client";
+import { buildPublicUrl, usePublicLinkConfig } from "@/lib/publicLinks";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
 import { readImageFileForEditor } from "@/lib/imageFile";
@@ -108,6 +109,7 @@ const SectionToggle = ({ open, title, count }: { open: boolean; title: string; c
 
 const VehicleDetail = () => {
   const { projectId } = useParams();
+  const { config: linkConfig } = usePublicLinkConfig();
   const navigate = useNavigate();
   const session = getSession();
   // Guards the one-shot consumption of an image handed back from the editor.
@@ -602,7 +604,7 @@ const VehicleDetail = () => {
             </Button>
             <Button
               variant="ghost" size="icon" className="h-9 w-9"
-              onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/guest/${projectId}`); toast.success("Gast-Link kopiert!"); }}
+              onClick={() => { navigator.clipboard.writeText(buildPublicUrl(linkConfig, `/freigabe/${projectId}`)); toast.success("Gast-Link kopiert!"); }}
               title="Gast-Link kopieren"
             >
               <Share2 className="h-4 w-4" />

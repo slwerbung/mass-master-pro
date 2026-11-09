@@ -78,6 +78,15 @@ Kunden können Projekte online einsehen und freigeben.
   (`docs/terminbuchung.md`)
 - `src/components/BookingInviteDialog.tsx` – Termineinladung aus der App
   (Projektuebersicht = allgemeiner Link, Projekt = Link mit Projektbezug)
+- `src/components/ProjectTeam.tsx` + Edge Function `project-team` – Projektteam im
+  Projekt (Hauptverantwortlicher = `projects.employee_id`, Mitglieder =
+  `project_employee_assignments`; ändern dürfen Admin und Hauptverantwortlicher).
+  Benachrichtigungsziel `project_team` in `send-notification` = beide zusammen
+- Kundenlinks mit Firmennamen: `/<slug>/freigabe/<id>`, `/<slug>/termin/...`
+  (`app_config.public_link_slug`/`public_base_url`, Adminmenü → Kundenlinks).
+  Bauen NUR über `publicUrl()` (`src/lib/publicLinks.ts` bzw.
+  `_shared/publicLinks.ts`), nie aus `window.location.origin`. `SlugRoute`
+  leitet einen falschen Slug um; neue Präfixe gehören in die PWA-Denylist
 
 ## Bekannte Architektur-Entscheidungen
 - Storage Bucket `project-files` ist **privat** (Phase 3, `docs/phase3-storage.md`).

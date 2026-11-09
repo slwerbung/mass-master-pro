@@ -12,6 +12,7 @@
 // noch einmal auf den Status geschaut.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getPublicLinkConfig, publicUrl, type PublicLinkConfig } from "../_shared/publicLinks.ts";
 import { DateTime } from "luxon";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import { buildIcs, toBase64 } from "../_shared/booking/ics.ts";
@@ -28,7 +29,6 @@ const cors = {
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
-const APP_BASE = "https://captfix.app";
 // Die Mailadresse muss bei captfix.app bleiben (dort liegt die bei Resend
 // verifizierte Domain), der ANZEIGENAME aber nicht: im Postfach des Kunden
 // steht unsere Firma. "Captfix" sagt ihm nichts und kostet Vertrauen.
@@ -74,6 +74,8 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Methode nicht erlaubt" }, 405);
 
   const db = sb();
+  const linkCfg = await getPublicLinkConfig(db);
+  const pub = (path: string) => publicUrl(linkCfg, path);
   try {
     const body = await req.json().catch(() => ({}));
 
@@ -181,10 +183,10 @@ Deno.serve(async (req) => {
           hinweis: (bk.answers as any)?.hinweis ?? null,
           staffName: kind === "internal_new" ? (staffOf.get(bk.staff_id) ?? null) : null,
           cancelReason: bk.cancel_reason ?? null,
-          cancelUrl: bk.cancel_token ? `${APP_BASE}/termin/absagen/${bk.cancel_token}` : undefined,
-          bookingUrl: bk.project_id ? `${APP_BASE}/termin/${bk.project_id}` : undefined,
-          staffCancelUrl: bk.staff_token ? `${APP_BASE}/termin/intern/${bk.staff_token}?mode=cancel` : undefined,
-          staffRescheduleUrl: bk.staff_token ? `${APP_BASE}/termin/intern/${bk.staff_token}?mode=reschedule` : undefined,
+          cancelUrl: bk.cancel_token ? `${pub("/termin/absagen/" + bk.cancel_token)}` : undefined,
+          bookingUrl: bk.project_id ? `${pub("/termin/" + bk.project_id)}` : undefined,
+          staffCancelUrl: bk.staff_token ? `${pub("/termin/intern/" + bk.staff_token)}?mode=cancel` : undefined,
+          staffRescheduleUrl: bk.staff_token ? `${pub("/termin/intern/" + bk.staff_token)}?mode=reschedule` : undefined,
           companyName: firma,
         };
 
