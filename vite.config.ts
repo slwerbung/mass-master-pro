@@ -56,7 +56,14 @@ export default defineConfig(() => ({
         // JS — und eine neu hinzugekommene Route landet dann im 404 der App,
         // obwohl sie live ist (genau so passiert, Okt. 2026). Offline nuetzt
         // die Seite ohnehin nichts, sie rechnet serverseitig.
-        navigateFallbackDenylist: [/^\/mister-x-live\//, /^\/termin\//],
+        // Kundenlinks aus Mails: nie die precachte index.html mit altem JS ausliefern (sonst 404 bei neuen Routen).
+        // Firmen-Links (Spec B): /<firma>/freigabe|kunde|termin|… – Mitarbeiterrouten (/projects/<id>/…) treffen das nicht.
+        navigateFallbackDenylist: [
+          /^\/mister-x-live\//,
+          /^\/termin\//,
+          /^\/freigabe\//,
+          /^\/[a-z0-9-]+\/(freigabe|kunde|termin|hero-aktion|neukunde|fahrzeug-anfrage|wohnmobil-reparatur|layout-upload|gestaltung|datenschutz)(\/|$)/,
+        ],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

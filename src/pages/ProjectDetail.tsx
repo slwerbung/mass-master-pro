@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import LocationCard from "@/components/LocationCard";
 import { supabase } from "@/integrations/supabase/client";
+import { buildPublicUrl, usePublicLinkConfig } from "@/lib/publicLinks";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { mergeWithDefaultProjectFields } from "@/lib/projectFields";
 import { naturalLocationSortDesc } from "@/lib/locationSorting";
@@ -48,6 +49,8 @@ const LITE = { withOriginals: false } as const;
 
 const ProjectDetail = () => {
   const { projectId } = useParams();
+  // Kundenlink mit Firmennamen (Spec B) – vorab laden, damit „Link kopieren“ synchron bleibt (Zwischenablage braucht die Klick-Geste).
+  const { config: linkConfig } = usePublicLinkConfig();
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -225,7 +228,7 @@ const ProjectDetail = () => {
   };
 
   const copyGuestLink = () => {
-    const guestUrl = `${window.location.origin}/guest/${projectId}`;
+    const guestUrl = buildPublicUrl(linkConfig, `/freigabe/${projectId}`);
     navigator.clipboard.writeText(guestUrl);
     toast.success("Gast-Link kopiert!");
   };

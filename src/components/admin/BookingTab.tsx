@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DateTime } from "luxon";
 import { supabase } from "@/integrations/supabase/client";
+import { buildPublicUrl, usePublicLinkConfig } from "@/lib/publicLinks";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -997,6 +998,7 @@ function StaffKarte({
 }) {
   const [name, setName] = useState(staff.display_name);
   const [aktiv, setAktiv] = useState(staff.active);
+  const { config: linkConfig } = usePublicLinkConfig();
   const [adresse, setAdresse] = useState(staff.home_base_address ?? "");
   const [hours, setHours] = useState<WorkingHour[]>(staff.workingHours ?? []);
 
@@ -1005,7 +1007,7 @@ function StaffKarte({
   // Der Link entsteht erst beim ersten Einladen (dann vergibt der Server den
   // Slug) — hier steht deshalb notfalls ein Hinweis statt einer falschen URL.
   const terminLink = staff.booking_slug
-    ? `${window.location.origin}/termin/m/${staff.booking_slug}`
+    ? buildPublicUrl(linkConfig, `/termin/m/${staff.booking_slug}`)
     : "— entsteht beim ersten Einladen —";
 
   function setzeTag(wd: number, an: boolean) {

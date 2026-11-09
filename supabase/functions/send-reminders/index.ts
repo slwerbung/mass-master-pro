@@ -12,6 +12,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getPublicLinkConfig, publicUrl, type PublicLinkConfig } from "../_shared/publicLinks.ts";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 
 const corsHeaders = {
@@ -20,7 +21,6 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const APP_BASE = "https://captfix.app";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -62,11 +62,10 @@ function bodyToHtml(body: string): string {
 function buildReminderMail(
   companyName: string,
   projectNumber: string,
-  projectId: string,
+  link: string,
   subjectTpl: string,
   bodyTpl: string,
 ): { subject: string; html: string } {
-  const link = `${APP_BASE}/guest/${projectId}`;
   const vars = { firma: companyName, projektnummer: projectNumber, link };
   const subject = applyVars((subjectTpl || DEFAULT_REMINDER_SUBJECT).trim(), vars) || `Erinnerung – Projekt ${projectNumber}`;
   const bodyHtml = bodyToHtml(applyVars((bodyTpl || DEFAULT_REMINDER_BODY), vars));
@@ -103,6 +102,7 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    let linkCfg: PublicLinkConfig | null = null;
     // Load settings from app_config.
     const { data: cfgRows } = await supabase
       .from("app_config")
@@ -191,7 +191,8 @@ serve(async (req) => {
 
       // Send the reminder.
       const projectNumber = invite.project_number || invite.project_id.slice(0, 8);
-      const { subject, html } = buildReminderMail(companyName, projectNumber, invite.project_id, subjectTpl, bodyTpl);
+      linkCfg ??= await getPublicLinkConfig(supabase);
+      const { subject, html } = buildReminderMail(companyName, projectNumber, publicUrl(linkCfg, `/freigabe/${invite.project_id}`), subjectTpl, bodyTpl);
 
       const mailRes = await fetch("https://api.resend.com/emails", {
         method: "POST",

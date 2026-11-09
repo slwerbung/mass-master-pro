@@ -9,6 +9,7 @@
 //     https://captfix.app/guest/<projectId>. Requires a valid employee/admin
 //     session token so random callers can't send mail on the company's behalf.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getPublicLinkConfig, publicUrl, type PublicLinkConfig } from "../_shared/publicLinks.ts";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 
 const corsHeaders = {
@@ -25,7 +26,6 @@ function json(data: unknown, status = 200) {
 }
 
 const HERO_URL = "https://login.hero-software.de/api/external/v7/graphql";
-const APP_BASE = "https://captfix.app";
 
 async function heroQuery(apiKey: string, query: string, variables: Record<string, unknown>) {
   try {
@@ -128,8 +128,7 @@ async function heroAddLogbook(apiKey: string, heroProjectId: number, title: stri
   }
 }
 
-function buildInviteMail(companyName: string, projectNumber: string, projectId: string, note: string) {
-  const link = `${APP_BASE}/guest/${projectId}`;
+function buildInviteMail(companyName: string, projectNumber: string, link: string, note: string) {
   const noteBlock = note.trim()
     ? `<p style="margin:16px 0;white-space:pre-wrap">${escapeHtml(note.trim())}</p>`
     : "";
@@ -137,7 +136,7 @@ function buildInviteMail(companyName: string, projectNumber: string, projectId: 
   const html = `
     <div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:560px;line-height:1.5">
       <p>Guten Tag,</p>
-      <p><strong>${escapeHtml(companyName)}</strong> hat für Ihr Projekt <strong>${escapeHtml(projectNumber)}</strong> die Standorte zur Freigabe bereitgestellt. Die Prüfung läuft online über <strong>Captfix</strong> (captfix.app).</p>
+      <p><strong>${escapeHtml(companyName)}</strong> hat für Ihr Projekt <strong>${escapeHtml(projectNumber)}</strong> die Standorte zur Freigabe bereitgestellt. Die Prüfung läuft bequem online – ohne Registrierung.</p>
       ${noteBlock}
       <p style="margin:16px 0"><strong>So geht's:</strong> Link öffnen, Ihren Namen eingeben, dann Standorte freigeben oder Korrekturen hinterlassen.</p>
       <p style="margin:24px 0">
@@ -289,7 +288,8 @@ Deno.serve(async (req) => {
       const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
       if (!RESEND_API_KEY) return json({ error: "RESEND_API_KEY not configured" }, 500);
 
-      const { subject, html } = buildInviteMail(companyName, projectNumber, projectId, note);
+      const link = publicUrl(await getPublicLinkConfig(supabase), `/freigabe/${projectId}`);
+      const { subject, html } = buildInviteMail(companyName, projectNumber, link, note);
       const emailRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
@@ -317,7 +317,7 @@ Deno.serve(async (req) => {
           const logText =
             `Einladung zur Korrektur/Freigabe an ${email} versendet.\n\n` +
             `Betreff: ${subject}\n` +
-            `Link: ${APP_BASE}/guest/${projectId}` +
+            `Link: ${link}` +
             (note.trim() ? `\n\nPersönliche Nachricht:\n${note.trim()}` : "");
           await heroAddLogbook(hctx.apiKey, hctx.heroId, "Captfix: Einladung versendet", logText);
         }

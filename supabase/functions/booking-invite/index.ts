@@ -31,6 +31,7 @@
 //   POST { action:'send',  token, email, ruleSet, duration?, projectId?, projectNumber?, note? }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getPublicLinkConfig, publicUrl, type PublicLinkConfig } from "../_shared/publicLinks.ts";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import {
   durationBounds, durationLabel, durationToSegment, effectiveDuration,
@@ -45,7 +46,6 @@ const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 const sb = () => createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-const APP_BASE = "https://captfix.app";
 
 const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -262,6 +262,8 @@ Deno.serve(async (req) => {
       }
     }
 
+    const linkCfg = await getPublicLinkConfig(db);
+    const pub = (path: string) => publicUrl(linkCfg, path);
     const projectId = String(body.projectId || "").trim();
     const arten = await buchbareTerminarten(db);
     if (arten.length === 0) return json({ error: "Es ist keine Terminart buchbar (Adminmenü → Termine)." }, 503);
@@ -279,8 +281,8 @@ Deno.serve(async (req) => {
       if (dauer) teile.push(`d=${dauer}`);
       const query = teile.join("&");
       return projectId
-        ? `${APP_BASE}/termin/${encodeURIComponent(projectId)}?m=${encodeURIComponent(slug)}&${query}`
-        : `${APP_BASE}/termin/m/${encodeURIComponent(slug)}?${query}`;
+        ? `${pub(`/termin/${encodeURIComponent(projectId)}`)}?m=${encodeURIComponent(slug)}&${query}`
+        : `${pub(`/termin/m/${encodeURIComponent(slug)}`)}?${query}`;
     };
 
     /**
@@ -309,7 +311,7 @@ Deno.serve(async (req) => {
      */
     const vorlage = (artKey: string, dauer?: number | null) => {
       const pfad = [
-        `${APP_BASE}/termin/m/{{Partner.last_name}}/{{ProjectMatch.display_id}}`,
+        pub("/termin/m/{{Partner.last_name}}/{{ProjectMatch.display_id}}"),
         encodeURIComponent(artKey),
       ];
       if (dauer) pfad.push(durationToSegment(dauer));
