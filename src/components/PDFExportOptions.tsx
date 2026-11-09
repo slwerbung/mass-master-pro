@@ -2,15 +2,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { FileText, Shield, Users } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export type PDFExportMode = "internal" | "customer";
 
 export interface PDFExportOptions {
   mode: PDFExportMode;
+  /** Spec C: Kundenkorrekturen (Markierungen + Kommentarliste) einzeichnen */
+  withMarkup: boolean;
 }
 
 export const defaultPDFOptions: PDFExportOptions = {
   mode: "internal",
+  withMarkup: false,
 };
 
 interface Props {
@@ -73,6 +77,14 @@ const PDFExportOptionsUI = ({ options, onChange }: Props) => {
           );
         })}
       </div>
+
+      <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-3">
+        <Checkbox checked={options.withMarkup} onCheckedChange={(v) => onChange({ ...options, withMarkup: !!v })} className="mt-0.5" />
+        <span>
+          <span className="text-sm font-medium">Korrekturen einzeichnen</span>
+          <span className="block text-sm text-muted-foreground">Markierungen direkt auf Druckdatei bzw. Foto, dazu je Standort die nummerierte Kommentarliste (erledigte grau).</span>
+        </span>
+      </label>
     </div>
   );
 };

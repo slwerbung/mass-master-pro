@@ -27,6 +27,8 @@ import {
   drawMediaPage,
   drawFloorPlanPage,
   drawDetailPage,
+  drawCommentsPage,
+  type CommentRow,
   type FieldRow,
   type PillKind,
 } from "@/lib/pdfHelpers";
@@ -34,6 +36,8 @@ import * as pdfjsLib from "pdfjs-dist";
 import { mergeWithDefaultLocationFields } from "@/lib/customerFields";
 import { hydrateProjectFromSupabase } from "@/lib/supabaseSync";
 import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
+import { numberTopLevel, type Markup, type MediaRef } from "@/lib/markup";
+import { burnMarkup, type RasterItem } from "@/lib/markupRaster";
 
 // Reuse the worker source proven in LocationApprovalMedia / FloorPlanUpload.
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
@@ -114,6 +118,9 @@ type FeedbackItem = {
   author_type?: string;
   status: "open" | "done";
   created_at: string;
+  parent_id?: string | null;
+  markup?: Markup | null;
+  media_ref?: MediaRef | null;
 };
 
 const Export = () => {
@@ -148,7 +155,7 @@ const Export = () => {
           supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
           supabase
             .from("location_feedback")
-            .select("id, location_id, message, author_name, author_type, status, created_at")
+            .select("id, location_id, message, author_name, author_type, status, created_at, parent_id, markup, media_ref")
             .order("created_at", { ascending: true }),
           fetchViewSettings(),
         ]);
@@ -369,8 +376,41 @@ const Export = () => {
 
     // Pro Standort: das (unbemaßte) Standortfoto als Hauptbild, danach die
     // Produktionsdateien als eigene Seiten (PDF via pdf.js gerendert).
+    // Spec C: Korrekturen einzeichnen – Markierungen der aktuellen Dateien auf die Bilder brennen.
+    const withMarkup = !!pdfOptions.withMarkup;
+    const photoPaths = new Map<string, string[]>();
+    if (withMarkup && sortedLocations.length) {
+      const { data: imgs } = await supabase.from("location_images").select("location_id, storage_path, image_type")
+        .in("location_id", sortedLocations.map((l) => l.id)).in("image_type", ["original", "annotated"]);
+      for (const r of (imgs || []) as any[]) (photoPaths.get(r.location_id) ?? photoPaths.set(r.location_id, []).get(r.location_id)!).push(r.storage_path);
+    }
+    const markupItems = (locationId: string, match: (ref: MediaRef) => boolean): RasterItem[] => {
+      const all = (feedbackMap[locationId] || []) as FeedbackItem[];
+      const numbers = numberTopLevel(all);
+      return all.filter((f) => f.markup && f.media_ref && !f.parent_id && match(f.media_ref))
+        .map((f) => ({ markup: f.markup!, number: numbers.get(f.id) ?? 0, done: f.status === "done" }));
+    };
+    const burn = async (src: string | undefined, items: RasterItem[]) => {
+      if (!src || !items.length) return src;
+      try { return await burnMarkup(src, items); } catch { return src; }
+    };
+    const commentRows = (locationId: string): CommentRow[] => {
+      const all = ((feedbackMap[locationId] || []) as FeedbackItem[]);
+      const numbers = numberTopLevel(all);
+      const fmt = (iso: string) => new Date(iso).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
+      return all.filter((f) => !f.parent_id).sort((a, b) => a.created_at.localeCompare(b.created_at)).map((f) => ({
+        number: f.markup ? numbers.get(f.id) : undefined,
+        author: f.author_name, date: fmt(f.created_at), done: f.status === "done", text: f.message,
+        replies: all.filter((r) => r.parent_id === f.id).map((r) => ({ author: r.author_name, date: fmt(r.created_at), text: r.message })),
+      }));
+    };
+
     const buildLocationMedia = async (location: any): Promise<LocMedia> => {
-      const photo = (location.originalImageData || location.imageData) as string | undefined;
+      const rawPhoto = (location.originalImageData || location.imageData) as string | undefined;
+      const myPhotoPaths = photoPaths.get(location.id) || [];
+      const photo = withMarkup
+        ? await burn(rawPhoto, markupItems(location.id, (ref) => ref.kind === "image" && myPhotoPaths.includes(ref.storagePath)))
+        : rawPhoto;
       const printFiles = printFilesByLocation[location.id] || [];
       const printNames = printFiles.map((p: any) => p.file_name);
       const productionPages: { src: string; label: string }[] = [];
@@ -381,7 +421,11 @@ const Export = () => {
           const isPdf = /\.pdf$/i.test(pf.file_name || "") || /\.pdf$/i.test(pf.storage_path || "");
           try {
             if (isPdf) {
-              productionPages.push(...(await rasterizePdf(url, pf.file_name)));
+              const pages = await rasterizePdf(url, pf.file_name);
+              for (let i = 0; i < pages.length; i++) {
+                const items = withMarkup ? markupItems(location.id, (ref) => ref.kind === "pdf" && ref.storagePath === pf.storage_path && ref.page === i + 1) : [];
+                productionPages.push({ ...pages[i], src: (await burn(pages[i].src, items)) || pages[i].src });
+              }
             } else {
               const d = await urlToDataUrl(url);
               if (d) productionPages.push({ src: d, label: pf.file_name });
@@ -438,6 +482,7 @@ const Export = () => {
       // production pages get their own pages.
       page += Math.max(0, m.productionPages.length - 1);
       if (showDetailImages && location.detailImages && location.detailImages.length > 0) page += 1;
+      if (withMarkup && commentRows(location.id).length > 0) page += 1;
     }
 
     // ── 3) Deckblatt (Standortnummern verlinken auf die jeweilige Seite) ────
@@ -516,6 +561,19 @@ const Export = () => {
           name: location.locationName,
           projectNumber: project.projectNumber,
           images: location.detailImages.map((d: any) => ({ src: d.imageData, caption: d.caption })),
+          pageNumber: p,
+        });
+      }
+
+      // Korrekturen (nummeriert wie die Markierungen)
+      const rows = withMarkup ? commentRows(location.id) : [];
+      if (rows.length) {
+        pdf.addPage();
+        p += 1;
+        drawCommentsPage(pdf, {
+          title: `Standort ${location.locationNumber} · Korrekturen`,
+          sub: `${location.locationName ? location.locationName + "  ·  " : ""}Projekt ${project.projectNumber}`,
+          comments: rows,
           pageNumber: p,
         });
       }
