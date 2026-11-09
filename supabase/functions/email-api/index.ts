@@ -20,6 +20,7 @@ import { learnRule } from "../_shared/email/learn.ts";
 import { mapDocumentTypes, mapSteps } from "../_shared/email/heroReload.ts";
 import { matchesPattern } from "../_shared/email/mail.ts";
 import { normalizeTopicConfig } from "../_shared/email/topics.ts";
+import { REFERENCE_DOC_MAX } from "../_shared/email/store.ts";
 import { decideTopic, listTopics, topicCounts, topicOfThread, type Topic, type TopicView, type Viewer } from "../_shared/email/topicsDb.ts";
 import { KNOWLEDGE_TEXT_MAX, normalizePattern, patternForScope, type KnowledgeScope } from "../_shared/email/knowledge.ts";
 
@@ -781,7 +782,7 @@ const handlers: Record<string, Handler> = {
     }
     if (body.content !== undefined) {
       const c = String(body.content);
-      if (c.length > 60000) throw new Error("Höchstens 60.000 Zeichen je Dokument – bitte aufteilen.");
+      if (c.length > REFERENCE_DOC_MAX) throw new Error("Höchstens 200.000 Zeichen je Dokument – bitte aufteilen.");
       row.content = c;
     }
     if (body.tasks !== undefined) {

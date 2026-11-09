@@ -103,8 +103,15 @@ export async function loadExamples(sb: any, n = 20): Promise<FeedbackExample[]> 
   return (data || []).map((r: any) => ({ field: r.field, old_value: r.old_value, new_value: r.new_value, from: r.from_addr ?? undefined }));
 }
 
-/** Referenzwissen (Skill-Dateien, HERO-Doku) fuer eine KI-Aufgabe, gekappt auf `max` Zeichen. */
-export async function loadReference(sb: any, task: string, max = 30000): Promise<string> {
+/** Hoechstlaenge eines Referenzdokuments (Einstellungen → Referenzwissen). */
+export const REFERENCE_DOC_MAX = 200_000;
+
+/**
+ * Referenzwissen (Skill-Dateien, HERO-Doku) fuer eine KI-Aufgabe, gekappt auf `max` Zeichen. Standard 120.000 Zeichen
+ * (~35.000 Token) fuer Angebote/ABs – selten und im zwischengespeicherten System-Teil; Einsortieren/Entwuerfe (jede Mail)
+ * rufen mit kleinerem `max` auf. Reihenfolge: aelteste Dokumente zuerst, was nicht mehr passt, faellt weg.
+ */
+export async function loadReference(sb: any, task: string, max = 120_000): Promise<string> {
   const { data } = await sb.from("email_reference_docs").select("title, content").eq("active", true).contains("tasks", [task])
     .order("created_at", { ascending: true });
   let out = "";

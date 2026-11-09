@@ -14,7 +14,7 @@ const TASKS: { key: string; label: string; hint: string }[] = [
   { key: "understand", label: "Einsortieren", hint: "jede Mail – knapp halten" },
   { key: "draft", label: "Antwortentwürfe", hint: "jede Antwort – knapp halten" },
 ];
-const MAX = 60000;
+const MAX = 200_000;
 
 function DocEditor({ doc, onDone }: { doc: RefDoc | null; onDone: () => void }) {
   const qc = useQueryClient();
@@ -28,11 +28,11 @@ function DocEditor({ doc, onDone }: { doc: RefDoc | null; onDone: () => void }) 
   });
   const load = async (f: File | undefined) => {
     if (!f) return;
-    if (f.size > MAX * 4) { toast.error("Datei zu groß – höchstens ca. 60.000 Zeichen je Dokument."); return; }
+    if (f.size > MAX * 4) { toast.error("Datei zu groß – höchstens ca. 200.000 Zeichen je Dokument."); return; }
     const text = await f.text();
     setContent(text.slice(0, MAX));
     if (!title.trim()) setTitle(f.name.replace(/\.(md|txt|markdown)$/i, ""));
-    if (text.length > MAX) toast.warning("Gekürzt auf 60.000 Zeichen – bitte in mehrere Dokumente aufteilen.");
+    if (text.length > MAX) toast.warning("Gekürzt auf 200.000 Zeichen – bitte in mehrere Dokumente aufteilen.");
   };
   return (
     <div className="space-y-3">
@@ -43,7 +43,7 @@ function DocEditor({ doc, onDone }: { doc: RefDoc | null; onDone: () => void }) 
           <input type="file" accept=".md,.markdown,.txt,text/plain,text/markdown" className="hidden" onChange={(e) => load(e.target.files?.[0])} />
         </label>
       </div>
-      <Field label={`Inhalt (${content.length.toLocaleString("de-DE")} / 60.000 Zeichen)`}>
+      <Field label={`Inhalt (${content.length.toLocaleString("de-DE")} / 200.000 Zeichen)`}>
         <Textarea rows={16} className="font-mono text-xs" value={content} onChange={(e) => setContent(e.target.value.slice(0, MAX))} />
       </Field>
       <div className="space-y-1">
@@ -81,7 +81,8 @@ export default function ReferenceDocs() {
       <p className="text-sm text-muted-foreground">
         Längere Dokumente, die die KI bei bestimmten Aufgaben mitliest – z. B. die Skill-Datei zur Angebotserstellung (Leistungen, Kalkulation,
         was für Auftragsbestätigungen gilt) oder die HERO-Doku. Einzelne Sätze („Mails von X sind Y“) gehören in die Wissensdatei.
-        Keine Kundennamen oder Adressen hineinschreiben. Pro KI-Aufruf werden höchstens 30.000 Zeichen gelesen (Einsortieren/Entwürfe: 8.000).
+        Keine Kundennamen oder Adressen hineinschreiben. Pro KI-Aufruf werden höchstens 120.000 Zeichen gelesen, alle Dokumente einer Aufgabe zusammen, älteste zuerst
+        (Einsortieren/Entwürfe laufen bei jeder Mail: dort nur 8.000 – also knapp halten).
       </p>
       {editing === "neu" ? (
         <Card><CardHeader><CardTitle>Neues Dokument</CardTitle></CardHeader><CardContent><DocEditor doc={null} onDone={() => setEditing(null)} /></CardContent></Card>

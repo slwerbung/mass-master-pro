@@ -336,8 +336,8 @@ und nicht SQL. Jeder Lauf steht in `email_runs` (kind `retention`).
 
 Einstellungen → **Referenzwissen** (`email_reference_docs`): längere Dokumente (Skill-Dateien, HERO-Doku) je KI-Aufgabe – Angebote,
 Auftragsbestätigungen, Einsortieren, Antwortentwürfe. Startbestand: „HERO bei SL WERBUNG – Grundlagen“ (aktiv) und ein Platzhalter
-„Angebotserstellung (Skill hero-angebote)“ (aus, bis der Inhalt von `Angebot_SKILL.md` eingefügt ist). Höchstens 60.000 Zeichen je Dokument;
-pro Aufruf gelesen: 30.000 (Angebot/AB) bzw. 8.000 (Einsortieren/Entwürfe). Keine Kundendaten hineinschreiben.
+„Angebotserstellung (Skill hero-angebote)“ (aus, bis der Inhalt von `Angebot_SKILL.md` eingefügt ist). Höchstens 200.000 Zeichen je Dokument;
+pro Aufruf gelesen: 120.000 (Angebot/AB, alle Dokumente zusammen, älteste zuerst) bzw. 8.000 (Einsortieren/Entwürfe). Keine Kundendaten hineinschreiben.
 
 ## Autopilot-Stufen und Schattenmodus
 
