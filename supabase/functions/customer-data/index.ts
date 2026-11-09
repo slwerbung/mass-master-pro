@@ -1,5 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
+import { locationInProject, prepareFeedbackExtras } from "../_shared/feedbackMarkup.ts";
+import { validateMarkup } from "../_shared/markup.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -145,15 +147,23 @@ Deno.serve(async (req) => {
 
         const { data: assignment } = await supabase
           .from("customer_project_assignments")
-          .select("id")
+          .select("id, project_id")
           .eq("id", params.assignmentId)
           .eq("customer_id", customerId)
           .single();
 
         if (!assignment) return json({ error: "Kein Zugriff auf dieses Projekt" }, 403);
+        // Standort muss zum Projekt dieser Zuweisung gehoeren (fehlte frueher).
+        if (!(await locationInProject(supabase, String(params.locationId), assignment.project_id))) {
+          return json({ error: "Kein Zugriff auf diesen Standort" }, 403);
+        }
 
+        // Kommentar bleibt Pflicht – auch mit Markierung (sonst weiss niemand, was gemeint ist).
         const sanitizedMessage = String(params.message || "").trim().slice(0, 5000);
         if (!sanitizedMessage) return json({ error: "Leere Nachricht" }, 400);
+
+        const extras = await prepareFeedbackExtras(supabase, String(params.locationId), { parentId: params.parentId, markup: params.markup, mediaRef: params.mediaRef });
+        if (!extras.ok) return json({ error: extras.error }, 400);
 
         const { data, error } = await supabase
           .from("location_feedback")
@@ -164,6 +174,7 @@ Deno.serve(async (req) => {
             message: sanitizedMessage,
             status: "open",
             author_type: "customer",
+            ...extras.extras,
           })
           .select("*")
           .single();
@@ -189,12 +200,26 @@ Deno.serve(async (req) => {
 
         if (!assignment) return json({ error: "No access" }, 403);
 
-        const sanitizedMessage = String(params.message || "").trim().slice(0, 5000);
-        if (!sanitizedMessage) return json({ error: "Missing message" }, 400);
+        const patch: Record<string, unknown> = {};
+        if (params.message !== undefined) {
+          const sanitizedMessage = String(params.message || "").trim().slice(0, 5000);
+          if (!sanitizedMessage) return json({ error: "Missing message" }, 400);
+          patch.message = sanitizedMessage;
+        }
+        // Markierung aendern: nur an eigenen Top-Level-Kommentaren, die schon eine haben (Bezug bleibt).
+        if (params.markup !== undefined) {
+          const { data: own } = await supabase.from("location_feedback").select("parent_id, media_ref")
+            .eq("id", params.feedbackId).eq("location_id", params.locationId).maybeSingle();
+          if (!own || own.parent_id || !own.media_ref) return json({ error: "Diese Nachricht hat keine Markierung." }, 400);
+          const m = validateMarkup(params.markup);
+          if (!m.ok) return json({ error: m.error }, 400);
+          patch.markup = m.markup;
+        }
+        if (!Object.keys(patch).length) return json({ error: "Missing message" }, 400);
 
         const { data, error } = await supabase
           .from("location_feedback")
-          .update({ message: sanitizedMessage })
+          .update(patch)
           .eq("id", params.feedbackId)
           .eq("location_id", params.locationId)
           .eq("author_customer_id", customerId)
