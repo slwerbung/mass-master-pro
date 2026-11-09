@@ -1,11 +1,16 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import { useDirectCamera } from "@/lib/useDirectCamera";
 import { useNavigate } from "react-router-dom";
 import { setEditorHandoff } from "@/lib/editorHandoff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, Maximize2, X, Plus, Ruler, Type } from "lucide-react";
+import { Trash2, Pencil, ImagePlus, FileUp, FileText, ExternalLink, Loader2, MessageSquare, Check, CheckCheck, Clock, Maximize2, X, Plus, Ruler, Type, PenLine } from "lucide-react";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
+import ReviewViewer from "@/components/review/ReviewViewer";
+import { locationEmployeeSource } from "@/components/review/sources";
+import type { ReviewFile } from "@/components/review/types";
+import type { LayerItem } from "@/components/review/MarkupLayer";
+import { numberTopLevel, type Markup, type MediaRef } from "@/lib/markup";
 import { Input } from "@/components/ui/input";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -38,6 +43,9 @@ interface FeedbackItem {
   status: "open" | "done";
   created_at: string;
   legacy?: boolean;
+  parent_id?: string | null;
+  markup?: Markup | null;
+  media_ref?: MediaRef | null;
 }
 
 const LEGACY_FEEDBACK_PREFIX = "legacy-feedback-";
@@ -86,6 +94,12 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     onCapture: (imageData) => { setEditorHandoff({ imageData }); navigate(`/projects/${projectId}/editor?detail=true&locationId=${location.id}`); },
   });
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  // Spec C: Dateipfade für Markierungen (Druck-PDF und annotiertes Foto in Storage) + Prüfmodus.
+  const [pdfPath, setPdfPath] = useState<string | null>(null);
+  const [photoPath, setPhotoPath] = useState<string | null>(null);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [mediaRef, setMediaRef] = useState<MediaRef | null>(null);
   const [pdfName, setPdfName] = useState<string | null>(null);
   // Large-view overlay for looking at an image without opening the editor.
   // Large-view overlay. Clicking an image only views it; `editPath` feeds the
@@ -207,8 +221,33 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         .createSignedUrl(data.storage_path, 3600);
       setPdfUrl(signedData?.signedUrl || null);
       setPdfName(data.file_name);
+      setPdfPath(data.storage_path);
+    }
+    // Wie die Kundenansicht: Originalfoto bevorzugt, sonst das bemaßte – dieselbe Datei, auf der der Kunde markiert.
+    const { data: imgs } = await supabase.from("location_images").select("storage_path, image_type")
+      .eq("location_id", location.id).in("image_type", ["original", "annotated"]);
+    const photo = (imgs || []).find((i: any) => i.image_type === "original") || (imgs || []).find((i: any) => i.image_type === "annotated");
+    setPhotoPath((photo as any)?.storage_path ?? null);
+    if (photo) {
+      const { data: signedPhoto } = await supabase.storage.from("project-files").createSignedUrl((photo as any).storage_path, 3600);
+      setPhotoUrl(signedPhoto?.signedUrl ?? null);
     }
   };
+
+  // Prüfmodus: Druck-PDF + Foto aus Storage (dieselben Dateien wie beim Kunden).
+  const reviewFiles: ReviewFile[] = [
+    ...(pdfUrl && pdfPath ? [{ kind: "pdf" as const, storagePath: pdfPath, url: pdfUrl, name: pdfName || "Produktionsdatei" }] : []),
+    ...(photoPath && (photoUrl || location.imageData) ? [{ kind: "image" as const, storagePath: photoPath, url: photoUrl || location.imageData, name: "Foto" }] : []),
+  ];
+  const reviewSource = useMemo(
+    () => locationEmployeeSource({ locationId: location.id, files: reviewFiles, authorName: getSession()?.name || "Mitarbeiter" }),
+    [location.id, pdfUrl, pdfPath, photoPath, photoUrl, location.imageData], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const markupNumbers = numberTopLevel(feedbacks.filter((f) => !f.legacy) as any);
+  const openMarkups = feedbacks.filter((f) => !f.legacy && !f.parent_id && f.status !== "done");
+  const overlayFor = (ref: MediaRef): LayerItem[] => openMarkups
+    .filter((f) => f.markup && f.media_ref && f.media_ref.storagePath === ref.storagePath && (ref.kind !== "pdf" || (f.media_ref.kind === "pdf" && f.media_ref.page === ref.page)))
+    .map((f) => ({ id: f.id, number: markupNumbers.get(f.id) ?? 0, markup: f.markup!, done: false }));
 
   // Staff read/write of the Standort-Chat goes through the location-feedback
   // edge function. After the Phase-2 RLS lockdown the anon/expired-session
@@ -418,7 +457,10 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
         <div className="p-3 pb-0">
           <LocationApprovalMedia
             annotatedUrl={location.imageData}
-            pdfs={[{ url: pdfUrl, name: pdfName || "Produktionsdatei" }]}
+            annotatedPath={photoPath ?? undefined}
+            pdfs={[{ url: pdfUrl, name: pdfName || "Produktionsdatei", storagePath: pdfPath ?? undefined }]}
+            onPageChange={setMediaRef}
+            overlay={overlayFor}
           />
         </div>
       ) : (
@@ -574,7 +616,16 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           <div className="flex items-center gap-2">
             <MessageSquare className="h-4 w-4 text-primary" />
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Standort-Chat</p>
+            {reviewFiles.length > 0 && (
+              <Button size="sm" variant="outline" className="ml-auto h-7 px-2 text-xs" onClick={() => setReviewOpen(true)}>
+                <PenLine className="mr-1 h-3.5 w-3.5" /> Korrekturen ansehen{openMarkups.length ? ` (${openMarkups.length})` : ""}
+              </Button>
+            )}
           </div>
+          {reviewOpen && (
+            <ReviewViewer open={reviewOpen} onOpenChange={setReviewOpen} source={reviewSource}
+              title={`Standort ${location.locationNumber}`} initialRef={mediaRef} onChanged={loadFeedbacks} />
+          )}
           <LocationChat
             messages={feedbacks as ChatMessage[]}
             viewerSide="employee"
@@ -585,6 +636,12 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
             onDelete={deleteOwnMessage}
             busyId={updatingFeedbackId}
             placeholder="Antwort an den Kunden…"
+            onReply={async (parent, text) => {
+              try {
+                await invokeFeedback("send", { message: text, name: getSession()?.name || "Mitarbeiter", parentId: parent.id });
+                await loadFeedbacks();
+              } catch (e: any) { toast.error("Antwort konnte nicht gesendet werden: " + (e?.message || "Fehler")); }
+            }}
           />
         </div>
 

@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { ChevronLeft, ChevronRight, Loader2, ImageIcon, FileText } from "lucide-react";
+import type { MediaRef } from "@/lib/markup";
+import { MarkupLayer, type LayerItem } from "@/components/review/MarkupLayer";
+import { useMediaRect } from "@/components/review/useMediaRect";
 
 // Reuse the same worker source proven in FloorPlanUpload.
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
@@ -8,6 +11,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs
 export interface ApprovalPdf {
   url: string;       // signed URL of the production PDF
   name: string;      // display name
+  storagePath?: string; // Dateiversion – für Markierungen (Spec C)
 }
 
 interface RenderedPage {
@@ -19,7 +23,7 @@ interface RenderedPage {
 // rendered pages instead of re-rasterising the same PDF.
 const pageCache = new Map<string, RenderedPage[]>();
 
-async function renderPdf(url: string, name: string): Promise<RenderedPage[]> {
+export async function renderPdf(url: string, name: string): Promise<RenderedPage[]> {
   const cached = pageCache.get(url);
   if (cached) return cached;
   const resp = await fetch(url);
@@ -48,9 +52,31 @@ async function renderPdf(url: string, name: string): Promise<RenderedPage[]> {
 
 interface Props {
   annotatedUrl?: string;       // the original on-site photo (signed URL)
+  annotatedPath?: string;      // storage path of that photo (für Markierungen)
   pdfs: ApprovalPdf[];         // production PDFs (signed URLs)
   heightClass?: string;        // container height utility class
   big?: boolean;               // fullscreen sizing for controls
+  /** aktuelle Seite/Datei nach außen (für „Markieren“ an der richtigen Stelle) */
+  onPageChange?: (ref: MediaRef | null) => void;
+  /** offene Markierungen read-only über das Medium legen */
+  overlay?: (ref: MediaRef) => LayerItem[];
+}
+
+/** Medium mit optionalem Markierungs-Overlay exakt auf dem dargestellten Bild (Letterboxing). */
+function MediaWithOverlay({ src, alt, mediaRef, overlay }: { src: string; alt: string; mediaRef: MediaRef | null; overlay?: (ref: MediaRef) => LayerItem[] }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const rect = useMediaRect(boxRef, natural);
+  const items = overlay && mediaRef ? overlay(mediaRef) : [];
+  return (
+    <div ref={boxRef} className="relative w-full h-full">
+      <img src={src} alt={alt} className="w-full h-full object-contain"
+        onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })} />
+      {rect && items.length > 0 && (
+        <MarkupLayer className="absolute pointer-events-none" items={items} w={rect.w} h={rect.h} style={{ left: rect.x, top: rect.y }} />
+      )}
+    </div>
+  );
 }
 
 /**
@@ -59,8 +85,8 @@ interface Props {
  * thumbnail in the corner (tap to peek). Falls back to just the photo when no
  * production file exists. Any orientation is letterboxed (object-contain).
  */
-export function LocationApprovalMedia({ annotatedUrl, pdfs, heightClass, big }: Props) {
-  const [pages, setPages] = useState<RenderedPage[]>([]);
+export function LocationApprovalMedia({ annotatedUrl, annotatedPath, pdfs, heightClass, big, onPageChange, overlay }: Props) {
+  const [pages, setPages] = useState<(RenderedPage & { ref: MediaRef | null })[]>([]);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [idx, setIdx] = useState(0);
@@ -88,12 +114,12 @@ export function LocationApprovalMedia({ annotatedUrl, pdfs, heightClass, big }: 
     let cancelled = false;
     (async () => {
       setLoading(true); setFailed(false);
-      const out: RenderedPage[] = [];
+      const out: (RenderedPage & { ref: MediaRef | null })[] = [];
       for (const pdf of pdfs) {
         if (!pdf.url) continue;
         try {
           const rendered = await renderPdf(pdf.url, pdf.name);
-          out.push(...rendered);
+          out.push(...rendered.map((r, i) => ({ ...r, ref: pdf.storagePath ? { kind: "pdf" as const, storagePath: pdf.storagePath, page: i + 1 } : null })));
         } catch {
           /* skip a broken/missing pdf, keep going */
         }
@@ -107,13 +133,17 @@ export function LocationApprovalMedia({ annotatedUrl, pdfs, heightClass, big }: 
   }, [inView, hasPdf, pdfKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const h = heightClass || "h-72 sm:h-80";
+  const photoRef: MediaRef | null = annotatedPath ? { kind: "image", storagePath: annotatedPath } : null;
+  const currentRef: MediaRef | null = !hasPdf || showOriginal ? photoRef : (pages[Math.min(idx, Math.max(0, pages.length - 1))]?.ref ?? null);
+  const refKey = currentRef ? JSON.stringify(currentRef) : "";
+  useEffect(() => { onPageChange?.(currentRef); }, [refKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // No production file: behave like before — just the photo.
   if (!hasPdf) {
     return (
       <div ref={containerRef} className={`relative w-full ${h} bg-muted rounded-lg overflow-hidden flex items-center justify-center`}>
         {annotatedUrl
-          ? <img src={annotatedUrl} alt="Standort" className="w-full h-full object-contain" />
+          ? <MediaWithOverlay src={annotatedUrl} alt="Standort" mediaRef={photoRef} overlay={overlay} />
           : <span className="text-sm text-muted-foreground">Kein Bild</span>}
       </div>
     );
@@ -139,9 +169,9 @@ export function LocationApprovalMedia({ annotatedUrl, pdfs, heightClass, big }: 
       {!loading && !failed && (
         <>
           {showOriginal && annotatedUrl ? (
-            <img src={annotatedUrl} alt="Original-Foto" className="w-full h-full object-contain" />
+            <MediaWithOverlay src={annotatedUrl} alt="Original-Foto" mediaRef={photoRef} overlay={overlay} />
           ) : current ? (
-            <img src={current.src} alt={current.name} className="w-full h-full object-contain" />
+            <MediaWithOverlay src={current.src} alt={current.name} mediaRef={current.ref} overlay={overlay} />
           ) : null}
 
           {/* Label top-left */}

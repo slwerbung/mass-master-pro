@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, X, CheckCircle2, Circle } from "lucide-react";
+import { ChevronLeft, ChevronRight, X, CheckCircle2, Circle, PenLine } from "lucide-react";
 import { LocationApprovalMedia, ApprovalPdf } from "./LocationApprovalMedia";
 
 export interface FsLocation {
@@ -16,6 +16,10 @@ interface Props {
   setIndex: (i: number) => void;
   onToggleApprove: (id: string, approved: boolean) => void;
   onClose: () => void;
+  /** Spec C: Prüfmodus für den aktuellen Standort öffnen */
+  onMark?: (id: string) => void;
+  /** Tastatur aus, solange ein Dialog darüber liegt (Prüfmodus, Rückfrage) */
+  paused?: boolean;
 }
 
 /**
@@ -23,7 +27,7 @@ interface Props {
  * Big production-file viewer, minimal text, keyboard: ← → switch location,
  * Enter = approve & next, Esc = close.
  */
-export function FullscreenApproval({ locations, index, setIndex, onToggleApprove, onClose }: Props) {
+export function FullscreenApproval({ locations, index, setIndex, onToggleApprove, onClose, onMark, paused }: Props) {
   const safeIndex = Math.min(Math.max(index, 0), locations.length - 1);
   const loc = locations[safeIndex];
 
@@ -39,6 +43,7 @@ export function FullscreenApproval({ locations, index, setIndex, onToggleApprove
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (paused) return;
       if (e.key === "ArrowRight") nav(1);
       else if (e.key === "ArrowLeft") nav(-1);
       else if (e.key === "Enter") approveAndNext();
@@ -46,7 +51,7 @@ export function FullscreenApproval({ locations, index, setIndex, onToggleApprove
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [nav, approveAndNext, onClose]);
+  }, [nav, approveAndNext, onClose, paused]);
 
   if (!loc) return null;
   const approvedCount = locations.filter((l) => l.approved).length;
@@ -85,6 +90,11 @@ export function FullscreenApproval({ locations, index, setIndex, onToggleApprove
           <ChevronLeft className="h-5 w-5" /> <span className="hidden sm:inline">Zurück</span>
         </button>
         <div className="flex items-center gap-2">
+          {onMark && (
+            <button onClick={() => onMark(loc.id)} className="flex items-center gap-2 px-4 py-3 rounded-lg bg-white/10 hover:bg-white/20" title="Markieren & kommentieren">
+              <PenLine className="h-5 w-5" /> <span className="hidden sm:inline">Markieren</span>
+            </button>
+          )}
           <button
             onClick={() => onToggleApprove(loc.id, !loc.approved)}
             className="flex items-center gap-2 px-4 py-3 rounded-lg bg-white/10 hover:bg-white/20"

@@ -24,7 +24,28 @@ import { fetchViewSettings, defaultViewSettings } from "@/lib/viewSettings";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import { FullscreenApproval, FsLocation } from "@/components/FullscreenApproval";
 import { FloorPlanApproval, PlanPage } from "@/components/FloorPlanApproval";
-import { Maximize2 } from "lucide-react";
+import { Maximize2, PenLine } from "lucide-react";
+import ReviewViewer from "@/components/review/ReviewViewer";
+import { locationCustomerSource, vehicleCustomerSource } from "@/components/review/sources";
+import type { ReviewFile, ReviewSource } from "@/components/review/types";
+import type { LayerItem } from "@/components/review/MarkupLayer";
+import { numberTopLevel, type Markup, type MediaRef } from "@/lib/markup";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+
+/** Offene Korrekturen (Top-Level, nicht erledigt) – egal von wem. */
+const openCorrections = (items: { parent_id?: string | null; status?: string | null; legacy?: boolean }[]) =>
+  items.filter((f) => !f.parent_id && !f.legacy && f.status !== "done").length;
+
+const sameMediaRef = (a?: MediaRef | null, b?: MediaRef | null) =>
+  !!a && !!b && a.storagePath === b.storagePath && (a.kind !== "pdf" || (b.kind === "pdf" && a.page === b.page));
+
+/** Offene Markierungen einer Seite für das read-only Overlay. */
+const overlayItems = (items: any[], ref: MediaRef): LayerItem[] => {
+  const numbers = numberTopLevel(items.filter((f) => !f.legacy));
+  return items
+    .filter((f) => f.markup && !f.parent_id && f.status !== "done" && sameMediaRef(f.media_ref, ref))
+    .map((f) => ({ id: f.id, number: numbers.get(f.id) ?? 0, markup: f.markup, done: false }));
+};
 
 interface FieldConfig {
   id?: string;
@@ -46,6 +67,9 @@ interface FeedbackItem {
   created_at: string;
   resolved_at: string | null;
   legacy?: boolean;
+  parent_id?: string | null;
+  markup?: Markup | null;
+  media_ref?: MediaRef | null;
 }
 
 const LEGACY_FEEDBACK_PREFIX = "legacy-feedback-";
@@ -83,6 +107,11 @@ const CustomerView = () => {
   const [locations, setLocations] = useState<any[]>([]);
   const [images, setImages] = useState<any[]>([]);
   const [fsOpen, setFsOpen] = useState(false);
+  // Spec C: Prüfmodus (Standort oder Fahrzeuglayout), aktuelle Seite je Medium, Rückfrage bei offenen Korrekturen.
+  const [review, setReview] = useState<{ source: ReviewSource; title: string; initialRef: MediaRef | null } | null>(null);
+  const [mediaRefs, setMediaRefs] = useState<Record<string, MediaRef | null>>({});
+  const [confirmAsk, setConfirmAsk] = useState<{ text: string; resolve: (ok: boolean) => void } | null>(null);
+  const askConfirm = (text: string) => new Promise<boolean>((resolve) => setConfirmAsk({ text, resolve }));
   const [fsIndex, setFsIndex] = useState(0);
   const [floorPlans, setFloorPlans] = useState<any[]>([]);
   const [detailImagesByLocation, setDetailImagesByLocation] = useState<Record<string, any[]>>({});
@@ -896,6 +925,8 @@ const CustomerView = () => {
   const toggleVehicleApproval = async () => {
     if (!selectedAssignment || isLimitedGuestMode) return;
     const newVal = !vehicleApproved;
+    const openV = newVal ? openCorrections(vehicleFeedbacks as any[]) : 0;
+    if (openV > 0 && !(await askConfirm(`Es gibt noch ${openV} offene ${openV === 1 ? "Korrektur" : "Korrekturen"} zum Layout. Trotzdem freigeben?`))) return;
     setSavingVehicleApproval(true);
     setVehicleApproved(newVal);
     // Freigeben schreibt die Zeile dieses Kunden; Zurücknehmen hebt die
@@ -1031,8 +1062,41 @@ const CustomerView = () => {
     } catch { toast.error("Fehler beim Löschen"); }
   };
 
+  // Markieren nur als echter Kunde mit echter Zuweisung (customer-data prüft beides).
+  const canMark = !isLimitedGuestMode && !!selectedAssignment && !isSyntheticAssignment(selectedAssignment?.id) && isRealCustomerId(session?.id);
+
+  const locationFiles = (annotated: any, pdfEntries: any[]): ReviewFile[] => [
+    ...(viewSettings.customerShowPrintFiles ? pdfEntries : []).map((p: any) => ({ kind: "pdf" as const, storagePath: p.storage_path, url: getSignedImageUrl(p.storage_path), name: p.file_name || "Druckdatei" })),
+    ...(annotated ? [{ kind: "image" as const, storagePath: annotated.storage_path, url: getSignedImageUrl(annotated.storage_path), name: "Foto" }] : []),
+  ].filter((f) => f.url);
+
+  const openLocationReview = (loc: any, annotated: any, pdfEntries: any[]) => {
+    if (!selectedAssignment || !session) return;
+    setReview({
+      title: `Standort ${loc.location_number}${loc.location_name ? " · " + loc.location_name : ""}`,
+      initialRef: mediaRefs[loc.id] ?? null,
+      source: locationCustomerSource({
+        locationId: loc.id, assignmentId: selectedAssignment.id, files: locationFiles(annotated, pdfEntries),
+        customerId: session.id, authorName: session.name || "Kunde",
+      }),
+    });
+  };
+
+  const sendCustomerReply = async (locationId: string, parentId: string, text: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke("customer-data", {
+        body: { action: "create_feedback", customerToken: session?.authToken, assignmentId: selectedAssignment?.id, locationId, message: text, parentId, authorName: session?.name || "Kunde" },
+      });
+      if (error || data?.error) throw new Error(await extractFnError(error, data));
+      await reloadFeedbacks([locationId]);
+      triggerNotification("comment");
+    } catch (e: any) { toast.error("Antwort konnte nicht gesendet werden: " + (e?.message || "Fehler")); }
+  };
+
   const toggleApproval = async (locationId: string, approved: boolean) => {
     if (!selectedAssignment || isLimitedGuestMode) return;
+    const open = approved ? openCorrections(feedbacks[locationId] || []) : 0;
+    if (open > 0 && !(await askConfirm(`Es gibt noch ${open} offene ${open === 1 ? "Korrektur" : "Korrekturen"}. Trotzdem freigeben?`))) return;
     setApprovals(prev => ({ ...prev, [locationId]: approved }));
     // Projektweiter Status: Freigeben schreibt die Zeile dieses Kunden;
     // Zurücknehmen hebt die Freigabe für ALLE Kunden des Standorts auf, damit
@@ -1056,6 +1120,11 @@ const CustomerView = () => {
 
   const approveAll = async (approved: boolean) => {
     if (!selectedAssignment || isLimitedGuestMode) return;
+    if (approved) {
+      const affected = locations.filter((l) => openCorrections(feedbacks[l.id] || []) > 0)
+        .map((l: any) => `Standort ${l.location_number}`);
+      if (affected.length && !(await askConfirm(`Bei ${affected.join(", ")} gibt es noch offene Korrekturen. Trotzdem alle freigeben?`))) return;
+    }
     setSavingApprovals(true);
     const newApprovals: Record<string, boolean> = {};
     locations.forEach(l => { newApprovals[l.id] = approved; });
@@ -1153,10 +1222,26 @@ const CustomerView = () => {
                       const name = vehicleLayout.file_name || "";
                       const url = getVehiclePublicUrl(vehicleLayout.storage_path);
                       const thumb = vehicleImages[0] ? getVehiclePublicUrl(vehicleImages[0].storage_path) : undefined;
-                      if (/\.pdf$/i.test(name)) return <LocationApprovalMedia pdfs={[{ url, name }]} annotatedUrl={thumb} />;
-                      if (/\.(png|jpe?g|webp|gif|svg)$/i.test(name)) return <LocationApprovalMedia pdfs={[]} annotatedUrl={url} />;
+                      const ov = (ref: MediaRef) => overlayItems(vehicleFeedbacks as any[], ref);
+                      const onPage = (ref: MediaRef | null) => setMediaRefs((m) => (sameMediaRef(m.__vehicle, ref) ? m : { ...m, __vehicle: ref }));
+                      if (/\.pdf$/i.test(name)) return <LocationApprovalMedia pdfs={[{ url, name, storagePath: vehicleLayout.storage_path }]} annotatedUrl={thumb} onPageChange={onPage} overlay={ov} />;
+                      if (/\.(png|jpe?g|webp|gif|svg)$/i.test(name)) return <LocationApprovalMedia pdfs={[]} annotatedUrl={url} annotatedPath={vehicleLayout.storage_path} onPageChange={onPage} overlay={ov} />;
                       return null;
                     })()}
+                    {!isLimitedGuestMode && selectedAssignment && /\.(pdf|png|jpe?g|webp|gif)$/i.test(vehicleLayout.file_name || "") && (
+                      <Button size="sm" variant="outline" onClick={() => setReview({
+                        title: "Fahrzeuglayout",
+                        initialRef: mediaRefs.__vehicle ?? null,
+                        source: vehicleCustomerSource({
+                          projectId: selectedAssignment.project_id,
+                          files: [{ kind: /\.pdf$/i.test(vehicleLayout.file_name || "") ? "pdf" : "image", storagePath: vehicleLayout.storage_path, url: getVehiclePublicUrl(vehicleLayout.storage_path), name: vehicleLayout.file_name || "Layout" }],
+                          customerId: isRealCustomerId(session?.id) ? session!.id : null,
+                          authorName: session?.name || localStorage.getItem("guest_name") || "Kunde",
+                        }),
+                      })}>
+                        <PenLine className="h-4 w-4 mr-1" /> Markieren &amp; kommentieren
+                      </Button>
+                    )}
                     <a href={getVehiclePublicUrl(vehicleLayout.storage_path)} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-2 p-3 rounded-lg border bg-muted/20 hover:bg-muted/40 transition-colors">
                       <FileText className="h-5 w-5 text-primary shrink-0" />
@@ -1323,10 +1408,23 @@ const CustomerView = () => {
                     status: f.status,
                     created_at: f.created_at,
                     author_customer_id: f.author_customer_id,
+                    parent_id: f.parent_id,
+                    markup: f.markup,
                   }))}
                   viewerSide="customer"
                   sending={savingVehicleFeedback}
                   onSend={sendVehicleCustomerMessage}
+                  onReply={async (parent, text) => {
+                    if (!selectedAssignment) return;
+                    const { data, error } = await supabase.from("vehicle_layout_feedback").insert({
+                      project_id: selectedAssignment.project_id, message: text, parent_id: parent.id,
+                      author_name: session?.name || localStorage.getItem("guest_name") || "Kunde",
+                      author_customer_id: isRealCustomerId(session?.id) ? session!.id : null, author_type: "customer", status: "open",
+                    }).select().single();
+                    if (error) { toast.error("Antwort konnte nicht gesendet werden"); return; }
+                    setVehicleFeedbacks((prev) => [...prev, data]);
+                    triggerNotification("comment");
+                  }}
                   canDelete={(m) => m.author_type !== "employee" && isRealCustomerId(session?.id) && m.author_customer_id === session?.id}
                   onDelete={(m) => deleteVehicleMessage(m.id)}
                   placeholder="Hinweis oder Korrektur zum Layout…"
@@ -1483,10 +1581,18 @@ const CustomerView = () => {
                       {(annotated || (viewSettings.customerShowPrintFiles && pdfEntries.length > 0)) && (
                         <LocationApprovalMedia
                           annotatedUrl={annotated ? getSignedImageUrl(annotated.storage_path) : undefined}
+                          annotatedPath={annotated?.storage_path}
                           pdfs={viewSettings.customerShowPrintFiles
-                            ? pdfEntries.map((p: any) => ({ url: getSignedImageUrl(p.storage_path), name: p.file_name })).filter((p: any) => p.url)
+                            ? pdfEntries.map((p: any) => ({ url: getSignedImageUrl(p.storage_path), name: p.file_name, storagePath: p.storage_path })).filter((p: any) => p.url)
                             : []}
+                          onPageChange={(ref) => setMediaRefs((m) => (sameMediaRef(m[loc.id], ref) ? m : { ...m, [loc.id]: ref }))}
+                          overlay={(ref) => overlayItems(locationFeedback as any[], ref)}
                         />
+                      )}
+                      {canMark && (annotated || (viewSettings.customerShowPrintFiles && pdfEntries.length > 0)) && (
+                        <Button size="sm" variant="outline" onClick={() => openLocationReview(loc, annotated, pdfEntries)}>
+                          <PenLine className="h-4 w-4 mr-1" /> Markieren &amp; kommentieren
+                        </Button>
                       )}
 
                       {visibleFields.length > 0 && (
@@ -1536,6 +1642,7 @@ const CustomerView = () => {
                             (m.author_customer_id === session?.id || (!m.author_customer_id && m.author_name === session?.name))
                           }
                           onDelete={(m) => deleteFeedback(loc.id, m.id)}
+                          onReply={canMark ? (parent, text) => sendCustomerReply(loc.id, parent.id, text) : undefined}
                           placeholder="Hinweis oder Korrektur zu diesem Standort…"
                         />
                       </div>
@@ -1560,7 +1667,7 @@ const CustomerView = () => {
             label: `Standort ${loc.location_number}${loc.location_name ? " · " + loc.location_name : ""}`,
             annotatedUrl: annotated ? getSignedImageUrl(annotated.storage_path) : undefined,
             pdfs: viewSettings.customerShowPrintFiles
-              ? pdfEntries.map((p: any) => ({ url: getSignedImageUrl(p.storage_path), name: p.file_name })).filter((p: any) => p.url)
+              ? pdfEntries.map((p: any) => ({ url: getSignedImageUrl(p.storage_path), name: p.file_name, storagePath: p.storage_path })).filter((p: any) => p.url)
               : [],
             approved: !!approvals[loc.id],
           };
@@ -1572,9 +1679,40 @@ const CustomerView = () => {
             setIndex={setFsIndex}
             onToggleApprove={(id, approved) => toggleApproval(id, approved)}
             onClose={() => setFsOpen(false)}
+            paused={!!review || !!confirmAsk}
+            onMark={canMark ? (id) => {
+              const loc: any = locations.find((l: any) => l.id === id);
+              if (!loc) return;
+              const annotated = images.find((i: any) => i.location_id === id && i.image_type === "original")
+                || images.find((i: any) => i.location_id === id && i.image_type === "annotated");
+              openLocationReview(loc, annotated, images.filter((i: any) => i.location_id === id && i.image_type === "pdf"));
+            } : undefined}
           />
         );
       })()}
+
+      {review && (
+        <ReviewViewer open onOpenChange={(v) => { if (!v) setReview(null); }} source={review.source} title={review.title}
+          initialRef={review.initialRef} startDrawing
+          onChanged={() => {
+            if (review.source.kind === "vehicle" && selectedAssignment) loadVehicleData(selectedAssignment.project_id, selectedAssignment.id);
+            else reloadFeedbacks(locations.map((l: any) => l.id));
+            triggerNotification("comment");
+          }} />
+      )}
+
+      <AlertDialog open={!!confirmAsk} onOpenChange={(v) => { if (!v && confirmAsk) { confirmAsk.resolve(false); setConfirmAsk(null); } }}>
+        <AlertDialogContent className="z-[60]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Offene Korrekturen</AlertDialogTitle>
+            <AlertDialogDescription>{confirmAsk?.text}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel autoFocus onClick={() => { confirmAsk?.resolve(false); setConfirmAsk(null); }}>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { confirmAsk?.resolve(true); setConfirmAsk(null); }}>Trotzdem freigeben</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
