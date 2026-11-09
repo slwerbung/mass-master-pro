@@ -85,11 +85,13 @@ const Admin = () => {
   const [savingLegalInfo, setSavingLegalInfo] = useState(false);
 
   // Notifications: global recipient + per-event { enabled, target }.
-  // Target is "global" (use globalEmail) or "assigned_employee" (use
-  // the project owner's email; if that employee has no email,
-  // server-side falls back to globalEmail).
+  // Target is "global" (use globalEmail), "assigned_employee" (the project
+  // owner's email) or "project_team" (owner + all team members). Without a
+  // usable address the server falls back to globalEmail.
   type NotificationEvent = "first_action" | "comment" | "completion";
-  type NotificationEventSetting = { enabled: boolean; target: "global" | "assigned_employee" };
+  type NotificationTarget = "global" | "assigned_employee" | "project_team";
+  type NotificationEventSetting = { enabled: boolean; target: NotificationTarget };
+  const asTarget = (t: unknown): NotificationTarget => (t === "assigned_employee" || t === "project_team" ? t : "global");
   const [notifGlobalEmail, setNotifGlobalEmail] = useState("");
   const [notifSettings, setNotifSettings] = useState<Record<NotificationEvent, NotificationEventSetting>>({
     first_action: { enabled: false, target: "global" },
@@ -385,15 +387,15 @@ const Admin = () => {
       setNotifSettings({
         first_action: {
           enabled: !!s.first_action?.enabled,
-          target: (s.first_action?.target === "assigned_employee" ? "assigned_employee" : "global"),
+          target: asTarget(s.first_action?.target),
         },
         comment: {
           enabled: !!s.comment?.enabled,
-          target: (s.comment?.target === "assigned_employee" ? "assigned_employee" : "global"),
+          target: asTarget(s.comment?.target),
         },
         completion: {
           enabled: !!s.completion?.enabled,
-          target: (s.completion?.target === "assigned_employee" ? "assigned_employee" : "global"),
+          target: asTarget(s.completion?.target),
         },
       });
     } catch {}
@@ -420,7 +422,7 @@ const Admin = () => {
   // why nothing would arrive.
   const canEnableEvent = (s: NotificationEventSetting): boolean => {
     if (notifGlobalEmail.trim()) return true;
-    return s.target === "assigned_employee";
+    return s.target !== "global";
   };
 
   const updateEventSetting = (event: NotificationEvent, partial: Partial<NotificationEventSetting>) => {
@@ -1340,7 +1342,7 @@ const Admin = () => {
                           <Label className="text-xs">Empfänger</Label>
                           <Select
                             value={setting.target}
-                            onValueChange={(v) => updateEventSetting(ev.key, { target: v as "global" | "assigned_employee" })}
+                            onValueChange={(v) => updateEventSetting(ev.key, { target: asTarget(v) })}
                             disabled={!setting.enabled}
                           >
                             <SelectTrigger className="w-full">
@@ -1348,7 +1350,8 @@ const Admin = () => {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="global">Globale E-Mail-Adresse</SelectItem>
-                              <SelectItem value="assigned_employee">Projekt-zugeordneter Mitarbeiter</SelectItem>
+                              <SelectItem value="assigned_employee">Hauptverantwortlicher</SelectItem>
+                              <SelectItem value="project_team">Ganzes Projektteam</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>

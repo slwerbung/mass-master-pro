@@ -62,3 +62,6 @@ verify_jwt = false
 
 [functions.email-retention]
 verify_jwt = false
+
+[functions.project-team]
+verify_jwt = false

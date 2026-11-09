@@ -36,6 +36,7 @@ import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import { BookingInviteDialog } from "@/components/BookingInviteDialog";
 import { SplitPdfDialog } from "@/components/SplitPdfDialog";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
+import ProjectTeam from "@/components/ProjectTeam";
 import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 
 
@@ -302,6 +303,7 @@ const ProjectDetail = () => {
             {(project as any).customerName && (
               <p className="text-xs text-muted-foreground truncate">{(project as any).customerName}</p>
             )}
+            {projectId && <div className="mt-1"><ProjectTeam projectId={projectId} /></div>}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
             <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setInviteOpen(true)} title="Kunde einladen">
