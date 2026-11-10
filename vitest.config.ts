@@ -10,6 +10,8 @@ export default defineConfig({
       "supabase/functions/email-*/**/*.test.ts",
       "supabase/functions/project-team/**/*.test.ts",
       "supabase/functions/_shared/publicLinks.test.ts",
+      "supabase/functions/_shared/markup.test.ts",
+      "src/components/review/**/*.test.ts",
     ],
     environment: "node",
   },

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock, Mail, Camera, ChevronDown } from "lucide-react";
+import { ArrowLeft, Upload, Trash2, FileText, Download, ImagePlus, Car, Check, X, Pencil, Share2, CheckCheck, AlertTriangle, Clock, Mail, Camera, ChevronDown, PenLine } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { supabase } from "@/integrations/supabase/client";
 import { buildPublicUrl, usePublicLinkConfig } from "@/lib/publicLinks";
@@ -27,6 +27,10 @@ import { MeetingNotesCard } from "@/components/MeetingNotesCard";
 import { enqueueHeroUploadIfLinked, getHeroProjectMatchId, dataUrlToBlob } from "@/lib/heroSyncHelpers";
 import { setEditorHandoff, takeMeasuredResult } from "@/lib/editorHandoff";
 import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
+import ReviewViewer from "@/components/review/ReviewViewer";
+import { vehicleEmployeeSource } from "@/components/review/sources";
+import type { LayerItem } from "@/components/review/MarkupLayer";
+import { numberTopLevel, type Markup, type MediaRef } from "@/lib/markup";
 import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import LocationChat, { ChatMessage } from "@/components/LocationChat";
 import { useSignedUrls } from "@/hooks/useSignedUrls";
@@ -81,6 +85,9 @@ interface FeedbackItem {
   author_type?: string;
   status: "open" | "done";
   created_at: string;
+  parent_id?: string | null;
+  markup?: Markup | null;
+  media_ref?: MediaRef | null;
 }
 
 // Collapsed by default; remembered for the browser session only.
@@ -512,8 +519,10 @@ const VehicleDetail = () => {
   // Maps a stored feedback row to the LocationChat shape. author_type may be
   // missing on very old rows; fall back to customer for anything not marked
   // as an employee reply.
-  const openFeedbackCount = feedbacks.filter((f) => f.status === "open").length;
+  const openFeedbackCount = feedbacks.filter((f) => f.status === "open" && !f.parent_id).length;
   const chatMessages: ChatMessage[] = feedbacks.map((f) => ({
+    parent_id: f.parent_id,
+    markup: f.markup,
     id: f.id,
     author_name: f.author_name,
     author_type: f.author_type === "employee" ? "employee" : "customer",
@@ -579,6 +588,25 @@ const VehicleDetail = () => {
   };
 
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><p className="text-muted-foreground">Laden…</p></div>;
+  // Spec C: Prüfmodus und Markierungen am Layout (direkt per Supabase-Session, RLS „Mitarbeiter Vollzugriff“).
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [layoutRef, setLayoutRef] = useState<MediaRef | null>(null);
+  const layoutKind = layout ? layoutPreviewKind(layout.file_name) : null;
+  const reviewSource = useMemo(() => (layout && projectId && (layoutKind === "pdf" || layoutKind === "image"))
+    ? vehicleEmployeeSource({
+        projectId,
+        files: [{ kind: layoutKind, storagePath: layout.storage_path, url: urlFor(layout.storage_path) || "", name: layout.file_name }],
+        authorName: session?.name || "Mitarbeiter",
+      })
+    : null, [layout?.storage_path, projectId, layoutKind]); // eslint-disable-line react-hooks/exhaustive-deps
+  const layoutOverlay = (ref: MediaRef): LayerItem[] => {
+    const numbers = numberTopLevel(feedbacks);
+    return feedbacks
+      .filter((f) => f.markup && !f.parent_id && f.status !== "done" && f.media_ref && f.media_ref.storagePath === ref.storagePath
+        && (ref.kind !== "pdf" || (f.media_ref.kind === "pdf" && f.media_ref.page === ref.page)))
+      .map((f) => ({ id: f.id, number: numbers.get(f.id) ?? 0, markup: f.markup!, done: false }));
+  };
+
   if (!project) return null;
 
   return (
@@ -885,10 +913,19 @@ const VehicleDetail = () => {
                   const kind = layoutPreviewKind(layout.file_name);
                   const url = urlFor(layout.storage_path);
                   const thumb = images[0] ? urlFor(images[0].storage_path) : undefined;
-                  if (kind === "pdf") return <LocationApprovalMedia pdfs={[{ url, name: layout.file_name }]} annotatedUrl={thumb} />;
-                  if (kind === "image") return <LocationApprovalMedia pdfs={[]} annotatedUrl={url} />;
+                  if (kind === "pdf") return <LocationApprovalMedia pdfs={[{ url, name: layout.file_name, storagePath: layout.storage_path }]} annotatedUrl={thumb} onPageChange={setLayoutRef} overlay={layoutOverlay} />;
+                  if (kind === "image") return <LocationApprovalMedia pdfs={[]} annotatedUrl={url} annotatedPath={layout.storage_path} onPageChange={setLayoutRef} overlay={layoutOverlay} />;
                   return null;
                 })()}
+                {reviewSource && (
+                  <Button size="sm" variant="outline" onClick={() => setReviewOpen(true)}>
+                    <PenLine className="h-4 w-4 mr-1" /> Korrekturen ansehen{openFeedbackCount ? ` (${openFeedbackCount})` : ""}
+                  </Button>
+                )}
+                {reviewSource && reviewOpen && (
+                  <ReviewViewer open={reviewOpen} onOpenChange={setReviewOpen} source={reviewSource} title="Fahrzeuglayout"
+                    initialRef={layoutRef} onChanged={loadAll} />
+                )}
                 <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/20">
                   <div className="flex items-center gap-2 min-w-0">
                     <FileText className="h-5 w-5 text-primary shrink-0" />
@@ -937,6 +974,15 @@ const VehicleDetail = () => {
               canDelete={() => true}
               onDelete={(m) => deleteFeedback(m.id)}
               placeholder="Antwort an den Kunden schreiben…"
+              onReply={async (parent, text) => {
+                if (!projectId) return;
+                const { data, error } = await supabase.from("vehicle_layout_feedback").insert({
+                  project_id: projectId, message: text, parent_id: parent.id, author_name: session?.name || "Mitarbeiter",
+                  author_customer_id: null, author_type: "employee", status: "open",
+                }).select().single();
+                if (error) { toast.error("Antwort konnte nicht gesendet werden"); return; }
+                setFeedbacks((prev) => [...prev, data as FeedbackItem]);
+              }}
             />
           </CardContent>
           </CollapsibleContent>

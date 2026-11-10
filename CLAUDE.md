@@ -87,6 +87,11 @@ Kunden können Projekte online einsehen und freigeben.
   Bauen NUR über `publicUrl()` (`src/lib/publicLinks.ts` bzw.
   `_shared/publicLinks.ts`), nie aus `window.location.origin`. `SlugRoute`
   leitet einen falschen Slug um; neue Präfixe gehören in die PWA-Denylist
+- Kundenkorrektur mit Markierungen (Spec C): `location_feedback`/`vehicle_layout_feedback`
+  haben `parent_id` (Antwort, eine Ebene), `markup` (normiert 0..1) und `media_ref`
+  (Datei + Seite). Format/Prüfung NUR über `_shared/markup.ts` (identische Kopie
+  `src/lib/markup.ts`, Test prüft Gleichheit). Prüfmodus `src/components/review/`
+  (`ReviewViewer`, vier Datenquellen in `sources.ts`); Export „Korrekturen einzeichnen“
 
 ## Bekannte Architektur-Entscheidungen
 - Storage Bucket `project-files` ist **privat** (Phase 3, `docs/phase3-storage.md`).

@@ -492,3 +492,52 @@ export async function drawDetailPage(pdf: jsPDF, opts: {
   }
   drawFooter(pdf, { left: opts.companyName, pageNumber: opts.pageNumber });
 }
+
+// ─── Korrekturen-Liste (Spec C, Option „Korrekturen einzeichnen“) ────────────────
+export interface CommentRow {
+  number?: number;
+  author: string;
+  date: string;
+  done: boolean;
+  text: string;
+  replies: { author: string; date: string; text: string }[];
+}
+
+/** Nummerierte Kommentarliste eines Standorts; passt nicht alles auf eine Seite, steht unten ein Hinweis. */
+export function drawCommentsPage(pdf: jsPDF, opts: { title: string; sub?: string; comments: CommentRow[]; pageNumber: number; companyName?: string }) {
+  drawHeaderBand(pdf, { title: opts.title, sub: opts.sub });
+  let y = HEADER_H + 10;
+  const maxY = FOOTER_Y - 8;
+  const lineH = 4.6;
+  let shown = 0;
+  for (const c of opts.comments) {
+    const head = `${c.number ? `[${c.number}] ` : ""}${c.author} · ${c.date} · ${c.done ? "umgesetzt" : "offen"}`;
+    const body = pdf.splitTextToSize(c.text, CONTENT_W - 6) as string[];
+    const replyLines = c.replies.flatMap((r) => pdf.splitTextToSize(`> ${r.author} (${r.date}): ${r.text}`, CONTENT_W - 12) as string[]);
+    const need = lineH * (1 + body.length + replyLines.length) + 3;
+    if (y + need > maxY) break;
+    ink(pdf, c.done ? MUTED : INK);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(9.5);
+    pdf.text(head, MARGIN, y);
+    y += lineH;
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9.5);
+    pdf.text(body, MARGIN + 3, y);
+    y += lineH * body.length;
+    if (replyLines.length) {
+      ink(pdf, MUTED);
+      pdf.setFontSize(8.5);
+      pdf.text(replyLines, MARGIN + 8, y);
+      y += lineH * replyLines.length;
+    }
+    y += 3;
+    shown++;
+  }
+  if (shown < opts.comments.length) {
+    ink(pdf, MUTED);
+    pdf.setFontSize(8.5);
+    pdf.text(`... und ${opts.comments.length - shown} weitere Kommentare (im Projekt einsehbar)`, MARGIN, maxY + 3);
+  }
+  drawFooter(pdf, { left: opts.companyName, pageNumber: opts.pageNumber });
+}
