@@ -1,1 +1,0 @@
-Voruebergehend fuer den Lader.
