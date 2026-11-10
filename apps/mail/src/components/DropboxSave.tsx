@@ -13,6 +13,9 @@ interface Targets {
   attachments: { id: string; filename: string; mime: string; size: number; ignored: boolean; stored: boolean; savedPath: string | null; savedAt: string | null }[];
 }
 
+/** Gespeichert oder aus dem Postfach nachladbar (bis 15 MB, wie beim Abholen). */
+const fetchable = (a: { stored: boolean; size: number }) => a.stored || a.size <= 15 * 1024 * 1024;
+
 const kb = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1000))} KB`);
 
 /** Anhänge einer Mail per Klick in den Dropbox-Projektordner (über email-action, nur hinzufügen, nie überschreiben). */
@@ -26,10 +29,16 @@ export function DropboxSave({ messageId, onClose }: { messageId: string; onClose
   useEffect(() => {
     if (!t) return;
     setSub(t.defaultSubfolder);
-    setPicked(new Set(t.attachments.filter((a) => a.stored && !a.ignored && !a.savedPath).map((a) => a.id)));
+    setPicked(new Set(t.attachments.filter((a) => fetchable(a) && !a.ignored && !a.savedPath).map((a) => a.id)));
   }, [t]);
   const save = useMutation({
-    mutationFn: () => invokeFn<{ folder: string; files: string[]; created: boolean }>("email-action", { action: "dropbox_save", messageId, attachmentIds: [...picked], subfolder: sub }),
+    mutationFn: async () => {
+      // Noch nicht gespeicherte Anhänge (früher ausgeblendet) erst aus dem Postfach holen – dann ablegen.
+      if ((t?.attachments ?? []).some((a) => picked.has(a.id) && !a.stored)) {
+        await invokeFn("email-mailbox", { action: "attachments_reload", id: messageId });
+      }
+      return await invokeFn<{ folder: string; files: string[]; created: boolean }>("email-action", { action: "dropbox_save", messageId, attachmentIds: [...picked], subfolder: sub });
+    },
     onSuccess: (r) => {
       toast.success(`${r.files.length} Datei(en) in der Dropbox abgelegt: ${r.folder}${r.created ? " (Projektordner neu angelegt)" : ""}`);
       qc.invalidateQueries({ queryKey: ["dropbox", messageId] });
@@ -63,16 +72,18 @@ export function DropboxSave({ messageId, onClose }: { messageId: string; onClose
             {!list.length && <p className="text-muted-foreground">Keine Anhänge.</p>}
             {list.map((a) => (
               <label key={a.id} className="flex flex-wrap items-center gap-2">
-                <input type="checkbox" disabled={!a.stored} checked={picked.has(a.id)} onChange={() => toggle(a.id)} />
-                <span className={a.stored ? "" : "text-muted-foreground line-through"}>{a.filename}</span>
+                <input type="checkbox" disabled={!fetchable(a)} checked={picked.has(a.id)} onChange={() => toggle(a.id)} />
+                <span className={fetchable(a) ? "" : "text-muted-foreground line-through"}>{a.filename}</span>
                 <span className="text-xs text-muted-foreground">{kb(a.size)}</span>
-                {!a.stored && <span className="text-xs text-muted-foreground">(nicht gespeichert – zu groß)</span>}
+                {!a.stored && fetchable(a) && <span className="text-xs text-muted-foreground">(wird beim Ablegen aus dem Postfach geholt)</span>}
+                {!fetchable(a) && <span className="text-xs text-muted-foreground">(über 15 MB – nur im Mailprogramm)</span>}
+                {a.ignored && <span className="text-xs text-muted-foreground">· ausgeblendet</span>}
                 {a.savedPath && <Badge variant="good" title={a.savedPath}><Check className="h-3 w-3" /> liegt in der Dropbox ({formatDateTime(a.savedAt)})</Badge>}
               </label>
             ))}
             {hidden > 0 && (
               <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setShowHidden(!showHidden)}>
-                {showHidden ? "Ausgeblendete verbergen" : `${hidden} ausgeblendete (Logos, Signaturbilder) zeigen`}
+                {showHidden ? "Ausgeblendete verbergen" : `${hidden} ausgeblendete (kleine Signaturbilder) zeigen`}
               </button>
             )}
           </div>

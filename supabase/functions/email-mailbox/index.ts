@@ -88,13 +88,17 @@ const handlers: Record<string, (sb: any, body: any) => Promise<unknown>> = {
     let saved = 0;
     const failed: string[] = [];
     let n = 0;
+    // Gleichnamige Anhaenge (z. B. zweimal „Logo.svg“) der Reihe nach zuordnen, nicht alle auf die erste Zeile.
+    const used = new Set<string>();
     for (const a of parsed.attachments) {
       n++;
-      const row = rows.find((r) => r.filename === a.filename);
+      const row = rows.find((r) => r.filename === a.filename && !used.has(r.id));
+      if (row) used.add(row.id);
       if (row?.storage_path) continue;
+      // Auch ausgeblendete speichern – genau die fehlten bisher, wenn man sie doch brauchte.
       const ignored = isIgnorableAttachment(a);
       let path: string | null = null;
-      if (!ignored && a.content && a.size <= MAX_ATTACHMENT_BYTES) {
+      if (a.content && a.size <= MAX_ATTACHMENT_BYTES) {
         path = `${acc.id}/${m.id}/${n}-${storageKeyName(a.filename)}`;
         try {
           await store.uploadAttachment(path, a.content, a.mime);
@@ -104,7 +108,12 @@ const handlers: Record<string, (sb: any, body: any) => Promise<unknown>> = {
           failed.push(`${a.filename}: ${(e as Error).message}`.slice(0, 160));
         }
       }
-      if (row) await sb.from("email_attachments").update({ storage_path: path }).eq("id", row.id);
+      if (row) {
+        // Eine Datei, die bisher wegen der alten Regel versteckt war und jetzt als echter Anhang gilt, wieder zeigen.
+        const patch: Record<string, unknown> = { storage_path: path };
+        if (!ignored) patch.is_ignored = false;
+        await sb.from("email_attachments").update(patch).eq("id", row.id);
+      }
       else await store.insertAttachment({ message_id: m.id, filename: a.filename, mime: a.mime, size: a.size, storage_path: path, is_ignored: ignored });
     }
     if (parsed.attachments.length) await sb.from("email_messages").update({ has_attachments: true }).eq("id", m.id);

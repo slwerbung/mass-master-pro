@@ -133,11 +133,23 @@ export function storageKeyName(name: string, fallback = "datei"): string {
 }
 
 /** Signaturbilder, Tracking-Pixel und Winzdateien kommen nie an HERO. */
-export function isIgnorableAttachment(a: { size: number; mime: string; inline?: boolean }): boolean {
-  if (a.size < MIN_ATTACHMENT_BYTES) return true;
-  if (a.inline && /^image\//i.test(a.mime)) return true;
-  return false;
+/**
+ * Nur AUSBLENDEN (gespeichert wird trotzdem alles, sync.ts): Tracking-Pixel und kleine eingebettete Rasterbilder
+ * (Signatur-Logos, Social-Icons). Apple Mail bettet echte Anhaenge (Fotos, Logos des Kunden) ebenfalls „inline“ ein –
+ * deshalb nur bis 25 KB, und Vektor-/Dokumentdateien (SVG, PDF, AI, EPS …) nie: das sind fast immer echte Druckdaten.
+ */
+export function isIgnorableAttachment(a: { size: number; mime: string; inline?: boolean; filename?: string }): boolean {
+  const name = String(a.filename || "").toLowerCase();
+  const raster = /^image\/(png|jpe?g|gif|bmp|webp)$/i.test(a.mime) || /\.(png|jpe?g|gif|bmp|webp)$/.test(name);
+  if (!raster) return a.size < TRACKING_PIXEL_BYTES && !/\.(svg|pdf|ai|eps|cdr|dxf|txt|csv|vcf|ics)$/.test(name);
+  if (a.size < TRACKING_PIXEL_BYTES) return true;
+  return !!a.inline && a.size < INLINE_IMAGE_HIDE_BYTES;
 }
+
+/** Kleiner als das: Tracking-Pixel/Platzhalter. */
+export const TRACKING_PIXEL_BYTES = 2 * 1024;
+/** Eingebettete Rasterbilder bis zu dieser Groesse gelten als Signaturbilder (ausgeblendet, aber gespeichert). */
+export const INLINE_IMAGE_HIDE_BYTES = 25 * 1024;
 
 /** Name aus „Vorname Nachname <a@b.de>" oder die Adresse selbst. */
 export function displayName(name: string | undefined | null, addr: string): string {

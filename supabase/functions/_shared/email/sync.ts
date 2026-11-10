@@ -222,9 +222,10 @@ async function storeOne(
   const failed: string[] = [];
   for (const a of m.attachments) {
     n++;
+    // Ausgeblendet heisst nur „nicht in der Liste“ – gespeichert wird jede Datei, damit man sie spaeter noch bekommt.
     const ignored = isIgnorableAttachment(a);
     let path: string | null = null;
-    if (!ignored && a.content && a.size <= MAX_ATTACHMENT_BYTES) {
+    if (a.content && a.size <= MAX_ATTACHMENT_BYTES) {
       path = `${acc.id}/${row.id}/${n}-${storageKeyName(a.filename)}`;
       try {
         await d.store.uploadAttachment(path, a.content, a.mime);

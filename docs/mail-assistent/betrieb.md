@@ -274,6 +274,16 @@ an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorl
   trotzdem beim Admin unter „Zu entscheiden“ (sonst bliebe sie liegen). Das Abräumen irrelevanter Threads entscheidet nie nach Sicht
   eines Betrachters.
 
+## Anhänge (Nov. 2026)
+
+- **Gespeichert wird jeder Anhang bis 15 MB** (`sync.ts`), auch ausgeblendete. „Ausgeblendet“ (`is_ignored`) heißt nur: nicht in der
+  Liste. Ausgeblendet werden nur Tracking-Pixel (< 2 KB) und eingebettete Rasterbilder unter 25 KB (Signatur-Logos); Vektor-/Dokument-
+  dateien (SVG, PDF, AI, EPS …) nie (`isIgnorableAttachment` in `mail.ts`). Früher wurde jedes eingebettete Bild ausgeblendet und NICHT
+  gespeichert – Apple Mail bettet aber echte Anhänge ein, deshalb fehlten Fotos und Kundenlogos.
+- Fehlt eine Datei (alte Mails): `email-mailbox` `attachments_reload` holt sie aus dem Postfach, auch ausgeblendete; gleichnamige der
+  Reihe nach. Die Dropbox-Ablage ruft das vorher selbst auf. Mail-Ansicht: „+ n ausgeblendete“ zeigt sie, „einblenden“ setzt
+  `is_ignored = false` (`email-api` `set_attachment_hidden`).
+
 ## Themen einem Mitarbeiter zuordnen (Nov. 2026)
 
 - Knopf „Mitarbeiter …“ an jedem Thema (Zu entscheiden, Themen, Mail-Ansicht). Zugeordnet wird das **Thema** (`email_threads.

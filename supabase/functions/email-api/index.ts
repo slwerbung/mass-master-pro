@@ -375,6 +375,15 @@ const handlers: Record<string, Handler> = {
     return { ok: true };
   },
 
+  /** Anhang ein- oder ausblenden (nur Anzeige – gespeichert bleibt die Datei). */
+  async set_attachment_hidden({ sb, user, body }) {
+    const { data: att } = await sb.from("email_attachments").select("id, message_id").eq("id", String(body.id || "")).maybeSingle();
+    if (!att) throw new Error("Anhang nicht gefunden.");
+    await assertMessages(sb, user, [att.message_id]);
+    must(await sb.from("email_attachments").update({ is_ignored: !!body.hidden }).eq("id", att.id));
+    return { ok: true };
+  },
+
   /** Mehrfachauswahl in der Liste: Kategorie setzen (wie einzeln korrigiert, mit Lernen) oder neu verarbeiten. */
   async bulk_messages({ sb, user, body }) {
     const ids: string[] = (Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 200);

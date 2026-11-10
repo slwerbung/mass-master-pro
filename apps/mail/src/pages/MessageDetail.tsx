@@ -152,6 +152,12 @@ export default function MessageDetail() {
     onError: (e) => toast.error(errorText(e)),
   });
 
+  const [showHiddenAtt, setShowHiddenAtt] = useState(false);
+  const hideAtt = useMutation({
+    mutationFn: (p: { attId: string; hidden: boolean }) => api("set_attachment_hidden", { id: p.attId, hidden: p.hidden }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["message"] }),
+    onError: (e) => toast.error(errorText(e)),
+  });
   const reloadAtt = useMutation({
     mutationFn: () => invokeFn<{ found: number; saved: number; failed: string[] }>("email-mailbox", { action: "attachments_reload", id }),
     onSuccess: (r) => {
@@ -248,9 +254,22 @@ export default function MessageDetail() {
                 ? <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm hover:bg-accent"><Paperclip className="h-3.5 w-3.5" />{a.filename}<span className="text-xs text-muted-foreground">{Math.round(a.size / 1024)} KB</span></a>
                 : <span key={a.id} className="inline-flex items-center gap-1.5 rounded-md border border-dashed px-2.5 py-1 text-sm text-muted-foreground"><Paperclip className="h-3.5 w-3.5" />{a.filename} (nicht gespeichert)</span>
             ))}
-            {(attachments.length === 0 || attachments.some((a) => !a.url)) && (
+            {showHiddenAtt && d.attachments.filter((a) => a.is_ignored).map((a) => (
+              <span key={a.id} className="inline-flex items-center gap-1.5 rounded-md border border-dashed px-2.5 py-1 text-sm text-muted-foreground">
+                <Paperclip className="h-3.5 w-3.5" />
+                {a.url ? <a href={a.url} target="_blank" rel="noreferrer" className="hover:underline">{a.filename}</a> : <>{a.filename} (nicht gespeichert)</>}
+                <span className="text-xs">{Math.round(a.size / 1024)} KB</span>
+                <button className="text-xs underline" disabled={hideAtt.isPending} onClick={() => hideAtt.mutate({ attId: a.id, hidden: false })}>einblenden</button>
+              </span>
+            ))}
+            {d.attachments.some((a) => a.is_ignored) && (
+              <button className="text-xs text-muted-foreground underline" onClick={() => setShowHiddenAtt(!showHiddenAtt)}>
+                {showHiddenAtt ? "Ausgeblendete verbergen" : `+ ${d.attachments.filter((a) => a.is_ignored).length} ausgeblendete (Signaturbilder)`}
+              </button>
+            )}
+            {(d.attachments.length === 0 || d.attachments.some((a) => !a.url)) && (
               <Button size="sm" variant="ghost" onClick={() => reloadAtt.mutate()} disabled={reloadAtt.isPending}>
-                {reloadAtt.isPending ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />} {attachments.length ? "Fehlende Anhänge nachladen" : "Anhänge aus dem Postfach laden"}
+                {reloadAtt.isPending ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />} {d.attachments.length ? "Fehlende Anhänge aus dem Postfach holen" : "Anhänge aus dem Postfach laden"}
               </Button>
             )}
           </div>
@@ -399,6 +418,7 @@ export default function MessageDetail() {
             <div key={a.id} className="flex flex-wrap items-center gap-2 text-sm">
               {a.url ? <a className="inline-flex items-center gap-1 underline" href={a.url} target="_blank" rel="noreferrer"><Download className="h-3 w-3" />{a.filename}</a> : <span>{a.filename}</span>}
               <span className="text-xs text-muted-foreground">{Math.round(a.size / 1024)} KB · {a.mime}</span>
+              <button className="text-xs underline" disabled={hideAtt.isPending} onClick={() => hideAtt.mutate({ attId: a.id, hidden: false })}>einblenden</button>
             </div>
           ))}
         </Section>
