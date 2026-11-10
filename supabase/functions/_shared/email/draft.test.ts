@@ -52,7 +52,8 @@ describe("Prompt", () => {
   it("Hinweis des Mitarbeiters und fehlende Signatur", () => {
     const r = buildDraftRequest({ ...base, hint: "kürzer", signatureHint: false, hero: null });
     expect(r.user).toMatch(/Anweisung des Mitarbeiters fuer diesen Entwurf \(hat Vorrang vor allen Regeln oben\): kürzer$/);
-    expect(r.system[0].text).toContain("Viele Grüße");
+    expect(r.system[0].text).toContain("Beste Grüße");
+    expect(r.system[0].text).not.toContain("SL WERBUNG");
     expect(r.user).not.toContain("HERO-Projekt");
   });
 });
@@ -88,6 +89,11 @@ describe("generateDraft", () => {
     const deps: DraftDeps = { llm, store, writer, heroContext: async () => ({ projectNr: "WER-5", projectName: "P", stepName: "x", offers: [], nextAppointment: null }), knowledge: "K", replyRules: "R", signature: "Viele Grüße\nSL WERBUNG" };
     return { deps, saved, writes, reqs };
   }
+  it("ohne hinterlegte Signatur endet der Entwurf mit „Beste Grüße“ – ohne Firmennamen", async () => {
+    const t = setup();
+    const r = await generateDraft(msg(), { ...t.deps, signature: "" }, { write: false });
+    expect(r.text).toBe("Hallo Max,\n\ndas Layout kommt [[Termin nennen]].\n\nBeste Grüße");
+  });
   it("speichert den Entwurf mit Betreff und Signatur und legt ihn ins Postfach", async () => {
     const t = setup();
     const r = await generateDraft(msg(), t.deps, { write: true });
