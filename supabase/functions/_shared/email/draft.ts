@@ -176,9 +176,31 @@ export function replySubject(subject: string): string {
 /** Gruss am Ende, wenn am Postfach keine Text-Signatur hinterlegt ist (Einstellungen → Postfächer). Kein Firmenname. */
 export const DEFAULT_CLOSING = "Beste Grüße";
 
+/** Eine Zeile, die nur ein Gruss ist („Viele Grüße", „Mit freundlichen Grüßen", „LG" …). */
+const CLOSING_LINE = /^(?:(?:mit\s+)?(?:(?:viele|beste|liebe|herzliche|freundliche|schöne|sonnige)n?)?\s*(?:gr[üu](?:ß|ss)(?:en?)?|gru(?:ß|ss))(?:\s+aus\s+\S+)?|mfg|vg|lg|bg|best regards|kind regards|regards)[\s,.!]*$/i;
+
+/**
+ * Entfernt einen Gruss, den die KI trotz Anweisung selbst ans Ende gesetzt hat – samt bis zu zwei kurzen Zeilen
+ * danach (Name/Firma). Sonst stuende er doppelt da („Viele Grüße" + angehaengtes „Beste Grüße").
+ */
+export function stripClosing(body: string): string {
+  const lines = body.trimEnd().split("\n");
+  for (let i = lines.length - 1; i >= 0 && i >= lines.length - 4; i--) {
+    const t = lines[i].trim();
+    if (!t) continue;
+    if (CLOSING_LINE.test(t)) {
+      const after = lines.slice(i + 1).map((l) => l.trim()).filter(Boolean);
+      if (after.length <= 2 && after.every((l) => l.length <= 40)) return lines.slice(0, i).join("\n").trimEnd();
+      return body.trimEnd();
+    }
+    if (t.length > 40) break; // ein echter Satz – kein Gruss-Block am Ende
+  }
+  return body.trimEnd();
+}
+
 export function withSignature(body: string, signature: string): string {
-  const b = body.trim();
   const sig = signature.trim();
+  const b = (sig ? stripClosing(body) : body).trim();
   return sig ? `${b}\n\n${sig}` : b;
 }
 

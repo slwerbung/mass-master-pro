@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDraftRequest, DraftSchema, generateDraft, hintFormality, replySubject, shouldDraft, withSignature, type DraftDeps, type DraftMsg, type DraftStore, type DraftWriter } from "./draft.ts";
+import { buildDraftRequest, DraftSchema, generateDraft, hintFormality, replySubject, shouldDraft, stripClosing, withSignature, type DraftDeps, type DraftMsg, type DraftStore, type DraftWriter } from "./draft.ts";
 import type { LlmDeps, Provider, TaskSetting } from "./llm.ts";
 
 const msg = (o: Partial<DraftMsg> = {}): DraftMsg => ({
@@ -68,6 +68,14 @@ describe("Betreff und Signatur", () => {
   it("Signatur anhaengen", () => {
     expect(withSignature("Hallo\n", "Viele Grüße\nSL")).toBe("Hallo\n\nViele Grüße\nSL");
     expect(withSignature("Hallo", "  ")).toBe("Hallo");
+  });
+  it("Gruss der KI wird nicht verdoppelt", () => {
+    const body = "Hallo Herr Reinhard,\n\nvielen Dank für die Empfehlung.\n\nViele Grüße";
+    expect(withSignature(body, "Beste Grüße")).toBe("Hallo Herr Reinhard,\n\nvielen Dank für die Empfehlung.\n\nBeste Grüße");
+    expect(withSignature("Text.\n\nMit freundlichen Grüßen\nMax Muster\nSL WERBUNG", "Beste Grüße")).toBe("Text.\n\nBeste Grüße");
+    expect(withSignature("Text.\n\nLG,", "X")).toBe("Text.\n\nX");
+    expect(stripClosing("Viele Grüße an Ihr Team richte ich gerne aus, wir melden uns morgen mit dem Layout.")).toContain("Layout");
+    expect(stripClosing("Bitte senden Sie uns die Datei.\n\nDanke!")).toBe("Bitte senden Sie uns die Datei.\n\nDanke!");
   });
   it("Schema", () => {
     expect(DraftSchema.parse({ body: "x", placeholders: "kaputt" }).placeholders).toEqual([]);
