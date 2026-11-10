@@ -142,7 +142,7 @@ describe("syncAccount", () => {
     expect(log.cursors[0]).toEqual({ id: "A1", inbox_uidvalidity: "8", inbox_last_uid: 2 });
   });
 
-  it("speichert Anhaenge, ignoriert Winziges, laesst Uebergrosses ohne Datei", async () => {
+  it("speichert jeden Anhang (auch ausgeblendete Signaturbilder), laesst Uebergrosses ohne Datei", async () => {
     const big = new Uint8Array(10);
     const { deps, log } = fake({
       11: mail({
@@ -154,9 +154,9 @@ describe("syncAccount", () => {
       }),
     }, { INBOX: { uids: [11] } });
     await syncAccount(acc({ folder_map: { inbox: "INBOX" } }), deps);
-    expect(log.uploads).toEqual(["A1/M1/1-Layout V2.pdf"]);
+    expect(log.uploads).toEqual(["A1/M1/1-Layout V2.pdf", "A1/M1/2-sig.png"]);
     expect(log.atts.map((a) => [a.filename, a.storage_path !== null, a.is_ignored])).toEqual([
-      ["Layout V2.pdf", true, false], ["sig.png", false, true], ["riesig.zip", false, false],
+      ["Layout V2.pdf", true, false], ["sig.png", true, true], ["riesig.zip", false, false],
     ]);
     expect(log.msgs[0].has_attachments).toBe(true);
   });

@@ -68,7 +68,7 @@ export async function dropboxSave(sb: any, key: string | null, messageId: string
   const { m, settings, token, project } = await context(sb, key, messageId);
   const { data: atts } = await sb.from("email_attachments").select("id, filename, storage_path").eq("message_id", m.id).in("id", ids);
   const rows = (atts || []).filter((a: any) => a.storage_path);
-  if (rows.length !== ids.length) throw new Error("Mindestens eine Datei ist nicht gespeichert (zu groß oder ausgeblendet) und kann nicht abgelegt werden.");
+  if (rows.length !== ids.length) throw new Error("Mindestens eine Datei ließ sich nicht aus dem Postfach holen (über 15 MB oder die Mail liegt nicht mehr im Postfach).");
   const download = storageDownloader(sb);
   const files = [];
   for (const a of rows) files.push({ name: a.filename, bytes: await download(a.storage_path) });

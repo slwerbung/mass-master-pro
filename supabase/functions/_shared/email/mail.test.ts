@@ -86,10 +86,17 @@ describe("Sonstiges", () => {
     expect(safeFilename("Größe: 5*5?.pdf")).toBe("Größe_ 5_5_.pdf");
     expect(safeFilename("")).toBe("datei");
   });
-  it("ignoriert Signaturbilder und Winzdateien", () => {
+  it("blendet nur Tracking-Pixel und kleine eingebettete Signaturbilder aus", () => {
     expect(isIgnorableAttachment({ size: 500, mime: "image/gif" })).toBe(true);
-    expect(isIgnorableAttachment({ size: 50_000, mime: "image/png", inline: true })).toBe(true);
+    expect(isIgnorableAttachment({ size: 12_000, mime: "image/png", inline: true })).toBe(true);
     expect(isIgnorableAttachment({ size: 50_000, mime: "application/pdf" })).toBe(false);
+  });
+  it("echte Anhänge aus Apple Mail (inline) bleiben sichtbar", () => {
+    expect(isIgnorableAttachment({ size: 60_000, mime: "image/jpeg", inline: true, filename: "Bild.jpeg" })).toBe(false);
+    expect(isIgnorableAttachment({ size: 55_000, mime: "image/png", inline: true, filename: "Bildschirmfoto.png" })).toBe(false);
+    expect(isIgnorableAttachment({ size: 15_000, mime: "image/svg+xml", inline: true, filename: "Logo.svg" })).toBe(false);
+    expect(isIgnorableAttachment({ size: 1_500, mime: "image/svg+xml", inline: true, filename: "Logo.svg" })).toBe(false);
+    expect(isIgnorableAttachment({ size: 8_000, mime: "application/pdf", filename: "Skizze.pdf" })).toBe(false);
   });
   it("wandelt HTML in Text", () => {
     const t = htmlToText("<p>Hallo&nbsp;Welt</p><style>x{color:red}</style><p>Zwei</p>");
