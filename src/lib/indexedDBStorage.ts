@@ -48,6 +48,11 @@ interface AufmassDBSchema extends DBSchema {
       // Arbeiten an verschiedenen Standorten nicht gegenseitig ueberschrieben
       // wird. Fehlt der Wert (Altbestand), gilt createdAt.
       updatedAt?: string;
+      // true = dieser Standort lag schon einmal auf dem Server (heruntergeladen
+      // oder erfolgreich hochgeladen). Fehlt er beim naechsten Laden der
+      // Online-Fassung, wurde er dort geloescht. Ohne Flag ist er neue,
+      // noch nicht hochgeladene Arbeit und darf nie verworfen werden.
+      synced?: boolean;
     };
     indexes: { 'by-project': string };
   };
@@ -68,6 +73,10 @@ interface AufmassDBSchema extends DBSchema {
       locationId: string;
       caption?: string;
       createdAt: string;
+      // Wie locations.synced: true = lag schon auf dem Server. Ein Detailbild
+      // ohne dieses Flag ist noch nicht hochgeladen und ueberlebt jedes Laden
+      // der Online-Fassung (WER-1937: Detailbilder nach dem Speichern weg).
+      synced?: boolean;
     };
     indexes: { 'by-location': string };
   };
@@ -445,14 +454,21 @@ export const indexedDBStorage = {
     return detailImages;
   },
 
-  async saveDetailImage(locationId: string, detailImage: DetailImage): Promise<void> {
+  // touch (Standard): ein NEUES bzw. geaendertes Detailbild ist eine Aenderung
+  // an seinem Standort und am Projekt – beide Stempel ziehen mit. Ohne das
+  // hielt der Sync den Standort fuer unveraendert, lud die Online-Fassung und
+  // das neue Detailbild war weg (WER-1937). saveProject ruft mit
+  // touch: false auf, weil es auch beim Laden aus Supabase laeuft.
+  async saveDetailImage(locationId: string, detailImage: DetailImage, opts: { touch?: boolean } = {}): Promise<void> {
     const db = await getDB();
+    const existing = await db.get('detail-images', detailImage.id);
     
     await db.put('detail-images', {
       id: detailImage.id,
       locationId,
       caption: detailImage.caption,
       createdAt: detailImage.createdAt.toISOString(),
+      synced: existing?.synced,
     });
     
     if (detailImage.imageData) {
@@ -472,6 +488,50 @@ export const indexedDBStorage = {
         blob: base64ToBlob(detailImage.originalImageData),
       });
     }
+
+    if (opts.touch !== false) {
+      await touchLocation(db, locationId);
+      const loc = await db.get('locations', locationId);
+      const project = loc ? await db.get('projects', loc.projectId) : undefined;
+      if (project) await db.put('projects', { ...project, updatedAt: new Date().toISOString() });
+    }
+  },
+
+  /** Merkt sich, dass diese Detailbilder auf dem Server liegen (siehe synced). */
+  async markDetailImagesSynced(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const db = await getDB();
+    for (const id of ids) {
+      const record = await db.get('detail-images', id);
+      if (record && record.synced !== true) await db.put('detail-images', { ...record, synced: true });
+    }
+  },
+
+  /** Merkt sich, dass diese Standorte auf dem Server liegen (siehe synced). */
+  async markLocationsSynced(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const db = await getDB();
+    for (const id of ids) {
+      const record = await db.get('locations', id);
+      if (record && record.synced !== true) await db.put('locations', { ...record, synced: true });
+    }
+  },
+
+  /** Sync-Flags aller Standorte und Detailbilder eines Projekts (ohne Bilddaten). */
+  async getSyncFlags(projectId: string): Promise<{
+    locations: Map<string, boolean | undefined>;
+    details: Map<string, { locationId: string; synced: boolean | undefined }>;
+  }> {
+    const db = await getDB();
+    const locations = new Map<string, boolean | undefined>();
+    const details = new Map<string, { locationId: string; synced: boolean | undefined }>();
+    for (const loc of await db.getAllFromIndex('locations', 'by-project', projectId)) {
+      locations.set(loc.id, loc.synced);
+      for (const d of await db.getAllFromIndex('detail-images', 'by-location', loc.id)) {
+        details.set(d.id, { locationId: loc.id, synced: d.synced });
+      }
+    }
+    return { locations, details };
   },
 
   async updateLocationImage(projectId: string, locationId: string, imageData: string): Promise<void> {
@@ -598,6 +658,7 @@ export const indexedDBStorage = {
         areaMeasurements: location.areaMeasurements ? JSON.stringify(location.areaMeasurements) : undefined,
         createdAt: location.createdAt.toISOString(),
         updatedAt: stamp,
+        synced: previous?.synced,
       });
       
       // Save image blob if: new location OR existing location but blob is missing
@@ -630,7 +691,7 @@ export const indexedDBStorage = {
       const existingDetailImages = await db.getAllFromIndex('detail-images', 'by-location', location.id);
 
       for (const detailImage of location.detailImages || []) {
-        await this.saveDetailImage(location.id, detailImage);
+        await this.saveDetailImage(location.id, detailImage, { touch: false });
       }
 
       for (const existingDetail of existingDetailImages) {

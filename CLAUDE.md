@@ -271,9 +271,17 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
 3. ~~Konflikt-Sync: last-write-wins auf Projekt-Ebene~~ – erledigt (Sept. 2026).
    `locations.updated_at` + lokaler Stempel pro Standort; bei Konflikt wird
    pro Standort entschieden statt das ganze Projekt zu verwerfen
-   (`findLocallyNewerLocations` / `reapplyLocalLocations` in `supabaseSync.ts`).
+   (heute `mergeWithLocal` in `supabaseSync.ts`, siehe unten).
    Offen bleibt der Fall, dass ZWEI Leute DENSELBEN Standort gleichzeitig
    ändern – dort gilt weiter last-write-wins (auf Standort-Ebene).
+   Seit Nov. 2026 (WER-1937) passiert das Zusammenführen in
+   `hydrateAndMerge`/`mergeWithLocal` – also bei JEDEM Laden der
+   Online-Fassung (Projektseite, Grundriss, Sync), nicht nur im Sync. Noch nie
+   hochgeladene Standorte/Detailbilder (`synced`-Flag in IndexedDB fehlt)
+   bleiben immer erhalten. Online gelöscht wird nur noch mit Löschvermerk
+   (`markLocationDeleted`, `deleteDetailImageFromSupabase`), nie mehr nach
+   „fehlt lokal“. Jede lokale Änderung an einem Standort muss dessen Stempel
+   setzen (`saveDetailImage` tut es jetzt auch).
 
 ## Workflow
 1. Änderungen direkt im Repo vornehmen

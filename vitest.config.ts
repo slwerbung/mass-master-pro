@@ -1,8 +1,10 @@
 import { defineConfig } from "vitest/config";
+import path from "path";
 
 // Unit tests for pure logic (e.g. the booking engine). Kept separate from the
 // Playwright e2e suite (`npm test`). Run with `npm run test:unit`.
 export default defineConfig({
+  resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
   test: {
     include: [
       "supabase/functions/_shared/booking/**/*.test.ts",
@@ -12,6 +14,7 @@ export default defineConfig({
       "supabase/functions/_shared/publicLinks.test.ts",
       "supabase/functions/_shared/markup.test.ts",
       "src/components/review/**/*.test.ts",
+      "src/lib/**/*.test.ts",
     ],
     environment: "node",
   },
