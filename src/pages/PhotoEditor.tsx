@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { createMeasurementGroup } from "@/lib/measurement";
 import { createAreaMeasurementGroup, renderAreaLabels } from "@/lib/areaMeasurement";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
+import { scheduleSyncProject } from "@/lib/supabaseSync";
 import { supabase } from "@/integrations/supabase/client";
 import { signedFileUrl } from "@/lib/storageUrl";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob } from "@/lib/heroSyncHelpers";
@@ -917,6 +918,10 @@ const PhotoEditor = () => {
               }
               toast.success("Bild aktualisiert");
             }
+            // Nachtraeglich bemasste Bilder sofort hochladen. Ohne diesen
+            // Anstoss blieb die Aenderung nur auf dem Handy liegen, bis sie
+            // ein spaeteres Laden der Online-Fassung ueberschrieb (WER-1937).
+            scheduleSyncProject(projectId);
             navigate(`/projects/${projectId}`);
           } catch (e) {
             console.error("Error saving:", e);

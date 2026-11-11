@@ -274,6 +274,14 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
    (`findLocallyNewerLocations` / `reapplyLocalLocations` in `supabaseSync.ts`).
    Offen bleibt der Fall, dass ZWEI Leute DENSELBEN Standort gleichzeitig
    ändern – dort gilt weiter last-write-wins (auf Standort-Ebene).
+   Seit Nov. 2026 (WER-1937) passiert das Zusammenführen in
+   `hydrateAndMerge`/`mergeWithLocal` – also bei JEDEM Laden der
+   Online-Fassung (Projektseite, Grundriss, Sync), nicht nur im Sync. Noch nie
+   hochgeladene Standorte/Detailbilder (`synced`-Flag in IndexedDB fehlt)
+   bleiben immer erhalten. Online gelöscht wird nur noch mit Löschvermerk
+   (`markLocationDeleted`, `deleteDetailImageFromSupabase`), nie mehr nach
+   „fehlt lokal“. Jede lokale Änderung an einem Standort muss dessen Stempel
+   setzen (`saveDetailImage` tut es jetzt auch).
 
 ## Workflow
 1. Änderungen direkt im Repo vornehmen

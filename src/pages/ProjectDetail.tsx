@@ -8,7 +8,7 @@ import { Project } from "@/types/project";
 import { toast } from "sonner";
 import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { getSession } from "@/lib/session";
-import { deleteDetailImageFromSupabase, deleteProjectFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, scheduleSyncProject } from "@/lib/supabaseSync";
+import { deleteDetailImageFromSupabase, deleteProjectFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, markLocationDeleted, scheduleSyncProject } from "@/lib/supabaseSync";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -182,6 +182,8 @@ const ProjectDetail = () => {
     if (!project || !projectId) return;
     try {
       const updatedProject = { ...project, locations: project.locations.filter((l) => l.id !== locationId) };
+      // Nur mit diesem Vermerk loescht der Sync den Standort auch online.
+      markLocationDeleted(locationId);
       await indexedDBStorage.saveProject(updatedProject);
       const reloadedProject = await indexedDBStorage.getProject(projectId, undefined, LITE);
       scheduleSyncProject(projectId);
