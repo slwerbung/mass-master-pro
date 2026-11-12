@@ -147,6 +147,19 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
     return await evaluateAll(sb);
   },
 
+  /** Terminarten und Mitarbeiter (mit HERO-Zuordnung) fuer den Dialog „Termine anlegen“. */
+  async event_setup({ sb }) {
+    const [types, emps] = await Promise.all([
+      sb.from("project_event_types").select("id, name, duration_minutes, gap_days, default_employee_id, sort").order("sort", { ascending: true }),
+      sb.from("employees").select("id, name, hero_partner_id").not("hero_partner_id", "is", null).order("name", { ascending: true }),
+    ]);
+    must(types); must(emps);
+    return {
+      types: (types.data || []).map((t: any) => ({ id: t.id, name: t.name, durationMinutes: t.duration_minutes, gapDays: t.gap_days, defaultEmployeeId: t.default_employee_id })),
+      employees: (emps.data || []).map((e: any) => ({ id: e.id, name: e.name })),
+    };
+  },
+
   // ------------------------------------------------------------------ Einstellungen (nur Admin)
   async settings({ sb }) {
     const [steps, rules, cfg] = await Promise.all([

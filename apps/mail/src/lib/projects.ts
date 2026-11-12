@@ -35,3 +35,14 @@ export const CATEGORY_STYLE: Record<PCategory, string> = {
   pflege: "bg-muted text-muted-foreground",
 };
 export const tageText = (n: number) => (n === 1 ? "1 Tag" : `${n} Tage`);
+
+// ------------------------------------------------------------------ Aktionen (project-action)
+export interface ActionResult { ok: true; shadow: boolean; message: string; warnings?: string[]; done?: number[]; failed?: { heroId: number; error: string }[] }
+export const pact = <T = ActionResult>(action: string, params: Record<string, unknown> = {}) => invokeFn<T>("project-action", { action, ...params });
+
+export interface StepsInfo { shadow: boolean; current: number | null; steps: { id: number; name: string; key: string }[] }
+export interface EventSetup {
+  types: { id: string; name: string; durationMinutes: number; gapDays: number; defaultEmployeeId: string | null }[];
+  employees: { id: string; name: string }[];
+}
+export interface EventRow { title: string; date: string; time: string; durationMinutes: number; employeeId: string }

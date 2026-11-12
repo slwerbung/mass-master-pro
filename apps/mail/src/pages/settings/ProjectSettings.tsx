@@ -17,15 +17,25 @@ export default function ProjectSettingsPage() {
     onSuccess: () => { toast.success("Gespeichert. Gilt ab dem nächsten Abgleich."); setDays(null); refresh(); },
     onError: (e) => toast.error(errorText(e)),
   });
+  const saveWrite = useMutation({
+    mutationFn: (enabled: boolean) => papi("save_write_enabled", { enabled }),
+    onSuccess: (_r, enabled) => { toast.success(enabled ? "Schreiben nach HERO ist AN." : "Schattenmodus ist AN (nichts wird nach HERO geschrieben)."); refresh(); },
+    onError: (e) => toast.error(errorText(e)),
+  });
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorBox error={q.error} />;
   const s = q.data!;
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Änderungen gelten ab dem nächsten Abgleich (alle 10 Minuten oder „Jetzt abgleichen“ im Bereich Projekte).
-        Schalter „Schreiben nach HERO“: <Badge variant={s.writeEnabled ? "good" : "warn"}>{s.writeEnabled ? "an" : "aus – Schattenmodus"}</Badge> (wird mit den scharfen Aktionen bedienbar).
-      </p>
+      <p className="text-sm text-muted-foreground">Änderungen gelten ab dem nächsten Abgleich (alle 10 Minuten oder „Jetzt abgleichen“ im Bereich Projekte).</p>
+
+      <Card>
+        <CardHeader><CardTitle>Schreiben nach HERO</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          <Switch checked={s.writeEnabled} onChange={(v) => saveWrite.mutate(v)} disabled={saveWrite.isPending} label={s.writeEnabled ? "An – Abschließen, Status, Notizen, Termine und Archivieren schreiben direkt nach HERO" : "Aus – Schattenmodus: Aktionen werden nur protokolliert"} />
+          <p className="text-xs text-muted-foreground">Aus = nichts wird nach HERO geschrieben und keine Mail versendet. Jede Aktion steht in <code>project_actions_log</code>.</p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader><CardTitle>Aufräum-Karte</CardTitle></CardHeader>

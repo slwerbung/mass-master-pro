@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlarmClock, Archive, RefreshCw } from "lucide-react";
+import { AlarmClock, Archive, CalendarPlus, Check, NotebookPen, RefreshCw, Shuffle } from "lucide-react";
 import { invokeFn } from "@/lib/api";
-import { CATEGORY_NAMES, CATEGORY_STYLE, papi, tageText, type FollowupItem, type ProjectCard, type ProjectDetail, type ProjectList, type ProjectOverview, type ProjectView } from "@/lib/projects";
+import { useMe } from "@/lib/me";
+import { CATEGORY_NAMES, CATEGORY_STYLE, pact, papi, tageText, type ActionResult, type FollowupItem, type ProjectCard, type ProjectDetail, type ProjectList, type ProjectOverview, type ProjectView } from "@/lib/projects";
 import { Badge, Button, Card, CardContent, ErrorBox, Field, Input, Spinner } from "@/components/ui";
 import { HeroLink, heroProjectUrl } from "@/components/HeroLink";
+import { ConfirmDialog, EventsDialog, NoteDialog, StatusDialog, reportResult } from "@/components/ProjectActions";
 import { cn, errorText } from "@/lib/utils";
 
 const QK = ["projects"];
@@ -16,6 +18,8 @@ export default function Projects() {
   const [view, setView] = useState<View>("stapel");
   const [sel, setSel] = useState<string | null>(null); // Karten-ID oder "cleanup"
   const [snoozeFor, setSnoozeFor] = useState<ProjectCard | null>(null);
+  const [dialog, setDialog] = useState<null | { kind: "status" | "note" | "events" | "archive"; card: ProjectCard }>(null);
+  const me = useMe();
 
   const overview = useQuery({ queryKey: [...QK, "overview"], queryFn: () => papi<ProjectOverview>("overview"), refetchInterval: 60_000 });
   const list = useQuery({ queryKey: [...QK, "list"], queryFn: () => papi<ProjectList>("list"), refetchInterval: 60_000 });
@@ -44,6 +48,27 @@ export default function Projects() {
     if (!stack.some((c) => c.id === sel)) setSel(stack[0]?.id ?? (cleanup.length ? "cleanup" : null));
   }, [list.data, sel, view]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Nach einer Aktion: weiter zur naechsten Karte; bleibt das Projekt offen, Wiedervorlage vorschlagen.
+  const afterAction = (card: ProjectCard, r: ActionResult, stays: boolean) => {
+    setDialog(null);
+    refresh();
+    if (r.shadow) return; // Schattenmodus: nichts ist passiert, die Karte bleibt
+    if (stays) { setSnoozeFor(card); return; }
+    const i = stack.findIndex((c) => c.id === card.id);
+    setSel(stack[i + 1]?.id ?? stack[i - 1]?.id ?? null);
+  };
+  const complete = useMutation({
+    mutationFn: (card: ProjectCard) => pact("complete", { heroId: card.project.heroId }).then((r) => ({ r, card })),
+    onSuccess: ({ r, card }) => { reportResult(r); afterAction(card, r, false); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  const archive = useMutation({
+    mutationFn: (card: ProjectCard) => pact("archive", { heroId: card.project.heroId }).then((r) => ({ r, card })),
+    onSuccess: ({ r, card }) => { reportResult(r); afterAction(card, r, false); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  const busy = complete.isPending || archive.isPending;
+
   const step = (d: 1 | -1) => {
     const i = stack.findIndex((c) => c.id === sel);
     const n = stack[Math.min(Math.max(i + d, 0), stack.length - 1)];
@@ -54,11 +79,13 @@ export default function Projects() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if (snoozeFor || e.metaKey || e.ctrlKey || e.altKey || (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) || view !== "stapel") return;
+      if (snoozeFor || dialog || e.metaKey || e.ctrlKey || e.altKey || (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) || view !== "stapel") return;
       const k = e.key.toLowerCase();
       if (k === "j") step(1);
       else if (k === "k") step(-1);
       else if (k === "w" && selected) setSnoozeFor(selected);
+      else if (k === "e" && selected && !busy) complete.mutate(selected);
+      else if (k === "a" && selected && !busy) setDialog({ kind: "archive", card: selected });
       else if (k === "h" && selected) window.open(heroProjectUrl(selected.project.heroId), "_blank", "noopener");
     };
     window.addEventListener("keydown", onKey);
@@ -108,12 +135,23 @@ export default function Projects() {
             )}
           </div>
           <div className="min-w-0">
-            {selected && <CardPane key={selected.id} card={selected} onSnooze={() => setSnoozeFor(selected)} />}
-            {showCleanup && <CleanupPane items={cleanup} days={list.data.bundleAfterDays} />}
+            {selected && (
+              <CardPane key={selected.id} card={selected} busy={busy} shadow={!!o?.shadow}
+                onSnooze={() => setSnoozeFor(selected)} onComplete={() => complete.mutate(selected)}
+                onDialog={(kind) => setDialog({ kind, card: selected })} />
+            )}
+            {showCleanup && <CleanupPane items={cleanup} days={list.data.bundleAfterDays} admin={!!me.data?.admin} onDone={refresh} />}
           </div>
         </div>
       )}
 
+      {dialog?.kind === "status" && <StatusDialog project={dialog.card.project} onClose={() => setDialog(null)} onDone={(r) => afterAction(dialog.card, r, true)} />}
+      {dialog?.kind === "note" && <NoteDialog project={dialog.card.project} onClose={() => setDialog(null)} onDone={(r) => afterAction(dialog.card, r, true)} />}
+      {dialog?.kind === "events" && <EventsDialog project={dialog.card.project} onClose={() => setDialog(null)} onDone={(r) => afterAction(dialog.card, r, true)} />}
+      {dialog?.kind === "archive" && (
+        <ConfirmDialog title="Projekt archivieren?" confirm="Archivieren" danger busy={archive.isPending} onCancel={() => setDialog(null)} onConfirm={() => archive.mutate(dialog.card)}
+          text={<>{dialog.card.project.nr} <b>{dialog.card.project.name}</b> wird in HERO auf „Archiviert“ gesetzt{o?.shadow ? " (Schattenmodus: nur protokolliert)" : ""}.</>} />
+      )}
       {snoozeFor && (
         <SnoozeDialog card={snoozeFor} onClose={() => setSnoozeFor(null)}
           onDone={() => { const i = stack.findIndex((c) => c.id === snoozeFor.id); setSel(stack[i + 1]?.id ?? stack[i - 1]?.id ?? null); setSnoozeFor(null); refresh(); }} />
@@ -141,8 +179,21 @@ function StackItem({ card, active, onClick }: { card: ProjectCard; active: boole
   );
 }
 
-function CardPane({ card, onSnooze }: { card: ProjectCard; onSnooze: () => void }) {
+type DialogKind = "status" | "note" | "events" | "archive";
+
+/** Hauptaktion zum Vorschlag der Regel – nur wo es sie schon gibt (Mailwege folgen mit „Nachfassen“). */
+function suggestedAction(card: ProjectCard): { label: string; dialog?: DialogKind; hero?: boolean } | null {
+  if (card.ruleKey === "termine_fehlen") return { label: "Termine anlegen", dialog: "events" };
+  if (["anfrage_status_alt", "haengt", "waise"].includes(card.ruleKey)) return { label: "Status ändern", dialog: "status" };
+  if (card.channel === "hero") return { label: `${card.suggestion || "In HERO erledigen"} (in HERO)`, hero: true };
+  return null;
+}
+
+function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog }: {
+  card: ProjectCard; busy: boolean; shadow: boolean; onSnooze: () => void; onComplete: () => void; onDialog: (k: DialogKind) => void;
+}) {
   const p = card.project;
+  const main = suggestedAction(card);
   const detail = useQuery({ queryKey: [...QK, "detail", p.heroId], queryFn: () => papi<ProjectDetail>("detail", { heroId: p.heroId }) });
   return (
     <Card>
@@ -182,24 +233,80 @@ function CardPane({ card, onSnooze }: { card: ProjectCard; onSnooze: () => void 
         {card.suggestion && <p className="text-sm"><span className="text-muted-foreground">Vorschlag:</span> <b>{card.suggestion}</b></p>}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={onSnooze}><AlarmClock className="h-4 w-4" /> Wiedervorlage <kbd className="ml-1 rounded border px-1 text-[10px]">W</kbd></Button>
+          {main && (
+            <Button variant="secondary" disabled={busy} onClick={() => (main.dialog ? onDialog(main.dialog) : window.open(heroProjectUrl(p.heroId), "_blank", "noopener"))}>{main.label}</Button>
+          )}
+          <Button disabled={busy} onClick={onComplete} title="Setzt den Status in HERO auf „Abgeschlossen“ und trägt es im Logbuch ein">
+            <Check className="h-4 w-4" /> Abschließen <kbd className="ml-1 rounded border px-1 text-[10px]">E</kbd>
+          </Button>
+          <Button variant="outline" onClick={onSnooze}><AlarmClock className="h-4 w-4" /> Wiedervorlage <kbd className="ml-1 rounded border px-1 text-[10px]">W</kbd></Button>
           <Button variant="outline" onClick={() => window.open(heroProjectUrl(p.heroId), "_blank", "noopener")}>In HERO öffnen <kbd className="ml-1 rounded border px-1 text-[10px]">H</kbd></Button>
         </div>
-        <p className="text-xs text-muted-foreground">Schattenmodus: Abschließen, Statuswechsel, Notizen und Termine in HERO folgen mit „Aktionen scharf“. Tasten: J/K nächste/vorige Karte.</p>
+
+        <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">HERO</span>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("status")}><Shuffle className="h-3.5 w-3.5" /> Status ändern</Button>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("note")}><NotebookPen className="h-3.5 w-3.5" /> Logbuch-Notiz</Button>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("events")}><CalendarPlus className="h-3.5 w-3.5" /> Termine anlegen</Button>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("archive")}><Archive className="h-3.5 w-3.5" /> Archivieren <kbd className="ml-1 rounded border px-1 text-[10px]">A</kbd></Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {shadow ? "Schattenmodus: Aktionen werden nur protokolliert, nichts geht nach HERO. " : "Aktionen schreiben direkt nach HERO. "}
+          Tasten: J/K Karte, E abschließen, A archivieren, W Wiedervorlage, H HERO.
+        </p>
       </CardContent>
     </Card>
   );
 }
 
-function CleanupPane({ items, days }: { items: ProjectCard[]; days: number }) {
+function CleanupPane({ items, days, admin, onDone }: { items: ProjectCard[]; days: number; admin: boolean; onDone: () => void }) {
+  const [off, setOff] = useState<Set<number>>(new Set()); // abgewaehlte Projekte
+  const [confirm, setConfirm] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const chosen = items.filter((c) => !off.has(c.project.heroId));
+  const toggle = (id: number) => setOff((o) => { const n = new Set(o); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  const run = useMutation({
+    mutationFn: async () => {
+      const ids = chosen.map((c) => c.project.heroId);
+      let done = 0; const failed: { heroId: number; error: string }[] = []; let shadow = false;
+      setProgress({ done: 0, total: ids.length });
+      for (let i = 0; i < ids.length; i += 25) {
+        const part = ids.slice(i, i + 25);
+        const r = await pact("bulk_archive", { heroIds: part });
+        shadow = r.shadow; done += r.done?.length ?? 0; failed.push(...(r.failed ?? []));
+        setProgress({ done: Math.min(i + part.length, ids.length), total: ids.length });
+      }
+      return { done, failed, shadow };
+    },
+    onSuccess: (r) => {
+      if (r.shadow) toast.info(`Schattenmodus: ${r.done} Projekte wären archiviert worden (nichts geschrieben).`, { duration: 6000 });
+      else toast.success(`${r.done} Projekte archiviert.`);
+      if (r.failed.length) toast.error(`${r.failed.length} fehlgeschlagen: ${r.failed[0].error}`, { duration: 10000 });
+      setConfirm(false); setProgress(null); onDone();
+    },
+    onError: (e) => { toast.error(errorText(e)); setConfirm(false); setProgress(null); onDone(); },
+  });
+
   return (
     <Card>
       <CardContent className="space-y-3 pt-6">
         <h2 className="text-lg font-semibold">{items.length} Projekte seit über {days} Tagen ohne Bewegung</h2>
-        <p className="text-sm text-muted-foreground">Diese Projekte stehen nicht einzeln im Stapel. Das Aufräumen (einzeln abwählen, „Alle archivieren“) kommt mit den scharfen Aktionen.</p>
+        <p className="text-sm text-muted-foreground">
+          Diese Projekte stehen nicht einzeln im Stapel. Abwählen, was bleiben soll – der Rest wird in HERO auf „Archiviert“ gesetzt.
+          {!admin && " Aufräumen dürfen nur Admins."}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="destructive" disabled={!admin || !chosen.length || run.isPending} onClick={() => setConfirm(true)}>
+            <Archive className="h-4 w-4" /> {chosen.length === items.length ? "Alle archivieren" : `${chosen.length} archivieren`}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setOff(off.size ? new Set() : new Set(items.map((c) => c.project.heroId)))}>{off.size ? "Alle auswählen" : "Alle abwählen"}</Button>
+          {progress && <span className="text-sm text-muted-foreground">{progress.done} / {progress.total} …</span>}
+        </div>
         <ul className="divide-y rounded-md border text-sm">
           {items.map((c) => (
             <li key={c.id} className="flex items-center gap-2 p-2">
+              <input type="checkbox" className="h-4 w-4" checked={!off.has(c.project.heroId)} onChange={() => toggle(c.project.heroId)} aria-label={`${c.project.nr} auswählen`} />
               <span className="w-16 shrink-0 text-xs text-muted-foreground">{c.project.nr}</span>
               <span className="min-w-0 flex-1 truncate">{c.project.name}<span className="text-muted-foreground"> · {c.project.kunde}</span></span>
               <span className="hidden truncate text-xs text-muted-foreground sm:inline">{c.project.stepName.replace(/^[^\p{L}\p{N}]+/u, "")}</span>
@@ -209,6 +316,10 @@ function CleanupPane({ items, days }: { items: ProjectCard[]; days: number }) {
           ))}
         </ul>
       </CardContent>
+      {confirm && (
+        <ConfirmDialog title={`${chosen.length} Projekte archivieren?`} confirm={`${chosen.length} archivieren`} danger busy={run.isPending} onCancel={() => setConfirm(false)} onConfirm={() => run.mutate()}
+          text={<>Alle ausgewählten Projekte werden in HERO auf „Archiviert“ gesetzt und im Logbuch vermerkt. Das lässt sich nur einzeln in HERO zurücknehmen.</>} />
+      )}
     </Card>
   );
 }
