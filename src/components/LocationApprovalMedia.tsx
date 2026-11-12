@@ -23,8 +23,13 @@ interface RenderedPage {
 // rendered pages instead of re-rasterising the same PDF.
 const pageCache = new Map<string, RenderedPage[]>();
 
-export async function renderPdf(url: string, name: string): Promise<RenderedPage[]> {
-  const cached = pageCache.get(url);
+/**
+ * PDF-Seiten als JPEG (Cache je Datei). `cacheKey` = Storage-Pfad, wenn bekannt – signierte Links wechseln, der Pfad
+ * nicht (Spec D2: Vergleich nutzt denselben Cache).
+ */
+export async function renderPdf(url: string, name: string, cacheKey?: string): Promise<RenderedPage[]> {
+  const key = cacheKey || url;
+  const cached = pageCache.get(key);
   if (cached) return cached;
   const resp = await fetch(url);
   const buf = await resp.arrayBuffer();
@@ -46,7 +51,7 @@ export async function renderPdf(url: string, name: string): Promise<RenderedPage
       name: doc.numPages > 1 ? `${name} · S.${i}` : name,
     });
   }
-  pageCache.set(url, out);
+  pageCache.set(key, out);
   return out;
 }
 
@@ -118,7 +123,7 @@ export function LocationApprovalMedia({ annotatedUrl, annotatedPath, pdfs, heigh
       for (const pdf of pdfs) {
         if (!pdf.url) continue;
         try {
-          const rendered = await renderPdf(pdf.url, pdf.name);
+          const rendered = await renderPdf(pdf.url, pdf.name, pdf.storagePath);
           out.push(...rendered.map((r, i) => ({ ...r, ref: pdf.storagePath ? { kind: "pdf" as const, storagePath: pdf.storagePath, page: i + 1 } : null })));
         } catch {
           /* skip a broken/missing pdf, keep going */

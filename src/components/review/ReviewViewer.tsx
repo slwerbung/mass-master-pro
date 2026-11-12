@@ -16,6 +16,7 @@ import { useMediaRect } from "./useMediaRect";
 import { clampView, discardStroke, doubleTap, IDENTITY, panBy, pinch, zoomAt, type View } from "./gestures";
 import { isOpenTop, type ReviewComment, type ReviewFile, type ReviewSource } from "./types";
 import { versionLabel, versionOfPath } from "./versions";
+import CompareView from "./CompareView";
 
 type Tool = "pin" | "arrow" | "rect" | "ellipse" | "path" | "text";
 interface Page { src: string; name: string; ref: MediaRef }
@@ -54,6 +55,7 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
     ...source.files.filter((f) => !versionedPaths.has(f.storagePath)),
   ], [source.files, versions, selectedVersion, versionedPaths]);
   const viewKey = viewFiles.map((f) => f.storagePath).join("|");
+  const [comparing, setComparing] = useState(false);
 
   const [pages, setPages] = useState<Page[]>([]);
   const [loadingPages, setLoadingPages] = useState(false);
@@ -94,7 +96,7 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
         if (!f.url) continue;
         if (f.kind === "image") { out.push({ src: f.url, name: f.name, ref: { kind: "image", storagePath: f.storagePath } }); continue; }
         try {
-          const rendered = await renderPdf(f.url, f.name);
+          const rendered = await renderPdf(f.url, f.name, f.storagePath);
           rendered.forEach((r, i) => out.push({ src: r.src, name: r.name, ref: { kind: "pdf", storagePath: f.storagePath, page: i + 1 } }));
         } catch { /* kaputte Datei überspringen */ }
       }
@@ -383,6 +385,7 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
     <Dialog open={open} onOpenChange={(v) => { if (!v) { resetDraft(); setTool(null); } onOpenChange(v); }}>
       <DialogContent className="flex h-[100dvh] max-w-none flex-col gap-0 overflow-hidden rounded-none p-0 sm:rounded-none [&>button]:hidden">
         <DialogTitle className="sr-only">{title}</DialogTitle>
+        {comparing && versions && <CompareView versions={versions} comments={comments} onClose={() => setComparing(false)} />}
         <div className="flex items-center gap-2 border-b px-3 py-2">
           <span className="truncate font-semibold">{title}</span>
           <span className="text-xs text-muted-foreground">{openCount} offen</span>
@@ -391,6 +394,9 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
               onChange={(e) => { setVersionNo(Number(e.target.value)); resetDraft(); setTool(null); }} title="Version">
               {versions.map((v) => <option key={v.version} value={v.version}>{versionLabel(v)}</option>)}
             </select>
+          )}
+          {versions && versions.length >= 2 && (
+            <Button size="sm" variant="outline" className="h-8 px-2 text-xs" onClick={() => { resetDraft(); setTool(null); setComparing(true); }}>Vergleichen</Button>
           )}
           <div className="ml-auto flex items-center gap-1">
             <Button variant="ghost" size="icon" onClick={() => zoomButton(1 / 1.5)} title="Verkleinern"><ZoomOut className="h-4 w-4" /></Button>
