@@ -21,8 +21,11 @@ function fakeDb(tables: Record<string, any[]>) {
     then(res: any, rej: any) { return Promise.resolve(this.run()).then(res, rej); }
     run() {
       const rows = (tables[this.t] ||= []);
+      // Wie jsonb: Schluessel kommen in anderer Reihenfolge zurueck als geschrieben.
+      const flip = (r: any) => (r && r.reasons ? { ...r, reasons: Object.fromEntries(Object.entries(r.reasons).reverse()) } : r);
       if (this.op === "insert") {
-        for (const r of this.payload) {
+        for (const raw of this.payload) {
+          const r = flip(raw);
           if (this.t === "project_cards" && ["open", "in_hero", "snoozed", "muted", "auto"].includes(r.state ?? "open")
             && rows.some((x) => x.hero_id === r.hero_id && ["open", "in_hero", "snoozed", "muted", "auto"].includes(x.state))) {
             return { data: null, error: { message: "duplicate live card" } };
@@ -32,7 +35,7 @@ function fakeDb(tables: Record<string, any[]>) {
         return { data: null, error: null };
       }
       const hit = rows.filter((r) => this.filters.every((f) => f(r)));
-      if (this.op === "update") { hit.forEach((r) => Object.assign(r, this.payload)); return { data: null, error: null }; }
+      if (this.op === "update") { hit.forEach((r) => Object.assign(r, flip(this.payload))); return { data: null, error: null }; }
       if (this.head) return { count: hit.length, data: null, error: null };
       return { data: this.single ? (hit[0] ?? null) : hit.map((r) => ({ ...r })), error: null };
     }

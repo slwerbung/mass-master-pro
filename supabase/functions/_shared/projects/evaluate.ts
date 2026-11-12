@@ -10,6 +10,12 @@ export interface EvalStats {
   projects: number; created: number; updated: number; closed: number; woken: number; bundled: number; orphans: number; cards: number;
 }
 
+/** JSON mit sortierten Schluesseln: jsonb liefert die Schluessel in anderer Reihenfolge zurueck, als wir sie schreiben. */
+export const canon = (v: unknown): string =>
+  JSON.stringify(v, (_k, val) => (val && typeof val === "object" && !Array.isArray(val)
+    ? Object.fromEntries(Object.entries(val as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+    : val));
+
 function must<T extends { error: any }>(r: T, what: string): T {
   if (r.error) throw new Error(`${what}: ${r.error.message}`);
   return r;
@@ -107,7 +113,7 @@ export async function evaluateAll(sb: any, now = new Date()): Promise<EvalStats>
       }
       const reasons = { ...signal.reasons };
       if (card.rule_key !== signal.ruleKey || Number(card.priority) !== signal.priority || card.bundled !== signal.bundled
-        || JSON.stringify(card.reasons) !== JSON.stringify(reasons)) {
+        || canon(card.reasons) !== canon(reasons)) {
         toUpdate.push({ id: card.id, patch: { rule_key: signal.ruleKey, category: signal.category, priority: signal.priority, bundled: signal.bundled, reasons } });
       }
       continue;
