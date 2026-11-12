@@ -100,6 +100,16 @@ Kunden können Projekte online einsehen und freigeben.
 - **Freigabe-Nachweis**: `approval_events` + `approved_version`/`approved_paths`/`approved_by_name` setzt NUR der
   Trigger (`approval_stamp`/`approval_log`) – nie vom Client schreiben. Neue Version mit Reset → Ereignis
   `reset_new_version`. Anzeige `ApprovalProof.tsx`; Kundenmail „Neue Version“: `project-invite` `notify_new_version`
+- **Archiv & Speicher** (Spec E, Nov. 2026): Einstellungen `app_config.archive_settings` (Standardwerte in
+  `_shared/archive.ts`, Schreiben nur `admin-manage` `set_archive_settings`). Cron `auto_archive_old_projects` →
+  `run_auto_archive()` (respektiert `archive_pinned`), Cron `archive_compact` 03:30 → Function `archive-compact`
+  (`x-poll-secret` = `archive_poll_secret`). **Freigegebene Pfade nie löschen**, DB vor Storage, Fotos am **selben
+  Pfad** ersetzen (die App lädt Standortfotos über feste Pfade `images/<Standort>/annotated`). Die Bild-Umrechnung
+  von Supabase ist im Tarif nicht aktiv → Fotos verkleinert der Browser des Admins (Adminmenü → Archiv & Speicher →
+  „Fotos verkleinern“, `image_tasks`/`image_done`); in der Function nie neu kodieren (CPU-Limit). Archivieren/
+  Reaktivieren/Anpinnen nur über `project-team`. Kunde bei archiviertem Projekt: RLS `project_is_archived()` +
+  `customer-data` 409. Archivierte Projekte verlassen die Geräte (`archiveEviction.ts`, nur ohne offene Änderungen).
+  Verwaiste Dateien: `storage_orphans()` (nur Bericht + Klick, nie automatisch)
 - Edge Functions mit dynamischem `import("https://…")` (Aufmaß-PDF lädt pdf-lib so): im Lader-Verfahren den Import
   statisch in den Lader nehmen (Bündel: `import(...)` → `Promise.resolve(require(...))`), sonst fehlt das Modul
 
