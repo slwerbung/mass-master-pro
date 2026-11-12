@@ -1313,6 +1313,10 @@ export type Database = {
       }
       projects: {
         Row: {
+          archive_pinned: boolean
+          archived_by: string | null
+          compacted_at: string | null
+          print_files_purged_at: string | null
           archived_at: string | null
           created_at: string
           custom_fields: Json | null
@@ -1326,6 +1330,10 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          archive_pinned?: boolean
+          archived_by?: string | null
+          compacted_at?: string | null
+          print_files_purged_at?: string | null
           archived_at?: string | null
           created_at?: string
           custom_fields?: Json | null
@@ -1339,6 +1347,10 @@ export type Database = {
           user_id: string
         }
         Update: {
+          archive_pinned?: boolean
+          archived_by?: string | null
+          compacted_at?: string | null
+          print_files_purged_at?: string | null
           archived_at?: string | null
           created_at?: string
           custom_fields?: Json | null

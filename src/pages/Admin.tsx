@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AutomationsTab from "@/components/admin/AutomationsTab";
 import BookingTab from "@/components/admin/BookingTab";
+import ArchiveTab from "@/components/admin/ArchiveTab";
 import { DropboxCard } from "@/components/admin/DropboxCard";
 import { Label } from "@/components/ui/label";
 import { LogOut, Plus, Trash2, User, Users, FolderOpen, Link, Settings, Lock, ChevronDown, ChevronUp, Pencil, Save, X, KeyRound, ImageIcon, Car, Plug, CheckCircle, XCircle, Mail, RefreshCw, ShieldCheck } from "lucide-react";
@@ -1096,6 +1097,7 @@ const Admin = () => {
             <TabsTrigger value="settings" className="text-xs sm:text-sm">Einstellungen</TabsTrigger>
             <TabsTrigger value="automations" className="text-xs sm:text-sm">Automationen</TabsTrigger>
             <TabsTrigger value="booking" className="text-xs sm:text-sm">Termine</TabsTrigger>
+            <TabsTrigger value="archive" className="text-xs sm:text-sm">Archiv &amp; Speicher</TabsTrigger>
           </TabsList>
 
           <TabsContent value="employees" className="space-y-4 mt-4">
@@ -2291,6 +2293,10 @@ const Admin = () => {
 
           <TabsContent value="booking" className="space-y-4 mt-4">
             <BookingTab adminToken={adminToken} />
+          </TabsContent>
+
+          <TabsContent value="archive" className="space-y-4 mt-4">
+            <ArchiveTab adminToken={adminToken} />
           </TabsContent>
 
         </Tabs>

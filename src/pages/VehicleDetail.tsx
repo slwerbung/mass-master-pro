@@ -38,6 +38,7 @@ import { signedFileUrl } from "@/lib/storageUrl";
 import { buildReviewVersions } from "@/components/review/versions";
 import { VersionUploadDialog, type VersionUploadChoice } from "@/components/VersionUploadDialog";
 import { ApprovalProof } from "@/components/ApprovalProof";
+import { ArchivedBanner, ArchivePinButton, useProjectArchive } from "@/components/ProjectArchiveBar";
 import { currentRows, deleteConfirmText, deleteCurrentVersion, notifyNewVersion, uploadVehicleLayoutVersion } from "@/lib/fileVersions";
 
 // Which layout files can be previewed inline (PDF via pdf.js, images via <img>).
@@ -600,6 +601,7 @@ const VehicleDetail = () => {
     return <Input value={value} onChange={e => onChange(e.target.value)} />;
   };
 
+  const archive = useProjectArchive(projectId);
   // Spec C: Prüfmodus und Markierungen am Layout (direkt per Supabase-Session, RLS „Mitarbeiter Vollzugriff“).
   const [reviewOpen, setReviewOpen] = useState(false);
   const [layoutRef, setLayoutRef] = useState<MediaRef | null>(null);
@@ -642,6 +644,7 @@ const VehicleDetail = () => {
             <span className="text-xs text-muted-foreground hidden sm:inline">Fahrzeugbeschriftung</span>
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
+            <ArchivePinButton archive={archive} />
             <Button
               variant="ghost" size="icon" className="h-9 w-9"
               onClick={() => setInviteOpen(true)}
@@ -676,6 +679,7 @@ const VehicleDetail = () => {
           </div>
         </div>
       </div>
+      <ArchivedBanner archive={archive} />
 
       <InAppCamera
         open={inAppCamera !== null}

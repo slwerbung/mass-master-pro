@@ -33,6 +33,8 @@ interface LocationChatProps {
   placeholder?: string;
   /** Antworten (eine Ebene); ohne Prop kein „Antworten“-Knopf */
   onReply?: (parent: ChatMessage, text: string) => Promise<void> | void;
+  /** Spec E: abgeschlossenes Projekt – nur lesen (kein Eingabefeld, kein Löschen/Antworten) */
+  readOnly?: boolean;
 }
 
 const isEmployee = (m: ChatMessage) => m.author_type === "employee";
@@ -44,8 +46,10 @@ function fmtTime(iso: string): string {
 }
 
 const LocationChat = ({
-  messages, viewerSide, onSend, sending, canDelete, onDelete, onToggleDone, busyId, placeholder, onReply,
+  messages, viewerSide, onSend, sending, canDelete: canDeleteProp, onDelete, onToggleDone, busyId, placeholder, onReply: onReplyProp, readOnly,
 }: LocationChatProps) => {
+  const canDelete = readOnly ? undefined : canDeleteProp;
+  const onReply = readOnly ? undefined : onReplyProp;
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
@@ -142,7 +146,7 @@ const LocationChat = ({
         </div>
       )}
 
-      <div className="flex items-end gap-2">
+      {!readOnly && <div className="flex items-end gap-2">
         <Textarea
           placeholder={placeholder || "Nachricht schreiben…"}
           value={text}
@@ -154,7 +158,7 @@ const LocationChat = ({
         <Button size="icon" onClick={handleSend} disabled={sending || !text.trim()} title="Senden">
           <Send className="h-4 w-4" />
         </Button>
-      </div>
+      </div>}
     </div>
   );
 };

@@ -30,6 +30,7 @@ import { locationCustomerSource, vehicleCustomerSource } from "@/components/revi
 import { buildReviewVersions } from "@/components/review/versions";
 import { ApprovalProof } from "@/components/ApprovalProof";
 import { currentRows, isNewForViewer, markVersionSeen, type VersionedRow } from "@/lib/fileVersions";
+import { getArchivePolicy, type ArchivePolicy } from "@/lib/projectArchive";
 import type { ReviewFile, ReviewSource } from "@/components/review/types";
 import type { LayerItem } from "@/components/review/MarkupLayer";
 import { numberTopLevel, type Markup, type MediaRef } from "@/lib/markup";
@@ -202,6 +203,28 @@ const CustomerView = () => {
   const getSelectedProjectId = () => selectedAssignment?.project_id || directProjectId || null;
   const isDirectGuestMode = !!selectedAssignment?.direct || (!!directProjectId && !assignments.some((a) => a.project_id === directProjectId));
   const isLimitedGuestMode = isDirectGuestMode && !isRealCustomerId(session?.id);
+  // Spec E: abgeschlossenes (archiviertes) Projekt – je nach Einstellung nur lesen oder gar nicht sichtbar.
+  const [archived, setArchived] = useState<{ access: ArchivePolicy["customerAccessArchived"]; policy: ArchivePolicy } | null>(null);
+  useEffect(() => {
+    const pid = selectedAssignment?.project_id || directProjectId;
+    setArchived(null);
+    if (!pid) return;
+    let alive = true;
+    (async () => {
+      const [{ data }, policy] = await Promise.all([
+        (supabase as any).from("projects").select("archived_at").eq("id", pid).maybeSingle(),
+        getArchivePolicy(),
+      ]);
+      if (alive && data?.archived_at && policy && policy.customerAccessArchived !== "full") setArchived({ access: policy.customerAccessArchived, policy });
+    })().catch(() => null);
+    return () => { alive = false; };
+  }, [selectedAssignment?.project_id, directProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // „gar nicht sichtbar“: abgeschlossene Projekte aus der Liste nehmen
+  const [listPolicy, setListPolicy] = useState<ArchivePolicy | null>(null);
+  useEffect(() => { getArchivePolicy().then(setListPolicy).catch(() => null); }, []);
+  const visibleAssignments = listPolicy?.customerAccessArchived === "none" ? assignments.filter((a) => !a.projects?.archived_at) : assignments;
+  /** Keine Änderungen möglich: eingeschränkter Gast oder abgeschlossenes Projekt. */
+  const writeBlocked = isLimitedGuestMode || !!archived;
 
   const saveLegacyFeedback = async (locationId: string, message: string) => {
     const projectId = getSelectedProjectId();
@@ -254,7 +277,7 @@ const CustomerView = () => {
         (supabase as any).from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
         (supabase as any).from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
         isRealCustomerId(session?.id)
-          ? supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number, project_type)").eq("customer_id", session!.id)
+          ? supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number, project_type, archived_at)").eq("customer_id", session!.id)
           : Promise.resolve({ data: [], error: null } as any),
       ]);
 
@@ -267,7 +290,7 @@ const CustomerView = () => {
       if (directProjectId && isRealCustomerId(session?.id) && !loadedAssignments.some((a: any) => a.project_id === directProjectId)) {
         const ensured = await ensureDirectProjectAssignment(directProjectId);
         if (ensured) {
-          const refreshed = await supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number, project_type)").eq("customer_id", session!.id);
+          const refreshed = await supabase.from("customer_project_assignments").select("id, project_id, projects(id, project_number, project_type, archived_at)").eq("customer_id", session!.id);
           loadedAssignments = refreshed.data || loadedAssignments;
         }
       }
@@ -952,7 +975,7 @@ const CustomerView = () => {
   };
 
   const toggleVehicleApproval = async () => {
-    if (!selectedAssignment || isLimitedGuestMode) return;
+    if (!selectedAssignment || writeBlocked) return;
     const newVal = !vehicleApproved;
     const openV = newVal ? openCorrections(vehicleFeedbacks as any[]) : 0;
     if (openV > 0 && !(await askConfirm(`Es gibt noch ${openV} offene ${openV === 1 ? "Korrektur" : "Korrekturen"} zum Layout. Trotzdem freigeben?`))) return;
@@ -1092,7 +1115,7 @@ const CustomerView = () => {
   };
 
   // Markieren nur als echter Kunde mit echter Zuweisung (customer-data prüft beides).
-  const canMark = !isLimitedGuestMode && !!selectedAssignment && !isSyntheticAssignment(selectedAssignment?.id) && isRealCustomerId(session?.id);
+  const canMark = !writeBlocked && !!selectedAssignment && !isSyntheticAssignment(selectedAssignment?.id) && isRealCustomerId(session?.id);
 
   const locationFiles = (annotated: any, pdfEntries: any[]): ReviewFile[] => [
     ...(viewSettings.customerShowPrintFiles ? pdfEntries : []).map((p: any) => ({ kind: "pdf" as const, storagePath: p.storage_path, url: getSignedImageUrl(p.storage_path), name: p.file_name || "Druckdatei" })),
@@ -1130,7 +1153,7 @@ const CustomerView = () => {
   };
 
   const toggleApproval = async (locationId: string, approved: boolean) => {
-    if (!selectedAssignment || isLimitedGuestMode) return;
+    if (!selectedAssignment || writeBlocked) return;
     const open = approved ? openCorrections(feedbacks[locationId] || []) : 0;
     if (open > 0 && !(await askConfirm(`Es gibt noch ${open} offene ${open === 1 ? "Korrektur" : "Korrekturen"}. Trotzdem freigeben?`))) return;
     setApprovals(prev => ({ ...prev, [locationId]: approved }));
@@ -1155,7 +1178,7 @@ const CustomerView = () => {
   };
 
   const approveAll = async (approved: boolean) => {
-    if (!selectedAssignment || isLimitedGuestMode) return;
+    if (!selectedAssignment || writeBlocked) return;
     if (approved) {
       const affected = locations.filter((l) => openCorrections(feedbacks[l.id] || []) > 0)
         .map((l: any) => `Standort ${l.location_number}`);
@@ -1187,8 +1210,8 @@ const CustomerView = () => {
     setSavingApprovals(false);
   };
 
-  const allApproved = !isLimitedGuestMode && locations.length > 0 && locations.every(l => approvals[l.id]);
-  const someApproved = !isLimitedGuestMode && locations.some(l => approvals[l.id]);
+  const allApproved = !writeBlocked && locations.length > 0 && locations.every(l => approvals[l.id]);
+  const someApproved = !writeBlocked && locations.some(l => approvals[l.id]);
   const handleLogout = () => { clearSession(); navigate("/"); };
 
   if (loading && !selectedAssignment) {
@@ -1215,18 +1238,35 @@ const CustomerView = () => {
           <Button variant="outline" size="sm" onClick={handleLogout}><LogOut className="h-4 w-4" /></Button>
         </div>
 
+        {selectedAssignment && archived?.access === "readonly" && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            Dieses Projekt ist abgeschlossen. Sie können alles ansehen, aber nichts mehr ändern.
+          </div>
+        )}
+
         {!selectedAssignment ? (
-          assignments.length === 0 ? (
+          visibleAssignments.length === 0 ? (
             <p className="text-center text-muted-foreground py-12">Keine Projekte zugewiesen.</p>
           ) : (
             <div className="grid gap-3">
-              {assignments.map((a) => (
+              {visibleAssignments.map((a) => (
                 <Card key={a.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => loadLocations(a)}>
                   <CardHeader><CardTitle>Projekt {a.projects.project_number}</CardTitle></CardHeader>
                 </Card>
               ))}
             </div>
           )
+        ) : archived?.access === "none" ? (
+          <Card>
+            <CardContent className="space-y-2 p-6 text-center">
+              <p className="font-medium">Dieses Projekt ist abgeschlossen.</p>
+              {(archived.policy.contact.name || archived.policy.contact.phone || archived.policy.contact.email) && (
+                <p className="text-sm text-muted-foreground">
+                  Bei Fragen: {[archived.policy.contact.name, archived.policy.contact.phone, archived.policy.contact.email].filter(Boolean).join(" · ")}
+                </p>
+              )}
+            </CardContent>
+          </Card>
         ) : loading ? (
           <p className="text-center text-muted-foreground py-8">Laden...</p>
         ) : (selectedProjectMeta?.project_type === 'fahrzeugbeschriftung' || (selectedAssignment?.projects as any)?.project_type === 'fahrzeugbeschriftung') ? (
@@ -1242,7 +1282,7 @@ const CustomerView = () => {
               <CardHeader className="p-4 pb-2">
                 <div className="flex items-start justify-between gap-3">
                   <CardTitle className="text-base">Fahrzeuglayout <VersionBadge version={vehicleLayout?.version} isNew={!!newVersion.__vehicle} show /></CardTitle>
-                  {vehicleLayout && !isLimitedGuestMode && (
+                  {vehicleLayout && !writeBlocked && (
                     <Button size="sm" variant={vehicleApproved ? "outline" : "default"} onClick={toggleVehicleApproval} disabled={savingVehicleApproval}>
                       <Check className="h-4 w-4 mr-1" /> {vehicleApproved ? "Freigabe zurücknehmen" : "Layout freigeben"}
                     </Button>
@@ -1264,7 +1304,7 @@ const CustomerView = () => {
                       if (/\.(png|jpe?g|webp|gif|svg)$/i.test(name)) return <LocationApprovalMedia pdfs={[]} annotatedUrl={url} annotatedPath={vehicleLayout.storage_path} onPageChange={onPage} overlay={ov} />;
                       return null;
                     })()}
-                    {!isLimitedGuestMode && selectedAssignment && /\.(pdf|png|jpe?g|webp|gif)$/i.test(vehicleLayout.file_name || "") && (
+                    {!writeBlocked && selectedAssignment && /\.(pdf|png|jpe?g|webp|gif)$/i.test(vehicleLayout.file_name || "") && (
                       <Button size="sm" variant="outline" onClick={() => setReview({
                         title: "Fahrzeuglayout",
                         initialRef: mediaRefs.__vehicle ?? null,
@@ -1298,7 +1338,7 @@ const CustomerView = () => {
             <Card>
               <CardHeader className="p-4 pb-2"><CardTitle className="text-base">Fahrzeugbilder</CardTitle></CardHeader>
               <CardContent className="p-4">
-                {vehicleImages.length === 0 && !isLimitedGuestMode ? (
+                {vehicleImages.length === 0 && !writeBlocked ? (
                   <>
                     <label
                       className={`flex flex-col items-center justify-center gap-3 border-2 border-dashed rounded-xl p-8 cursor-pointer transition-colors ${vehicleDragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"}`}
@@ -1335,7 +1375,7 @@ const CustomerView = () => {
                         </div>
                       ))}
                     </div>
-                    {!isLimitedGuestMode && (
+                    {!writeBlocked && (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <label
                           className="flex items-center gap-2 cursor-pointer"
@@ -1369,7 +1409,7 @@ const CustomerView = () => {
                 <CardHeader className="p-4 pb-2">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base">Fahrzeuginformationen</CardTitle>
-                    {!isLimitedGuestMode && !editingVehicleFields && (
+                    {!writeBlocked && !editingVehicleFields && (
                       <Button size="sm" variant="outline" onClick={() => { setVehicleDraftValues({ ...vehicleFieldValues }); setEditingVehicleFields(true); }}>
                         <Pencil className="h-3 w-3 mr-1" /> Bearbeiten
                       </Button>
@@ -1453,6 +1493,7 @@ const CustomerView = () => {
                     markup: f.markup,
                   }))}
                   viewerSide="customer"
+                  readOnly={!!archived}
                   sending={savingVehicleFeedback}
                   onSend={sendVehicleCustomerMessage}
                   onReply={async (parent, text) => {
@@ -1477,7 +1518,7 @@ const CustomerView = () => {
           <p className="text-center text-muted-foreground py-12">Keine Standorte vorhanden.</p>
         ) : (
           <>
-            {!isLimitedGuestMode && (
+            {!writeBlocked && (
               <Card className="border-primary/30 bg-primary/5">
                 <CardContent className="p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
@@ -1612,7 +1653,7 @@ const CustomerView = () => {
                           </CardTitle>
                           <p className="text-xs text-muted-foreground mt-1">Erstellt am {formatDateTimeSafe((loc as any).created_at ?? (loc as any).createdAt)}</p>
                         </div>
-                        {!isLimitedGuestMode && (
+                        {!writeBlocked && (
                           <Button size="sm" variant={isApproved ? "outline" : "default"} onClick={() => toggleApproval(loc.id, !isApproved)}>
                             <Check className="h-4 w-4 mr-1" /> {isApproved ? "Freigabe zurücknehmen" : "Freigeben"}
                           </Button>
@@ -1677,6 +1718,7 @@ const CustomerView = () => {
                         <LocationChat
                           messages={locationFeedback as any}
                           viewerSide="customer"
+                          readOnly={!!archived}
                           sending={savingId === loc.id}
                           onSend={(text) => sendCustomerMessage(loc.id, text)}
                           canDelete={(m) =>

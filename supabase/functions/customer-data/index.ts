@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import { locationInProject, prepareFeedbackExtras } from "../_shared/feedbackMarkup.ts";
 import { validateMarkup } from "../_shared/markup.ts";
+import { mergeArchiveSettings } from "../_shared/archive.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -60,11 +61,24 @@ Deno.serve(async (req) => {
 
     if (!customer) return json({ error: "Invalid customer" }, 401);
 
+    // Spec E: abgeschlossene (archivierte) Projekte – je nach Einstellung nur lesen (readonly) oder gar nicht (none).
+    const WRITE_ACTIONS = ["create_feedback", "update_feedback", "update_guest_info", "delete_feedback"];
+    if ((WRITE_ACTIONS.includes(action) || action === "get_locations") && params.assignmentId) {
+      const { data: asg } = await supabase.from("customer_project_assignments")
+        .select("project_id, projects(archived_at)").eq("id", params.assignmentId).eq("customer_id", customerId).maybeSingle();
+      if ((asg as any)?.projects?.archived_at) {
+        const { data: cfg } = await supabase.from("app_config").select("value").eq("key", "archive_settings").maybeSingle();
+        const access = mergeArchiveSettings(cfg?.value ?? null).customerAccessArchived;
+        if (access === "none") return json({ error: "Dieses Projekt ist abgeschlossen.", code: "archived" }, 409);
+        if (access === "readonly" && WRITE_ACTIONS.includes(action)) return json({ error: "Projekt ist abgeschlossen", code: "archived" }, 409);
+      }
+    }
+
     switch (action) {
       case "get_projects": {
         const { data, error } = await supabase
           .from("customer_project_assignments")
-          .select("id, project_id, projects(id, project_number)")
+          .select("id, project_id, projects(id, project_number, archived_at)")
           .eq("customer_id", customerId);
         if (error) return json({ error: error.message }, 500);
         return json({ assignments: data });

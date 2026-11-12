@@ -15,6 +15,7 @@ export default defineConfig({
       "supabase/functions/_shared/markup.test.ts",
       "supabase/functions/_shared/markupPdf.test.ts",
       "supabase/functions/_shared/newVersionMail.test.ts",
+      "supabase/functions/_shared/archive.test.ts",
       "src/components/review/**/*.test.ts",
       "src/lib/**/*.test.ts",
     ],
