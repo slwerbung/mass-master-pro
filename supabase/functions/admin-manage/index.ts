@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import bcrypt from "https://esm.sh/bcryptjs@3.0.2";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import { getPublicLinkConfig, validateBaseUrl, validateSlug } from "../_shared/publicLinks.ts";
+import { archivePolicy, handleArchiveAction } from "../_shared/archiveAdmin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,7 +36,7 @@ Deno.serve(async (req) => {
     //   the URL still requires admin auth via set_privacy_url.
     // - get_legal_info returns the responsible-party data shown on the
     //   built-in /datenschutz page; it is meant to be public.
-    const publicActions = ["get_project_prefix", "get_integration_config", "get_logo", "get_privacy_url", "get_legal_info", "get_public_link_config"];
+    const publicActions = ["get_project_prefix", "get_integration_config", "get_logo", "get_privacy_url", "get_legal_info", "get_public_link_config", "get_archive_policy"];
     if (!publicActions.includes(action)) {
       const payload = adminToken ? await verifySessionToken(adminToken, getSessionSecret()) : null;
       if (!payload || payload.role !== "admin" || payload.userId !== "admin") {
@@ -929,8 +930,16 @@ Deno.serve(async (req) => {
         return json({ options });
       }
 
-      default:
+      case "get_archive_policy":
+        // Public: Kundenansicht braucht nur den Zugriff auf abgeschlossene Projekte + Kontakt.
+        return json(await archivePolicy(supabase));
+
+      default: {
+        // Spec E: Archiv & Speicher (Admin)
+        const r = await handleArchiveAction(supabase, action, params, json);
+        if (r) return r;
         return json({ error: `Unknown action: ${action}` }, 400);
+      }
     }
   } catch (e) {
     return json({ error: "Server error" }, 500);

@@ -9,6 +9,8 @@
 //   set_owner     { employeeId | null } -> bisheriger Hauptverantwortlicher bleibt als Mitglied
 //   add_member    { employeeId }
 //   remove_member { employeeId }
+//   archive / unarchive         (Spec E; gleiche Rechte wie das Team aendern, Admin immer) -> setzt archived_by
+//   set_pinned    { pinned }    „nicht automatisch archivieren“
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
@@ -64,6 +66,24 @@ Deno.serve(async (req) => {
     const canEdit = canEditTeam({ isAdmin, selfId, ownerId });
 
     if (action === "get") return json(await loadTeam(ownerId));
+
+    // Spec E: Archivieren/Reaktivieren/Anpinnen – nicht mehr per Direkt-Update aus der App.
+    if (action === "archive" || action === "unarchive" || action === "set_pinned") {
+      if (!canEdit) return json({ error: "Nur der Hauptverantwortliche oder ein Admin kann das Projekt archivieren." }, 403);
+      let byName = "Admin";
+      if (!isAdmin) {
+        const { data: me } = await sb.from("employees").select("name").eq("id", selfId).maybeSingle();
+        byName = me?.name || "Mitarbeiter";
+      }
+      const patch: Record<string, unknown> =
+        action === "archive" ? { archived_at: new Date().toISOString(), archived_by: byName }
+        : action === "unarchive" ? { archived_at: null, archived_by: null }
+        : { archive_pinned: body.pinned === true };
+      const { data: row, error } = await sb.from("projects").update(patch).eq("id", projectId)
+        .select("id, archived_at, archived_by, archive_pinned, compacted_at").maybeSingle();
+      if (error) return json({ error: error.message }, 500);
+      return json({ project: row });
+    }
 
     if (!["set_owner", "add_member", "remove_member"].includes(action)) return json({ error: `Unbekannte Aktion: ${action}` }, 400);
     if (!canEdit) return json({ error: "Nur der Hauptverantwortliche oder ein Admin kann das Team ändern." }, 403);

@@ -65,3 +65,6 @@ verify_jwt = false
 
 [functions.project-team]
 verify_jwt = false
+
+[functions.archive-compact]
+verify_jwt = false
