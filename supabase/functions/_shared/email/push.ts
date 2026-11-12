@@ -97,7 +97,7 @@ export async function loadVapid(sb: any): Promise<VapidKeys> {
   const have = await getConfig<VapidKeys | null>(sb, VAPID_KEY, null);
   if (have?.publicKey && have.privateJwk) return have;
   const { data: acc } = await sb.from("email_accounts").select("address").order("created_at").limit(1).maybeSingle();
-  const fresh = await generateVapid(`mailto:${acc?.address || "info@slwerbung.de"}`);
+  const fresh = await generateVapid(`mailto:${acc?.address || "notifications@captfix.app"}`);
   // Gleichzeitige Erzeugung: nur der erste Eintrag zaehlt (sonst passen bestehende Abos nicht mehr).
   const { error } = await sb.from("email_config").insert({ key: VAPID_KEY, value: fresh, updated_at: new Date().toISOString() });
   if (error && !/duplicate|unique/i.test(error.message)) throw new Error(error.message);

@@ -18,6 +18,7 @@
 
 import type { ZodType } from "zod";
 import type { AiTask } from "./types.ts";
+import { fillCompany } from "./company.ts";
 
 export type ProviderType = "cloudflare" | "anthropic" | "openai";
 
@@ -84,6 +85,13 @@ export interface LlmDeps {
   timeoutMs?: number;
   /** true, wenn das Monatsbudget (Admin-Bereich) aufgebraucht ist. */
   budgetExceeded?(): Promise<boolean>;
+  /** Firmenname aus `legal_info` – ersetzt `{{FIRMA}}` in den Anweisungen. */
+  companyName?: string;
+}
+
+/** `{{FIRMA}}` in Systemprompt und Nutzertext durch den Firmennamen ersetzen. */
+export function withCompany(req: LlmRequest, name: string | null | undefined): LlmRequest {
+  return { ...req, system: req.system.map((b) => ({ ...b, text: fillCompany(b.text, name) })), user: fillCompany(req.user, name) };
 }
 
 /** Kontingent erschoepft und `on_limit = warten`: die Mail bleibt liegen, ohne Fehlversuch. */
@@ -269,6 +277,7 @@ async function attempt<T>(
 export async function runTask<T>(
   task: AiTask, req: LlmRequest, schema: ZodType<T, any, any>, deps: LlmDeps, opts: { messageId?: string | null } = {},
 ): Promise<TaskResult<T>> {
+  req = withCompany(req, deps.companyName);
   if (await deps.budgetExceeded?.()) throw new BudgetExceededError();
   const s = await deps.getSetting(task);
   if (!s || !s.provider) throw new LlmError(`Fuer die Aufgabe „${task}“ ist kein KI-Anbieter eingestellt`);
@@ -309,6 +318,7 @@ export async function runTask<T>(
 export async function runShadow<T>(
   task: AiTask, req: LlmRequest, schema: ZodType<T, any, any>, deps: LlmDeps, opts: { messageId?: string | null } = {},
 ): Promise<{ providerName: string; model: string; data?: T; error?: string } | null> {
+  req = withCompany(req, deps.companyName);
   if (await deps.budgetExceeded?.()) return null;
   const s = await deps.getSetting(task);
   if (!s || !s.shadow || !s.shadowModel) return null;

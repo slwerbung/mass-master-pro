@@ -4,6 +4,7 @@
 import { decryptSecret } from "./crypto.ts";
 import type { CallLog, LlmDeps, Provider, ProviderType, TaskSetting } from "./llm.ts";
 import { type AiTask, DEFAULT_FOLDER_NAMES, type FolderNames } from "./types.ts";
+import { loadCompanyName } from "./company.ts";
 
 export async function getConfig<T>(sb: any, key: string, fallback: T): Promise<T> {
   const { data } = await sb.from("email_config").select("value").eq("key", key).maybeSingle();
@@ -67,8 +68,10 @@ export async function buildLlmDeps(sb: any): Promise<LlmDeps> {
   const budget = await getConfig<{ monthly_usd?: number | null }>(sb, "budget", {});
   const limit = budget?.monthly_usd != null ? Number(budget.monthly_usd) : null;
   let spent: number | null = null;
+  const companyName = await loadCompanyName(sb);
   return {
     prices,
+    companyName,
     async budgetExceeded(): Promise<boolean> {
       if (limit == null || limit <= 0) return false;
       if (spent == null) spent = await monthCostUsd(sb, prices);

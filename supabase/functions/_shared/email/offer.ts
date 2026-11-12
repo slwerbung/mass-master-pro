@@ -65,7 +65,7 @@ export function buildOfferRequest(m: OfferMsg, services: ServiceRow[], reference
     system: [{
       cache: true,
       text: [
-        "Du bereitest fuer SL WERBUNG (Schilder- und Werbetechnik) die Positionsliste eines ANGEBOTS vor. Ein Mensch uebernimmt die Positionen in HERO und kalkuliert.",
+        "Du bereitest fuer die Firma {{FIRMA}} (Schilder- und Werbetechnik) die Positionsliste eines ANGEBOTS vor. Ein Mensch uebernimmt die Positionen in HERO und kalkuliert.",
         "",
         "Regeln:",
         "- Ordne jede angefragte Leistung einer Leistung aus dem Katalog zu (service_id). Passt keine, ist service_id null und description beschreibt die Leistung in eigenen Worten.",

@@ -141,7 +141,7 @@ function HtmlSignature({ accountId }: { accountId: string }) {
   return (
     <div className="space-y-2">
       <Field label="HTML-Signatur (für gesendete Mails)" hint="HTML-Code, z. B. aus Thunderbird (Konten-Einstellungen → Signatur) kopieren. Bilder als Link (https://…) einbinden.">
-        <Textarea rows={6} className="font-mono text-xs" value={html} onChange={(e) => setHtml(e.target.value)} placeholder={'<p>Viele Grüße<br><b>SL WERBUNG</b></p>'} />
+        <Textarea rows={6} className="font-mono text-xs" value={html} onChange={(e) => setHtml(e.target.value)} placeholder={'<p>Viele Grüße<br><b>Firmenname</b></p>'} />
       </Field>
       {html.trim() && <SignaturePreview html={html} />}
       <Button size="sm" variant="outline" onClick={() => save.mutate()} disabled={save.isPending || html === stored}>Signatur speichern</Button>
