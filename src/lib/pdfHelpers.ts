@@ -541,3 +541,57 @@ export function drawCommentsPage(pdf: jsPDF, opts: { title: string; sub?: string
   }
   drawFooter(pdf, { left: opts.companyName, pageNumber: opts.pageNumber });
 }
+
+// ── Spec D1: Freigabeprotokoll ────────────────────────────────────────────────
+
+export interface ApprovalLogRow {
+  location: string;
+  version: string;
+  file: string;
+  by: string;
+  at: string;
+}
+
+/** Letzte Seite: Tabelle Standort · Version · Dateiname · Freigegeben von · Zeitpunkt. */
+export function drawApprovalLogPage(pdf: jsPDF, opts: { projectNumber: string; rows: ApprovalLogRow[]; pageNumber: number; companyName?: string }) {
+  drawHeaderBand(pdf, { title: "Freigabeprotokoll", sub: `Projekt ${opts.projectNumber}` });
+  const cols = [
+    { label: "Standort", w: 38 }, { label: "Version", w: 16 }, { label: "Datei", w: 58 },
+    { label: "Freigegeben von", w: 40 }, { label: "Zeitpunkt", w: CONTENT_W - 38 - 16 - 58 - 40 },
+  ];
+  const maxY = FOOTER_Y - 8;
+  let y = HEADER_H + 10;
+  const head = () => {
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8.5);
+    ink(pdf, MUTED);
+    let x = MARGIN;
+    for (const c of cols) { pdf.text(c.label, x, y); x += c.w; }
+    y += 2;
+    pdf.setDrawColor(BORDER.r, BORDER.g, BORDER.b);
+    pdf.line(MARGIN, y, MARGIN + CONTENT_W, y);
+    y += 4.5;
+  };
+  head();
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(9);
+  let shown = 0;
+  for (const r of opts.rows) {
+    if (y > maxY) break;
+    ink(pdf, INK);
+    const vals = [r.location, r.version, r.file, r.by, r.at];
+    let x = MARGIN;
+    vals.forEach((v, i) => { pdf.text(trunc(pdf, v || "–", cols[i].w - 2), x, y); x += cols[i].w; });
+    y += 5.5;
+    shown++;
+  }
+  if (!opts.rows.length) {
+    ink(pdf, MUTED);
+    pdf.text("Noch keine Freigaben.", MARGIN, y);
+  } else if (shown < opts.rows.length) {
+    ink(pdf, MUTED);
+    pdf.setFontSize(8.5);
+    pdf.text(`... und ${opts.rows.length - shown} weitere Einträge`, MARGIN, maxY + 3);
+  }
+  drawFooter(pdf, { left: opts.companyName, pageNumber: opts.pageNumber });
+}

@@ -14,7 +14,8 @@ import {
 import { MarkupLayer, ShapeSvg, type LayerItem } from "./MarkupLayer";
 import { useMediaRect } from "./useMediaRect";
 import { clampView, discardStroke, doubleTap, IDENTITY, panBy, pinch, zoomAt, type View } from "./gestures";
-import { isOpenTop, type ReviewComment, type ReviewSource } from "./types";
+import { isOpenTop, type ReviewComment, type ReviewFile, type ReviewSource } from "./types";
+import { versionLabel, versionOfPath } from "./versions";
 
 type Tool = "pin" | "arrow" | "rect" | "ellipse" | "path" | "text";
 interface Page { src: string; name: string; ref: MediaRef }
@@ -33,12 +34,27 @@ const TOOLS: { t: Tool; icon: typeof MapPin; label: string }[] = [
  * Vollbild-Prüfmodus (Spec C): Druckdatei/Foto mit Markierungen, Zeichnen (Maus und Touch), nummerierte Kommentare
  * mit Antworten. Zwei Finger zoomen/verschieben immer – auch mit aktivem Werkzeug; ein Finger zeichnet bzw. verschiebt.
  */
-export default function ReviewViewer({ open, onOpenChange, source, title, initialRef, startDrawing, onChanged }: {
+export default function ReviewViewer({ open, onOpenChange, source, title, initialRef, startDrawing, onChanged, footer }: {
   open: boolean; onOpenChange: (v: boolean) => void; source: ReviewSource; title: string;
   initialRef?: MediaRef | null; startDrawing?: boolean;
   /** nach jeder Änderung (z. B. Zähler/Chat neu laden) */
   onChanged?: () => void;
+  /** z. B. Freigabe-Nachweis unter der Kommentarliste */
+  footer?: React.ReactNode;
 }) {
+  // Spec D1: Versionswahl. Standard = aktuelle Version; ältere nur ansehen/antworten.
+  const versions = source.versions && source.versions.length > 0 ? source.versions : null;
+  const currentVersionNo = versions?.find((v) => v.current)?.version ?? versions?.[0]?.version ?? null;
+  const [versionNo, setVersionNo] = useState<number | null>(() => versionOfPath(versions ?? undefined, initialRef?.storagePath)?.version ?? currentVersionNo);
+  const selectedVersion = versions?.find((v) => v.version === versionNo) ?? versions?.find((v) => v.current) ?? null;
+  const isCurrentView = !versions || !selectedVersion || selectedVersion.current;
+  const versionedPaths = useMemo(() => new Set((versions ?? []).flatMap((v) => v.files.map((f) => f.storagePath))), [versions]);
+  const viewFiles: ReviewFile[] = useMemo(() => !versions ? source.files : [
+    ...(selectedVersion?.files ?? []),
+    ...source.files.filter((f) => !versionedPaths.has(f.storagePath)),
+  ], [source.files, versions, selectedVersion, versionedPaths]);
+  const viewKey = viewFiles.map((f) => f.storagePath).join("|");
+
   const [pages, setPages] = useState<Page[]>([]);
   const [loadingPages, setLoadingPages] = useState(false);
   const [idx, setIdx] = useState(0);
@@ -74,7 +90,7 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
     (async () => {
       setLoadingPages(true);
       const out: Page[] = [];
-      for (const f of source.files) {
+      for (const f of viewFiles) {
         if (!f.url) continue;
         if (f.kind === "image") { out.push({ src: f.url, name: f.name, ref: { kind: "image", storagePath: f.storagePath } }); continue; }
         try {
@@ -89,7 +105,7 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
       setLoadingPages(false);
     })();
     return () => { alive = false; };
-  }, [open, source]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, source, viewKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reload = useCallback(async () => {
     try { setComments(await source.list()); } catch (e: any) { toast.error(e?.message || "Kommentare konnten nicht geladen werden"); }
@@ -101,9 +117,14 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
   }, [open, source, reload]);
 
   useEffect(() => { setView(IDENTITY); setNatural(null); setDraft([]); setDrawing(null); setTextPos(null); }, [idx]);
+  // Ältere Version: keine Werkzeuge.
+  useEffect(() => { if (!isCurrentView) { setTool(null); setDraft([]); setDrawing(null); setTextPos(null); } }, [isCurrentView]);
 
   const numbers = useMemo(() => numberTopLevel(comments), [comments]);
-  const knownPaths = useMemo(() => new Set(source.files.map((f) => f.storagePath)), [source.files]);
+  const knownPaths = useMemo(() => new Set([...source.files.map((f) => f.storagePath), ...versionedPaths]), [source.files, versionedPaths]);
+  const viewPaths = useMemo(() => new Set(viewFiles.map((f) => f.storagePath)), [viewFiles]);
+  /** Markierung gehört zu einer anderen (noch vorhandenen) Version als der gezeigten */
+  const otherVersion = useCallback((c: ReviewComment) => !!c.media_ref && knownPaths.has(c.media_ref.storagePath) && !viewPaths.has(c.media_ref.storagePath), [knownPaths, viewPaths]);
   const tops = useMemo(() => comments.filter((c) => !c.parent_id).sort((a, b) => a.created_at.localeCompare(b.created_at)), [comments]);
   const repliesOf = useCallback((id: string) => comments.filter((c) => c.parent_id === id), [comments]);
   const layerItems: LayerItem[] = useMemo(() => !page ? [] : tops
@@ -280,7 +301,17 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
     document.getElementById(`review-c-${id}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   };
 
-  const visibleTops = tops.filter((c) => filter === "alle" || (filter === "offen" ? isOpenTop(c) : c.status === "done"));
+  const visibleTops = tops.filter((c) => !otherVersion(c)).filter((c) => filter === "alle" || (filter === "offen" ? isOpenTop(c) : c.status === "done"));
+  const fromOtherVersions = versions ? tops.filter((c) => otherVersion(c) && isOpenTop(c)) : [];
+  const [showOther, setShowOther] = useState(false);
+  const switchToComment = (c: ReviewComment) => {
+    const v = versionOfPath(versions ?? undefined, c.media_ref?.storagePath);
+    if (!v) return;
+    setVersionNo(v.version);
+    setActiveId(c.id);
+    // Seiten der Version werden neu aufgebaut; danach auf die Markierung springen.
+    setTimeout(() => setActiveId(c.id), 0);
+  };
   const withMarkup = visibleTops.filter((c) => c.markup);
   const generalTops = visibleTops.filter((c) => !c.markup);
   const openCount = tops.filter(isOpenTop).length;
@@ -306,7 +337,7 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
           )}
         </div>
         <p className="mt-1 whitespace-pre-wrap break-words">{c.message}</p>
-        {outdated && <p className="mt-1 text-[11px] text-muted-foreground">bezieht sich auf eine frühere Datei</p>}
+        {outdated && <p className="mt-1 text-[11px] text-muted-foreground">bezieht sich auf eine gelöschte Datei</p>}
         {repliesOf(c.id).map((r) => (
           <div key={r.id} className="mt-2 ml-4 border-l-2 pl-2">
             <div className="flex items-center gap-2">
@@ -328,7 +359,7 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
               {done ? <><RotateCcw className="h-3 w-3" /> öffnen</> : <><Check className="h-3 w-3" /> erledigt</>}
             </button>
           )}
-          {own && c.markup && !outdated && <button className="text-muted-foreground hover:text-foreground" onClick={() => startEdit(c)}>Markierung ändern</button>}
+          {own && c.markup && !outdated && isCurrentView && <button className="text-muted-foreground hover:text-foreground" onClick={() => startEdit(c)}>Markierung ändern</button>}
           {own && (
             <button className="inline-flex items-center gap-0.5 text-destructive/80 hover:text-destructive" disabled={busy}
               onClick={() => { if (confirm("Kommentar löschen? Antworten werden mitgelöscht.")) run(() => source.remove(c.id)); }}>
@@ -355,6 +386,12 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
         <div className="flex items-center gap-2 border-b px-3 py-2">
           <span className="truncate font-semibold">{title}</span>
           <span className="text-xs text-muted-foreground">{openCount} offen</span>
+          {versions && versions.length > 0 && (
+            <select className="ml-2 h-8 max-w-[52vw] rounded border bg-background px-1.5 text-xs" value={selectedVersion?.version ?? ""}
+              onChange={(e) => { setVersionNo(Number(e.target.value)); resetDraft(); setTool(null); }} title="Version">
+              {versions.map((v) => <option key={v.version} value={v.version}>{versionLabel(v)}</option>)}
+            </select>
+          )}
           <div className="ml-auto flex items-center gap-1">
             <Button variant="ghost" size="icon" onClick={() => zoomButton(1 / 1.5)} title="Verkleinern"><ZoomOut className="h-4 w-4" /></Button>
             <Button variant="ghost" size="icon" onClick={() => zoomButton(1.5)} title="Vergrößern"><ZoomIn className="h-4 w-4" /></Button>
@@ -404,8 +441,17 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
                 </>
               )}
             </div>
+            {selectedVersion?.note && (
+              <div className="border-t border-neutral-700 bg-neutral-800 px-3 py-1 text-xs text-neutral-200">Änderung v{selectedVersion.version}: {selectedVersion.note}</div>
+            )}
+            {!isCurrentView && (
+              <div className="flex items-center gap-2 border-t border-neutral-700 bg-neutral-800 px-3 py-2 text-xs text-amber-200">
+                Markieren nur auf der aktuellen Version.
+                {currentVersionNo != null && <button className="underline" onClick={() => setVersionNo(currentVersionNo)}>Zur aktuellen v{currentVersionNo}</button>}
+              </div>
+            )}
             {/* Werkzeuge */}
-            <div className="flex flex-wrap items-center gap-1 border-t border-neutral-700 bg-neutral-800 px-2 py-1.5 text-white">
+            {isCurrentView && <div className="flex flex-wrap items-center gap-1 border-t border-neutral-700 bg-neutral-800 px-2 py-1.5 text-white">
               <Button size="sm" variant={tool === null ? "secondary" : "ghost"} className="h-8 px-2 text-white" onClick={() => setTool(null)} title="Ansehen / verschieben">
                 <Hand className="h-4 w-4" />
               </Button>
@@ -421,7 +467,7 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
               <span className="mx-1 h-5 w-px bg-neutral-600" />
               <Button size="sm" variant="ghost" className="h-8 px-2 text-white" disabled={!draft.length} onClick={() => setDraft((d) => d.slice(0, -1))} title="Rückgängig"><Undo2 className="h-4 w-4" /></Button>
               {(draft.length > 0 || editingId) && <Button size="sm" variant="ghost" className="h-8 px-2 text-white" onClick={() => { resetDraft(); setTool(null); }}>Abbrechen</Button>}
-            </div>
+            </div>}
             {draft.length > 0 && (
               <div className="flex items-end gap-2 border-t border-neutral-700 bg-neutral-800 p-2">
                 <Textarea rows={2} value={message} onChange={(e) => setMessage(e.target.value)} className="resize-none bg-white text-sm text-black"
@@ -444,6 +490,20 @@ export default function ReviewViewer({ open, onOpenChange, source, title, initia
               {withMarkup.map(renderComment)}
               {generalTops.length > 0 && <p className="px-1 pt-2 text-xs font-medium text-muted-foreground">Allgemein</p>}
               {generalTops.map(renderComment)}
+              {fromOtherVersions.length > 0 && (
+                <div className="pt-2">
+                  <button className="w-full rounded px-1 py-1 text-left text-xs font-medium text-muted-foreground hover:bg-muted" onClick={() => setShowOther((v) => !v)}>
+                    {showOther ? "▾" : "▸"} Aus anderen Versionen ({fromOtherVersions.length} offen)
+                  </button>
+                  {showOther && fromOtherVersions.map((c) => (
+                    <button key={c.id} className="mt-1 block w-full rounded border p-2 text-left text-xs hover:bg-muted" onClick={() => switchToComment(c)}>
+                      <span className="font-medium">v{versionOfPath(versions ?? undefined, c.media_ref?.storagePath)?.version} · {c.author_name}</span>
+                      <span className="mt-0.5 line-clamp-2 block text-muted-foreground">{c.message}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {footer && <div className="border-t pt-2">{footer}</div>}
             </div>
             <div className="flex items-end gap-2 border-t p-2">
               <Textarea rows={2} value={general} onChange={(e) => setGeneral(e.target.value)} className="resize-none text-sm"

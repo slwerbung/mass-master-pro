@@ -10,11 +10,14 @@ export interface PDFExportOptions {
   mode: PDFExportMode;
   /** Spec C: Kundenkorrekturen (Markierungen + Kommentarliste) einzeichnen */
   withMarkup: boolean;
+  /** Spec D1: letzte Seite mit Freigabeprotokoll (Standort · Version · Datei · Freigegeben von · Zeitpunkt) */
+  withApprovalLog: boolean;
 }
 
 export const defaultPDFOptions: PDFExportOptions = {
   mode: "internal",
   withMarkup: false,
+  withApprovalLog: false,
 };
 
 interface Props {
@@ -83,6 +86,13 @@ const PDFExportOptionsUI = ({ options, onChange }: Props) => {
         <span>
           <span className="text-sm font-medium">Korrekturen einzeichnen</span>
           <span className="block text-sm text-muted-foreground">Markierungen direkt auf Druckdatei bzw. Foto, dazu je Standort die nummerierte Kommentarliste (erledigte grau).</span>
+        </span>
+      </label>
+      <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-3">
+        <Checkbox checked={options.withApprovalLog} onCheckedChange={(v) => onChange({ ...options, withApprovalLog: !!v })} className="mt-0.5" />
+        <span>
+          <span className="text-sm font-medium">Freigabeprotokoll anhängen</span>
+          <span className="block text-sm text-muted-foreground">Letzte Seite: welche Datei (Version) wer wann freigegeben hat.</span>
         </span>
       </label>
     </div>

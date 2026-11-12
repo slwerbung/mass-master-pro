@@ -9,6 +9,16 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+/** Spec D1: alle Druckdatei-Versionen je Standort (neueste zuerst). */
+function groupPdfVersions(rows: any[]): Record<string, any[]> {
+  const out: Record<string, any[]> = {};
+  for (const r of rows) (out[r.location_id] ??= []).push({
+    storage_path: r.storage_path, file_name: r.file_name, version: r.version, superseded_at: r.superseded_at,
+    uploaded_at: r.uploaded_at, uploaded_by: r.uploaded_by, version_note: r.version_note,
+  });
+  return out;
+}
+
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -92,20 +102,24 @@ Deno.serve(async (req) => {
 
         const { data: pdfs } = await supabase
           .from("location_pdfs")
-          .select("location_id, storage_path, file_name")
-          .in("location_id", locationIds.length > 0 ? locationIds : ['none']);
+          .select("location_id, storage_path, file_name, version, superseded_at, uploaded_at, uploaded_by, version_note")
+          .in("location_id", locationIds.length > 0 ? locationIds : ['none'])
+          .order("version", { ascending: false });
 
-        const pdfEntries = (pdfs || []).map((p: any) => ({
+        // Bisheriges Feld bleibt: nur die aktuelle Version (Spec D1). Alle Versionen zusaetzlich in pdfVersions.
+        const pdfEntries = (pdfs || []).filter((p: any) => !p.superseded_at).map((p: any) => ({
           location_id: p.location_id,
           image_type: "pdf",
           storage_path: p.storage_path,
           file_name: p.file_name,
+          version: p.version,
         }));
 
         return json({
           locations: locations || [],
           permissions: [],
           images: [...(images || []), ...pdfEntries],
+          pdfVersions: groupPdfVersions(pdfs || []),
         });
         }
 
@@ -123,20 +137,23 @@ Deno.serve(async (req) => {
 
         const { data: pdfs2 } = await supabase
           .from("location_pdfs")
-          .select("location_id, storage_path, file_name")
-          .in("location_id", locationIds);
+          .select("location_id, storage_path, file_name, version, superseded_at, uploaded_at, uploaded_by, version_note")
+          .in("location_id", locationIds)
+          .order("version", { ascending: false });
 
-        const pdfEntries2 = (pdfs2 || []).map((p: any) => ({
+        const pdfEntries2 = (pdfs2 || []).filter((p: any) => !p.superseded_at).map((p: any) => ({
           location_id: p.location_id,
           image_type: "pdf",
           storage_path: p.storage_path,
           file_name: p.file_name,
+          version: p.version,
         }));
 
         return json({
           locations: locations || [],
           permissions,
           images: [...(images || []), ...pdfEntries2],
+          pdfVersions: groupPdfVersions(pdfs2 || []),
         });
       }
 

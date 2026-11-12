@@ -35,6 +35,10 @@ import { InviteCustomerDialog } from "@/components/InviteCustomerDialog";
 import LocationChat, { ChatMessage } from "@/components/LocationChat";
 import { useSignedUrls } from "@/hooks/useSignedUrls";
 import { signedFileUrl } from "@/lib/storageUrl";
+import { buildReviewVersions } from "@/components/review/versions";
+import { VersionUploadDialog, type VersionUploadChoice } from "@/components/VersionUploadDialog";
+import { ApprovalProof } from "@/components/ApprovalProof";
+import { currentRows, deleteConfirmText, deleteCurrentVersion, notifyNewVersion, uploadVehicleLayoutVersion } from "@/lib/fileVersions";
 
 // Which layout files can be previewed inline (PDF via pdf.js, images via <img>).
 // .ai/.eps and similar stay as a download link only.
@@ -74,6 +78,10 @@ interface VehicleLayout {
   storage_path: string;
   file_name: string;
   uploaded_at: string;
+  version: number;
+  superseded_at: string | null;
+  uploaded_by?: string | null;
+  version_note?: string | null;
 }
 
 interface FeedbackItem {
@@ -141,6 +149,10 @@ const VehicleDetail = () => {
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [images, setImages] = useState<VehicleImage[]>([]);
   const [layout, setLayout] = useState<VehicleLayout | null>(null);
+  // Spec D1: alle Versionen des Layouts (aktuell = superseded_at null)
+  const [layouts, setLayouts] = useState<VehicleLayout[]>([]);
+  const [pendingLayoutFile, setPendingLayoutFile] = useState<File | null>(null);
+  const [proofKey, setProofKey] = useState(0);
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
   const [vehicleApproved, setVehicleApproved] = useState(false);
   const [measuredImages, setMeasuredImages] = useState<any[]>([]);
@@ -194,7 +206,7 @@ const VehicleDetail = () => {
         supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
         supabase.from("vehicle_field_values").select("field_key, value").eq("project_id", projectId!),
         supabase.from("vehicle_images").select("*").eq("project_id", projectId!).order("created_at"),
-        supabase.from("vehicle_layouts").select("*").eq("project_id", projectId!).order("uploaded_at", { ascending: false }).limit(1),
+        supabase.from("vehicle_layouts").select("*").eq("project_id", projectId!).order("version", { ascending: false }),
         supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId!).order("created_at"),
         supabase.from("vehicle_measured_images").select("*").eq("project_id", projectId!).order("created_at"),
         supabase.from("vehicle_layout_approval").select("approved").eq("project_id", projectId!).eq("approved", true),
@@ -207,7 +219,9 @@ const VehicleDetail = () => {
       (values || []).forEach((v: any) => { vals[v.field_key] = v.value || ""; });
       setFieldValues(vals);
       setImages((imgs || []) as VehicleImage[]);
-      setLayout(layouts && layouts.length > 0 ? (layouts[0] as VehicleLayout) : null);
+      const allLayouts = (layouts || []) as unknown as VehicleLayout[];
+      setLayouts(allLayouts);
+      setLayout(currentRows(allLayouts)[0] ?? null);
       setFeedbacks((fbs || []) as FeedbackItem[]);
       setMeasuredImages(measured || []);
     } catch (e) {
@@ -264,38 +278,34 @@ const VehicleDetail = () => {
 
   const handleLayoutUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file || !projectId) return;
     setLayoutOpen(true); // show the result even if the section was folded
+    // Spec D1: gibt es schon ein Layout, wird es eine neue Version – vorher fragen.
+    if (layout) { setPendingLayoutFile(file); return; }
+    await uploadLayoutVersion(file, { note: "", resetApproval: false, resolveOpen: false, notifyEmail: null });
+  };
+
+  const uploadLayoutVersion = async (file: File, choice: VersionUploadChoice) => {
+    if (!projectId) return;
     setUploadingLayout(true);
     try {
-      // Remove old layout from storage if exists
-      if (layout) {
-        await supabase.storage.from("project-files").remove([layout.storage_path]);
-        await supabase.from("vehicle_layouts").delete().eq("id", layout.id);
-      }
-      const path = `vehicle-layouts/${projectId}/${crypto.randomUUID()}-${file.name}`;
-      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file, { contentType: file.type });
-      if (uploadError) {
-        if ((uploadError as any).statusCode === '409' || uploadError.message?.includes('already exists')) {
-          const { error: updateError } = await supabase.storage.from("project-files").update(path, file, { contentType: file.type });
-          if (updateError) throw updateError;
-        } else {
-          throw uploadError;
+      const r = await uploadVehicleLayoutVersion(projectId, file, { resetApproval: choice.resetApproval, note: choice.note, resolveOpen: choice.resolveOpen });
+      toast.success(r.version > 1 ? `Layout v${r.version} hochgeladen` : "Layout hochgeladen");
+      if (choice.notifyEmail) {
+        try {
+          await notifyNewVersion({ projectId, kind: "vehicle", email: choice.notifyEmail, note: choice.note, resetApproval: choice.resetApproval });
+          toast.success("Kunde benachrichtigt");
+        } catch (err: any) {
+          toast.error("Mail nicht gesendet: " + (err?.message || "unbekannter Fehler"));
         }
       }
-      const { error: dbError } = await supabase.from("vehicle_layouts").insert({
-        project_id: projectId,
-        storage_path: path,
-        file_name: file.name,
-      });
-      if (dbError) throw dbError;
-      toast.success("Layout hochgeladen");
-      loadAll();
+      await loadAll();
+      setProofKey((k) => k + 1);
     } catch (err: any) {
-      toast.error("Upload fehlgeschlagen: " + err.message);
+      toast.error(err?.message || "Upload fehlgeschlagen");
     } finally {
       setUploadingLayout(false);
-      e.target.value = "";
     }
   };
 
@@ -436,12 +446,14 @@ const VehicleDetail = () => {
   };
 
   const deleteLayout = async () => {
-    if (!layout) return;
+    if (!layout || !projectId) return;
+    const count = new Set(layouts.map((l) => l.version)).size;
+    if (!confirm(deleteConfirmText(layout.version, count))) return;
     try {
-      await supabase.storage.from("project-files").remove([layout.storage_path]);
-      await supabase.from("vehicle_layouts").delete().eq("id", layout.id);
-      setLayout(null);
-      toast.success("Layout gelöscht");
+      const r = await deleteCurrentVersion("vehicle", projectId);
+      toast.success(r.restored ? `v${r.deleted} gelöscht – v${r.restored} ist wieder aktuell` : "Layout gelöscht");
+      await loadAll();
+      setProofKey((k) => k + 1);
     } catch {
       toast.error("Fehler beim Löschen");
     }
@@ -538,8 +550,9 @@ const VehicleDetail = () => {
       if (images.length > 0) {
         await supabase.storage.from("project-files").remove(images.map(i => i.storage_path));
       }
-      if (layout) {
-        await supabase.storage.from("project-files").remove([layout.storage_path]);
+      if (layouts.length) {
+        // alle Versionen, nicht nur die aktuelle
+        await supabase.storage.from("project-files").remove(layouts.map((l) => l.storage_path));
       }
       await deleteProjectFromSupabase(projectId!);
       await indexedDBStorage.deleteProject(projectId!);
@@ -553,7 +566,7 @@ const VehicleDetail = () => {
   // Der Bucket ist privat: Bilder und Layouts brauchen einen signierten Link.
   // Der Hook loest alle Pfade dieser Ansicht in einem Aufruf auf.
   const { urlFor } = useSignedUrls([
-    layout?.storage_path,
+    ...layouts.map((l) => l.storage_path),
     ...images.map((i) => i.storage_path),
     ...measuredImages.map((i: any) => i.storage_path),
   ]);
@@ -587,18 +600,23 @@ const VehicleDetail = () => {
     return <Input value={value} onChange={e => onChange(e.target.value)} />;
   };
 
-  if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><p className="text-muted-foreground">Laden…</p></div>;
   // Spec C: Prüfmodus und Markierungen am Layout (direkt per Supabase-Session, RLS „Mitarbeiter Vollzugriff“).
   const [reviewOpen, setReviewOpen] = useState(false);
   const [layoutRef, setLayoutRef] = useState<MediaRef | null>(null);
   const layoutKind = layout ? layoutPreviewKind(layout.file_name) : null;
+  const layoutVersions = buildReviewVersions(layouts, (p) => urlFor(p), (r) => {
+    const k = layoutPreviewKind(r.file_name);
+    return k === "pdf" || k === "image" ? k : null;
+  });
+  const layoutVersionKey = layouts.map((l) => `${l.storage_path}:${l.superseded_at ? 0 : 1}:${urlFor(l.storage_path) ? 1 : 0}`).join("|");
   const reviewSource = useMemo(() => (layout && projectId && (layoutKind === "pdf" || layoutKind === "image"))
     ? vehicleEmployeeSource({
         projectId,
         files: [{ kind: layoutKind, storagePath: layout.storage_path, url: urlFor(layout.storage_path) || "", name: layout.file_name }],
+        versions: layoutVersions.length > 1 ? layoutVersions : undefined,
         authorName: session?.name || "Mitarbeiter",
       })
-    : null, [layout?.storage_path, projectId, layoutKind]); // eslint-disable-line react-hooks/exhaustive-deps
+    : null, [layout?.storage_path, projectId, layoutKind, layoutVersionKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const layoutOverlay = (ref: MediaRef): LayerItem[] => {
     const numbers = numberTopLevel(feedbacks);
     return feedbacks
@@ -607,6 +625,7 @@ const VehicleDetail = () => {
       .map((f) => ({ id: f.id, number: numbers.get(f.id) ?? 0, markup: f.markup!, done: false }));
   };
 
+  if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><p className="text-muted-foreground">Laden…</p></div>;
   if (!project) return null;
 
   return (
@@ -769,6 +788,16 @@ const VehicleDetail = () => {
         </Card>
         </FileDropZone>
         </Collapsible>
+        {projectId && (
+          <VersionUploadDialog
+            open={!!pendingLayoutFile}
+            onOpenChange={(v) => { if (!v) setPendingLayoutFile(null); }}
+            title={`Neue Version v${Math.max(0, ...layouts.map((l) => l.version)) + 1} hochladen`}
+            subtitle={pendingLayoutFile ? `Fahrzeuglayout · ${pendingLayoutFile.name}` : undefined}
+            projectId={projectId}
+            onConfirm={async (choice) => { if (pendingLayoutFile) await uploadLayoutVersion(pendingLayoutFile, choice); }}
+          />
+        )}
 
         {/* Vehicle Information — einklappbar */}
         {fieldConfigs.length > 0 && (
@@ -924,11 +953,15 @@ const VehicleDetail = () => {
                 )}
                 {reviewSource && reviewOpen && (
                   <ReviewViewer open={reviewOpen} onOpenChange={setReviewOpen} source={reviewSource} title="Fahrzeuglayout"
-                    initialRef={layoutRef} onChanged={loadAll} />
+                    initialRef={layoutRef} onChanged={loadAll}
+                    footer={projectId ? <ApprovalProof kind="vehicle" projectId={projectId} currentVersion={layout.version} refreshKey={proofKey} /> : null} />
                 )}
                 <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/20">
                   <div className="flex items-center gap-2 min-w-0">
                     <FileText className="h-5 w-5 text-primary shrink-0" />
+                    {layouts.length > 0 && new Set(layouts.map((l) => l.version)).size > 1 && (
+                      <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary">v{layout.version}</span>
+                    )}
                     <span className="text-sm font-medium truncate">{layout.file_name}</span>
                     <span className="text-xs text-muted-foreground shrink-0">{formatDateTimeSafe(layout.uploaded_at)}</span>
                   </div>
@@ -941,6 +974,7 @@ const VehicleDetail = () => {
                     </Button>
                   </div>
                 </div>
+                {projectId && <ApprovalProof kind="vehicle" projectId={projectId} currentVersion={layout.version} refreshKey={proofKey} />}
               </>
             )}
           </CardContent>

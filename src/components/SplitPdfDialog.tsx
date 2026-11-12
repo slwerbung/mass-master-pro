@@ -9,6 +9,8 @@ import * as pdfjsLib from "pdfjs-dist";
 import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/integrations/supabase/client";
 import { naturalLocationSortAsc } from "@/lib/locationSorting";
+import { notifyNewVersion, uploadLocationPrintVersion } from "@/lib/fileVersions";
+import { VersionUploadDialog, type VersionUploadChoice } from "@/components/VersionUploadDialog";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
@@ -46,6 +48,8 @@ export function SplitPdfDialog({ open, onOpenChange, projectId, projectNumber, l
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Spec D1: haben Ziel-Standorte schon eine Druckdatei, wird eine neue Version angelegt – vorher einmal fragen.
+  const [askVersion, setAskVersion] = useState<{ existing: number } | null>(null);
 
   // Reset everything when the dialog closes.
   useEffect(() => {
@@ -137,6 +141,15 @@ export function SplitPdfDialog({ open, onOpenChange, projectId, projectNumber, l
   const process = async () => {
     if (!fileRef.current) return;
     if (assignedCount === 0) { toast.error("Keine Seite ist einem Standort zugeordnet."); return; }
+    const targets = [...new Set(assignment.filter(Boolean) as string[])];
+    const { data: cur } = await (supabase as any).from("location_pdfs").select("location_id").in("location_id", targets).is("superseded_at", null);
+    const existing = new Set(((cur || []) as any[]).map((r) => r.location_id)).size;
+    if (existing > 0) { setAskVersion({ existing }); return; }
+    await runSplit({ note: "", resetApproval: false, resolveOpen: false, notifyEmail: null });
+  };
+
+  const runSplit = async (choice: VersionUploadChoice) => {
+    if (!fileRef.current) return;
 
     // Group page indices per location, preserving page order.
     const byLocation = new Map<string, number[]>();
@@ -170,26 +183,28 @@ export function SplitPdfDialog({ open, onOpenChange, projectId, projectNumber, l
         const outBytes = await out.save({ useObjectStreams: true });
         const blob = new Blob([outBytes], { type: "application/pdf" });
 
-        const path = `pdfs/${locId}/${Date.now()}_split.pdf`;
-        // Replace any existing production PDF for this location (storage + row),
-        // mirroring the single-upload behaviour.
-        const { data: oldRows } = await supabase.from("location_pdfs").select("storage_path").eq("location_id", locId);
-        const oldPaths = (oldRows || []).map((r: any) => r.storage_path).filter(Boolean);
-        if (oldPaths.length > 0) {
-          await supabase.storage.from("project-files").remove(oldPaths);
-          await supabase.from("location_pdfs").delete().eq("location_id", locId);
-        }
-        const { error: upErr } = await supabase.storage.from("project-files").upload(path, blob, { contentType: "application/pdf" });
-        if (upErr) throw new Error(`Standort ${loc?.locationNumber}: Upload fehlgeschlagen (${upErr.message})`);
+        // Spec D1: neue Version statt die alte Datei zu löschen.
         const fileLabel = `${loc?.locationNumber || "Standort"}.pdf`;
-        const { error: dbErr } = await supabase.from("location_pdfs").insert({ location_id: locId, storage_path: path, file_name: fileLabel });
-        if (dbErr) throw new Error(`Standort ${loc?.locationNumber}: Datenbankfehler (${dbErr.message})`);
+        try {
+          await uploadLocationPrintVersion(locId, [{ blob, name: fileLabel }], { resetApproval: choice.resetApproval, note: choice.note, resolveOpen: choice.resolveOpen });
+        } catch (err: any) {
+          throw new Error(`Standort ${loc?.locationNumber}: ${err?.message || "Upload fehlgeschlagen"}`);
+        }
 
         done += 1;
         setProgress({ done, total: byLocation.size });
       }
 
       toast.success(`Fertig: ${done} Standort(e) mit PDF versehen.`);
+      if (choice.notifyEmail) {
+        // genau EINE Mail für alle betroffenen Standorte
+        try {
+          await notifyNewVersion({ projectId, kind: "location", email: choice.notifyEmail, locationIds: [...byLocation.keys()], note: choice.note, resetApproval: choice.resetApproval });
+          toast.success("Kunde benachrichtigt");
+        } catch (err: any) {
+          toast.error("Mail nicht gesendet: " + (err?.message || "unbekannter Fehler"));
+        }
+      }
       onOpenChange(false);
     } catch (e: any) {
       toast.error("Aufteilen fehlgeschlagen: " + (e?.message || String(e)));
@@ -271,6 +286,15 @@ export function SplitPdfDialog({ open, onOpenChange, projectId, projectNumber, l
             </div>
           </>
         )}
+
+        <VersionUploadDialog
+          open={!!askVersion}
+          onOpenChange={(v) => { if (!v) setAskVersion(null); }}
+          title="Neue Versionen hochladen"
+          subtitle={askVersion ? `${askVersion.existing} Standort(e) haben schon eine Druckdatei – dort entsteht eine neue Version.` : undefined}
+          projectId={projectId}
+          onConfirm={async (choice) => { setAskVersion(null); await runSplit(choice); }}
+        />
 
         <DialogFooter className="shrink-0">
           {fileName && !loadingDoc && (

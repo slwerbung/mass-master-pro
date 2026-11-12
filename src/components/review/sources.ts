@@ -4,7 +4,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/session";
 import { validateMarkup, type Markup } from "@/lib/markup";
-import type { ReviewComment, ReviewCreateInput, ReviewFile, ReviewSource } from "./types";
+import type { ReviewComment, ReviewCreateInput, ReviewFile, ReviewSource, ReviewVersion } from "./types";
 
 type Client = typeof supabase;
 
@@ -36,12 +36,12 @@ function realtime(sb: Client, table: string, filter: string, onChange: () => voi
 const sortByTime = (xs: ReviewComment[]) => [...xs].sort((a, b) => a.created_at.localeCompare(b.created_at));
 
 export function locationCustomerSource(o: {
-  locationId: string; assignmentId: string; files: ReviewFile[]; customerId: string; authorName: string; sb?: Client;
+  locationId: string; assignmentId: string; files: ReviewFile[]; versions?: ReviewVersion[]; customerId: string; authorName: string; sb?: Client;
 }): ReviewSource {
   const sb = o.sb ?? supabase;
   const base = () => ({ customerToken: getSession()?.authToken, assignmentId: o.assignmentId, locationId: o.locationId });
   return {
-    kind: "location", viewerSide: "customer", files: o.files,
+    kind: "location", viewerSide: "customer", files: o.files, versions: o.versions,
     async list() {
       const { data, error } = await (sb as any).from("location_feedback").select("*").eq("location_id", o.locationId).order("created_at");
       if (error) throw new Error(error.message);
@@ -67,12 +67,12 @@ export function locationCustomerSource(o: {
   };
 }
 
-export function locationEmployeeSource(o: { locationId: string; files: ReviewFile[]; authorName: string; sb?: Client }): ReviewSource {
+export function locationEmployeeSource(o: { locationId: string; files: ReviewFile[]; versions?: ReviewVersion[]; authorName: string; sb?: Client }): ReviewSource {
   const sb = o.sb ?? supabase;
   const call = (action: string, extra: Record<string, unknown> = {}) =>
     invokeFn(sb, "location-feedback", { token: getSession()?.authToken, action, locationId: o.locationId, ...extra });
   return {
-    kind: "location", viewerSide: "employee", files: o.files,
+    kind: "location", viewerSide: "employee", files: o.files, versions: o.versions,
     async list() { return sortByTime(((await call("list"))?.messages || []) as ReviewComment[]); },
     async create(input) {
       const markup = checkMarkup(input);
@@ -91,12 +91,12 @@ export function locationEmployeeSource(o: { locationId: string; files: ReviewFil
 }
 
 export function vehicleCustomerSource(o: {
-  projectId: string; files: ReviewFile[]; customerId: string | null; authorName: string; sb?: Client;
+  projectId: string; files: ReviewFile[]; versions?: ReviewVersion[]; customerId: string | null; authorName: string; sb?: Client;
 }): ReviewSource {
   const sb = o.sb ?? supabase;
   const t = () => (sb as any).from("vehicle_layout_feedback");
   return {
-    kind: "vehicle", viewerSide: "customer", files: o.files,
+    kind: "vehicle", viewerSide: "customer", files: o.files, versions: o.versions,
     async list() {
       const { data, error } = await t().select("*").eq("project_id", o.projectId).order("created_at");
       if (error) throw new Error(error.message);
@@ -129,11 +129,11 @@ export function vehicleCustomerSource(o: {
   };
 }
 
-export function vehicleEmployeeSource(o: { projectId: string; files: ReviewFile[]; authorName: string; sb?: Client }): ReviewSource {
+export function vehicleEmployeeSource(o: { projectId: string; files: ReviewFile[]; versions?: ReviewVersion[]; authorName: string; sb?: Client }): ReviewSource {
   const sb = o.sb ?? supabase;
   const t = () => (sb as any).from("vehicle_layout_feedback");
   return {
-    kind: "vehicle", viewerSide: "employee", files: o.files,
+    kind: "vehicle", viewerSide: "employee", files: o.files, versions: o.versions,
     async list() {
       const { data, error } = await t().select("*").eq("project_id", o.projectId).order("created_at");
       if (error) throw new Error(error.message);

@@ -11,6 +11,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getPublicLinkConfig, publicUrl, type PublicLinkConfig } from "../_shared/publicLinks.ts";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
+import { buildNewVersionMail, type NewVersionItem } from "../_shared/newVersionMail.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -323,6 +324,65 @@ Deno.serve(async (req) => {
         }
       } catch { /* logbook is best-effort */ }
 
+      return json({ success: true });
+    }
+
+    // Spec D1: Kunde ueber eine neue Druckdatei-/Layoutversion informieren (eine Mail, auch fuer mehrere Standorte).
+    if (action === "notify_new_version") {
+      const projectId = String(body.projectId || "").trim();
+      const email = String(body.email || "").trim();
+      const kind = body.kind === "vehicle" ? "vehicle" : "location";
+      const note = String(body.note || "").slice(0, 300);
+      const resetApproval = body.resetApproval !== false;
+      if (!projectId) return json({ error: "projectId fehlt" }, 400);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "Ungültige E-Mail-Adresse" }, 400);
+      const { data: proj } = await supabase.from("projects").select("project_number").eq("id", projectId).maybeSingle();
+      if (!proj) return json({ error: "Projekt nicht gefunden" }, 404);
+      const projectNumber = proj.project_number || projectId.slice(0, 8);
+
+      const items: NewVersionItem[] = [];
+      if (kind === "vehicle") {
+        const { data: cur } = await supabase.from("vehicle_layouts").select("version").eq("project_id", projectId).is("superseded_at", null).limit(1);
+        items.push({ label: "Fahrzeuglayout", version: cur?.[0]?.version ?? null });
+      } else {
+        const ids = (Array.isArray(body.locationIds) ? body.locationIds : []).map(String).slice(0, 200);
+        if (!ids.length) return json({ error: "Keine Standorte angegeben" }, 400);
+        const [{ data: locs }, { data: pdfs }] = await Promise.all([
+          supabase.from("locations").select("id, location_number, location_name").eq("project_id", projectId).in("id", ids).order("location_number"),
+          supabase.from("location_pdfs").select("location_id, version").in("location_id", ids).is("superseded_at", null),
+        ]);
+        if (!locs?.length) return json({ error: "Standorte gehören nicht zu diesem Projekt" }, 400);
+        const ver = new Map((pdfs || []).map((p: any) => [p.location_id, p.version]));
+        for (const l of locs as any[]) {
+          items.push({ label: [`Standort ${l.location_number ?? ""}`.trim(), l.location_name].filter(Boolean).join(" · "), version: ver.get(l.id) ?? null });
+        }
+      }
+
+      let companyName = "";
+      const { data: legalRow } = await supabase.from("app_config").select("value").eq("key", "legal_info").maybeSingle();
+      try { companyName = String(JSON.parse(legalRow?.value || "{}")?.companyName || "").trim(); } catch { /* leer */ }
+      const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+      if (!RESEND_API_KEY) return json({ error: "RESEND_API_KEY not configured" }, 500);
+      const link = publicUrl(await getPublicLinkConfig(supabase), `/freigabe/${projectId}`);
+      const mail = buildNewVersionMail({ companyName, projectNumber, link, items, note, resetApproval });
+      const from = `${(companyName || "Freigabe").replace(/[<>"]/g, "")} <notifications@captfix.app>`;
+      const emailRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from, to: [email], subject: mail.subject, html: mail.html, text: mail.text }),
+      });
+      if (!emailRes.ok) {
+        const errText = await emailRes.text();
+        return json({ error: `Mailversand fehlgeschlagen: ${errText.slice(0, 200)}` }, 502);
+      }
+      try {
+        const hctx = await heroContext(supabase, projectId);
+        if (hctx) {
+          const versions = items.map((i) => `${i.label}${i.version ? ` v${i.version}` : ""}`).join(", ");
+          await heroAddLogbook(hctx.apiKey, hctx.heroId, `Neue Version an ${email} gemeldet`,
+            `${versions}${note.trim() ? `\n\nÄnderung: ${note.trim()}` : ""}\n\nLink: ${link}`);
+        }
+      } catch { /* Logbuch ist best-effort */ }
       return json({ success: true });
     }
 
