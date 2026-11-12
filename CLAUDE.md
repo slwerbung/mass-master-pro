@@ -92,6 +92,16 @@ Kunden können Projekte online einsehen und freigeben.
   (Datei + Seite). Format/Prüfung NUR über `_shared/markup.ts` (identische Kopie
   `src/lib/markup.ts`, Test prüft Gleichheit). Prüfmodus `src/components/review/`
   (`ReviewViewer`, vier Datenquellen in `sources.ts`); Export „Korrekturen einzeichnen“
+- **Dateiversionen** (Spec D1, Nov. 2026): Druckdateien (`location_pdfs`) und Fahrzeuglayouts (`vehicle_layouts`)
+  haben `version`/`superseded_at`; **aktuell = `superseded_at IS NULL`** (Export, Aufmaß-PDF, Gastansicht nur
+  aktuelle). Hochladen/Löschen NUR über `src/lib/fileVersions.ts` → DB-Funktionen `add_file_version` /
+  `delete_current_version` (eine Transaktion). **Nie die alte Datei beim Upload löschen.** Projekt/Standort löschen
+  entfernt alle Versionen. Prüfmodus: Versionswahl, ältere Versionen nur ansehen/antworten
+- **Freigabe-Nachweis**: `approval_events` + `approved_version`/`approved_paths`/`approved_by_name` setzt NUR der
+  Trigger (`approval_stamp`/`approval_log`) – nie vom Client schreiben. Neue Version mit Reset → Ereignis
+  `reset_new_version`. Anzeige `ApprovalProof.tsx`; Kundenmail „Neue Version“: `project-invite` `notify_new_version`
+- Edge Functions mit dynamischem `import("https://…")` (Aufmaß-PDF lädt pdf-lib so): im Lader-Verfahren den Import
+  statisch in den Lader nehmen (Bündel: `import(...)` → `Promise.resolve(require(...))`), sonst fehlt das Modul
 
 ## Bekannte Architektur-Entscheidungen
 - Storage Bucket `project-files` ist **privat** (Phase 3, `docs/phase3-storage.md`).

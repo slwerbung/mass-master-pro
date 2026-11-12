@@ -9,6 +9,10 @@ import { LocationApprovalMedia } from "@/components/LocationApprovalMedia";
 import ReviewViewer from "@/components/review/ReviewViewer";
 import { locationEmployeeSource } from "@/components/review/sources";
 import type { ReviewFile } from "@/components/review/types";
+import { buildReviewVersions } from "@/components/review/versions";
+import { VersionUploadDialog, type VersionUploadChoice } from "@/components/VersionUploadDialog";
+import { ApprovalProof } from "@/components/ApprovalProof";
+import { currentRows, deleteConfirmText, deleteCurrentVersion, notifyNewVersion, uploadLocationPrintVersion, type VersionedRow } from "@/lib/fileVersions";
 import type { LayerItem } from "@/components/review/MarkupLayer";
 import { numberTopLevel, type Markup, type MediaRef } from "@/lib/markup";
 import { Input } from "@/components/ui/input";
@@ -101,6 +105,11 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   const [reviewOpen, setReviewOpen] = useState(false);
   const [mediaRef, setMediaRef] = useState<MediaRef | null>(null);
   const [pdfName, setPdfName] = useState<string | null>(null);
+  // Spec D1: alle Versionen der Druckdatei (aktuell = superseded_at null) + signierte Links.
+  const [pdfRows, setPdfRows] = useState<VersionedRow[]>([]);
+  const [pdfUrls, setPdfUrls] = useState<Record<string, string>>({});
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [proofKey, setProofKey] = useState(0);
   // Large-view overlay for looking at an image without opening the editor.
   // Large-view overlay. Clicking an image only views it; `editPath` feeds the
   // "Bearbeiten" button there, so the editor is always an explicit choice.
@@ -209,20 +218,24 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
   }, [location.id, location.guestInfo]);
 
   const loadPdf = async () => {
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from("location_pdfs")
-      .select("storage_path, file_name")
+      .select("storage_path, file_name, version, superseded_at, uploaded_at, uploaded_by, version_note")
       .eq("location_id", location.id)
-      .maybeSingle();
+      .order("version", { ascending: false });
     if (error) console.warn("loadPdf error:", error.message);
-    if (data) {
-      const { data: signedData } = await supabase.storage
-        .from("project-files")
-        .createSignedUrl(data.storage_path, 3600);
-      setPdfUrl(signedData?.signedUrl || null);
-      setPdfName(data.file_name);
-      setPdfPath(data.storage_path);
+    const rows = (data || []) as VersionedRow[];
+    setPdfRows(rows);
+    const urls: Record<string, string> = {};
+    if (rows.length) {
+      const { data: signed } = await supabase.storage.from("project-files").createSignedUrls(rows.map((r) => r.storage_path), 3600);
+      for (const x of signed || []) if (x.path && x.signedUrl) urls[x.path] = x.signedUrl;
     }
+    setPdfUrls(urls);
+    const cur = currentRows(rows)[0];
+    setPdfUrl(cur ? urls[cur.storage_path] || null : null);
+    setPdfName(cur?.file_name ?? null);
+    setPdfPath(cur?.storage_path ?? null);
     // Wie die Kundenansicht: Originalfoto bevorzugt, sonst das bemaßte – dieselbe Datei, auf der der Kunde markiert.
     const { data: imgs } = await supabase.from("location_images").select("storage_path, image_type")
       .eq("location_id", location.id).in("image_type", ["original", "annotated"]);
@@ -239,9 +252,13 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
     ...(pdfUrl && pdfPath ? [{ kind: "pdf" as const, storagePath: pdfPath, url: pdfUrl, name: pdfName || "Produktionsdatei" }] : []),
     ...(photoPath && (photoUrl || location.imageData) ? [{ kind: "image" as const, storagePath: photoPath, url: photoUrl || location.imageData, name: "Foto" }] : []),
   ];
+  const reviewVersions = useMemo(() => buildReviewVersions(pdfRows, (p) => pdfUrls[p], () => "pdf"), [pdfRows, pdfUrls]);
+  const currentPdfRows = currentRows(pdfRows);
+  const currentVersion = currentPdfRows[0]?.version ?? null;
+  const versionCount = new Set(pdfRows.map((r) => r.version)).size;
   const reviewSource = useMemo(
-    () => locationEmployeeSource({ locationId: location.id, files: reviewFiles, authorName: getSession()?.name || "Mitarbeiter" }),
-    [location.id, pdfUrl, pdfPath, photoPath, photoUrl, location.imageData], // eslint-disable-line react-hooks/exhaustive-deps
+    () => locationEmployeeSource({ locationId: location.id, files: reviewFiles, versions: reviewVersions.length > 1 ? reviewVersions : undefined, authorName: getSession()?.name || "Mitarbeiter" }),
+    [location.id, pdfUrl, pdfPath, photoPath, photoUrl, location.imageData, reviewVersions], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const markupNumbers = numberTopLevel(feedbacks.filter((f) => !f.legacy) as any);
   const openMarkups = feedbacks.filter((f) => !f.legacy && !f.parent_id && f.status !== "done");
@@ -336,102 +353,50 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
 
   const handlePrintFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    if (pdfInputRef.current) pdfInputRef.current.value = "";
     if (!file) return;
     if (!isSupportedPrintFile(file)) {
       toast.error("Bitte eine PDF- oder Bilddatei auswählen");
       return;
     }
+    // Spec D1: gibt es schon eine Version, erst fragen (Änderung, Freigabe zurücksetzen, Kunde benachrichtigen).
+    if (currentVersion) { setPendingFile(file); return; }
+    await uploadPrintVersion(file, { note: "", resetApproval: false, resolveOpen: false, notifyEmail: null });
+  };
+
+  const uploadPrintVersion = async (file: File, choice: VersionUploadChoice) => {
     setUploadingPdf(true);
     try {
-      // Sanitize filename for Supabase Storage. The bucket rejects keys
-      // with non-ASCII characters, spaces, parentheses, and several
-      // other punctuation marks with "Invalid key". German filenames
-      // commonly contain umlauts (ä ö ü ß) and spaces - "Produktionsdatei
-      // für Standort 1 (final).pdf" would fail. We replace umlauts
-      // with ASCII equivalents and strip anything else that isn't a
-      // safe key character. We keep the original name in the DB so
-      // the user-facing filename stays intact.
-      const safeName = file.name
-        .replace(/ä/g, "ae")
-        .replace(/ö/g, "oe")
-        .replace(/ü/g, "ue")
-        .replace(/Ä/g, "Ae")
-        .replace(/Ö/g, "Oe")
-        .replace(/Ü/g, "Ue")
-        .replace(/ß/g, "ss")
-        .replace(/[^A-Za-z0-9._-]/g, "_") // anything else → underscore
-        .replace(/_+/g, "_")               // collapse runs of underscores
-        .replace(/^_+|_+$/g, "");          // trim leading/trailing underscores
-
-      const path = `pdfs/${location.id}/${Date.now()}_${safeName}`;
-      // We clean up the old row + storage file first, then insert a
-      // fresh one. We don't use { upsert: true } on the storage call
-      // because that triggers a SELECT under the hood to check if
-      // the object exists, and project-files has INSERT/UPDATE/DELETE
-      // policies for anon but no SELECT policy - so upsert returns
-      // "row-level security" errors even though pure INSERT would work.
-      // Since the path includes Date.now() it's unique per upload
-      // anyway, so upsert isn't needed.
-
-      // 1. Remove old DB row + the old storage file it references, so
-      //    we don't leak storage objects when the user replaces a file.
-      const { data: oldRows } = await supabase
-        .from("location_pdfs")
-        .select("storage_path")
-        .eq("location_id", location.id);
-      const oldPaths = (oldRows || []).map((r: any) => r.storage_path).filter(Boolean);
-      if (oldPaths.length > 0) {
-        await supabase.storage.from("project-files").remove(oldPaths);
-        await supabase.from("location_pdfs").delete().eq("location_id", location.id);
+      const r = await uploadLocationPrintVersion(location.id, [{ blob: file, name: file.name }], {
+        resetApproval: choice.resetApproval, note: choice.note, resolveOpen: choice.resolveOpen,
+      });
+      toast.success(r.version > 1 ? `Version v${r.version} hochgeladen ✓` : "Datei hochgeladen ✓");
+      if (choice.notifyEmail) {
+        try {
+          await notifyNewVersion({ projectId, kind: "location", email: choice.notifyEmail, locationIds: [location.id], note: choice.note, resetApproval: choice.resetApproval });
+          toast.success("Kunde benachrichtigt");
+        } catch (err: any) {
+          toast.error("Mail nicht gesendet: " + (err?.message || "unbekannter Fehler"));
+        }
       }
-
-      // 2. Upload the new file (no upsert; path is unique).
-      const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file);
-      if (uploadError) {
-        toast.error("Upload fehlgeschlagen: " + uploadError.message);
-        return;
-      }
-      const { error: dbError } = await supabase.from("location_pdfs").insert({ location_id: location.id, storage_path: path, file_name: file.name });
-      if (dbError) {
-        toast.error("Datenbankfehler: " + dbError.message);
-        return;
-      }
-      toast.success("Datei hochgeladen ✓");
-      await loadPdf();
+      await Promise.all([loadPdf(), loadApprovals(), loadFeedbacks()]);
+      setProofKey((k) => k + 1);
     } catch (err: any) {
-      toast.error("Fehler: " + err.message);
+      toast.error(err?.message || "Upload fehlgeschlagen");
     } finally {
       setUploadingPdf(false);
-      if (pdfInputRef.current) pdfInputRef.current.value = "";
     }
   };
 
   const handleDeletePrintFile = async () => {
     setUploadingPdf(true);
     try {
-      // Remove the storage object(s) first, then the DB row(s), so we
-      // don't leak files in the bucket.
-      const { data: rows } = await supabase
-        .from("location_pdfs")
-        .select("storage_path")
-        .eq("location_id", location.id);
-      const paths = (rows || []).map((r: any) => r.storage_path).filter(Boolean);
-      if (paths.length > 0) {
-        await supabase.storage.from("project-files").remove(paths);
-      }
-      const { error: dbError } = await supabase
-        .from("location_pdfs")
-        .delete()
-        .eq("location_id", location.id);
-      if (dbError) {
-        toast.error("Löschen fehlgeschlagen: " + dbError.message);
-        return;
-      }
-      setPdfUrl(null);
-      setPdfName(null);
-      toast.success("Datei gelöscht ✓");
+      const r = await deleteCurrentVersion("location", location.id);
+      toast.success(r.restored ? `v${r.deleted} gelöscht – v${r.restored} ist wieder aktuell` : "Datei gelöscht ✓");
+      await loadPdf();
+      setProofKey((k) => k + 1);
     } catch (err: any) {
-      toast.error("Fehler: " + err.message);
+      toast.error("Löschen fehlgeschlagen: " + (err?.message || ""));
     } finally {
       setUploadingPdf(false);
     }
@@ -458,7 +423,7 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           <LocationApprovalMedia
             annotatedUrl={location.imageData}
             annotatedPath={photoPath ?? undefined}
-            pdfs={[{ url: pdfUrl, name: pdfName || "Produktionsdatei", storagePath: pdfPath ?? undefined }]}
+            pdfs={currentPdfRows.filter((r) => pdfUrls[r.storage_path]).map((r) => ({ url: pdfUrls[r.storage_path], name: r.file_name || "Produktionsdatei", storagePath: r.storage_path }))}
             onPageChange={setMediaRef}
             overlay={overlayFor}
           />
@@ -572,6 +537,9 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
             pdfUrl && pdfName ? (
               <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 text-primary shrink-0" />
+                {currentVersion && versionCount > 1 && (
+                  <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary" title={`${versionCount} Versionen`}>v{currentVersion}</span>
+                )}
                 <span className="text-sm truncate flex-1">{pdfName}</span>
                 <Button size="sm" variant="outline" asChild>
                   <a href={pdfUrl} target="_blank" rel="noopener noreferrer">
@@ -589,9 +557,9 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>Datei löschen?</AlertDialogTitle>
+                      <AlertDialogTitle>{deleteConfirmText(currentVersion, versionCount)}</AlertDialogTitle>
                       <AlertDialogDescription>
-                        „{pdfName}" wird dauerhaft entfernt. Diese Aktion kann nicht rückgängig gemacht werden.
+                        „{pdfName}" wird dauerhaft entfernt. Markierungen darauf bleiben als Kommentare erhalten.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -610,7 +578,18 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           ) : (
             <p className="text-sm text-muted-foreground">In der internen Ansicht ausgeblendet.</p>
           )}
+          {showPrintFiles && pdfUrl && (
+            <ApprovalProof kind="location" projectId={projectId} locationId={location.id} currentVersion={currentVersion} refreshKey={proofKey} />
+          )}
         </FileDropZone>
+        <VersionUploadDialog
+          open={!!pendingFile}
+          onOpenChange={(v) => { if (!v) setPendingFile(null); }}
+          title={`Neue Version v${(Math.max(0, ...pdfRows.map((r) => r.version)) || 0) + 1} hochladen`}
+          subtitle={pendingFile ? `Standort ${location.locationNumber} · ${pendingFile.name}` : undefined}
+          projectId={projectId}
+          onConfirm={async (choice) => { if (pendingFile) await uploadPrintVersion(pendingFile, choice); }}
+        />
 
         <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
           <div className="flex items-center gap-2">
@@ -624,7 +603,8 @@ const LocationCard = ({ location, projectId, onDelete, onDeleteDetailImage, fiel
           </div>
           {reviewOpen && (
             <ReviewViewer open={reviewOpen} onOpenChange={setReviewOpen} source={reviewSource}
-              title={`Standort ${location.locationNumber}`} initialRef={mediaRef} onChanged={loadFeedbacks} />
+              title={`Standort ${location.locationNumber}`} initialRef={mediaRef} onChanged={loadFeedbacks}
+              footer={<ApprovalProof kind="location" projectId={projectId} locationId={location.id} currentVersion={currentVersion} refreshKey={proofKey} />} />
           )}
           <LocationChat
             messages={feedbacks as ChatMessage[]}

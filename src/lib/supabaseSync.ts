@@ -694,9 +694,12 @@ async function removeDeletedLocationsFromSupabase(project: Project) {
     getLocationImagePath(id, "original"),
   ]);
   const { data: remoteDetailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', deletedLocationIds);
+  // Druckdateien: alle Versionen (Spec D1), nicht nur die aktuelle.
+  const { data: remotePdfs } = await supabase.from('location_pdfs').select('storage_path').in('location_id', deletedLocationIds);
   await removeStoragePaths([
     ...locationStoragePathsToDelete,
     ...(remoteDetailImages || []).flatMap((row) => [row.annotated_path, row.original_path]),
+    ...(remotePdfs || []).map((row: any) => row.storage_path),
   ]);
   await (supabase as any).from('location_feedback').delete().in('location_id', deletedLocationIds);
   await supabase.from('location_approvals').delete().in('location_id', deletedLocationIds);
@@ -842,9 +845,12 @@ export async function deleteProjectFromSupabase(projectId: string): Promise<void
       getLocationImagePath(id, "original"),
     ]);
     const { data: detailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', locationIds);
+    // Druckdateien: alle Versionen (Spec D1), nicht nur die aktuelle.
+    const { data: pdfRows } = await supabase.from('location_pdfs').select('storage_path').in('location_id', locationIds);
     await removeStoragePaths([
       ...locationStoragePaths,
       ...(detailImages || []).flatMap((row) => [row.annotated_path, row.original_path]),
+      ...(pdfRows || []).map((row: any) => row.storage_path),
     ]);
     await (supabase as any).from("location_feedback").delete().in("location_id", locationIds);
     await supabase.from("location_approvals").delete().in("location_id", locationIds);

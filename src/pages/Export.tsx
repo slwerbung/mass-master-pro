@@ -28,6 +28,7 @@ import {
   drawFloorPlanPage,
   drawDetailPage,
   drawCommentsPage,
+  drawApprovalLogPage,
   type CommentRow,
   type FieldRow,
   type PillKind,
@@ -199,7 +200,8 @@ const Export = () => {
         const locationIds = loadedProject.locations.map((loc) => loc.id);
         if (locationIds.length > 0) {
           const [{ data: printFiles }, { data: approvals }] = await Promise.all([
-            supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
+            // Spec D1: nur die aktuelle Version.
+            (supabase as any).from("location_pdfs").select("id, location_id, storage_path, file_name, version").in("location_id", locationIds).is("superseded_at", null),
             supabase.from("location_approvals").select("location_id").eq("approved", true).in("location_id", locationIds),
           ]);
           const map: Record<string, any[]> = {};
@@ -577,6 +579,32 @@ const Export = () => {
           pageNumber: p,
         });
       }
+    }
+
+    // Spec D1: Freigabeprotokoll als letzte Seite
+    if (pdfOptions.withApprovalLog) {
+      const { data: ev } = await (supabase as any).from("approval_events")
+        .select("location_id, kind, action, version, storage_paths, actor_name, assignment_id, created_at")
+        .eq("project_id", project.id).order("created_at", { ascending: true });
+      const events = (ev || []) as any[];
+      const locById = new Map(sortedLocations.map((l: any) => [l.id, l]));
+      const { data: fileRows } = await (supabase as any).from("location_pdfs").select("storage_path, file_name").in("location_id", sortedLocations.map((l: any) => l.id));
+      const { data: layoutRows } = await (supabase as any).from("vehicle_layouts").select("storage_path, file_name").eq("project_id", project.id);
+      const nameOf = new Map([...(fileRows || []), ...(layoutRows || [])].map((r: any) => [r.storage_path, r.file_name]));
+      const fmt = (iso: string) => new Date(iso).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      const rows = events.filter((e) => e.action === "approve").map((e) => {
+        const loc = e.location_id ? locById.get(e.location_id) : null;
+        const paths: string[] = e.storage_paths || [];
+        return {
+          location: e.kind === "vehicle" ? "Fahrzeuglayout" : loc ? `${loc.locationNumber}${loc.locationName ? " · " + loc.locationName : ""}` : "Standort",
+          version: e.version ? `v${e.version}` : "–",
+          file: paths.map((p) => nameOf.get(p) || p.split("/").pop() || p).join(", "),
+          by: e.actor_name || "",
+          at: fmt(e.created_at),
+        };
+      });
+      pdf.addPage();
+      drawApprovalLogPage(pdf, { projectNumber: project.projectNumber, rows, pageNumber: pdf.getNumberOfPages() });
     }
 
     return pdf.output("blob");

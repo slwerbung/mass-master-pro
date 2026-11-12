@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
         { data: vehicleFeedbacks },
       ] = await Promise.all([
         supabase.from("vehicle_images").select("*").eq("project_id", projectId).order("created_at"),
-        supabase.from("vehicle_layouts").select("*").eq("project_id", projectId).order("uploaded_at", { ascending: false }).limit(1),
+        supabase.from("vehicle_layouts").select("*").eq("project_id", projectId).is("superseded_at", null).order("uploaded_at", { ascending: false }).limit(1),
         supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
         supabase.from("vehicle_field_values").select("field_key, value").eq("project_id", projectId),
         supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId).order("created_at"),
@@ -119,10 +119,12 @@ Deno.serve(async (req) => {
       .select("location_id, image_type, storage_path")
       .in("location_id", locationIds);
 
+    // Spec D1: Gastansicht zeigt nur die aktuelle Version.
     const { data: pdfs } = await supabase
       .from("location_pdfs")
-      .select("id, location_id, storage_path, file_name")
-      .in("location_id", locationIds);
+      .select("id, location_id, storage_path, file_name, version")
+      .in("location_id", locationIds)
+      .is("superseded_at", null);
 
     const { data: feedbacks } = await supabase
       .from("location_feedback")

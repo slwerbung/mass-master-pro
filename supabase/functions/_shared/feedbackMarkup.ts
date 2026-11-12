@@ -4,10 +4,14 @@ import { validateMarkup, validateMediaRef, type Markup, type MediaRef } from "./
 
 export type FeedbackExtras = { parent_id: string | null; markup: Markup | null; media_ref: MediaRef | null };
 
-/** Gehoert die Datei (storagePath) zu diesem Standort? PDFs aus location_pdfs, Bilder aus location_images. */
+/**
+ * Gehoert die Datei (storagePath) zu diesem Standort? PDFs aus location_pdfs – nur die AKTUELLE Version (Spec D1:
+ * auf aelteren Versionen wird nicht neu markiert) –, Bilder aus location_images.
+ */
 export async function mediaBelongsToLocation(sb: any, locationId: string, ref: MediaRef): Promise<boolean> {
-  const table = ref.kind === "pdf" ? "location_pdfs" : "location_images";
-  const { data } = await sb.from(table).select("id").eq("location_id", locationId).eq("storage_path", ref.storagePath).limit(1);
+  let q = sb.from(ref.kind === "pdf" ? "location_pdfs" : "location_images").select("id").eq("location_id", locationId).eq("storage_path", ref.storagePath);
+  if (ref.kind === "pdf") q = q.is("superseded_at", null);
+  const { data } = await q.limit(1);
   return !!data?.length;
 }
 

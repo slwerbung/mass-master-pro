@@ -100,7 +100,8 @@ export async function generateAufmassPdf(
     // Production/print files (Druckdaten) — always PDFs (see SplitPdfDialog).
     // Mirroring the app view (LocationApprovalMedia) these are the MAIN media
     // the customer approves; the old export dropped them entirely.
-    supabase.from("location_pdfs").select("location_id, storage_path, file_name").in("location_id", locationIds),
+    // Spec D1: nur die aktuelle Version.
+    supabase.from("location_pdfs").select("location_id, storage_path, file_name").in("location_id", locationIds).is("superseded_at", null),
     withMarkup
       ? supabase.from("location_feedback").select("id, location_id, message, author_name, status, created_at, parent_id, markup, media_ref")
         .in("location_id", locationIds).order("created_at", { ascending: true })

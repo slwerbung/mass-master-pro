@@ -27,6 +27,9 @@ import { FloorPlanApproval, PlanPage } from "@/components/FloorPlanApproval";
 import { Maximize2, PenLine } from "lucide-react";
 import ReviewViewer from "@/components/review/ReviewViewer";
 import { locationCustomerSource, vehicleCustomerSource } from "@/components/review/sources";
+import { buildReviewVersions } from "@/components/review/versions";
+import { ApprovalProof } from "@/components/ApprovalProof";
+import { currentRows, isNewForViewer, markVersionSeen, type VersionedRow } from "@/lib/fileVersions";
 import type { ReviewFile, ReviewSource } from "@/components/review/types";
 import type { LayerItem } from "@/components/review/MarkupLayer";
 import { numberTopLevel, type Markup, type MediaRef } from "@/lib/markup";
@@ -108,7 +111,11 @@ const CustomerView = () => {
   const [images, setImages] = useState<any[]>([]);
   const [fsOpen, setFsOpen] = useState(false);
   // Spec C: Prüfmodus (Standort oder Fahrzeuglayout), aktuelle Seite je Medium, Rückfrage bei offenen Korrekturen.
-  const [review, setReview] = useState<{ source: ReviewSource; title: string; initialRef: MediaRef | null } | null>(null);
+  const [review, setReview] = useState<{ source: ReviewSource; title: string; initialRef: MediaRef | null; footer?: React.ReactNode } | null>(null);
+  // Spec D1: alle Versionen der Druckdateien (je Standort) bzw. des Layouts, „Neu“-Markierung je Standort/Layout.
+  const [pdfVersionRows, setPdfVersionRows] = useState<Record<string, VersionedRow[]>>({});
+  const [vehicleLayoutRows, setVehicleLayoutRows] = useState<VersionedRow[]>([]);
+  const [newVersion, setNewVersion] = useState<Record<string, boolean>>({});
   const [mediaRefs, setMediaRefs] = useState<Record<string, MediaRef | null>>({});
   const [confirmAsk, setConfirmAsk] = useState<{ text: string; resolve: (ok: boolean) => void } | null>(null);
   const askConfirm = (text: string) => new Promise<boolean>((resolve) => setConfirmAsk({ text, resolve }));
@@ -316,7 +323,7 @@ const CustomerView = () => {
             { data: values }, { data: fbs },
           ] = await Promise.all([
             supabase.from("vehicle_images").select("*").eq("project_id", projectId).order("created_at"),
-            supabase.from("vehicle_layouts").select("*").eq("project_id", projectId).order("uploaded_at", { ascending: false }).limit(1),
+            supabase.from("vehicle_layouts").select("*").eq("project_id", projectId).is("superseded_at", null).order("uploaded_at", { ascending: false }).limit(1),
             supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
             supabase.from("vehicle_field_values").select("field_key, value").eq("project_id", projectId),
             supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId).order("created_at"),
@@ -444,13 +451,26 @@ const CustomerView = () => {
       if (locationIds.length > 0) {
         const [{ data: imgs }, { data: pdfs }, { data: approvData }, feedbackResponse, { data: detailRows }] = await Promise.all([
           supabase.from("location_images").select("location_id, image_type, storage_path").in("location_id", locationIds),
-          supabase.from("location_pdfs").select("id, location_id, storage_path, file_name").in("location_id", locationIds),
-          supabase.from("location_approvals").select("location_id, approved").in("location_id", locationIds),
+          (supabase as any).from("location_pdfs").select("id, location_id, storage_path, file_name, version, superseded_at, uploaded_at, uploaded_by, version_note").in("location_id", locationIds).order("version", { ascending: false }),
+          (supabase as any).from("location_approvals").select("location_id, approved, approved_version").in("location_id", locationIds),
           (supabase as any).from("location_feedback").select("*").in("location_id", locationIds).order("created_at"),
           supabase.from("detail_images").select("id, location_id, caption, annotated_path, created_at").in("location_id", locationIds).order("created_at", { ascending: true }),
         ]);
 
-        const pdfEntries = (pdfs || []).map((p: any) => ({ location_id: p.location_id, image_type: "pdf", storage_path: p.storage_path, file_name: p.file_name, id: p.id }));
+        // Spec D1: angezeigt wird die aktuelle Version; alle Versionen stehen im Prüfmodus zur Wahl.
+        const versionMap: Record<string, VersionedRow[]> = {};
+        for (const p of (pdfs || []) as any[]) (versionMap[p.location_id] ??= []).push(p);
+        setPdfVersionRows(versionMap);
+        const approvedVer: Record<string, number> = {};
+        for (const a of (approvData || []) as any[]) if (a.approved && a.approved_version) approvedVer[a.location_id] = Math.max(approvedVer[a.location_id] || 0, a.approved_version);
+        const fresh: Record<string, boolean> = {};
+        for (const [locId, rows] of Object.entries(versionMap)) {
+          const cur = currentRows(rows)[0]?.version;
+          fresh[locId] = isNewForViewer(`loc:${locId}`, cur, approvedVer[locId]);
+          markVersionSeen(`loc:${locId}`, cur);
+        }
+        setNewVersion((m) => ({ ...m, ...fresh }));
+        const pdfEntries = currentRows((pdfs || []) as any[]).map((p: any) => ({ location_id: p.location_id, image_type: "pdf", storage_path: p.storage_path, file_name: p.file_name, id: p.id, version: p.version }));
         setImages([...(imgs || []), ...pdfEntries]);
         // Bug fix: the main location images (annotated) need their signed URLs
         // resolved too — previously only detail images were resolved here, so
@@ -847,14 +867,23 @@ const CustomerView = () => {
         { data: approval },
       ] = await Promise.all([
         supabase.from("vehicle_images").select("*").eq("project_id", projectId).order("created_at"),
-        supabase.from("vehicle_layouts").select("*").eq("project_id", projectId).order("uploaded_at", { ascending: false }).limit(1),
+        (supabase as any).from("vehicle_layouts").select("*").eq("project_id", projectId).order("version", { ascending: false }),
         supabase.from("vehicle_field_config").select("*").eq("is_active", true).order("sort_order"),
         supabase.from("vehicle_field_values").select("field_key, value").eq("project_id", projectId),
         supabase.from("vehicle_layout_feedback").select("*").eq("project_id", projectId).order("created_at"),
-        supabase.from("vehicle_layout_approval").select("approved").eq("project_id", projectId),
+        (supabase as any).from("vehicle_layout_approval").select("approved, approved_version").eq("project_id", projectId),
       ]);
       setVehicleImages(imgs || []);
-      setVehicleLayout(layouts && layouts.length > 0 ? layouts[0] : null);
+      const allLayouts = (layouts || []) as VersionedRow[];
+      const curLayout = currentRows(allLayouts)[0] ?? null;
+      setVehicleLayoutRows(allLayouts);
+      setVehicleLayout(curLayout);
+      {
+        const approvedV = Math.max(0, ...((approval as any[]) || []).filter((a: any) => a.approved && a.approved_version).map((a: any) => a.approved_version));
+        const fresh = isNewForViewer(`veh:${projectId}`, curLayout?.version, approvedV || null);
+        markVersionSeen(`veh:${projectId}`, curLayout?.version);
+        setNewVersion((m) => ({ ...m, __vehicle: fresh }));
+      }
       setVehicleFieldConfigs(configs || []);
       const vals: Record<string, string> = {};
       (values || []).forEach((v: any) => { vals[v.field_key] = v.value || ""; });
@@ -1077,8 +1106,15 @@ const CustomerView = () => {
       initialRef: mediaRefs[loc.id] ?? null,
       source: locationCustomerSource({
         locationId: loc.id, assignmentId: selectedAssignment.id, files: locationFiles(annotated, pdfEntries),
+        versions: (() => {
+          if (!viewSettings.customerShowPrintFiles) return undefined;
+          const v = buildReviewVersions(pdfVersionRows[loc.id] || [], (p) => getSignedImageUrl(p), () => "pdf");
+          return v.length > 1 ? v : undefined;
+        })(),
         customerId: session.id, authorName: session.name || "Kunde",
       }),
+      footer: <ApprovalProof kind="location" projectId={selectedAssignment.project_id} locationId={loc.id}
+        currentVersion={currentRows(pdfVersionRows[loc.id] || [])[0]?.version ?? null} />,
     });
   };
 
@@ -1205,7 +1241,7 @@ const CustomerView = () => {
             <Card className={vehicleApproved ? "border-green-500/50 bg-green-50/30 dark:bg-green-950/10" : ""}>
               <CardHeader className="p-4 pb-2">
                 <div className="flex items-start justify-between gap-3">
-                  <CardTitle className="text-base">Fahrzeuglayout</CardTitle>
+                  <CardTitle className="text-base">Fahrzeuglayout <VersionBadge version={vehicleLayout?.version} isNew={!!newVersion.__vehicle} show /></CardTitle>
                   {vehicleLayout && !isLimitedGuestMode && (
                     <Button size="sm" variant={vehicleApproved ? "outline" : "default"} onClick={toggleVehicleApproval} disabled={savingVehicleApproval}>
                       <Check className="h-4 w-4 mr-1" /> {vehicleApproved ? "Freigabe zurücknehmen" : "Layout freigeben"}
@@ -1232,9 +1268,14 @@ const CustomerView = () => {
                       <Button size="sm" variant="outline" onClick={() => setReview({
                         title: "Fahrzeuglayout",
                         initialRef: mediaRefs.__vehicle ?? null,
+                        footer: <ApprovalProof kind="vehicle" projectId={selectedAssignment.project_id} currentVersion={vehicleLayout.version ?? null} />,
                         source: vehicleCustomerSource({
                           projectId: selectedAssignment.project_id,
                           files: [{ kind: /\.pdf$/i.test(vehicleLayout.file_name || "") ? "pdf" : "image", storagePath: vehicleLayout.storage_path, url: getVehiclePublicUrl(vehicleLayout.storage_path), name: vehicleLayout.file_name || "Layout" }],
+                          versions: (() => {
+                            const v = buildReviewVersions(vehicleLayoutRows, (p) => getVehiclePublicUrl(p), (r) => /\.pdf$/i.test(r.file_name || "") ? "pdf" : /\.(png|jpe?g|webp|gif)$/i.test(r.file_name || "") ? "image" : null);
+                            return v.length > 1 ? v : undefined;
+                          })(),
                           customerId: isRealCustomerId(session?.id) ? session!.id : null,
                           authorName: session?.name || localStorage.getItem("guest_name") || "Kunde",
                         }),
@@ -1567,6 +1608,7 @@ const CustomerView = () => {
                           <CardTitle className="text-lg">
                             Standort {loc.location_number}
                             {loc.location_name && <span className="font-normal text-muted-foreground ml-2">· {loc.location_name}</span>}
+                            <VersionBadge version={pdfEntries[0]?.version} isNew={!!newVersion[loc.id]} show={viewSettings.customerShowPrintFiles} />
                           </CardTitle>
                           <p className="text-xs text-muted-foreground mt-1">Erstellt am {formatDateTimeSafe((loc as any).created_at ?? (loc as any).createdAt)}</p>
                         </div>
@@ -1693,7 +1735,7 @@ const CustomerView = () => {
 
       {review && (
         <ReviewViewer open onOpenChange={(v) => { if (!v) setReview(null); }} source={review.source} title={review.title}
-          initialRef={review.initialRef} startDrawing
+          initialRef={review.initialRef} startDrawing footer={review.footer}
           onChanged={() => {
             if (review.source.kind === "vehicle" && selectedAssignment) loadVehicleData(selectedAssignment.project_id, selectedAssignment.id);
             else reloadFeedbacks(locations.map((l: any) => l.id));
@@ -1716,5 +1758,15 @@ const CustomerView = () => {
     </div>
   );
 };
+
+/** Spec D1: „v3“ bzw. „v3 · Neu“ – erst ab der zweiten Version. */
+function VersionBadge({ version, isNew, show }: { version?: number | null; isNew: boolean; show: boolean }) {
+  if (!show || !version || version < 2) return null;
+  return (
+    <span className={`ml-2 inline-flex items-center rounded px-1.5 py-0.5 align-middle text-[11px] font-semibold ${isNew ? "bg-amber-100 text-amber-800" : "bg-primary/10 text-primary"}`}>
+      v{version}{isNew ? " · Neu" : ""}
+    </span>
+  );
+}
 
 export default CustomerView;
