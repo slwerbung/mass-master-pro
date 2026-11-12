@@ -6,6 +6,8 @@
 // automations don't eagerly pull the PDF library into their bundle.
 
 import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { numberTopLevel, type DrawOp } from "./markup.ts";
+import { hexColor, markupItemsFor, pdfMarkupOps, type FeedbackRow } from "./markupPdf.ts";
 
 const HERO_GRAPHQL_URL = "https://login.hero-software.de/api/external/v9/graphql";
 const HERO_UPLOAD_URL = "https://login.hero-software.de/app/v8/FileUploads/upload";
@@ -62,14 +64,17 @@ export interface AufmassPdfParams {
   projectNumber: string;
   customerName: string;
   companyName: string;
+  /** Spec C: Korrekturen (Markierungen + Kommentarliste) einzeichnen. Standard aus – bestehende Automationen bleiben unveraendert. */
+  withMarkup?: boolean;
 }
+
 
 // Builds a branded A4 PDF: title page + one page per location with the
 // annotated image and the location's field values. Returns null when the
 // project has no locations.
 export async function generateAufmassPdf(
   supabase: SupabaseClient,
-  { projectId, projectNumber, customerName, companyName }: AufmassPdfParams,
+  { projectId, projectNumber, customerName, companyName, withMarkup = false }: AufmassPdfParams,
 ): Promise<Uint8Array | null> {
   const { PDFDocument, StandardFonts, rgb } = await import("https://esm.sh/pdf-lib@1.17.1");
 
@@ -90,13 +95,26 @@ export async function generateAufmassPdf(
   const fieldOrder: string[] = (fieldCfgRes.data || []).map((f: any) => f.field_key as string);
 
   const locationIds = locations.map((l: any) => l.id as string);
-  const [{ data: locImages }, { data: locPdfs }] = await Promise.all([
+  const [{ data: locImages }, { data: locPdfs }, { data: feedback }, { data: origImages }] = await Promise.all([
     supabase.from("location_images").select("location_id, storage_path").in("location_id", locationIds).eq("image_type", "annotated"),
     // Production/print files (Druckdaten) — always PDFs (see SplitPdfDialog).
     // Mirroring the app view (LocationApprovalMedia) these are the MAIN media
     // the customer approves; the old export dropped them entirely.
     supabase.from("location_pdfs").select("location_id, storage_path, file_name").in("location_id", locationIds),
+    withMarkup
+      ? supabase.from("location_feedback").select("id, location_id, message, author_name, status, created_at, parent_id, markup, media_ref")
+        .in("location_id", locationIds).order("created_at", { ascending: true })
+      : Promise.resolve({ data: [] as any[] }),
+    withMarkup
+      ? supabase.from("location_images").select("location_id, storage_path").in("location_id", locationIds).eq("image_type", "original")
+      : Promise.resolve({ data: [] as any[] }),
   ]);
+  const feedbackMap = new Map<string, FeedbackRow[]>();
+  for (const f of (feedback || []) as FeedbackRow[]) (feedbackMap.get(f.location_id) ?? feedbackMap.set(f.location_id, []).get(f.location_id)!).push(f);
+  const photoPathsMap = new Map<string, Set<string>>();
+  for (const r of [...(locImages || []), ...(origImages || [])] as any[]) {
+    (photoPathsMap.get(r.location_id) ?? photoPathsMap.set(r.location_id, new Set()).get(r.location_id)!).add(r.storage_path);
+  }
 
   const imagePathMap = new Map<string, string>(
     (locImages || []).map((img: any) => [img.location_id as string, img.storage_path as string]),
@@ -156,6 +174,34 @@ export async function generateAufmassPdf(
     x: ML, y: 30, size: 8, font: fontReg, color: rgb(0.65, 0.65, 0.65),
   });
 
+  const drawOps = (pg: any, ops: DrawOp[]) => {
+    for (const o of ops) {
+      const color = hexColor(rgb, o.color);
+      try {
+        switch (o.op) {
+          case "line": pg.drawLine({ start: { x: o.x1, y: o.y1 }, end: { x: o.x2, y: o.y2 }, thickness: 1.5, color }); break;
+          case "rect": pg.drawRectangle({ x: o.x, y: o.y, width: o.w, height: o.h, borderColor: color, borderWidth: 1.5 }); break;
+          case "ellipse": pg.drawEllipse({ x: o.cx, y: o.cy, xScale: Math.max(o.rx, 0.5), yScale: Math.max(o.ry, 0.5), borderColor: color, borderWidth: 1.5 }); break;
+          case "polyline":
+            for (let i = 1; i < o.pts.length; i++) pg.drawLine({ start: { x: o.pts[i - 1][0], y: o.pts[i - 1][1] }, end: { x: o.pts[i][0], y: o.pts[i][1] }, thickness: 1.5, color });
+            break;
+          case "text": {
+            const t = sanitize(o.text, 200);
+            if (t) pg.drawText(t, { x: o.x, y: o.y - 9, size: 9, font: fontBold, color });
+            break;
+          }
+          case "badge": {
+            if (!o.label) break;
+            pg.drawCircle({ x: o.x, y: o.y, size: 7, color: o.done ? GREY : color, borderColor: WHITE, borderWidth: 1 });
+            const tw = fontBold.widthOfTextAtSize(o.label, 7);
+            pg.drawText(o.label, { x: o.x - tw / 2, y: o.y - 2.5, size: 7, font: fontBold, color: WHITE });
+            break;
+          }
+        }
+      } catch { /* eine kaputte Markierung bricht das PDF nie ab */ }
+    }
+  };
+
   const footerText = sanitize(`${companyName} · Captfix · ${projectNumber}`, 120);
   const drawHeaderBand = (pg: any, title: string, sub: string) => {
     pg.drawRectangle({ x: 0, y: A4H - 52, width: A4W, height: 52, color: BRAND });
@@ -178,7 +224,7 @@ export async function generateAufmassPdf(
       // Embed every production page up front (once), each file independently so
       // one broken print file doesn't drop the others.
       const prodFiles = pdfMap.get(loc.id) || [];
-      const prodPages: { ep: any; label: string }[] = [];
+      const prodPages: { ep: any; label: string; path: string; pageNo: number }[] = [];
       let prodFailed = false;
       for (const pf of prodFiles) {
         try {
@@ -188,7 +234,7 @@ export async function generateAufmassPdf(
           const eps = await pdfDoc.embedPdf(src, src.getPageIndices());
           const multi = eps.length > 1;
           eps.forEach((ep: any, pi: number) =>
-            prodPages.push({ ep, label: multi ? `${pf.file_name} · S.${pi + 1}` : pf.file_name }));
+            prodPages.push({ ep, label: multi ? `${pf.file_name} · S.${pi + 1}` : pf.file_name, path: pf.storage_path, pageNo: pi + 1 }));
         } catch {
           prodFailed = true; // noted as a field on the page; keep going
         }
@@ -220,14 +266,22 @@ export async function generateAufmassPdf(
       page.drawRectangle({ x: ML, y: mediaY, width: CW, height: mediaH, color: LIGHT });
 
       const main = prodPages[0]?.ep || null;
+      const fb = withMarkup ? feedbackMap.get(loc.id) || [] : [];
+      const pdfItems = (path: string, pageNo: number) =>
+        fb.length ? markupItemsFor(fb, (r) => r.kind === "pdf" && r.storagePath === path && r.page === pageNo) : [];
       let mainLabel = "";
       if (main) {
         const { w, h } = fitContain(boxW, boxH, main.width, main.height);
-        page.drawPage(main, { x: ML + (CW - w) / 2, y: mediaY + (mediaH - h) / 2, width: w, height: h });
+        const box = { x: ML + (CW - w) / 2, y: mediaY + (mediaH - h) / 2, w, h };
+        page.drawPage(main, { x: box.x, y: box.y, width: w, height: h });
+        drawOps(page, pdfMarkupOps(pdfItems(prodPages[0].path, prodPages[0].pageNo), box));
         mainLabel = "Produktionsdatei";
       } else if (photoEmbed) {
         const { w, h } = fitContain(boxW, boxH, photoEmbed.width, photoEmbed.height);
-        page.drawImage(photoEmbed, { x: ML + (CW - w) / 2, y: mediaY + (mediaH - h) / 2, width: w, height: h });
+        const box = { x: ML + (CW - w) / 2, y: mediaY + (mediaH - h) / 2, w, h };
+        page.drawImage(photoEmbed, { x: box.x, y: box.y, width: w, height: h });
+        const mine = photoPathsMap.get(loc.id);
+        if (fb.length && mine) drawOps(page, pdfMarkupOps(markupItemsFor(fb, (r) => r.kind === "image" && mine.has(r.storagePath)), box));
         mainLabel = "Foto";
       } else {
         page.drawText("Kein Bild vorhanden", { x: ML + pad, y: mediaY + mediaH / 2, size: 10, font: fontReg, color: GREY });
@@ -283,7 +337,7 @@ export async function generateAufmassPdf(
 
       // ── Remaining production pages (page 2+) as full pages ──
       for (let i = 1; i < prodPages.length; i++) {
-        const { ep, label } = prodPages[i];
+        const { ep, label, path, pageNo } = prodPages[i];
         const pp = pdfDoc.addPage([A4W, A4H]);
         drawHeaderBand(pp, "Produktionsdatei", `${headerLabel}  ·  ${label}`);
         const availW = CW;
@@ -291,7 +345,50 @@ export async function generateAufmassPdf(
         const topY = A4H - 52 - 12;
         const { w, h } = fitContain(availW, availH, ep.width, ep.height);
         pp.drawPage(ep, { x: ML + (CW - w) / 2, y: topY - h, width: w, height: h });
+        drawOps(pp, pdfMarkupOps(pdfItems(path, pageNo), { x: ML + (CW - w) / 2, y: topY - h, w, h }));
         drawFooterBand(pp);
+      }
+
+      // ── Korrekturen als Liste (nummeriert wie die Markierungen) ──
+      const tops = fb.filter((f) => !f.parent_id);
+      if (tops.length) {
+        const numbers = numberTopLevel(fb);
+        const fmt = (iso: string) => fmtDate(new Date(iso));
+        let cp = pdfDoc.addPage([A4W, A4H]);
+        drawHeaderBand(cp, "Korrekturen", `${headerLabel}  ·  Projekt ${projectNumber}`);
+        let cy = A4H - 52 - 24;
+        const wrap = (text: string, width: number, size: number): string[] => {
+          const words = sanitize(text, 2000).split(" ");
+          const lines: string[] = [];
+          let cur = "";
+          for (const w of words) {
+            const next = cur ? `${cur} ${w}` : w;
+            if (fontReg.widthOfTextAtSize(next, size) > width && cur) { lines.push(cur); cur = w; } else cur = next;
+          }
+          if (cur) lines.push(cur);
+          return lines;
+        };
+        const line = (text: string, x: number, size: number, font: any, color: any) => {
+          if (cy < 44) {
+            drawFooterBand(cp);
+            cp = pdfDoc.addPage([A4W, A4H]);
+            drawHeaderBand(cp, "Korrekturen (Fortsetzung)", `${headerLabel}  ·  Projekt ${projectNumber}`);
+            cy = A4H - 52 - 24;
+          }
+          cp.drawText(text, { x, y: cy, size, font, color });
+          cy -= size + 4;
+        };
+        for (const f of tops) {
+          const done = f.status === "done";
+          const nr = f.markup ? numbers.get(f.id) : undefined;
+          line(sanitize(`${nr ? `[${nr}] ` : ""}${f.author_name || ""} · ${fmt(f.created_at)} · ${done ? "umgesetzt" : "offen"}`, 200), ML, 9, fontBold, done ? GREY : BLACK);
+          for (const l of wrap(f.message, CW - 8, 9)) line(l, ML + 6, 9, fontReg, done ? GREY : BLACK);
+          for (const r of fb.filter((x) => x.parent_id === f.id)) {
+            for (const l of wrap(`> ${r.author_name || ""} (${fmt(r.created_at)}): ${r.message}`, CW - 20, 8)) line(l, ML + 16, 8, fontReg, GREY);
+          }
+          cy -= 4;
+        }
+        drawFooterBand(cp);
       }
     } catch (e) {
       // A single problematic location must never abort the whole document.
