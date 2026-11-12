@@ -7,6 +7,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, type MailUser } from "../_shared/email/http.ts";
 import { requireMailUser } from "../_shared/email/http.ts";
+import { canSee, isShadow } from "../_shared/projects/access.ts";
 import { evaluateAll } from "../_shared/projects/evaluate.ts";
 import { daysBetween } from "../_shared/projects/rules.ts";
 import { normalizeDocuments } from "../_shared/projects/docs.ts";
@@ -20,17 +21,8 @@ const must = <T extends { error: any }>(r: T): T => {
 const isAdmin = (u: MailUser) => u.role === "admin";
 const DOC_LABEL: Record<string, string> = { offer: "Angebot", confirmation: "Auftragsbestätigung", delivery_note: "Lieferschein", measurement: "Aufmaß", calculation: "Kalkulation", letter: "Brief" };
 
-/** Mitarbeiter sehen Projekte, bei denen sie Bearbeiter sind oder noch niemand zugewiesen ist; Admin sieht alle. */
-const canSee = (u: MailUser, p: { assignee_emails: string[] }) =>
-  isAdmin(u) || !p.assignee_emails?.length || (!!u.email && p.assignee_emails.includes(u.email.toLowerCase()));
-
-async function shadowMode(sb: any): Promise<boolean> {
-  const { data } = await sb.from("app_config").select("value").eq("key", "projects_write_enabled").maybeSingle();
-  return data?.value !== "true";
-}
-
 async function log(sb: any, user: MailUser, action: string, heroId: number | null, payload: Record<string, unknown>) {
-  await sb.from("project_actions_log").insert({ user: user.name || user.email || user.id, action, hero_id: heroId, payload, shadow: await shadowMode(sb) });
+  await sb.from("project_actions_log").insert({ user: user.name || user.email || user.id, action, hero_id: heroId, payload, shadow: await isShadow(sb) });
 }
 
 const PROJECT_COLS = "hero_id, project_nr, name, kunde, ort, gewerk, step_id, step_name, step_since, assignee_emails, hero_created";
@@ -65,7 +57,7 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
     const projects = await loadProjects(sb, ids);
     const visible = (id: number) => { const p = projects.get(id); return !!p && canSee(user, p); };
     return {
-      shadow: await shadowMode(sb),
+      shadow: await isShadow(sb),
       cards: (cards.data || []).filter((c: any) => !c.bundled && visible(Number(c.hero_id))).length,
       cleanup: (cards.data || []).filter((c: any) => c.bundled && visible(Number(c.hero_id))).length,
       followups: (fus.data || []).filter((f: any) => visible(Number(f.hero_id))).length,
@@ -194,6 +186,13 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
     must(await sb.from("project_rules").update(patch).eq("key", String(body.key || "")));
     return { ok: true };
   },
+  /** Schalter „Schreiben nach HERO“. Aus = Schattenmodus. */
+  async save_write_enabled({ sb, user, body }) {
+    const on = body.enabled === true;
+    must(await sb.from("app_config").upsert({ key: "projects_write_enabled", value: on ? "true" : "false" }, { onConflict: "key" }));
+    await log(sb, user, "set_write_enabled", null, { enabled: on });
+    return { writeEnabled: on };
+  },
   async save_bundle_days({ sb, body }) {
     const n = Math.round(Number(body.days));
     if (!(n >= 7 && n <= 730)) throw new Error("Aufräum-Schwelle: 7 bis 730 Tage.");
@@ -203,7 +202,7 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
 };
 
 /** Nur Admins. */
-const ADMIN_ONLY = new Set(["settings", "save_step", "save_rule", "save_bundle_days"]);
+const ADMIN_ONLY = new Set(["settings", "save_step", "save_rule", "save_bundle_days", "save_write_enabled"]);
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
