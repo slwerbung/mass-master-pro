@@ -25,3 +25,7 @@ Nur lesende Prüfungen gegen HERO und Supabase. Schreibende Tests (Logbuch, Stat
 - `_shared/hero.ts` gibt es nicht; der HERO-Client liegt in `supabase/functions/_shared/email/hero.ts` (genutzt von email-action, email-api, email-draft, email-process, booking-*).
 - `spec-captfix-okt-2026.md` liegt nicht im Repo; CaptFix A–E ist laut Git-Verlauf und `CLAUDE.md` umgesetzt.
 - `hero_set_step()` existiert nur live in der DB, nicht in `supabase/migrations/`.
+
+## Entscheidung (12.11.2026)
+
+Logbuch, Statuswechsel, Termine (`category_id`, `partner_ids`) und `create_document` laufen schon produktiv in `email-action`/`heroOps.ts`/`booking-api`. Ein eigener Schreibtest an einem Testprojekt entfällt. Offen bleibt nur, was Phase 3/4 braucht (Telefonnummer des Kontakts, Dokument-Direktlink, AB aus Angebot per API) – wird dort geprüft.

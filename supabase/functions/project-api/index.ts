@@ -76,10 +76,11 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
   /** Stapel, Aufraeum-Karte und Wiedervorlagen in einem Aufruf. */
   async list({ sb, user }) {
     const now = new Date();
-    const [cards, fus, rules] = await Promise.all([
+    const [cards, fus, rules, cfg] = await Promise.all([
       sb.from("project_cards").select("id, hero_id, rule_key, category, priority, state, bundled, reasons, created_at").eq("state", "open").order("priority", { ascending: true }),
       sb.from("followups").select("id, hero_id, due_at, reason, stage").eq("target_type", "project").is("done_at", null).order("due_at", { ascending: true }),
-      sb.from("project_rules").select("key, label, suggestion, channel"),
+      sb.from("project_rules").select("key, label, suggestion, channel, followup_days, followup_reason"),
+      sb.from("app_config").select("value").eq("key", "projects_bundle_after_days").maybeSingle(),
     ]);
     must(cards); must(fus); must(rules);
     const ids = [...new Set([...(cards.data || []), ...(fus.data || [])].map((r: any) => Number(r.hero_id)))];
@@ -89,11 +90,12 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
       const p = projects.get(Number(c.hero_id));
       const r = ruleBy.get(c.rule_key);
       return p && canSee(user, p)
-        ? { id: c.id, ruleKey: c.rule_key, ruleLabel: r?.label ?? c.rule_key, suggestion: r?.suggestion ?? "", channel: r?.channel ?? "api", category: c.category, reasons: c.reasons, project: projectView(p, now) }
+        ? { id: c.id, ruleKey: c.rule_key, ruleLabel: r?.label ?? c.rule_key, suggestion: r?.suggestion ?? "", channel: r?.channel ?? "api", followupDays: r?.followup_days ?? null, followupReason: r?.followup_reason ?? "", category: c.category, reasons: c.reasons, project: projectView(p, now) }
         : null;
     };
     const mapped = (cards.data || []).map((c: any) => ({ c, v: card(c) })).filter((x: any) => x.v);
     return {
+      bundleAfterDays: Number(cfg.data?.value) || 60,
       stack: mapped.filter((x: any) => !x.c.bundled).map((x: any) => x.v),
       cleanup: mapped.filter((x: any) => x.c.bundled).map((x: any) => x.v),
       followups: (fus.data || []).map((f: any) => {
