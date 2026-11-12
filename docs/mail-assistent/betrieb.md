@@ -314,9 +314,12 @@ an die **eigene Adresse** (Empfänger in der Karte änderbar) – kommt die Vorl
   `email-sync` reicht die Sitzung an `email-process` weiter; beide akzeptieren dafür jetzt jeden Mail-App-Benutzer (vorher nur Admin).
 - **Abruf jede Minute** (`email-sync`, pg_cron `* * * * *`). Ein Lauf ohne neue Mails ist ein IMAP-Login; die KI läuft nur für neue
   Mails – mehr Takt kostet keine KI. `email-process` bleibt als Nachzügler alle 5 Minuten, nach neuen Mails startet ihn `email-sync` sofort.
-- **Große Mails** (> 8 MB, `bigMail.ts`): nur Kopfzeilen und Text werden geholt, die Anhänge stehen als Hinweis im Text („im Mailprogramm
-  öffnen“). Vorher sprengte so eine Mail die Edge Function (HTTP 546), und weil der nächste Lauf an derselben Stelle weitermachte, hing das
-  Postfach dauerhaft (sl@, 29.10.).
+- **Große Mails** (> 8 MB, `bigMail.ts`): nicht die ganze Quelle durch mailparser, sondern Kopfzeilen + Text, danach jeder Anhang
+  **einzeln** per IMAP (`fetchPart`, eigener base64-Dekoder). Vorher sprengte so eine Mail die Edge Function (HTTP 546), und weil der
+  nächste Lauf an derselben Stelle weitermachte, hing das Postfach dauerhaft (sl@, 29.10.). Bis 12.11.2026 wurden die Anhänge dabei ganz
+  weggelassen, und der Hinweis darauf ging bei weitergeleiteten Mails beim Kürzen ab dem Zitat verloren („Mail kommt ohne Anhang an“).
+  Nur Anhänge > 15 MB fehlen noch; der Hinweis dazu steht jetzt OBEN im Text. „Anhänge neu laden“ (`email-mailbox` `attachments_reload`)
+  arbeitet bei großen Mails ebenfalls Teil für Teil.
 - **Hängt ein Postfach doch an einer Mail** (`email_accounts.sync_stuck`): 2. Versuch an derselben Stelle holt nur eine Mail, ab dem 3. wird
   sie übersprungen – Hinweis „Mail UID … übersprungen“ in `last_error`/Protokoll, die Mail im Mailprogramm ansehen.
 - **Push** (Einstellungen → *Benachrichtigungen*, jeder Benutzer für sich, je Gerät einschalten): „Zu entscheiden“ (Standard an; an einen

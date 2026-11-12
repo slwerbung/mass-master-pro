@@ -11,7 +11,8 @@
 
 import { ImapFlow } from "imapflow";
 import { decodeCharset, decodeTransfer, pickDisplayParts, type PartRef } from "./mailHtml.ts";
-import { attachmentParts, BIG_MAIL_BYTES, htmlToText, omittedNote, slimSource } from "./bigMail.ts";
+import { type AttachmentRef, attachmentRefs, BIG_MAIL_BYTES, decodePart, htmlToText, slimSource, slimText, tooBigNote } from "./bigMail.ts";
+import { MAX_ATTACHMENT_BYTES } from "./sync.ts";
 
 export interface ImapCreds {
   host: string;
@@ -34,6 +35,8 @@ export interface RawMessage {
   uid: number;
   flags: string[];
   source: Uint8Array;
+  /** Nur bei grossen Mails (schlanke Quelle): Anhaenge, die einzeln nachgeholt werden (`fetchPart`). */
+  parts?: AttachmentRef[];
 }
 
 const FETCH_CHUNK = 3;
@@ -188,8 +191,11 @@ export async function fetchNew(
   }
 }
 
-/** Grosse Mail: Kopfzeilen + Textteil statt der ganzen Quelle (Mailbox-Lock haelt der Aufrufer). */
-async function fetchSlim(client: ImapFlow, uid: number, size: number): Promise<RawMessage | null> {
+/**
+ * Grosse Mail: Kopfzeilen + Textteil statt der ganzen Quelle (Mailbox-Lock haelt der Aufrufer). Die Anhaenge kommen
+ * als Liste mit (`parts`) und werden danach einzeln geholt; nur was dafuer zu gross ist, steht als Hinweis im Text.
+ */
+async function fetchSlim(client: ImapFlow, uid: number, _size: number): Promise<RawMessage | null> {
   const head: any = await client.fetchOne(String(uid), { uid: true, flags: true, bodyStructure: true, headers: true }, { uid: true });
   if (!head?.headers) return null;
   let text = "";
@@ -205,8 +211,33 @@ async function fetchSlim(client: ImapFlow, uid: number, size: number): Promise<R
       }
     }
   }
-  const note = omittedNote(size, head.bodyStructure ? attachmentParts(head.bodyStructure) : []);
-  return { uid, flags: [...(head.flags ?? [])], source: slimSource(new Uint8Array(head.headers), `${text.trim()}\n\n${note}`) };
+  const parts = head.bodyStructure ? attachmentRefs(head.bodyStructure) : [];
+  const tooBig = parts.filter((p) => p.size > MAX_ATTACHMENT_BYTES).map((p) => ({ name: p.filename, size: p.size }));
+  const note = tooBig.length ? tooBigNote(tooBig) : null;
+  return { uid, flags: [...(head.flags ?? [])], source: slimSource(new Uint8Array(head.headers), slimText(text, note)), parts };
+}
+
+/** Groesse und BODYSTRUCTURE einer Mail (billig, ohne Inhalt). null, wenn es die UID nicht (mehr) gibt. */
+export async function fetchStructure(client: ImapFlow, folder: string, uid: number): Promise<{ size: number; bodyStructure: any } | null> {
+  const lock = await client.getMailboxLock(folder, { readOnly: true });
+  try {
+    const m: any = await client.fetchOne(String(uid), { uid: true, size: true, bodyStructure: true }, { uid: true });
+    return m?.bodyStructure ? { size: Number(m.size ?? 0), bodyStructure: m.bodyStructure } : null;
+  } finally {
+    lock.release();
+  }
+}
+
+/** Einen einzelnen Anhang holen und dekodieren – ohne die ganze Mail durch mailparser (CPU-Limit). */
+export async function fetchPart(client: ImapFlow, folder: string, uid: number, ref: AttachmentRef): Promise<Uint8Array | null> {
+  const lock = await client.getMailboxLock(folder, { readOnly: true });
+  try {
+    const msg: any = await client.fetchOne(String(uid), { bodyParts: [ref.key] }, { uid: true });
+    const b = msg?.bodyParts?.get(ref.key);
+    return b ? decodePart(new Uint8Array(b), ref.encoding) : null;
+  } finally {
+    lock.release();
+  }
 }
 
 /** Legt fehlende Ordner an (idempotent). Gibt die neu angelegten zurueck. */

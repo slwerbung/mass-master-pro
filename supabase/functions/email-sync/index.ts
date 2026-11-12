@@ -8,7 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 import { fail, isCronCall, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
 import { canAccount } from "../_shared/email/access.ts";
 import { accountPassword } from "../_shared/email/config.ts";
-import { fetchNew, withImap } from "../_shared/email/imap.ts";
+import { fetchNew, fetchPart, withImap } from "../_shared/email/imap.ts";
 import { parseRaw } from "../_shared/email/parseRaw.ts";
 import { claimAccount, recordRun, releaseAccount, syncStore } from "../_shared/email/store.ts";
 import { type AccountRow, syncAccount } from "../_shared/email/sync.ts";
@@ -35,6 +35,8 @@ async function syncOne(sb: any, id: string, origin: string, cronSecret: string |
               const r = await fetchNew(client, folder, o);
               return { state: r.state, baseline: r.baseline, messages: r.messages, more: r.more, skipped: r.skipped ?? null };
             },
+            // Anhaenge grosser Mails einzeln (ohne mailparser, siehe bigMail.ts).
+            fetchPart: (folder, uid, ref) => fetchPart(client, folder, uid, ref),
           },
         }),
     );

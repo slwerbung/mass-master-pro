@@ -9,7 +9,8 @@
 // (gleiche Message-ID) fangen die Datenbank-Eindeutigkeit und `insertMessage` ab.
 
 import { isIgnorableAttachment, normalizeSubject, storageKeyName } from "./mail.ts";
-import type { ParsedMail } from "./parse.ts";
+import type { ParsedAttachment, ParsedMail } from "./parse.ts";
+import type { AttachmentRef } from "./bigMail.ts";
 import type { Direction, FolderMap } from "./types.ts";
 
 export const SYNC_LIMIT = 15;
@@ -40,7 +41,13 @@ export interface StuckMarker { key: string; tries: number }
 export const STUCK_SINGLE = 2;
 export const STUCK_SKIP = 3;
 
-export interface RawFetched { uid: number; flags: string[]; source: Uint8Array }
+export interface RawFetched {
+  uid: number;
+  flags: string[];
+  source: Uint8Array;
+  /** Grosse Mail (nur Kopfzeilen + Text geholt): Anhaenge, die einzeln ueber `SyncImap.fetchPart` kommen. */
+  parts?: AttachmentRef[];
+}
 export interface FetchedFolder {
   state: { uidValidity: string; uidNext: number; exists: number };
   baseline: number;
@@ -52,6 +59,8 @@ export interface FetchedFolder {
 
 export interface SyncImap {
   fetchNew(folder: string, o: { lastUid: number | null; uidValidity: string | null; limit: number; backfill: number; skipFirst?: boolean }): Promise<FetchedFolder>;
+  /** Einen Anhang einer grossen Mail einzeln holen (dekodiert). */
+  fetchPart?(folder: string, uid: number, ref: AttachmentRef): Promise<Uint8Array | null>;
 }
 
 export interface MessageInsert {
@@ -211,7 +220,7 @@ async function storeOne(
     sent_at: m.sentAt,
     body_text: m.body,
     headers: m.headers,
-    has_attachments: m.attachments.length > 0,
+    has_attachments: m.attachments.length > 0 || !!raw.parts?.length,
     status: "neu",
     current_folder: folder,
     current_uid: raw.uid,
@@ -220,8 +229,7 @@ async function storeOne(
 
   let n = 0;
   const failed: string[] = [];
-  for (const a of m.attachments) {
-    n++;
+  const saveAttachment = async (a: ParsedAttachment) => {
     // Ausgeblendet heisst nur „nicht in der Liste“ – gespeichert wird jede Datei, damit man sie spaeter noch bekommt.
     const ignored = isIgnorableAttachment(a);
     let path: string | null = null;
@@ -238,6 +246,24 @@ async function storeOne(
     await d.store.insertAttachment({
       message_id: row.id, filename: a.filename, mime: a.mime, size: a.size, storage_path: path, is_ignored: ignored,
     });
+  };
+  for (const a of m.attachments) {
+    n++;
+    await saveAttachment(a);
+  }
+  // Grosse Mail: die Anhaenge einzeln holen (die schlanke Quelle hat keine). Einer nach dem anderen, damit nie mehr
+  // als ein Anhang im Speicher liegt. Scheitert einer, bleibt seine Zeile ohne Datei – „Anhänge neu laden“ holt sie.
+  for (const ref of raw.parts ?? []) {
+    n++;
+    let content: Uint8Array | null = null;
+    if (ref.size <= MAX_ATTACHMENT_BYTES && d.imap.fetchPart) {
+      try {
+        content = await d.imap.fetchPart(folder, raw.uid, ref);
+      } catch (e) {
+        failed.push(`${ref.filename}: ${(e as Error).message}`);
+      }
+    }
+    await saveAttachment({ filename: ref.filename, mime: ref.mime, size: content?.length ?? ref.size, inline: ref.inline, content });
   }
   if (failed.length) throw new Error(`Anhang nicht gespeichert – ${failed.join(" | ")}`);
   return "stored";
