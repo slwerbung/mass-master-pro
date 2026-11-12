@@ -17,7 +17,10 @@
 - **Nach einer Aktion:** bleibt das Projekt offen (Status, Notiz, Termine), schlägt die Oberfläche eine Wiedervorlage vor; nach Abschließen/Archivieren kommt die nächste Karte.
 - **Noch nicht in Phase 2:** Angebot/AB erstellen (Arbeitsmodus, Phase 4), Stummschalten, Mailwege (Phase 3).
 
-## Deploy
+## Stand 12.11.2026 – deployt, Schalter aus
+`project-action` (neu) und `project-api` (v3) sind deployt (`verify_jwt: false`). Geprüft: beide starten, Aufrufe ohne Anmeldung werden mit „Nicht angemeldet“ abgewiesen. `projects_write_enabled` steht auf `false` – es wurde nichts nach HERO geschrieben. Die Oberfläche ist erst nach dem Merge von #66 live (Vercel).
+
+## Deploy (für spätere Änderungen)
 ```bash
 supabase functions deploy project-action project-api --no-verify-jwt
 ```
