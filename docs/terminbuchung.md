@@ -22,7 +22,7 @@ hält Stand + bewusste Abweichungen fest.
   identisch. Richtet sich beim nächsten Deploy von selbst.
 - **Echtes Routing:** ✅ im Code (OpenRouteService). Wartet nur noch auf den
   Schlüssel im Supabase-Secret `ORS_API_KEY` und `booking_travel_mode=routing`.
-- **HERO-Leserichtung:** ✅ `booking-hero-sync` deployt, pg_cron alle 10 Minuten,
+- **HERO-Leserichtung:** ✅ `booking-hero-sync` deployt, pg_cron jede Minute (bis 12.11.2026 alle 10),
   live gegen Produktion geprüft (12 Termine im Fenster → 10 Blocks). Liest
   Termine **und** Abwesenheiten (Urlaub).
 - **Mail-Outbox:** ✅ `booking-mail` deployt, pg_cron alle 5 Minuten.
@@ -321,9 +321,22 @@ angeboten. Ohne hinterlegten Standort bleibt er drin — eine fehlende Koordinat
 darf nicht die ganze Terminliste leeren.
 
 ## M4 — HERO-Leserichtung (`supabase/functions/booking-hero-sync`)
-HERO hat fuer uns **keine Webhooks** freigeschaltet, also pollt pg_cron alle
-10 Minuten (`booking-hero-sync`, Header `x-poll-secret`; ein Admin-Token geht
-auch, fuer den Knopf „Jetzt abgleichen“).
+HERO hat fuer uns **keine Webhooks** freigeschaltet, also pollt pg_cron jede
+Minute (`booking-hero-sync`, Header `x-poll-secret`; ein Admin-Token geht
+auch, fuer den Knopf „Jetzt abgleichen“). Bis 12.11.2026 lief der Abgleich alle
+10 Minuten — ein frisch in der Plantafel angelegter oder verlaengerter Termin
+war so lange noch buchbar.
+
+**Live-Abgleich beim Buchen:** `create` in `booking-api` holt vor dem
+Neurechnen des Tages die Termine und Abwesenheiten DIESES Tages fuer DIESEN
+Mitarbeiter direkt aus HERO (`_shared/booking/hero-live.ts`,
+`refreshHeroDay`) und schreibt sie genauso nach `busy_block` wie der
+Cron-Lauf (gleiche `source_ref`, Abgleich statt nur ergaenzen). Danach rechnet
+die Engine den Tag wie immer — Fahrzeit und Kategorie-Regeln gelten also
+unveraendert. Ist der Slot inzwischen belegt, antwortet `create` mit 409
+„Dieser Termin ist nicht mehr verfügbar.“ HERO-Fehler oder Timeout (6 s)
+brechen die Buchung nicht ab; dann gilt der Stand des letzten Cron-Laufs.
+Regeln in `hero-live.ts` und `booking-hero-sync` muessen zueinander passen.
 
 Der Lauf liest **zwei** Quellen fuer die naechsten `booking_hero_sync_days`
 (60) Tage und schreibt daraus `busy_block(source='hero')`:
