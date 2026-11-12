@@ -59,6 +59,7 @@ import {
   formatAddress, geocode, heroCreateAppointment, heroDeleteAppointment,
   heroProjectByNumber, loadHeroContext, type GeocodeCache, type HeroAddress,
 } from "../_shared/booking/hero.ts";
+import { refreshHeroDay } from "../_shared/booking/hero-live.ts";
 import type { Geo } from "../_shared/booking/types.ts";
 
 const cors = {
@@ -742,6 +743,13 @@ Deno.serve(async (req) => {
 
         // Tag NEU rechnen — dem Frontend wird nicht geglaubt.
         const dayStart = DateTime.fromISO(slot.startsAt, { zone: "utc" }).setZone(TZ).startOf("day");
+
+        // Vorher den Tag dieses Mitarbeiters LIVE aus HERO holen: der
+        // Cron-Abgleich kennt einen gerade in der Plantafel angelegten oder
+        // verlaengerten Termin noch nicht. Fehler hier brechen nicht ab —
+        // dann gilt der Stand des letzten Abgleichs.
+        const live = await refreshHeroDay(db, s.heroApiKey, staffId, dayStart.toUTC().toISO()!);
+        if (!live.ok) console.warn("[booking] Live-Abgleich:", live.error);
         const res = await availabilityFor(
           db, s, dayStart.toUTC().toISO()!, dayStart.plus({ days: 1 }).toUTC().toISO()!, geo, ruleSetKey,
           eingeladenVon ? eingeladenVon.id : null, body.d,

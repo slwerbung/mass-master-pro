@@ -181,8 +181,10 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
   Schreibt nur Whitelist-Schlüssel/-Spalten – der Admin-Token darf kein
   Generalschlüssel für `app_config` sein
 - `booking-hero-sync` – liest HERO-Termine **und Abwesenheiten (Urlaub)** in
-  `busy_block(source='hero')`, damit sie Slots blockieren. pg_cron alle 10 Min
-  (`x-poll-secret`)
+  `busy_block(source='hero')`, damit sie Slots blockieren. pg_cron jede Minute
+  (`x-poll-secret`). Zusaetzlich gleicht `booking-api` beim Buchen den Tag des
+  Mitarbeiters live ab (`_shared/booking/hero-live.ts`); Regeln dort und hier
+  muessen zueinander passen
 - `booking-mail` – Outbox-Worker fuer die Terminmails via Resend (Bestaetigung
   mit .ics, interne Benachrichtigung, Erinnerung, Absage). pg_cron alle 5 Min
 - `booking-invite` – Terminlink + Einladungsmail, verlangt einen
