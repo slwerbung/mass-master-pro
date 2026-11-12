@@ -162,7 +162,7 @@ describe("Kunde finden – nicht nur ueber die exakte Absenderadresse", () => {
   it("unscharf nur bei genau einem Kunden; die eigene Firma zaehlt nie", async () => {
     const two = deps({ searchContacts: async () => [hit(1, 1, "a@firma.de"), hit(2, 2, "b@firma.de")] });
     expect((await matchMessage(input({ from: "c@firma.de" }), two)).knownContact).toBe(false);
-    const own = deps({ searchContacts: async () => [hit(3, 3, "info@slwerbung.de", "SL WERBUNG")] });
+    const own = deps({ ownCompany: "SL WERBUNG", searchContacts: async () => [hit(3, 3, "info@slwerbung.de", "SL WERBUNG")] });
     expect((await matchMessage(input({ from: "notifications@captfix.app", company: "SL WERBUNG" }), own)).knownContact).toBe(false);
   });
 

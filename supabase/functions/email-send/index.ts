@@ -22,8 +22,8 @@ import {
   quoteBlock, referenceChain, replyAllRecipients, replySubject, stripTrailingSignature,
 } from "../_shared/email/compose.ts";
 import { buildComposedMime, sendComposed } from "../_shared/email/composeSend.ts";
+import { loadCompanyName, senderName } from "../_shared/email/company.ts";
 
-const COMPANY_NAME = "SL WERBUNG";
 const MSG_COLS = "id, account_id, category, thread_id, message_id, refs, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, body_text, folder, current_folder, draft_message_id, draft_uid, draft_text, hero_project_match_id, hero_logged_at, match_info";
 type Mode = "reply" | "replyAll" | "forward";
 const asMode = (m: unknown): Mode | null => (m === "reply" || m === "replyAll" || m === "forward" ? m : null);
@@ -161,7 +161,7 @@ const handlers: Record<string, (sb: any, body: any, user: MailUser) => Promise<u
     const chain = orig && mode !== "forward" ? referenceChain(orig) : { inReplyTo: null, references: [] };
     const messageId = newMessageId(acc.address);
     const raw = await buildComposedMime({
-      from: { name: COMPANY_NAME, address: acc.address }, recipients, subject, text: parts.text, html: parts.html,
+      from: { name: senderName(await loadCompanyName(sb), acc), address: acc.address }, recipients, subject, text: parts.text, html: parts.html,
       messageId, inReplyTo: chain.inReplyTo, references: chain.references, attachments: files,
     });
 

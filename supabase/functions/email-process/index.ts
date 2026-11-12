@@ -28,8 +28,8 @@ import { understandPending } from "../_shared/email/understand.ts";
 import { notifyNewMail } from "../_shared/email/push.ts";
 import type { Gewerk } from "../_shared/email/gewerke.ts";
 import type { StepIds } from "../_shared/email/steps.ts";
+import { senderName } from "../_shared/email/company.ts";
 
-const COMPANY_NAME = "SL WERBUNG";
 
 async function processOne(sb: any, id: string) {
   const acc = await claimAccount(sb, id);
@@ -57,7 +57,7 @@ async function processOne(sb: any, id: string) {
     const hero = heroKey ? matchHero(sb, heroKey, excluded) : null;
     const t = await matchPending(
       id, matchStore(sb), hero,
-      { prefixes: gewerke.map((g) => g.short).filter(Boolean), ownAddresses: [acc.address, acc.username], knowledge: wissen }, llm,
+      { prefixes: gewerke.map((g) => g.short).filter(Boolean), ownAddresses: [acc.address, acc.username], ownCompany: llm.companyName, knowledge: wissen }, llm,
     );
 
     // 3. Handeln
@@ -75,7 +75,7 @@ async function processOne(sb: any, id: string) {
     const replyRules = await getConfig<string>(sb, "reply_rules", "");
     const lexoffice = await getConfig<{ address?: string }>(sb, "lexoffice", {});
     const writer = fm.drafts
-      ? imapDraftWriter(() => lazy.raw(), { drafts: fm.drafts, trash: fm.trash ?? null, fromName: COMPANY_NAME, fromAddress: acc.address })
+      ? imapDraftWriter(() => lazy.raw(), { drafts: fm.drafts, trash: fm.trash ?? null, fromName: senderName(llm.companyName ?? "", acc), fromAddress: acc.address })
       : null;
     actCtx.extra = buildExtra({
       docTypes: heroCfg.document_types ?? {},
@@ -84,7 +84,7 @@ async function processOne(sb: any, id: string) {
         confirmationTypeId: heroCfg.confirmation_document_type_id ?? null, offerTypeId: heroCfg.offer_document_type_id ?? null,
         steps: (heroCfg.steps ?? {}) as StepIds, gewerke,
       }) : null,
-      forward: lexoffice?.address ? makeForwarder(sb, acc, String(lexoffice.address), lazy, COMPANY_NAME, await accountPassword(acc)) : null,
+      forward: lexoffice?.address ? makeForwarder(sb, acc, String(lexoffice.address), lazy, senderName(llm.companyName ?? "", acc), await accountPassword(acc)) : null,
       draft: {
         canWrite: !!writer,
         deps: {

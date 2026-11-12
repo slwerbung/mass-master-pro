@@ -134,7 +134,7 @@ export function buildInstructionRequest(text: string, c: InstructionContext): Ll
   return {
     system: [{
       text: [
-        "Du uebersetzt die Anweisung eines Mitarbeiters von SL WERBUNG zu einer Kundenmail in einen festen Plan fuer HERO.",
+        "Du uebersetzt die Anweisung eines Mitarbeiters der Firma {{FIRMA}} zu einer Kundenmail in einen festen Plan fuer HERO.",
         "Moeglich sind: (1) Projekt – neu anlegen, einem bestehenden Projekt zuordnen oder unveraendert lassen;",
         "(2) offer = Angebotsentwurf im Projekt vorbereiten; (3) appointments = Kalendertermine in HERO (einer oder mehrere);",
         "(4) actions = weitere HERO-Aktionen (Ansprechpartner, Kontaktdaten, Adresse, Projektname/-status, Mitarbeiter zuweisen, Aufgabe, Logbuch);",

@@ -89,7 +89,7 @@ export default function Knowledge() {
         <CardHeader><CardTitle>Neuer Eintrag</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <Field label="Was soll der Assistent wissen?">
-            <Textarea rows={2} maxLength={1000} value={n.text} onChange={(e) => setN({ ...n, text: e.target.value })} placeholder="z. B. „Anfragen über das Kontaktformular von slwerbung.de sind immer neue Anfragen, auch wenn der Absender wordpress@ ist.“" />
+            <Textarea rows={2} maxLength={1000} value={n.text} onChange={(e) => setN({ ...n, text: e.target.value })} placeholder="z. B. „Anfragen über das Kontaktformular unserer Website sind immer neue Anfragen, auch wenn der Absender wordpress@ ist.“" />
           </Field>
           <div className="flex flex-wrap items-end gap-3">
             <Field label="Gilt für" hint="Leer = alle Mails, sonst a@b.de oder @b.de">

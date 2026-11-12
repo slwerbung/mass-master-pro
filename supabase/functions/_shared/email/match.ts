@@ -59,6 +59,8 @@ export interface MatchDeps {
   prefixes: string[];
   /** Eigene Adressen – bei ausgehenden Mails ist der Empfaenger der Gegenueber. */
   ownAddresses: string[];
+  /** Eigener Firmenname (`legal_info`): taucht als „Kontakt" in Formular-Mails auf, ist aber nie der Kunde. */
+  ownCompany?: string;
 }
 
 export interface MatchOutcome {
@@ -97,8 +99,6 @@ const LEGAL_FORMS = /\b(gmbh|mbh|ug|ag|kg|ohg|gbr|ek|e\.k\.|inh|co|haftungsbesch
 export const normalizeCompany = (c: string | null | undefined): string =>
   String(c ?? "").toLowerCase().replace(/&/g, " ").replace(LEGAL_FORMS, " ").replace(/[^a-z0-9äöüß]/g, "");
 
-/** Eigene Firma: taucht als „Kontakt" in Formular-Mails auf, ist aber nie der Kunde. */
-const OWN_COMPANY = normalizeCompany("SL WERBUNG");
 
 /** Adressen, unter denen der Kunde gesucht wird: Gegenueber zuerst, bei eingehenden Mails dazu die Adressen aus der Mail. */
 export function contactAddresses(m: MatchInput, own: string[]): string[] {
@@ -115,7 +115,7 @@ export function contactAddresses(m: MatchInput, own: string[]): string[] {
 }
 
 /** Den HERO-Kunden finden: exakte Adresse, sonst Firmen-Domain, sonst Firmenname (unscharf nur bei genau einem Kunden). */
-export async function findCustomer(m: MatchInput, addrs: string[], d: Pick<MatchDeps, "contactsByEmail" | "searchContacts" | "ownAddresses">): Promise<{ contacts: HeroContact[]; customer: CustomerRef } | null> {
+export async function findCustomer(m: MatchInput, addrs: string[], d: Pick<MatchDeps, "contactsByEmail" | "searchContacts" | "ownAddresses" | "ownCompany">): Promise<{ contacts: HeroContact[]; customer: CustomerRef } | null> {
   const pick = (contacts: HeroContact[], via: CustomerVia) => ({
     contacts, customer: { id: contacts[0].customerId, name: contacts[0].name, email: contacts[0].email, via },
   });
@@ -132,7 +132,7 @@ export async function findCustomer(m: MatchInput, addrs: string[], d: Pick<Match
     if (oneCustomer(hits)) return pick(hits, "domain");
   }
   const comp = normalizeCompany(m.company);
-  if (comp.length >= 4 && comp !== OWN_COMPANY) {
+  if (comp.length >= 4 && comp !== normalizeCompany(d.ownCompany)) {
     const hits = (await d.searchContacts(String(m.company))).filter((h) => normalizeCompany(h.company) === comp);
     if (oneCustomer(hits)) return pick(hits, "firma");
   }

@@ -131,7 +131,7 @@ export function buildConfirmationRequest(m: ConfirmationMsg, docs: SourceDoc[], 
     system: [{
       cache: true,
       text: [
-        "Du bereitest fuer SL WERBUNG (Schilder- und Werbetechnik) eine AUFTRAGSBESTAETIGUNG zu einer Bestellung vor. Ein Mensch prueft sie in HERO, bevor sie rausgeht.",
+        "Du bereitest fuer die Firma {{FIRMA}} (Schilder- und Werbetechnik) eine AUFTRAGSBESTAETIGUNG zu einer Bestellung vor. Ein Mensch prueft sie in HERO, bevor sie rausgeht.",
         "",
         "Regeln:",
         "- Waehle aus den Vorlagen (fruehere ABs des Kunden, Angebot im Projekt) genau die Positionen, die bestellt werden: source_doc_id + source_uid exakt aus der Liste.",

@@ -18,8 +18,8 @@ import { projectDraftContext, loadHeroKey } from "../_shared/email/hero.ts";
 import { LazyImap } from "../_shared/email/lazyImap.ts";
 import { draftStore, loadReference } from "../_shared/email/store.ts";
 import { makeForwarder } from "../_shared/email/forwardWiring.ts";
+import { loadCompanyName, senderName } from "../_shared/email/company.ts";
 
-const COMPANY_NAME = "SL WERBUNG";
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -43,6 +43,7 @@ Deno.serve(async (req) => {
     if (body.action === "forward_beleg" && m.category !== "beleg" && !(m.extracted as any)?.beleg?.is_booking_document) return fail("Nur Belege lassen sich an Lexware weiterleiten.");
     const { data: acc } = await sb.from("email_accounts").select("*").eq("id", m.account_id).maybeSingle();
     if (!acc) return fail("Postfach nicht gefunden.");
+    const COMPANY_NAME = senderName(await loadCompanyName(sb), acc);
 
     const fm = acc.folder_map || {};
 
