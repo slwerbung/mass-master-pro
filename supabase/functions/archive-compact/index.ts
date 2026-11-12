@@ -1,5 +1,9 @@
 // Spec E: Archivierte Projekte speicherschonend ablegen. Aufruf: pg_cron (x-poll-secret = app_config.archive_poll_secret)
-// oder Admin (adminToken; Testlauf/„Jetzt ausführen“). Body: { projectId?, dryRun?, action?: "run" | "probe" }.
+// oder Admin (adminToken; Testlauf/„Jetzt ausführen“). Body: { projectId?, dryRun?, action?: "run" | "probe" | "image_tasks" | "image_done" }.
+//
+// Fotos verkleinern: über Supabase Storage Image Transformation, wenn der Tarif sie hat. Sonst übernimmt das der Browser
+// des Admins (Adminmenü → Archiv & Speicher → „Fotos verkleinern“): image_tasks liefert signierte Download-/Upload-Links,
+// image_done protokolliert. In der Function selbst wird nie neu kodiert (CPU-Limit).
 //
 // Regeln (siehe _shared/archive.ts):
 // - Fotos werden verkleinert und AM SELBEN PFAD ersetzt (ein Schritt, nie ein Verweis auf eine fehlende Datei). Die
@@ -58,6 +62,10 @@ Deno.serve(async (req) => {
   for (const o of (objs || []) as any[]) objects.set(o.name, { size: Number(o.size) || 0, project_id: o.project_id });
 
   if (body.action === "probe") return json(await probe(sb, objects, settings));
+  if (body.action === "image_tasks" || body.action === "image_done") {
+    if (secret) return json({ error: "Nur aus dem Adminmenü." }, 403);
+    return body.action === "image_tasks" ? json(await imageTasks(sb, objects, settings, body)) : json(await imageDone(sb, objects, body));
+  }
 
   // ---- Kandidaten
   let projects: any[] = [];
@@ -101,8 +109,12 @@ async function resizeViaTransform(sb: any, path: string, dims: { w: number; h: n
   const r = await fetch(data.signedUrl);
   const ct = r.headers.get("content-type") || "";
   if (!r.ok || !ct.startsWith("image/")) { engineUsed = "none"; await r.body?.cancel(); return null; }
+  const out = new Uint8Array(await r.arrayBuffer());
+  // Ohne Transformation im Tarif kommt das Original unverändert zurück – dann gilt sie als nicht verfügbar.
+  const od = imageDims(out);
+  if (!od || Math.max(od.w, od.h) > Math.max(t.w, t.h) + 2) { engineUsed = "none"; return null; }
   engineUsed = "transform";
-  return new Uint8Array(await r.arrayBuffer());
+  return out;
 }
 
 async function download(sb: any, path: string): Promise<Uint8Array | null> {
@@ -118,7 +130,12 @@ async function probe(sb: any, objects: Map<string, { size: number }>, s: Archive
   const dims = bytes ? imageDims(bytes) : null;
   if (!bytes || !dims) return { ok: true, path: cand[0], note: "kein lesbares Bild" };
   const out = await resizeViaTransform(sb, cand[0], dims, s);
-  return { ok: true, path: cand[0], bytes: bytes.length, dims, engine: engineUsed, transformed: out ? { bytes: out.length, dims: imageDims(out) } : null };
+  // Signierter Upload-Link (für „Fotos verkleinern“ im Browser) – nur erzeugen, nichts hochladen.
+  const { data: up, error: upErr } = await sb.storage.from(BUCKET).createSignedUploadUrl(cand[0], { upsert: true });
+  return {
+    ok: true, path: cand[0], bytes: bytes.length, dims, engine: engineUsed, transformed: out ? { bytes: out.length, dims: imageDims(out) } : null,
+    signedUpload: !!up?.token, signedUploadError: upErr?.message ?? null,
+  };
 }
 
 // ------------------------------------------------------------------ Projekt verarbeiten
@@ -214,6 +231,7 @@ async function processProject(
         if (o.timeLeft() < 5000) { res.partial = true; break; }
         const before = size(ph.path);
         if (before == null || before < 150 * 1024) continue; // kleine Dateien lohnen nicht
+        if (!o.dryRun && engineUsed === "none") continue;     // ohne Transformation: Fotos macht der Browser des Admins
         try {
           const bytes = await download(sb, ph.path);
           const dims = bytes ? imageDims(bytes) : null;
@@ -290,4 +308,46 @@ async function processProject(
   }
   for (let i = 0; i < log.length; i += 200) await sb.from("storage_compaction_log").insert(log.slice(i, i + 200));
   return res;
+}
+
+// ------------------------------------------------------------------ Fotos im Browser des Admins verkleinern
+/** Komprimierbare Fotos archivierter (fälliger oder schon komprimierter) Projekte, die noch nicht verkleinert wurden. */
+async function imageTasks(sb: any, objects: Map<string, { size: number; project_id: string | null }>, s: ArchiveSettings, body: any) {
+  const limit = Math.min(60, Math.max(1, Number(body.limit) || 30));
+  let q = sb.from("projects").select("id, project_number, archived_at, compacted_at").not("archived_at", "is", null);
+  if (body.projectId) q = q.eq("id", String(body.projectId));
+  const { data: projects } = await q;
+  const due = ((projects || []) as any[]).filter((p) => body.projectId || p.compacted_at || compactionDue({ archived_at: p.archived_at, compacted_at: null }, s));
+  const dueIds = new Set(due.map((p) => p.id));
+  const number = new Map(due.map((p) => [p.id, p.project_number]));
+  // schon erledigt (verkleinert oder geprüft) → nicht noch einmal
+  const { data: done } = await sb.from("storage_compaction_log").select("storage_path").eq("action", "resize").eq("dry_run", false);
+  const skip = new Set(((done || []) as any[]).map((r) => r.storage_path));
+  const cands = [...objects.entries()]
+    .filter(([name, o]) => o.project_id && dueIds.has(o.project_id) && !skip.has(name) && o.size >= 150 * 1024)
+    .filter(([name]) => /^(images|detail-images|vehicle-images|vehicle-measured|floor-plans)\//.test(name) && isCompressibleImage(name, "image/jpeg"))
+    .sort((a, b) => b[1].size - a[1].size);
+  const tasks = [];
+  for (const [name, o] of cands.slice(0, limit)) {
+    const [{ data: dl }, { data: up }] = await Promise.all([
+      sb.storage.from(BUCKET).createSignedUrl(name, 900),
+      sb.storage.from(BUCKET).createSignedUploadUrl(name, { upsert: true }),
+    ]);
+    if (!dl?.signedUrl || !up?.token) continue;
+    tasks.push({ projectId: o.project_id, projectNumber: number.get(o.project_id!) ?? "", path: name, size: o.size, downloadUrl: dl.signedUrl, uploadToken: up.token });
+  }
+  return { ok: true, tasks, remaining: Math.max(0, cands.length - tasks.length), maxPx: s.imageMaxPx, quality: s.imageQuality };
+}
+
+async function imageDone(sb: any, objects: Map<string, { size: number; project_id: string | null }>, body: any) {
+  const items = (Array.isArray(body.items) ? body.items : []).slice(0, 100);
+  const rows = items
+    .filter((i: any) => typeof i?.path === "string" && objects.has(i.path))
+    .map((i: any) => ({
+      project_id: objects.get(i.path)!.project_id, storage_path: i.path, action: i.error ? "error" : "resize",
+      bytes_before: Number(i.before) || objects.get(i.path)!.size, bytes_after: i.error ? null : Number(i.after) || null, dry_run: false,
+      error: i.error ? String(i.error).slice(0, 300) : null,
+    }));
+  if (rows.length) await sb.from("storage_compaction_log").insert(rows);
+  return { ok: true, logged: rows.length };
 }

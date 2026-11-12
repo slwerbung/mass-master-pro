@@ -27,6 +27,8 @@ import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
 import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
+import { evictArchivedProjects } from "@/lib/archiveEviction";
+import { daysUntilArchive, getArchivePolicy, projectArchiveAction } from "@/lib/projectArchive";
 
 interface ProjectListItem {
   id: string;
@@ -39,6 +41,9 @@ interface ProjectListItem {
   isLocal: boolean;
   archivedAt?: Date | null;
   employeeId?: string | null;
+  /** Spec E */
+  archivePinned?: boolean;
+  compactedAt?: string | null;
 }
 
 interface ProjectFieldConfig {
@@ -70,6 +75,7 @@ const Projects = () => {
   const [projectFieldConfig, setProjectFieldConfig] = useState<ProjectFieldConfig[]>([]);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [showArchived, setShowArchived] = useState(false);
+  const [archiveWarn, setArchiveWarn] = useState<Record<string, number>>({});
   const [showUnassigned, setShowUnassigned] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   // Termineinladung ohne Projektbezug: der Dauerlink des angemeldeten
@@ -101,7 +107,7 @@ const Projects = () => {
 
       const projectQuery = supabase
         .from("projects")
-        .select("id, project_number, project_type, customer_name, custom_fields, created_at, employee_id, archived_at")
+        .select("id, project_number, project_type, customer_name, custom_fields, created_at, updated_at, employee_id, archived_at, archive_pinned, compacted_at")
         .order("created_at", { ascending: false });
 
       const [ownedResult, assignedResult, localSummary] = await Promise.all([
@@ -120,7 +126,7 @@ const Projects = () => {
         if (assignedIds.length > 0) {
           const { data: assignedProjects } = await supabase
             .from('projects')
-            .select('id, project_number, project_type, customer_name, custom_fields, created_at, employee_id, archived_at')
+            .select('id, project_number, project_type, customer_name, custom_fields, created_at, updated_at, employee_id, archived_at, archive_pinned, compacted_at')
             .in('id', assignedIds)
             .order('created_at', { ascending: false });
           const mergedRemote = new Map<string, any>();
@@ -143,8 +149,23 @@ const Projects = () => {
           isLocal: !!local,
           archivedAt: sp.archived_at ? new Date(sp.archived_at) : null,
           employeeId: sp.employee_id || null,
+          archivePinned: !!(sp as any).archive_pinned,
+          compactedAt: (sp as any).compacted_at ?? null,
         };
       });
+      // Spec E: archivierte Projekte vom Gerät entfernen (nur lokal, nur ohne offene Änderungen).
+      evictArchivedProjects(supabaseProjects as any[]).catch(() => null);
+      // Vorwarnung „wird in n Tagen archiviert“
+      Promise.all([getArchivePolicy(), (supabase as any).rpc("projects_with_activity")]).then(([policy, res]: any[]) => {
+        if (!policy || !policy.autoArchiveDays) { setArchiveWarn({}); return; }
+        const pinned = new Set((supabaseProjects as any[]).filter((p) => p.archive_pinned).map((p) => p.id));
+        const warn: Record<string, number> = {};
+        for (const r of (res?.data || []) as any[]) {
+          const d = daysUntilArchive(r.last_activity_at, policy.autoArchiveDays, pinned.has(r.id));
+          if (d !== null && d <= (policy.warnDaysBefore ?? 7)) warn[r.id] = Math.max(0, d);
+        }
+        setArchiveWarn(warn);
+      }).catch(() => null);
 
       const supabaseIds = new Set(supabaseProjects.map(sp => sp.id));
       if (session?.role !== "employee") {
@@ -226,10 +247,10 @@ const Projects = () => {
     });
   };
 
+  // Spec E: über project-team (prüft Rechte, setzt archived_by), nicht mehr per Direkt-Update.
   const archiveProject = async (id: string) => {
     try {
-      const { error } = await supabase.from("projects").update({ archived_at: new Date().toISOString() }).eq("id", id);
-      if (error) throw error;
+      await projectArchiveAction("archive", id);
       toast.success("Projekt archiviert");
       await loadProjects(false);
     } catch (e: any) {
@@ -238,9 +259,12 @@ const Projects = () => {
   };
 
   const unarchiveProject = async (id: string) => {
+    const p = projects.find((x) => x.id === id);
+    if (p?.compactedAt && !confirm("Fotos wurden verkleinert, gelöschte Originale/alte Versionen kommen nicht zurück. Trotzdem reaktivieren?")) return;
     try {
-      const { error } = await supabase.from("projects").update({ archived_at: null }).eq("id", id);
-      if (error) throw error;
+      // Komprimiertes Projekt: lokale Kopie vorher weg, damit der Sync die verkleinerten Bilder nicht mit alten überschreibt.
+      if (p?.compactedAt) await indexedDBStorage.deleteProject(id).catch(() => null);
+      await projectArchiveAction("unarchive", id);
       toast.success("Projekt reaktiviert");
       await loadProjects(false);
     } catch (e: any) {
@@ -498,6 +522,11 @@ const Projects = () => {
                         )}
                         {!project.archivedAt && !project.employeeId && (
                           <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-slate-100 text-slate-600 border-0">Nicht zugewiesen</Badge>
+                        )}
+                        {!project.archivedAt && archiveWarn[project.id] !== undefined && (
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-100 text-amber-800 border-0" title="Ohne Aktivität wird das Projekt automatisch archiviert">
+                            {archiveWarn[project.id] === 0 ? "wird bald archiviert" : `wird in ${archiveWarn[project.id]} ${archiveWarn[project.id] === 1 ? "Tag" : "Tagen"} archiviert`}
+                          </Badge>
                         )}
                       </div>
 

@@ -134,6 +134,11 @@ const DEBOUNCE_MS = 2500;
 const _running = new Set<string>();
 const _rerun = new Set<string>();
 
+/** Steht für dieses Projekt noch ein Sync aus (geplant oder laufend)? (Spec E: lokale Kopie erst danach entfernen) */
+export function hasPendingSync(projectId: string): boolean {
+  return _debounceTimers.has(projectId) || _running.has(projectId) || _rerun.has(projectId);
+}
+
 export function scheduleSyncProject(projectId: string): void {
   const existing = _debounceTimers.get(projectId);
   if (existing) clearTimeout(existing);

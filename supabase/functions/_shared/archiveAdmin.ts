@@ -11,13 +11,16 @@ async function loadSettings(sb: any) {
   return mergeArchiveSettings(data?.value ?? null);
 }
 
-/** Öffentlich: nur der Kundenzugriff und die Kontaktdaten für „Projekt abgeschlossen“. */
+/** Öffentlich: Kundenzugriff, Kontaktdaten für „Projekt abgeschlossen“, Archivierfrist (für die Vorwarnung in der Liste). */
 export async function archivePolicy(sb: any) {
   const s = await loadSettings(sb);
   const { data } = await sb.from("app_config").select("value").eq("key", "legal_info").maybeSingle();
   let info: any = {};
   try { info = JSON.parse(data?.value || "{}") || {}; } catch { info = {}; }
-  return { customerAccessArchived: s.customerAccessArchived, contact: { name: info.companyName || "", phone: info.phone || "", email: info.email || "" } };
+  return {
+    customerAccessArchived: s.customerAccessArchived, autoArchiveDays: s.autoArchiveDays, warnDaysBefore: s.warnDaysBefore,
+    contact: { name: info.companyName || "", phone: info.phone || "", email: info.email || "" },
+  };
 }
 
 /** null = Aktion gehört nicht hierher. */

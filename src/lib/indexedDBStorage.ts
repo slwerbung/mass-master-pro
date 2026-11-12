@@ -805,6 +805,13 @@ export const indexedDBStorage = {
     await db.delete('floor-plan-images', floorPlanId);
   },
 
+  /** Spec E: alle lokal gespeicherten Projekte mit lokalem Änderungsstempel (ohne Rechteprüfung, ohne Bilder). */
+  async listLocalProjectStamps(): Promise<{ id: string; updatedAt: Date | null }[]> {
+    const db = await getDB();
+    const records = await db.getAll('projects');
+    return records.map((r: any) => ({ id: r.id, updatedAt: r.updatedAt ? new Date(r.updatedAt) : null }));
+  },
+
   async deleteProject(id: string): Promise<void> {
     const db = await getDB();
     

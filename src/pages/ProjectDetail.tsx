@@ -39,6 +39,7 @@ import { SplitPdfDialog } from "@/components/SplitPdfDialog";
 import { MeetingNotesCard } from "@/components/MeetingNotesCard";
 import ProjectTeam from "@/components/ProjectTeam";
 import { getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
+import { ArchivedBanner, ArchivePinButton, useProjectArchive } from "@/components/ProjectArchiveBar";
 
 
 // This page only shows the annotated images. Loading without the original
@@ -269,6 +270,8 @@ const ProjectDetail = () => {
     return () => { cancelled = true; };
   }, [project?.locations]);
 
+  const archive = useProjectArchive(projectId);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -311,6 +314,7 @@ const ProjectDetail = () => {
             {projectId && <div className="mt-1"><ProjectTeam projectId={projectId} /></div>}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
+            <ArchivePinButton archive={archive} />
             <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setInviteOpen(true)} title="Kunde einladen">
               <Mail className="h-4 w-4" />
             </Button>
@@ -345,6 +349,7 @@ const ProjectDetail = () => {
           </div>
         </div>
       </div>
+      <ArchivedBanner archive={archive} />
 
       {/* Page content */}
       <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-4">
