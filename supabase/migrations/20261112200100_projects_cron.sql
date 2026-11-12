@@ -1,4 +1,5 @@
 -- Projekte Phase 1: Zeitplaene. ERST ANWENDEN, wenn die Functions hero-sync und project-evaluate deployt sind.
+-- (Ein Abgleich dauert ~30 s; pg_net wartet sonst nur 5 s, deshalb das laengere Timeout.)
 -- Aufruf wie beim Mail-Assistenten: Header x-cron-secret aus app_config.email_cron_secret.
 
 create extension if not exists pg_cron;
@@ -16,7 +17,8 @@ select cron.schedule(
       'Content-Type', 'application/json',
       'x-cron-secret', (select value from public.app_config where key = 'email_cron_secret')
     ),
-    body := '{}'::jsonb
+    body := '{}'::jsonb,
+    timeout_milliseconds := 120000
   );
   $$
 );
@@ -33,7 +35,8 @@ select cron.schedule(
       'Content-Type', 'application/json',
       'x-cron-secret', (select value from public.app_config where key = 'email_cron_secret')
     ),
-    body := '{}'::jsonb
+    body := '{}'::jsonb,
+    timeout_milliseconds := 120000
   );
   $$
 );

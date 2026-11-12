@@ -16,16 +16,32 @@
 - Mitarbeiter sehen Projekte, bei denen sie Bearbeiter sind oder noch niemand zugewiesen ist; Admin alle. `info@slwerbung.de` ist über `app_config.projects_ignored_assignees` ausgenommen.
 - Schattenmodus: Phase 1 schreibt nichts nach HERO und versendet nichts; die lokale Wiedervorlage steht in `project_actions_log`.
 
-## Deploy
+## Stand 12.11.2026 – live
+Migration ...200000 und die Cron-Migration sind angewendet, `hero-sync`, `project-evaluate` und `project-api` sind deployt (`verify_jwt: false`). Erster vollständiger Abgleich:
+
+| | Ergebnis | Spec (9.11.) |
+| --- | --- | --- |
+| HERO-Projekte geladen | 1500 | – |
+| offene Projekte im Spiegel | 370 | 361 |
+| Karten im Stapel | 57 | 55 |
+| Aufräum-Karte | 281 | 280 |
+| Waisen | 0 | 0 |
+
+Zweiter Lauf: nichts doppelt angelegt, keine unnötigen Updates. Cron: `hero-sync` alle 10 Min, `project-evaluate` täglich 5:30 UTC.
+
+Beim Test aufgefallen und behoben: `jsonb` liefert die Schlüssel in anderer Reihenfolge zurück, der Vergleich der `reasons` hielt jede Karte für geändert (338 Updates je Lauf). Jetzt `canon()` in `evaluate.ts`, mit Test.
+
+## Deploy (für spätere Änderungen)
 ```bash
-supabase db push                       # nur Migration ...200000 (die Cron-Datei erst danach)
+supabase db push
 supabase functions deploy hero-sync project-evaluate project-api --no-verify-jwt
 ```
-Dann in der Mail-App → Projekte → „Jetzt abgleichen“, Ergebnis prüfen, danach `20261112200100_projects_cron.sql` anwenden.
+Ändert sich `_shared/projects/*`, `_shared/email/hero.ts` oder `_shared/email/http.ts`, müssen alle drei neu deployt werden (und alle anderen Functions, die `hero.ts`/`http.ts` importieren).
 
-## Abnahme (offen, nur live prüfbar)
-- [ ] `hero_projects` enthält alle offenen Projekte (≈ 361), Sync alle 10 Min ohne Fehler (`select * from project_runs order by created_at desc`).
-- [ ] Verteilung plausibel zum 9.11.: ≈ 55 Karten im Stapel, ≈ 280 in der Aufräum-Karte.
-- [ ] `orphans = 0` im letzten `evaluate`-Lauf.
-- [ ] Wiedervorlage legen und „Jetzt holen“.
-- [ ] Nichts in HERO geschrieben, keine Mail versendet.
+## Abnahme
+- [x] `hero_projects` enthält alle offenen Projekte (370), Lauf ohne Fehler.
+- [x] Verteilung plausibel zum 9.11. (57 Karten / 281 Aufräum-Karte).
+- [x] Waisen-Check meldet 0.
+- [x] Nichts nach HERO geschrieben (nur Lesen), keine Mail versendet.
+- [ ] Cron-Lauf alle 10 Min (`select * from project_runs order by created_at desc`).
+- [ ] Wiedervorlage legen und „Jetzt holen“ in der Oberfläche.
