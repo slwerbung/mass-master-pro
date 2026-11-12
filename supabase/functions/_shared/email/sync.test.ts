@@ -231,4 +231,44 @@ describe("syncAccount", () => {
       expect(log.msgs.map((m) => m.uid)).toEqual([13]);
     });
   });
+
+  it("grosse Mail: Anhaenge kommen einzeln ueber fetchPart, zu grosse nur als Zeile ohne Datei", async () => {
+    const { deps, log } = fake({}, { INBOX: { uids: [11] }, Sent: { uids: [], validity: "9" } });
+    const orig = deps.imap.fetchNew;
+    deps.imap.fetchNew = async (folder, o) => {
+      const r = await orig(folder, o);
+      r.messages = r.messages.map((m) => ({ ...m, parts: [
+        { key: "1.2", filename: "anhang", mime: "image/jpeg", encoding: "base64", size: 18000, inline: true },
+        { key: "2", filename: "Plan.pdf", mime: "application/pdf", encoding: "base64", size: 9_000_000, inline: false },
+        { key: "3", filename: "riesig.zip", mime: "application/zip", encoding: "base64", size: 30 * 1024 * 1024, inline: false },
+      ] }));
+      return r;
+    };
+    const fetched: string[] = [];
+    deps.imap.fetchPart = async (folder, uid, ref) => { fetched.push(`${folder}/${uid}/${ref.key}`); return new Uint8Array(ref.key === "2" ? 9_000_000 : 18000); };
+    const r = await syncAccount(acc(), deps);
+    expect(r.errors).toBe(0);
+    expect(fetched).toEqual(["INBOX/11/1.2", "INBOX/11/2"]);
+    expect(log.msgs[0].has_attachments).toBe(true);
+    expect(log.atts.map((a) => [a.filename, a.storage_path, a.is_ignored])).toEqual([
+      ["anhang", "A1/M1/1-anhang", true],
+      ["Plan.pdf", "A1/M1/2-Plan.pdf", false],
+      ["riesig.zip", null, false],
+    ]);
+  });
+
+  it("grosse Mail: scheitert ein Teil, bleibt die Zeile ohne Datei und der Fehler wird gemeldet", async () => {
+    const { deps, log } = fake({}, { INBOX: { uids: [11] }, Sent: { uids: [], validity: "9" } });
+    const orig = deps.imap.fetchNew;
+    deps.imap.fetchNew = async (folder, o) => {
+      const r = await orig(folder, o);
+      r.messages = r.messages.map((m) => ({ ...m, parts: [{ key: "2", filename: "Plan.pdf", mime: "application/pdf", encoding: "base64", size: 100, inline: false }] }));
+      return r;
+    };
+    deps.imap.fetchPart = async () => { throw new Error("Verbindung weg"); };
+    const r = await syncAccount(acc(), deps);
+    expect(r.errors).toBe(1);
+    expect(r.notes[0]).toContain("Plan.pdf: Verbindung weg");
+    expect(log.atts).toEqual([expect.objectContaining({ filename: "Plan.pdf", storage_path: null })]);
+  });
 });

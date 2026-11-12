@@ -11,14 +11,14 @@ import { createClient } from "@supabase/supabase-js";
 import { fail, isCronCall, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
 import { assertMessages } from "../_shared/email/access.ts";
 import { accountPassword } from "../_shared/email/config.ts";
-import { fetchDisplay, fetchSource, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
+import { fetchDisplay, fetchPart, fetchSource, fetchStructure, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
+import { attachmentRefs, BIG_MAIL_BYTES } from "../_shared/email/bigMail.ts";
+import type { ParsedAttachment } from "../_shared/email/parse.ts";
 import { parseRaw } from "../_shared/email/parseRaw.ts";
 import { syncStore } from "../_shared/email/store.ts";
 import { MAX_ATTACHMENT_BYTES } from "../_shared/email/sync.ts";
 import { isIgnorableAttachment, storageKeyName } from "../_shared/email/mail.ts";
 
-/** Ganze Mail nur bis zu dieser Groesse durch mailparser (sonst CPU-Limit der Edge Function). */
-const MAX_RELOAD_BYTES = 20 * 1024 * 1024;
 import { mailHtml, MAX_CACHE_CHARS } from "../_shared/email/mailHtml.ts";
 
 const MAX_IDS = 100;
@@ -69,40 +69,44 @@ const handlers: Record<string, (sb: any, body: any) => Promise<unknown>> = {
     }
   },
 
-  /** Fehlende Anhaenge nachladen (z. B. nach einem Speicherfehler beim Abholen). Vorhandene Dateien bleiben unveraendert. */
+  /**
+   * Fehlende Anhaenge nachladen (z. B. nach einem Speicherfehler beim Abholen). Vorhandene Dateien bleiben unveraendert.
+   * Kleine Mails ganz durch mailparser; grosse (> BIG_MAIL_BYTES) Anhang fuer Anhang per IMAP – die ganze Quelle
+   * durch mailparser sprengt dort das CPU-Limit (2 s) der Edge Function (HTTP 546).
+   */
   async attachments_reload(sb, body) {
     const { data: m } = await sb.from("email_messages").select(COLS).eq("id", String(body.id || "")).maybeSingle();
     if (!m) throw new Error("Mail nicht gefunden.");
     const { acc, creds } = await account(sb, m.account_id);
     const fm = acc.folder_map || {};
-    const source = await withImap(creds, async (client) => {
-      const at = await locate(client, m, [fm.inbox || "INBOX", fm.sent, fm.trash, ...Object.values(fm.folders || {})].filter(Boolean) as string[]);
-      return at ? await fetchSource(client, at.folder, at.uid) : null;
-    });
-    if (!source) throw new Error("Die Mail liegt nicht mehr im Postfach.");
-    if (source.byteLength > MAX_RELOAD_BYTES) throw new Error("Die Mail ist zu groß zum Nachladen – Anhänge bitte im Mailprogramm öffnen.");
-    const parsed = await parseRaw(source);
     const { data: have } = await sb.from("email_attachments").select("id, filename, storage_path").eq("message_id", m.id);
     const rows = (have || []) as { id: string; filename: string; storage_path: string | null }[];
     const store = syncStore(sb);
     let saved = 0;
+    let found = 0;
     const failed: string[] = [];
-    let n = 0;
     // Gleichnamige Anhaenge (z. B. zweimal „Logo.svg“) der Reihe nach zuordnen, nicht alle auf die erste Zeile.
     const used = new Set<string>();
-    for (const a of parsed.attachments) {
-      n++;
+    /** Einen Anhang ablegen; `load` holt den Inhalt erst, wenn er wirklich fehlt. */
+    const handle = async (n: number, a: Omit<ParsedAttachment, "content">, load: () => Promise<Uint8Array | null>) => {
+      found++;
       const row = rows.find((r) => r.filename === a.filename && !used.has(r.id));
       if (row) used.add(row.id);
-      if (row?.storage_path) continue;
+      if (row?.storage_path) return;
       // Auch ausgeblendete speichern – genau die fehlten bisher, wenn man sie doch brauchte.
-      const ignored = isIgnorableAttachment(a);
       let path: string | null = null;
-      if (a.content && a.size <= MAX_ATTACHMENT_BYTES) {
-        path = `${acc.id}/${m.id}/${n}-${storageKeyName(a.filename)}`;
+      let size = a.size;
+      let ignored = isIgnorableAttachment(a);
+      if (a.size <= MAX_ATTACHMENT_BYTES) {
         try {
-          await store.uploadAttachment(path, a.content, a.mime);
-          saved++;
+          const content = await load();
+          if (content) {
+            size = content.length;
+            ignored = isIgnorableAttachment({ ...a, size });
+            path = `${acc.id}/${m.id}/${n}-${storageKeyName(a.filename)}`;
+            await store.uploadAttachment(path, content, a.mime);
+            saved++;
+          }
         } catch (e) {
           path = null;
           failed.push(`${a.filename}: ${(e as Error).message}`.slice(0, 160));
@@ -113,11 +117,36 @@ const handlers: Record<string, (sb: any, body: any) => Promise<unknown>> = {
         const patch: Record<string, unknown> = { storage_path: path };
         if (!ignored) patch.is_ignored = false;
         await sb.from("email_attachments").update(patch).eq("id", row.id);
+      } else {
+        await store.insertAttachment({ message_id: m.id, filename: a.filename, mime: a.mime, size, storage_path: path, is_ignored: ignored });
       }
-      else await store.insertAttachment({ message_id: m.id, filename: a.filename, mime: a.mime, size: a.size, storage_path: path, is_ignored: ignored });
-    }
-    if (parsed.attachments.length) await sb.from("email_messages").update({ has_attachments: true }).eq("id", m.id);
-    return { found: parsed.attachments.length, saved, failed };
+    };
+    const located = await withImap(creds, async (client) => {
+      const at = await locate(client, m, [fm.inbox || "INBOX", fm.sent, fm.trash, ...Object.values(fm.folders || {})].filter(Boolean) as string[]);
+      if (!at) return false;
+      const st = await fetchStructure(client, at.folder, at.uid);
+      if (!st) return false;
+      if (st.size > BIG_MAIL_BYTES) {
+        let n = 0;
+        for (const ref of attachmentRefs(st.bodyStructure)) {
+          n++;
+          await handle(n, { filename: ref.filename, mime: ref.mime, size: ref.size, inline: ref.inline }, () => fetchPart(client, at.folder, at.uid, ref));
+        }
+        return true;
+      }
+      const source = await fetchSource(client, at.folder, at.uid);
+      if (!source) return false;
+      const parsed = await parseRaw(source);
+      let n = 0;
+      for (const a of parsed.attachments) {
+        n++;
+        await handle(n, a, async () => a.content);
+      }
+      return true;
+    });
+    if (!located) throw new Error("Die Mail liegt nicht mehr im Postfach.");
+    if (found) await sb.from("email_messages").update({ has_attachments: true }).eq("id", m.id);
+    return { found, saved, failed };
   },
 
   async trash(sb, body) {

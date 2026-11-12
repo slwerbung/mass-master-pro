@@ -197,7 +197,7 @@ Antworten/Projekte/Angebote vor. Eigene Oberfläche: `apps/mail/` (eigenes Verce
 `mitarbeiter` nur die zugeordneten Postfächer (`email_account_users`, Einstellungen → Benutzer). Jede Function prüft per `requireMailUser` +
 `_shared/email/access.ts` (`assertMessages`/`assertThread`/`assertSuggestion`/`scopeAccounts`); Einstellungen nur Admin (`ADMIN_ONLY` in email-api).
 Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-assistent/betrieb.md`.
-- Edge Functions: `email-sync` (IMAP holen, pg_cron jede Minute; Mails > 8 MB nur Text, `sync_stuck` überspringt eine Mail, an der der
+- Edge Functions: `email-sync` (IMAP holen, pg_cron jede Minute; Mails > 8 MB: Text + jeder Anhang einzeln per IMAP, nie die ganze Quelle durch mailparser, `sync_stuck` überspringt eine Mail, an der der
   Abruf wiederholt hart abbricht), `email-process` (Verstehen → Zuordnen → Handeln → Push `push.ts`),
   `email-action` (Klick auf einen Vorschlag: einzige Stelle mit schreibenden HERO-Aufrufen), `email-draft` (Antwortentwürfe,
   Lexoffice-Entwurf), `email-account-test`, `email-api` (einzige Schnittstelle der Mail-App für Daten), `email-mailbox` (IMAP aus der
