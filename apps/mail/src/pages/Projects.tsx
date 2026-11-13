@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlarmClock, Archive, CalendarPlus, Check, NotebookPen, RefreshCw, Shuffle } from "lucide-react";
+import { AlarmClock, Archive, Bot, CalendarPlus, Check, Mail, NotebookPen, RefreshCw, Shuffle } from "lucide-react";
 import { invokeFn } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { CATEGORY_NAMES, CATEGORY_STYLE, pact, papi, tageText, type ActionResult, type FollowupItem, type ProjectCard, type ProjectDetail, type ProjectList, type ProjectOverview, type ProjectView } from "@/lib/projects";
 import { Badge, Button, Card, CardContent, ErrorBox, Field, Input, Spinner } from "@/components/ui";
 import { HeroLink, heroProjectUrl } from "@/components/HeroLink";
 import { ConfirmDialog, EventsDialog, NoteDialog, StatusDialog, reportResult } from "@/components/ProjectActions";
+import { AutopilotDialog, BulkFollowupDialog, CallPanel, DraftPanel } from "@/components/ProjectFollowup";
 import { cn, errorText } from "@/lib/utils";
 
 const QK = ["projects"];
@@ -19,6 +20,8 @@ export default function Projects() {
   const [sel, setSel] = useState<string | null>(null); // Karten-ID oder "cleanup"
   const [snoozeFor, setSnoozeFor] = useState<ProjectCard | null>(null);
   const [dialog, setDialog] = useState<null | { kind: "status" | "note" | "events" | "archive"; card: ProjectCard }>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [autopilotOpen, setAutopilotOpen] = useState(false);
   const me = useMe();
 
   const overview = useQuery({ queryKey: [...QK, "overview"], queryFn: () => papi<ProjectOverview>("overview"), refetchInterval: 60_000 });
@@ -37,6 +40,8 @@ export default function Projects() {
   });
 
   const stack = list.data?.stack ?? [];
+  // Sammelkarte: nur wenn mindestens zwei Entwuerfe bereitliegen und die Regel auf „Vorschlagen“ steht.
+  const bulkCards = stack.filter((c) => c.draft && !c.draft.error && c.autopilot === "suggest");
   const cleanup = list.data?.cleanup ?? [];
   const selected = stack.find((c) => c.id === sel) ?? null;
   const showCleanup = sel === "cleanup";
@@ -98,6 +103,9 @@ export default function Projects() {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">Projekte</h1>
         {o?.shadow && <Badge variant="warn" title="Es wird nichts nach HERO geschrieben und keine Mail versendet.">Schattenmodus</Badge>}
+        <Button variant="outline" size="sm" onClick={() => setAutopilotOpen(true)} title="Autopilot je Regel: Aus / Vorschlagen / Automatisch">
+          <Bot className="h-3.5 w-3.5" /> Autopilot{!!o?.autoSent && <Badge variant="secondary" className="ml-1" title="automatisch gesendet">{o.autoSent}</Badge>}
+        </Button>
         <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
           {o?.lastSync && <span title={o.lastSync.error ?? ""}>{o.lastSync.ok ? "Stand" : "Sync-Fehler"}: {new Date(o.lastSync.created_at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}</span>}
           <Button variant="outline" size="sm" onClick={() => sync.mutate()} disabled={sync.isPending} title="HERO jetzt abfragen und Regeln anwenden">
@@ -125,6 +133,11 @@ export default function Projects() {
         <div className="grid gap-4 md:grid-cols-[22rem_minmax(0,1fr)]">
           <div className="space-y-2">
             {!stack.length && !cleanup.length && <p className="rounded-md border p-4 text-sm text-muted-foreground">Nichts zu tun – kein Projekt braucht gerade eine Entscheidung. 🎉</p>}
+            {bulkCards.length >= 2 && (
+              <button type="button" onClick={() => setBulkOpen(true)} className="flex w-full items-center gap-2 rounded-md border border-sky-300 bg-sky-50 p-3 text-left text-sm font-medium text-sky-950 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100">
+                <Mail className="h-4 w-4 shrink-0" /> {bulkCards.length} Nachfass-Mails bereit
+              </button>
+            )}
             {stack.map((c) => <StackItem key={c.id} card={c} active={c.id === sel} onClick={() => setSel(c.id)} />)}
             {cleanup.length > 0 && (
               <button type="button" onClick={() => setSel("cleanup")}
@@ -138,7 +151,8 @@ export default function Projects() {
             {selected && (
               <CardPane key={selected.id} card={selected} busy={busy} shadow={!!o?.shadow}
                 onSnooze={() => setSnoozeFor(selected)} onComplete={() => complete.mutate(selected)}
-                onDialog={(kind) => setDialog({ kind, card: selected })} />
+                onDialog={(kind) => setDialog({ kind, card: selected })}
+                onSent={(r) => afterAction(selected, r, false)} onChanged={refresh} />
             )}
             {showCleanup && <CleanupPane items={cleanup} days={list.data.bundleAfterDays} admin={!!me.data?.admin} onDone={refresh} />}
           </div>
@@ -152,6 +166,8 @@ export default function Projects() {
         <ConfirmDialog title="Projekt archivieren?" confirm="Archivieren" danger busy={archive.isPending} onCancel={() => setDialog(null)} onConfirm={() => archive.mutate(dialog.card)}
           text={<>{dialog.card.project.nr} <b>{dialog.card.project.name}</b> wird in HERO auf „Archiviert“ gesetzt{o?.shadow ? " (Schattenmodus: nur protokolliert)" : ""}.</>} />
       )}
+      {bulkOpen && <BulkFollowupDialog cards={bulkCards} admin={!!me.data?.admin} onClose={() => setBulkOpen(false)} onDone={() => { setBulkOpen(false); refresh(); }} />}
+      {autopilotOpen && <AutopilotDialog admin={!!me.data?.admin} onClose={() => setAutopilotOpen(false)} onChanged={refresh} />}
       {snoozeFor && (
         <SnoozeDialog card={snoozeFor} onClose={() => setSnoozeFor(null)}
           onDone={() => { const i = stack.findIndex((c) => c.id === snoozeFor.id); setSel(stack[i + 1]?.id ?? stack[i - 1]?.id ?? null); setSnoozeFor(null); refresh(); }} />
@@ -171,6 +187,7 @@ function StackItem({ card, active, onClick }: { card: ProjectCard; active: boole
       <div className="flex items-center gap-2">
         <CategoryTag c={card.category} />
         <span className="text-xs text-muted-foreground">{p.nr}</span>
+        {card.draft && <Mail className="h-3 w-3 text-sky-700" aria-label="Entwurf bereit" />}
         <span className="ml-auto text-xs tabular-nums text-muted-foreground">{tageText(card.reasons.days ?? p.days)}</span>
       </div>
       <div className="mt-1 truncate text-sm font-medium">{p.name || "(ohne Namen)"}</div>
@@ -184,13 +201,15 @@ type DialogKind = "status" | "note" | "events" | "archive";
 /** Hauptaktion zum Vorschlag der Regel – nur wo es sie schon gibt (Mailwege folgen mit „Nachfassen“). */
 function suggestedAction(card: ProjectCard): { label: string; dialog?: DialogKind; hero?: boolean } | null {
   if (card.ruleKey === "termine_fehlen") return { label: "Termine anlegen", dialog: "events" };
+  if (card.ruleKey === "nachfassen_verloren") return { label: "Archivieren", dialog: "archive" };
   if (["anfrage_status_alt", "haengt", "waise"].includes(card.ruleKey)) return { label: "Status ändern", dialog: "status" };
   if (card.channel === "hero") return { label: `${card.suggestion || "In HERO erledigen"} (in HERO)`, hero: true };
   return null;
 }
 
-function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog }: {
+function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog, onSent, onChanged }: {
   card: ProjectCard; busy: boolean; shadow: boolean; onSnooze: () => void; onComplete: () => void; onDialog: (k: DialogKind) => void;
+  onSent: (r: ActionResult) => void; onChanged: () => void;
 }) {
   const p = card.project;
   const main = suggestedAction(card);
@@ -232,6 +251,9 @@ function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog }: {
 
         {card.suggestion && <p className="text-sm"><span className="text-muted-foreground">Vorschlag:</span> <b>{card.suggestion}</b></p>}
 
+        {card.channel === "mail" && <DraftPanel card={card} busy={busy} onSent={onSent} onChanged={onChanged} />}
+        {card.ruleKey === "nachfassen_anruf" && <CallPanel card={card} busy={busy} onDone={onSent} />}
+
         <div className="flex flex-wrap items-center gap-2">
           {main && (
             <Button variant="secondary" disabled={busy} onClick={() => (main.dialog ? onDialog(main.dialog) : window.open(heroProjectUrl(p.heroId), "_blank", "noopener"))}>{main.label}</Button>
@@ -269,7 +291,7 @@ function CleanupPane({ items, days, admin, onDone }: { items: ProjectCard[]; day
   const run = useMutation({
     mutationFn: async () => {
       const ids = chosen.map((c) => c.project.heroId);
-      let done = 0; const failed: { heroId: number; error: string }[] = []; let shadow = false;
+      let done = 0; const failed: { error: string }[] = []; let shadow = false;
       setProgress({ done: 0, total: ids.length });
       for (let i = 0; i < ids.length; i += 25) {
         const part = ids.slice(i, i + 25);

@@ -236,14 +236,19 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
 - HTML-Ansicht: `email-mailbox` `body` holt per IMAP nur HTML/Text und eingebettete Bilder (BODYSTRUCTURE, `fetchDisplay` – nie die
   ganze Mail durch mailparser: grosse Anhaenge sprengen das CPU-Limit), bettet `cid:`-Bilder ein (`mailHtml.ts`) und speichert in `body_html`
   (Aufbewahrungsfrist wie `body_text`). Angezeigt nur im iframe mit `sandbox` ohne Skripte und CSP; externe Bilder erst per Klick.
-- **Kein Versand, kein Löschen – drei Ausnahmen:** Der Assistent selbst schreibt Antworten nur als ENTWÜRFE in „Entwürfe“; kein Resend, kein
+- **Kein Versand, kein Löschen – vier Ausnahmen:** Der Assistent selbst schreibt Antworten nur als ENTWÜRFE in „Entwürfe“; kein Resend, kein
   `messageDelete`/`\Deleted`/expunge. Ausnahmen (ausdrücklich freigegeben): (1) Belege gehen automatisch per SMTP (Port 465) an die
   Lexware-Belegadresse, ausschließlich über `_shared/email/lexwareSend.ts` (prüft den Empfänger). (2) Ein in HERO geprüftes und
   abgeschlossenes Angebot / eine AB geht **nur per Klick** in der Mail-App über HERO `send_mail` (HERO-Vorlage + PDF) an den Kunden –
   ausschließlich `sendDocument` in `action.ts` → `sendDocumentMail` in `hero.ts`. (3) Mails, die ein Mensch in der Mail-App verfasst
   (neu, Antwort, Weiterleitung), gehen **nur per Klick** auf „Senden“ per SMTP raus – ausschließlich `sendComposed` in
   `composeSend.ts`, aufgerufen nur aus `email-send` (Admin-Sitzung); Kopie in „Gesendet“, Protokoll `email_sent`.
-  `imap.test.ts` prüft alle drei im Quelltext. Kategorien sind in der Seitenleiste der Mail-App als Ordner (= Filter, kein IMAP-Ordner).
+  (4) **Nachfass-Mails der Projekte-Ansicht** (Phase 3, vom Inhaber ausdrücklich freigegeben, Nov. 2026): per Klick (Karte, Sammelkarte) über
+  `email-send` `send_followup` ODER – nur wenn der Autopilot einer Regel/eines Projekts auf „Automatisch“ steht – über `send_followup_auto`
+  (nur mit Cron-Secret, aufgerufen vom `followup-runner`). Gesendet wird immer der GESPEICHERTE Entwurf über den bestehenden Weg `send`
+  (der einzige `sendComposed`-Aufruf); Regeln in `_shared/projects/followupSend.ts`; `send-guard.test.ts` prüft, dass die Projekte-Functions
+  nie selbst senden.
+  `imap.test.ts` prüft die ersten drei im Quelltext. Kategorien sind in der Seitenleiste der Mail-App als Ordner (= Filter, kein IMAP-Ordner).
 - Bestellung → Projekt + AB: Vorschlag `create_confirmation` (`confirmation.ts`/`confirmationWiring.ts`). Grundlage ist die frühere AB des
   Kunden bzw. das Angebot im Projekt; Namen/Preise kommen aus HERO, die KI wählt nur Positionen und Mengen. HERO-Dokumente entstehen
   über `create_document(input, actions)` als ENTWURF (`publish: false`); danach Vorschlag `send_document` („Prüfen & versenden“).
@@ -281,6 +286,23 @@ Inbetriebnahme, Abweichungen vom Konzept und offene Live-Prüfungen: `docs/mail-
 - `apps/mail/src/lib/shared.ts` ist eine Kopie von `_shared/email/types.ts` (`npm run sync-shared`; ein Test prüft die Gleichheit).
 - Tests: `npm run test:unit` (vitest) + `deno test` für `draftMime.deno_test.ts`; Typprüfung der Functions mit
   `deno check --config supabase/functions/<fn>/deno.json supabase/functions/<fn>/index.ts`, der App mit `npm run typecheck` in `apps/mail`.
+
+## Projekte abarbeiten wie Mails (Nov. 2026, `apps/mail/docs/projekte-phase*.md`, Bereich „Projekte“ der Mail-App)
+Jedes offene HERO-Projekt hat eine fällige Karte oder eine Wiedervorlage. Phasen 0–3 sind gebaut (Arbeitsmodus/Verzahnung folgen).
+- **Daten:** `hero_projects` (Spiegel, `hero-sync` alle 10 Min, nur lesend), `project_cards`, `followups`, `project_rules`/`project_step_settings`
+  (Schwellen, Ausschlüsse – alles im Adminmenü → Projekte), `project_followup_mails` (Entwürfe/Ketten), `project_actions_log` (jede Aktion).
+  Regeln hängen am **Statusnamen** (`step_key`, Emoji egal), nie an festen Status-IDs; „Abgeschlossen“/„Archiviert“ werden zur Laufzeit in
+  HERO gesucht (`findStepByKey`). Logik rein in `_shared/projects/` (rules, evaluate, followup*, actions), Tests daneben (`fakeDb` in `testdb.ts`).
+- **Functions:** `hero-sync`, `project-evaluate` (Karten, Entwürfe, Kundenantwort stoppt die Kette), `project-api` (einzige Schnittstelle der
+  Oberfläche), `project-action` (schreibende Aktionen), `followup-runner` (Autopilot, stündlich). `project-*`-Functions senden NIE selbst.
+- **Schattenmodus:** `app_config.projects_write_enabled` (Standard `false`). Aus = nichts nach HERO, keine Mail, nur `project_actions_log`
+  (`shadow = true`). Einschalten nur der Admin im Adminmenü → Projekte.
+- **Nachfass-Kette:** Stufe 1 Mail (Entwurf in der Karte), Stufe 2 Anruf-Karte (7 T nach Stufe 1), Stufe 3 „Angebot verloren?“ (30 T nach
+  Angebot). Antwortet der Kunde (eingehende Mail, dem Projekt zugeordnet), stoppt die Kette. Autopilot je Regel und je Projekt
+  (`project_autopilot` schlägt `project_rules.autopilot`); Aufräum-Karten (> 60 Tage) bekommen nie Entwürfe.
+- **Deploy-Reihenfolge Phase 3:** Migration `…projects_phase3` → `hero-sync`, `project-evaluate`, `project-api`, `project-action`, `email-send`,
+  `followup-runner` → Migration `…projects_followup_cron`. `email-send` ändert sich (per CLI einspielen, ggf. Lader ersetzen).
+- Edge Functions über das Supabase-MCP deployen: Dateien mit `../_shared/…`-Pfaden mitgeben (funktioniert), `verify_jwt: false`.
 
 ## Offene Baustellen
 1. ~~Anon-RLS schließen~~ – erledigt (Phase 2, `docs/phase2-rls.md`)
@@ -325,7 +347,8 @@ Kurze prägnante Messages auf Englisch:
 
 ## Was vermeiden
 - Im Mail-Assistenten nie etwas senden (außer Belege an die Lexware-Adresse über `lexwareSend.ts`, geprüfte Angebote/ABs per Klick über
-  `sendDocument` und vom Menschen verfasste Mails per Klick über `email-send`/`composeSend.ts` – nie automatisch) oder löschen, nie `email_*`-Tabellen für anon/authenticated freigeben,
+  `sendDocument`, vom Menschen verfasste Mails per Klick über `email-send`/`composeSend.ts` und Nachfass-Entwürfe der Projekte-Ansicht über
+  `send_followup`/`send_followup_auto` – automatisch NUR dieser eine Weg, nur außerhalb des Schattenmodus, im Versandfenster und unter dem Tageslimit) oder löschen, nie `email_*`-Tabellen für anon/authenticated freigeben,
   nie IMAP-Passwörter oder KI-Schlüssel im Klartext speichern/loggen/zurückgeben (`EMAIL_ENCRYPTION_KEY`, AES-GCM).
 - Keine HERO-„Dateiordner“-IDs als `document_type_id` verwenden (Ordner ≠ Dokumenttyp, siehe `phase0.md`).
 - Niemals Signing-Secret-Fallback im Code (kein `|| "fallback"`)

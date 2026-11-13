@@ -1,6 +1,7 @@
 // project-evaluate: Regeln anwenden, Karten anlegen/aktualisieren/schliessen, faellige Wiedervorlagen wecken.
 // Rein lesend gegenueber HERO (nur eigene Tabellen).
 
+import { maintainFollowups } from "./followupChain.ts";
 import { evaluateProject, outsideTarget, priorityOf, type EvalContext, type ProjectRow, type RuleRow, type Signal, type StepSetting } from "./rules.ts";
 
 const LIVE = ["open", "in_hero", "snoozed", "muted", "auto"];
@@ -8,6 +9,7 @@ const chunk = <T>(a: T[], n: number): T[][] => Array.from({ length: Math.ceil(a.
 
 export interface EvalStats {
   projects: number; created: number; updated: number; closed: number; woken: number; bundled: number; orphans: number; cards: number;
+  drafts?: number; stoppedDrafts?: number; replies?: number;
 }
 
 /** JSON mit sortierten Schluesseln: jsonb liefert die Schluessel in anderer Reihenfolge zurueck, als wir sie schreiben. */
@@ -22,7 +24,7 @@ function must<T extends { error: any }>(r: T, what: string): T {
 }
 
 export async function evaluateAll(sb: any, now = new Date()): Promise<EvalStats> {
-  const [projects, steps, rules, cards, followups, mutes, cfg] = await Promise.all([
+  const [projects, steps, rules, cards, followups, mutes, cfg, sentMails] = await Promise.all([
     sb.from("hero_projects").select("hero_id, project_nr, name, step_id, step_name, step_key, step_since, hero_created, documents"),
     sb.from("project_step_settings").select("*"),
     sb.from("project_rules").select("*"),
@@ -30,8 +32,9 @@ export async function evaluateAll(sb: any, now = new Date()): Promise<EvalStats>
     sb.from("followups").select("id, hero_id, due_at, reason").eq("target_type", "project").is("done_at", null),
     sb.from("project_rule_mutes").select("hero_id, rule_key, until").gt("until", now.toISOString()),
     sb.from("app_config").select("value").eq("key", "projects_bundle_after_days").maybeSingle(),
+    sb.from("project_followup_mails").select("hero_id, rule_key, stage, sent_at").eq("state", "sent"),
   ]);
-  for (const [r, w] of [[projects, "hero_projects"], [steps, "project_step_settings"], [rules, "project_rules"], [cards, "project_cards"], [followups, "followups"], [mutes, "project_rule_mutes"]] as const) must(r as any, w);
+  for (const [r, w] of [[projects, "hero_projects"], [steps, "project_step_settings"], [rules, "project_rules"], [cards, "project_cards"], [followups, "followups"], [mutes, "project_rule_mutes"], [sentMails, "project_followup_mails"]] as const) must(r as any, w);
 
   const ctx: EvalContext = {
     now,
@@ -39,7 +42,9 @@ export async function evaluateAll(sb: any, now = new Date()): Promise<EvalStats>
     rules: new Map((rules.data as RuleRow[]).map((r) => [r.key, r])),
     steps: new Map((steps.data as StepSetting[]).map((s) => [Number(s.step_id), s])),
   };
-  const projList = (projects.data || []) as ProjectRow[];
+  const sentBy = new Map<number, { rule_key: string; stage: number; sent_at: string }[]>();
+  for (const m of sentMails.data || []) (sentBy.get(Number(m.hero_id)) || sentBy.set(Number(m.hero_id), []).get(Number(m.hero_id))!).push({ rule_key: m.rule_key, stage: Number(m.stage), sent_at: m.sent_at });
+  const projList = ((projects.data || []) as ProjectRow[]).map((p) => ({ ...p, followups: sentBy.get(Number(p.hero_id)) ?? [] }));
   const byId = new Map(projList.map((p) => [Number(p.hero_id), p]));
   const stats: EvalStats = { projects: projList.length, created: 0, updated: 0, closed: 0, woken: 0, bundled: 0, orphans: 0, cards: 0 };
   const iso = now.toISOString();
@@ -105,6 +110,7 @@ export async function evaluateAll(sb: any, now = new Date()): Promise<EvalStats>
         continue;
       }
       if (card.state !== "open") continue; // snoozed / in_hero / muted / auto: nicht anfassen
+      if (card.rule_key === "kunde_antwort") continue; // „Kunde hat geantwortet“ bleibt, bis ein Mensch sie bearbeitet
       if (!signal) {
         if (card.reasons?.manual) continue; // durch Wiedervorlage geweckt: bleibt bis jemand sie bearbeitet
         toClose.push({ id: card.id, reason: "Signal erledigt" });
@@ -155,5 +161,9 @@ export async function evaluateAll(sb: any, now = new Date()): Promise<EvalStats>
   stats.cards = count ?? 0;
   const { count: b } = await sb.from("project_cards").select("id", { count: "exact", head: true }).eq("state", "open").eq("bundled", true);
   stats.bundled = b ?? 0;
+
+  // Nachfass-Kette: Kundenantworten, Entwuerfe (rein lokal).
+  const chain = await maintainFollowups(sb, now);
+  stats.drafts = chain.drafts; stats.stoppedDrafts = chain.stopped; stats.replies = chain.replies;
   return stats;
 }

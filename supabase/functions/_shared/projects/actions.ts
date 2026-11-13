@@ -5,6 +5,7 @@
 // damit die Logik ohne HERO testbar ist. Fehler werfen mit deutscher Meldung; der Aufrufer macht daraus { ok:false }.
 
 import { evaluateAll } from "./evaluate.ts";
+import { isMode, looksLikeEmail, type AutopilotMode } from "./followup.ts";
 import { displayStepName, isClosedKey, stepKey } from "./steps.ts";
 
 export interface HeroStep { id: number; name: string }
@@ -25,6 +26,8 @@ export interface ActionCtx {
   user: string;
   shadow: boolean;
   now?: Date;
+  /** Sichtbarkeit fuer Entwuerfe (Mitarbeiter sehen nur eigene bzw. nicht zugewiesene Projekte). */
+  canSee?: (p: { assignee_emails: string[] | null }) => boolean;
 }
 
 export interface ActionResult {
@@ -256,3 +259,81 @@ export async function bulkArchiveAction(c: ActionCtx, heroIds: number[]): Promis
     ...(warnings.length ? { warnings } : {}),
   };
 }
+
+// ---------------------------------------------------------------------------------------------- Nachfassen
+
+/** Entwurf in der Karte bearbeiten (Empfaenger, Betreff, Text). Rein lokal – gesendet wird erst per Klick. */
+export async function saveDraftAction(c: ActionCtx, draftId: string, patch: { to?: string; subject?: string; body?: string }): Promise<ActionResult> {
+  const { data: d } = await c.sb.from("project_followup_mails").select("id, hero_id, state").eq("id", draftId).maybeSingle();
+  if (!d || d.state !== "draft") throw new Error("Dieser Entwurf ist nicht mehr offen.");
+  const { data: p } = await c.sb.from("hero_projects").select("hero_id, assignee_emails").eq("hero_id", d.hero_id).maybeSingle();
+  if (!p || (c.canSee && !c.canSee(p))) throw new Error("Projekt nicht gefunden.");
+  const upd: Record<string, string> = {};
+  if (patch.to !== undefined) {
+    const to = String(patch.to).trim().toLowerCase();
+    if (!looksLikeEmail(to)) throw new Error("Bitte eine gültige E-Mail-Adresse eintragen.");
+    upd.to_email = to;
+  }
+  if (patch.subject !== undefined) {
+    const subject = String(patch.subject).trim();
+    if (!subject || subject.length > 300) throw new Error("Betreff: 1 bis 300 Zeichen.");
+    upd.subject = subject;
+  }
+  if (patch.body !== undefined) {
+    const body = String(patch.body).replace(/\r\n/g, "\n").trim();
+    if (!body || body.length > 10_000) throw new Error("Text: 1 bis 10.000 Zeichen.");
+    upd.body = body;
+  }
+  if (!Object.keys(upd).length) throw new Error("Nichts zu ändern.");
+  const { error } = await c.sb.from("project_followup_mails").update(upd).eq("id", draftId).eq("state", "draft");
+  if (error) throw new Error(error.message);
+  await logAction(c, "save_draft", Number(d.hero_id), { draftId, fields: Object.keys(upd) });
+  return { ok: true, shadow: false, message: "Entwurf gespeichert." };
+}
+
+/**
+ * Autopilot je Projekt und Regel („Für dieses Projekt automatisch nachfassen“). mode = null: zurueck zur Einstellung der Regel.
+ * Gilt auch im Schattenmodus (Einstellung, nicht Versand) – gesendet wird ohnehin nur ausserhalb des Schattenmodus.
+ */
+export async function setAutopilotAction(c: ActionCtx, heroId: number, ruleKey: string, mode: AutopilotMode | null): Promise<ActionResult> {
+  await loadProject(c, heroId);
+  const { data: rule } = await c.sb.from("project_rules").select("key, channel, label").eq("key", ruleKey).maybeSingle();
+  if (!rule || rule.channel !== "mail") throw new Error("Für diese Regel gibt es keinen Mailweg.");
+  if (mode !== null && !isMode(mode)) throw new Error("Autopilot: off, suggest oder auto.");
+  if (mode === null) {
+    const { error } = await c.sb.from("project_autopilot").delete().eq("hero_id", heroId).eq("rule_key", ruleKey);
+    if (error) throw new Error(error.message);
+  } else {
+    const { data: ex } = await c.sb.from("project_autopilot").select("hero_id").eq("hero_id", heroId).eq("rule_key", ruleKey).maybeSingle();
+    const r = ex
+      ? await c.sb.from("project_autopilot").update({ mode }).eq("hero_id", heroId).eq("rule_key", ruleKey)
+      : await c.sb.from("project_autopilot").insert({ hero_id: heroId, rule_key: ruleKey, mode });
+    if (r.error) throw new Error(r.error.message);
+  }
+  await logAction(c, "set_autopilot", heroId, { ruleKey, mode });
+  return { ok: true, shadow: false, message: mode === null ? "Zurück zur Einstellung der Regel." : mode === "auto" ? "Für dieses Projekt wird automatisch nachgefasst." : mode === "off" ? "Für dieses Projekt wird nicht nachgefasst." : "Für dieses Projekt gibt es einen Entwurf zum Senden." };
+}
+
+/** „Anruf erledigt“ (Stufe 2 der Kette): merkt den Anruf, schreibt ins HERO-Logbuch, setzt die Wiedervorlage der Regel. */
+export async function callDoneAction(c: ActionCtx, heroId: number): Promise<ActionResult> {
+  const p = await loadProject(c, heroId);
+  const { data: rule } = await c.sb.from("project_rules").select("key, followup_days, followup_reason").eq("key", "nachfassen_anruf").maybeSingle();
+  if (shadowOnly(c)) {
+    await logAction(c, "call_done", heroId, {});
+    return { ok: true, shadow: true, message: `Schattenmodus: Anruf zu ${p.project_nr} wäre vermerkt worden (nichts geschrieben).` };
+  }
+  const now = c.now ?? new Date();
+  const warnings: string[] = [];
+  const ins = await c.sb.from("project_followup_mails").insert({ hero_id: heroId, rule_key: "nachfassen", stage: 2, subject: "(Anruf)", body: `Anruf erledigt von ${c.user}`, state: "sent", sent_at: now.toISOString() });
+  if (ins.error) throw new Error(ins.error.message);
+  await logbookSafe(c, heroId, `Nachfass-Anruf erledigt (Projekte-Ansicht, ${c.user}).`, warnings);
+  const due = new Date(now.getTime() + (Number(rule?.followup_days) || 7) * 86_400_000);
+  due.setUTCHours(6, 0, 0, 0);
+  await c.sb.from("followups").update({ done_at: now.toISOString() }).eq("target_type", "project").eq("hero_id", heroId).is("done_at", null);
+  await c.sb.from("followups").insert({ target_type: "project", hero_id: heroId, due_at: due.toISOString(), reason: rule?.followup_reason || "Nach dem Anruf nachhaken", stage: 2 });
+  await c.sb.from("project_cards").update({ state: "snoozed" }).eq("hero_id", heroId).in("state", ["open", "in_hero"]);
+  await logAction(c, "call_done", heroId, {}, { response: { ok: true, warnings } });
+  return { ok: true, shadow: false, message: "Anruf vermerkt.", ...(warnings.length ? { warnings } : {}) };
+}
+
+const shadowOnly = (c: ActionCtx) => c.shadow;

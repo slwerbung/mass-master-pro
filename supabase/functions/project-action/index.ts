@@ -3,13 +3,16 @@
 //
 //   POST { action, heroId, ... }  ->  { ok: true, data } | { ok: false, error }
 //   steps | set_step | complete | archive | logbook_note | create_events | bulk_archive (nur Admin)
+//   Nachfassen: save_draft | send_followup | bulk_followup | set_autopilot | call_done
+//   Mails sendet diese Function NIE selbst: send_followup/bulk_followup reichen die Sitzung des Benutzers an email-send weiter.
 
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
 import { addLogbookEntry, loadHeroKey, projectSteps, setStep } from "../_shared/email/hero.ts";
 import { heroCreateAppointment } from "../_shared/booking/hero.ts";
 import { canSee, isShadow } from "../_shared/projects/access.ts";
-import { archiveAction, bulkArchiveAction, completeAction, eventsAction, noteAction, setStepAction, type ActionCtx, type HeroOps } from "../_shared/projects/actions.ts";
+import { MAX_BULK, archiveAction, bulkArchiveAction, callDoneAction, completeAction, eventsAction, noteAction, saveDraftAction, setAutopilotAction, setStepAction, type ActionCtx, type HeroOps } from "../_shared/projects/actions.ts";
+import { isMode } from "../_shared/projects/followup.ts";
 import { stepKey } from "../_shared/projects/steps.ts";
 
 Deno.serve(async (req) => {
@@ -20,7 +23,7 @@ Deno.serve(async (req) => {
   if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
   const body = await readJson(req);
   const action = String(body.action || "");
-  if (!["steps", "set_step", "complete", "archive", "logbook_note", "create_events", "bulk_archive"].includes(action)) return fail("Unbekannte Aktion.");
+  if (!["steps", "set_step", "complete", "archive", "logbook_note", "create_events", "bulk_archive", "save_draft", "send_followup", "bulk_followup", "set_autopilot", "call_done"].includes(action)) return fail("Unbekannte Aktion.");
   if (action === "bulk_archive" && user.role !== "admin") return fail("Nur für Admins.", { code: "forbidden" });
 
   try {
@@ -34,7 +37,36 @@ Deno.serve(async (req) => {
       addLogbook: (id, text) => addLogbookEntry(key, id, text),
       createEvent: (a) => heroCreateAppointment(key, { heroProjectId: a.heroId, title: a.title, startIso: a.startIso, endIso: a.endIso, categoryId: a.categoryId, partnerId: a.partnerId, description: a.description }),
     };
-    const ctx: ActionCtx = { sb, ops, user: user.name || user.email || "Mitarbeiter", shadow: await isShadow(sb) };
+    const ctx: ActionCtx = { sb, ops, user: user.name || user.email || "Mitarbeiter", shadow: await isShadow(sb), canSee: (p) => canSee(user, p) };
+
+    // Entwuerfe: Zugriff pruefen email-send bzw. saveDraftAction (Projekt des Entwurfs), hier keine heroId.
+    if (action === "save_draft") return ok(await saveDraftAction(ctx, String(body.draftId || ""), { to: body.to, subject: body.subject, body: body.body }));
+    if (action === "send_followup" || action === "bulk_followup") {
+      const draftIds: string[] = action === "send_followup" ? [String(body.draftId || "")] : (Array.isArray(body.draftIds) ? body.draftIds.map(String) : []);
+      if (!draftIds.length || draftIds.some((d) => !d)) return fail("Kein Entwurf angegeben.");
+      if (draftIds.length > MAX_BULK) return fail(`Höchstens ${MAX_BULK} Mails je Aufruf.`);
+      // Senden macht ausschliesslich email-send (Sitzung des Benutzers, eigene Postfaecher, Signatur, Thread, Logbuch).
+      const sendOne = async (draftId: string) => {
+        const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/email-send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: req.headers.get("authorization") || "" },
+          body: JSON.stringify({ action: "send_followup", draftId }),
+        });
+        const j = await r.json().catch(() => null);
+        if (!j?.ok) throw new Error(String(j?.error || `email-send HTTP ${r.status}`));
+        return j.data as { shadow: boolean; message: string; warnings?: string[] };
+      };
+      if (action === "send_followup") return ok(await sendOne(draftIds[0]));
+      const done: string[] = [];
+      const failed: { draftId: string; error: string }[] = [];
+      const warnings: string[] = [];
+      let shadow = ctx.shadow;
+      for (const draftId of draftIds) {
+        try { const r = await sendOne(draftId); shadow = r.shadow; done.push(draftId); warnings.push(...(r.warnings ?? [])); }
+        catch (e) { failed.push({ draftId, error: String((e as Error).message).slice(0, 200) }); }
+      }
+      return ok({ ok: true, shadow, done, failed, warnings, message: shadow ? `Schattenmodus: ${done.length} Mail(s) wären gesendet worden (nichts gesendet).` : `${done.length} gesendet${failed.length ? `, ${failed.length} fehlgeschlagen` : ""}.` });
+    }
 
     // Zugriff: jedes betroffene Projekt muss fuer den Benutzer sichtbar sein.
     const ids: number[] = action === "bulk_archive" ? (Array.isArray(body.heroIds) ? body.heroIds.map(Number) : []) : [Number(body.heroId)];
@@ -66,6 +98,12 @@ Deno.serve(async (req) => {
       case "archive": return ok(await archiveAction(ctx, heroId));
       case "logbook_note": return ok(await noteAction(ctx, heroId, String(body.text || "")));
       case "bulk_archive": return ok(await bulkArchiveAction(ctx, ids));
+      case "call_done": return ok(await callDoneAction(ctx, heroId));
+      case "set_autopilot": {
+        const mode = body.mode === null ? null : body.mode;
+        if (mode !== null && !isMode(mode)) return fail("Autopilot: off, suggest oder auto.");
+        return ok(await setAutopilotAction(ctx, heroId, String(body.ruleKey || ""), mode));
+      }
       case "create_events": {
         const { data } = await sb.from("app_config").select("key, value").in("key", ["projects_event_category_id", "booking_hero_category_id"]);
         const cfg = new Map((data || []).map((r: any) => [r.key, r.value]));

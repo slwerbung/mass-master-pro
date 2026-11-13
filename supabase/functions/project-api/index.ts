@@ -9,6 +9,7 @@ import { fail, ok, preflight, readJson, type MailUser } from "../_shared/email/h
 import { requireMailUser } from "../_shared/email/http.ts";
 import { canSee, isShadow } from "../_shared/projects/access.ts";
 import { evaluateAll } from "../_shared/projects/evaluate.ts";
+import { berlinDayStartIso, effectiveAutopilot, parseWindow } from "../_shared/projects/followup.ts";
 import { daysBetween } from "../_shared/projects/rules.ts";
 import { normalizeDocuments } from "../_shared/projects/docs.ts";
 
@@ -25,11 +26,11 @@ async function log(sb: any, user: MailUser, action: string, heroId: number | nul
   await sb.from("project_actions_log").insert({ user: user.name || user.email || user.id, action, hero_id: heroId, payload, shadow: await isShadow(sb) });
 }
 
-const PROJECT_COLS = "hero_id, project_nr, name, kunde, ort, gewerk, step_id, step_name, step_since, assignee_emails, hero_created";
+const PROJECT_COLS = "hero_id, project_nr, name, kunde, kunde_email, kunde_telefon, ort, gewerk, step_id, step_name, step_since, assignee_emails, hero_created";
 
 function projectView(p: any, now: Date) {
   return {
-    heroId: Number(p.hero_id), nr: p.project_nr, name: p.name, kunde: p.kunde, ort: p.ort, gewerk: p.gewerk,
+    heroId: Number(p.hero_id), nr: p.project_nr, name: p.name, kunde: p.kunde, kundeEmail: p.kunde_email || "", kundeTelefon: p.kunde_telefon || "", ort: p.ort, gewerk: p.gewerk,
     stepName: p.step_name, days: daysBetween(p.step_since ?? p.hero_created, now), assignees: p.assignee_emails || [],
   };
 }
@@ -47,11 +48,12 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
   /** Zahlen fuer Seitenleiste und Kopfzeile. */
   async overview({ sb, user }) {
     const now = new Date();
-    const [cards, fus, run, sync] = await Promise.all([
+    const [cards, fus, run, sync, autoSent] = await Promise.all([
       sb.from("project_cards").select("hero_id, bundled").eq("state", "open"),
       sb.from("followups").select("hero_id").eq("target_type", "project").is("done_at", null),
       sb.from("project_runs").select("created_at, ok, error, stats").eq("kind", "evaluate").order("created_at", { ascending: false }).limit(1).maybeSingle(),
       sb.from("project_runs").select("created_at, ok, error, stats").eq("kind", "sync").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      sb.from("project_actions_log").select("id", { count: "exact", head: true }).eq("action", "auto_followup").eq("shadow", false),
     ]);
     const ids = [...new Set([...(cards.data || []), ...(fus.data || [])].map((r: any) => Number(r.hero_id)))];
     const projects = await loadProjects(sb, ids);
@@ -62,27 +64,56 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
       cleanup: (cards.data || []).filter((c: any) => c.bundled && visible(Number(c.hero_id))).length,
       followups: (fus.data || []).filter((f: any) => visible(Number(f.hero_id))).length,
       lastSync: sync.data || null, lastEvaluate: run.data || null, now: now.toISOString(),
+      autoSent: autoSent.count ?? 0,
+    };
+  },
+
+  /** Autopilot-Dialog: Regeln mit Mailweg, Versandfenster, Limits, wie viel heute/insgesamt automatisch gesendet wurde. */
+  async autopilot_overview({ sb }) {
+    const [rules, cfg, today, total] = await Promise.all([
+      sb.from("project_rules").select("key, label, suggestion, autopilot, active").eq("channel", "mail").order("sort", { ascending: true }),
+      sb.from("app_config").select("key, value").in("key", ["projects_followup_hours", "projects_auto_max_per_run", "projects_auto_max_per_day", "projects_write_enabled"]),
+      sb.from("project_actions_log").select("id", { count: "exact", head: true }).eq("action", "auto_followup").eq("shadow", false).gte("created_at", berlinDayStartIso(new Date())),
+      sb.from("project_actions_log").select("id", { count: "exact", head: true }).eq("action", "auto_followup").eq("shadow", false),
+    ]);
+    must(rules);
+    const c = new Map((cfg.data || []).map((r: any) => [r.key, r.value]));
+    return {
+      rules: rules.data, window: parseWindow(c.get("projects_followup_hours")), maxPerRun: Number(c.get("projects_auto_max_per_run")) || 5,
+      maxPerDay: Number(c.get("projects_auto_max_per_day")) || 20, shadow: c.get("projects_write_enabled") !== "true",
+      autoSentToday: today.count ?? 0, autoSentTotal: total.count ?? 0,
     };
   },
 
   /** Stapel, Aufraeum-Karte und Wiedervorlagen in einem Aufruf. */
   async list({ sb, user }) {
     const now = new Date();
-    const [cards, fus, rules, cfg] = await Promise.all([
+    const [cards, fus, rules, cfg, drafts, overrides] = await Promise.all([
       sb.from("project_cards").select("id, hero_id, rule_key, category, priority, state, bundled, reasons, created_at").eq("state", "open").order("priority", { ascending: true }),
       sb.from("followups").select("id, hero_id, due_at, reason, stage").eq("target_type", "project").is("done_at", null).order("due_at", { ascending: true }),
-      sb.from("project_rules").select("key, label, suggestion, channel, followup_days, followup_reason"),
+      sb.from("project_rules").select("key, label, suggestion, channel, followup_days, followup_reason, autopilot"),
       sb.from("app_config").select("value").eq("key", "projects_bundle_after_days").maybeSingle(),
+      sb.from("project_followup_mails").select("id, hero_id, rule_key, stage, subject, body, to_email, error").eq("state", "draft"),
+      sb.from("project_autopilot").select("hero_id, rule_key, mode"),
     ]);
-    must(cards); must(fus); must(rules);
+    must(cards); must(fus); must(rules); must(drafts); must(overrides);
+    const draftBy = new Map<string, any>((drafts.data || []).map((d: any) => [`${d.hero_id}:${d.rule_key}`, d]));
+    const modeBy = new Map<string, string>((overrides.data || []).map((o: any) => [`${o.hero_id}:${o.rule_key}`, o.mode]));
     const ids = [...new Set([...(cards.data || []), ...(fus.data || [])].map((r: any) => Number(r.hero_id)))];
     const projects = await loadProjects(sb, ids);
     const ruleBy = new Map<string, any>((rules.data || []).map((r: any) => [r.key, r]));
     const card = (c: any) => {
       const p = projects.get(Number(c.hero_id));
       const r = ruleBy.get(c.rule_key);
+      const key = `${c.hero_id}:${c.rule_key}`;
+      const d = draftBy.get(key);
       return p && canSee(user, p)
-        ? { id: c.id, ruleKey: c.rule_key, ruleLabel: r?.label ?? c.rule_key, suggestion: r?.suggestion ?? "", channel: r?.channel ?? "api", followupDays: r?.followup_days ?? null, followupReason: r?.followup_reason ?? "", category: c.category, reasons: c.reasons, project: projectView(p, now) }
+        ? {
+          id: c.id, ruleKey: c.rule_key, ruleLabel: r?.label ?? c.rule_key, suggestion: r?.suggestion ?? "", channel: r?.channel ?? "api", followupDays: r?.followup_days ?? null, followupReason: r?.followup_reason ?? "", category: c.category, reasons: c.reasons, project: projectView(p, now),
+          // Nachfassen: Autopilot (Projekt vor Regel), Override am Projekt und der Entwurf, falls vorhanden.
+          autopilot: effectiveAutopilot(r?.autopilot, modeBy.get(key)), autopilotOverride: modeBy.get(key) ?? null,
+          draft: d ? { id: d.id, to: d.to_email || "", subject: d.subject, body: d.body, stage: d.stage, error: d.error ?? null } : null,
+        }
         : null;
     };
     const mapped = (cards.data || []).map((c: any) => ({ c, v: card(c) })).filter((x: any) => x.v);
@@ -162,14 +193,18 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
 
   // ------------------------------------------------------------------ Einstellungen (nur Admin)
   async settings({ sb }) {
-    const [steps, rules, cfg] = await Promise.all([
+    const [steps, rules, cfg, templates] = await Promise.all([
       sb.from("project_step_settings").select("*").order("closeness", { ascending: true }),
       sb.from("project_rules").select("*").order("sort", { ascending: true }),
-      sb.from("app_config").select("key, value").in("key", ["projects_bundle_after_days", "projects_write_enabled"]),
+      sb.from("app_config").select("key, value").in("key", ["projects_bundle_after_days", "projects_write_enabled", "projects_followup_hours", "projects_auto_max_per_run", "projects_auto_max_per_day"]),
+      sb.from("project_followup_templates").select("rule_key, stage, subject, body").order("rule_key", { ascending: true }).order("stage", { ascending: true }),
     ]);
-    must(steps); must(rules);
+    must(steps); must(rules); must(templates);
     const c = new Map((cfg.data || []).map((r: any) => [r.key, r.value]));
-    return { steps: steps.data, rules: rules.data, bundleAfterDays: Number(c.get("projects_bundle_after_days")) || 60, writeEnabled: c.get("projects_write_enabled") === "true" };
+    return {
+      steps: steps.data, rules: rules.data, templates: templates.data, bundleAfterDays: Number(c.get("projects_bundle_after_days")) || 60, writeEnabled: c.get("projects_write_enabled") === "true",
+      window: parseWindow(c.get("projects_followup_hours")), limits: { perRun: Number(c.get("projects_auto_max_per_run")) || 5, perDay: Number(c.get("projects_auto_max_per_day")) || 20 },
+    };
   },
   async save_step({ sb, body }) {
     const patch: Record<string, unknown> = {};
@@ -199,6 +234,36 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
     must(await sb.from("project_rules").update(patch).eq("key", String(body.key || "")));
     return { ok: true };
   },
+  /** Nachfass-Vorlage je Regel und Stufe (Platzhalter {kunde} {projekt} {angebot_nr} {angebot_datum}). */
+  async save_template({ sb, body }) {
+    const ruleKey = String(body.ruleKey || "");
+    const stage = Math.round(Number(body.stage));
+    const subject = String(body.subject ?? "").trim();
+    const text = String(body.body ?? "").replace(/\r\n/g, "\n").trim();
+    if (!(stage >= 1 && stage <= 3)) throw new Error("Stufe: 1 bis 3.");
+    if (!subject || subject.length > 300) throw new Error("Betreff: 1 bis 300 Zeichen.");
+    if (!text || text.length > 10_000) throw new Error("Text: 1 bis 10.000 Zeichen.");
+    const { data: rule } = must(await sb.from("project_rules").select("key, channel").eq("key", ruleKey).maybeSingle());
+    if (!rule || rule.channel !== "mail") throw new Error("Für diese Regel gibt es keinen Mailweg.");
+    must(await sb.from("project_followup_templates").upsert({ rule_key: ruleKey, stage, subject, body: text }, { onConflict: "rule_key,stage" }));
+    return { ok: true };
+  },
+  /** Versandfenster des Autopiloten: Wochentage (1 = Mo … 7 = So) und Stunden (Berliner Ortszeit). */
+  async save_window({ sb, body }) {
+    const days = [...new Set((Array.isArray(body.days) ? body.days : []).map(Number).filter((d: number) => Number.isInteger(d) && d >= 1 && d <= 7))].sort();
+    const from = Math.round(Number(body.from)), to = Math.round(Number(body.to));
+    if (!days.length) throw new Error("Mindestens ein Wochentag.");
+    if (!(from >= 0 && from <= 23 && to >= 1 && to <= 24 && from < to)) throw new Error("Uhrzeit: von 0–23 bis 1–24, „von“ vor „bis“.");
+    must(await sb.from("app_config").upsert({ key: "projects_followup_hours", value: JSON.stringify({ days, from, to }) }, { onConflict: "key" }));
+    return { ok: true };
+  },
+  /** Obergrenzen des Autopiloten (je Lauf und je Tag). */
+  async save_limits({ sb, body }) {
+    const perRun = Math.round(Number(body.perRun)), perDay = Math.round(Number(body.perDay));
+    if (!(perRun >= 0 && perRun <= 100) || !(perDay >= 0 && perDay <= 500)) throw new Error("Grenzen: je Lauf 0–100, je Tag 0–500.");
+    must(await sb.from("app_config").upsert([{ key: "projects_auto_max_per_run", value: String(perRun) }, { key: "projects_auto_max_per_day", value: String(perDay) }], { onConflict: "key" }));
+    return { ok: true };
+  },
   /** Schalter „Schreiben nach HERO“. Aus = Schattenmodus. */
   async save_write_enabled({ sb, user, body }) {
     const on = body.enabled === true;
@@ -215,7 +280,7 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
 };
 
 /** Nur Admins. */
-const ADMIN_ONLY = new Set(["settings", "save_step", "save_rule", "save_bundle_days", "save_write_enabled"]);
+const ADMIN_ONLY = new Set(["settings", "save_step", "save_rule", "save_bundle_days", "save_write_enabled", "save_template", "save_window", "save_limits"]);
 
 Deno.serve(async (req) => {
   const pre = preflight(req);

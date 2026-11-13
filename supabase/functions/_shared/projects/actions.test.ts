@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archiveAction, berlinWallToIso, bulkArchiveAction, completeAction, eventsAction, noteAction, setStepAction, type ActionCtx, type HeroOps } from "./actions.ts";
+import { archiveAction, berlinWallToIso, bulkArchiveAction, callDoneAction, completeAction, eventsAction, noteAction, saveDraftAction, setAutopilotAction, setStepAction, type ActionCtx, type HeroOps } from "./actions.ts";
 import { fakeDb } from "./testdb.ts";
 
 const STEPS = [
@@ -20,7 +20,13 @@ function setup(opts: { shadow: boolean; failStep?: boolean; failLogbook?: boolea
       { hero_id: 8, project_nr: "WER-8", name: "Banner", step_id: 1, step_name: "📬Anfragen", step_key: "anfragen", step_since: "2026-10-01T00:00:00Z", hero_created: "2026-09-01T00:00:00Z", documents: [], assignee_emails: [] },
     ],
     project_step_settings: [{ step_id: 1, name: "Anfragen", key: "anfragen", target_days: 7, excluded: false, closeness: 10 }, { step_id: 2, name: "Projektplanung", key: "planung", target_days: 7, excluded: false, closeness: 30 }],
-    project_rules: [], project_cards: [], followups: [], project_rule_mutes: [], app_config: [], project_actions_log: [],
+    project_rules: [
+      { key: "nachfassen", channel: "mail", label: "Nachfassen" }, { key: "haengt", channel: "api", label: "Hängt" },
+      { key: "nachfassen_anruf", channel: "hero", followup_days: 7, followup_reason: "Nach dem Anruf nachhaken" },
+    ],
+    project_cards: [], followups: [], project_rule_mutes: [], app_config: [], project_actions_log: [],
+    project_followup_mails: [{ id: "d1", hero_id: 7, rule_key: "nachfassen", stage: 1, state: "draft", to_email: "k@x.de", subject: "S", body: "B" }, { id: "d2", hero_id: 7, rule_key: "nachfassen", stage: 1, state: "sent" }],
+    project_autopilot: [],
     employees: [{ id: "e1", hero_partner_id: 555 }, { id: "e2", hero_partner_id: null }],
   };
   const ctx: ActionCtx = { sb: fakeDb(tables), ops, user: "Silas", shadow: opts.shadow, now: new Date("2026-11-12T10:00:00Z") };
@@ -135,5 +141,49 @@ describe("Berliner Zeit", () => {
     expect(berlinWallToIso("2026-07-16", "09:00")).toBe("2026-07-16T07:00:00.000Z");
     expect(() => berlinWallToIso("2026-02-30", "09:00")).toThrow();
     expect(() => berlinWallToIso("16.11.2026", "9")).toThrow();
+  });
+});
+
+describe("Nachfassen: Entwurf, Autopilot je Projekt, Anruf", () => {
+  it("Entwurf speichern: prüft Adresse, Betreff, Text; nur offene Entwürfe; Sichtbarkeit", async () => {
+    const { ctx, tables } = setup({ shadow: false });
+    await saveDraftAction(ctx, "d1", { to: " Neu@Kunde.DE ", subject: "Neuer Betreff", body: "Neuer\r\nText" });
+    expect(tables.project_followup_mails[0]).toMatchObject({ to_email: "neu@kunde.de", subject: "Neuer Betreff", body: "Neuer\nText" });
+    await expect(saveDraftAction(ctx, "d1", { to: "kaputt" })).rejects.toThrow("gültige E-Mail");
+    await expect(saveDraftAction(ctx, "d1", { subject: " " })).rejects.toThrow("Betreff");
+    await expect(saveDraftAction(ctx, "d1", { body: "" })).rejects.toThrow("Text");
+    await expect(saveDraftAction(ctx, "d1", {})).rejects.toThrow("Nichts zu ändern");
+    await expect(saveDraftAction(ctx, "d2", { body: "x" })).rejects.toThrow("nicht mehr offen");
+    await expect(saveDraftAction({ ...ctx, canSee: () => false }, "d1", { body: "x" })).rejects.toThrow("Projekt nicht gefunden");
+  });
+
+  it("Autopilot je Projekt: setzen, ändern, zurücksetzen; nur für Regeln mit Mailweg", async () => {
+    const { ctx, tables } = setup({ shadow: true }); // gilt auch im Schattenmodus
+    const rows = () => tables.project_autopilot.map(({ hero_id, rule_key, mode }: any) => ({ hero_id, rule_key, mode }));
+    await setAutopilotAction(ctx, 7, "nachfassen", "auto");
+    expect(rows()).toEqual([{ hero_id: 7, rule_key: "nachfassen", mode: "auto" }]);
+    await setAutopilotAction(ctx, 7, "nachfassen", "off");
+    expect(rows()).toEqual([{ hero_id: 7, rule_key: "nachfassen", mode: "off" }]);
+    await setAutopilotAction(ctx, 7, "nachfassen", null);
+    expect(tables.project_autopilot).toEqual([]);
+    await expect(setAutopilotAction(ctx, 7, "haengt", "auto")).rejects.toThrow("keinen Mailweg");
+    await expect(setAutopilotAction(ctx, 7, "nachfassen", "quatsch" as any)).rejects.toThrow("Autopilot");
+    expect(tables.project_actions_log.map((l: any) => l.action)).toEqual(["set_autopilot", "set_autopilot", "set_autopilot"]);
+  });
+
+  it("Anruf erledigt: Schattenmodus schreibt nichts; scharf: Stufe 2 vermerkt, Logbuch, Wiedervorlage, Karte zurückgestellt", async () => {
+    const sh = setup({ shadow: true });
+    const r = await callDoneAction(sh.ctx, 7);
+    expect(r.shadow).toBe(true);
+    expect(sh.wrote()).toEqual([]);
+    expect(sh.tables.project_followup_mails.filter((m: any) => m.stage === 2)).toHaveLength(0);
+
+    const s = setup({ shadow: false });
+    s.tables.project_cards.push({ id: "c1", hero_id: 7, rule_key: "nachfassen_anruf", state: "open" });
+    await callDoneAction(s.ctx, 7);
+    expect(s.tables.project_followup_mails.find((m: any) => m.stage === 2)).toMatchObject({ rule_key: "nachfassen", state: "sent", subject: "(Anruf)" });
+    expect(s.wrote().map((c) => c.fn)).toEqual(["addLogbook"]);
+    expect(s.tables.followups[0]).toMatchObject({ hero_id: 7, reason: "Nach dem Anruf nachhaken", due_at: "2026-11-19T06:00:00.000Z" });
+    expect(s.tables.project_cards[0].state).toBe("snoozed");
   });
 });
