@@ -13,6 +13,7 @@ import Settings from "@/pages/Settings";
 import Compose from "@/pages/Compose";
 import Topics from "@/pages/Topics";
 import Projects from "@/pages/Projects";
+import Today from "@/pages/Today";
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
@@ -46,6 +47,7 @@ export default function App() {
     <Layout>
       <Routes>
         <Route path="/" element={<Decide />} />
+        <Route path="/heute" element={<Today />} />
         <Route path="/themen" element={<Topics />} />
         <Route path="/projekte" element={<Projects />} />
         <Route path="/mails" element={<Messages />} />

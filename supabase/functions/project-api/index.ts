@@ -9,13 +9,14 @@ import { fail, ok, preflight, readJson, type MailUser } from "../_shared/email/h
 import { requireMailUser } from "../_shared/email/http.ts";
 import { assertThread } from "../_shared/email/access.ts";
 import { canSee, isShadow } from "../_shared/projects/access.ts";
+import { projectDigest } from "../_shared/projects/digest.ts";
 import { evaluateAll } from "../_shared/projects/evaluate.ts";
 import { berlinDayStartIso, effectiveAutopilot, parseWindow } from "../_shared/projects/followup.ts";
 import { daysBetween } from "../_shared/projects/rules.ts";
 import { normalizeDocuments } from "../_shared/projects/docs.ts";
 import { DEFAULT_CHECKLISTS, parseChecklists, type TaskKind } from "../_shared/projects/heroTask.ts";
 
-type Ctx = { sb: any; user: MailUser; body: Record<string, any> };
+type Ctx = { sb: any; user: MailUser; body: Record<string, any>; auth: string };
 
 const must = <T extends { error: any }>(r: T): T => {
   if (r.error) throw new Error(r.error.message);
@@ -34,7 +35,7 @@ const PROJECT_COLS = "hero_id, project_nr, name, kunde, kunde_email, kunde_telef
 
 function projectView(p: any, now: Date) {
   return {
-    heroId: Number(p.hero_id), nr: p.project_nr, name: p.name, kunde: p.kunde, kundeEmail: p.kunde_email || "", kundeTelefon: p.kunde_telefon || "", ort: p.ort, gewerk: p.gewerk,
+    heroId: Number(p.hero_id), stepId: p.step_id != null ? Number(p.step_id) : null, nr: p.project_nr, name: p.name, kunde: p.kunde, kundeEmail: p.kunde_email || "", kundeTelefon: p.kunde_telefon || "", ort: p.ort, gewerk: p.gewerk,
     stepName: p.step_name, days: daysBetween(p.step_since ?? p.hero_created, now), assignees: p.assignee_emails || [],
   };
 }
@@ -168,6 +169,42 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
     };
   },
 
+  /**
+   * Fluss-Ansicht (Phase 5): je Status Anzahl der Projekte, durchschnittliche und laengste Verweildauer, Projekte ausserhalb der Sollzeit
+   * und Ampel gegen das WIP-Limit. Gruen = im Limit, Gelb = bis 25 % darueber, Rot = mehr. Ohne Limit keine Ampel.
+   */
+  async flow({ sb, user }) {
+    const now = new Date();
+    const [projects, steps, cards] = await Promise.all([
+      sb.from("hero_projects").select("hero_id, step_id, step_name, step_since, hero_created, assignee_emails"),
+      sb.from("project_step_settings").select("step_id, name, target_days, excluded, closeness, wip_limit"),
+      sb.from("project_cards").select("hero_id, bundled").in("state", ["open", "in_hero"]),
+    ]);
+    must(projects); must(steps); must(cards);
+    const cardOf = new Set((cards.data || []).filter((c: any) => !c.bundled).map((c: any) => Number(c.hero_id)));
+    const cfg = new Map<number, any>((steps.data || []).map((s: any) => [Number(s.step_id), s]));
+    const by = new Map<number, { name: string; days: number[] ; cards: number }>();
+    for (const p of projects.data || []) {
+      if (!canSee(user, p)) continue;
+      const id = Number(p.step_id);
+      const e = by.get(id) ?? { name: String(p.step_name || ""), days: [], cards: 0 };
+      e.days.push(daysBetween(p.step_since ?? p.hero_created, now));
+      if (cardOf.has(Number(p.hero_id))) e.cards++;
+      by.set(id, e);
+    }
+    const rows = [...by.entries()].map(([id, e]) => {
+      const c = cfg.get(id);
+      const n = e.days.length, wip = c?.wip_limit ?? null, target = c?.target_days ?? 7;
+      return {
+        stepId: id, name: String(c?.name || e.name).replace(/^[^\p{L}\p{N}]+/u, ""), count: n, cards: e.cards,
+        avgDays: Math.round((e.days.reduce((a, b) => a + b, 0) / n) * 10) / 10, maxDays: Math.max(...e.days),
+        targetDays: target, overdue: e.days.filter((d) => d > target).length, excluded: !!c?.excluded, closeness: c?.closeness ?? 0, wipLimit: wip,
+        signal: wip == null ? "none" : n <= wip ? "green" : n <= Math.ceil(wip * 1.25) ? "amber" : "red",
+      };
+    }).sort((a, b) => a.closeness - b.closeness || a.name.localeCompare(b.name));
+    return { steps: rows, total: rows.reduce((a, r) => a + r.count, 0) };
+  },
+
   /** Mail-Karte: meine offene HERO-Aufgabe zu diesem Thema (Arbeitsmodus), falls es eine gibt. */
   async topic_task({ sb, user, body }) {
     const threadId = String(body.threadId || "");
@@ -183,6 +220,25 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
       heroId: Number(t.hero_id),
       task: { id: t.id, kind: k, label: lists[k].label, checklist: lists[k].items, by: t.created_by_name || "", mine: true, lockedUntil: new Date(Date.parse(t.created_at) + 30 * 60_000).toISOString() },
     };
+  },
+
+  /**
+   * Morgenuebersicht (Phase 5) fuer den 7-Uhr-Task und die Mail-App: die Mail-Uebersicht von `email-api` (`digest`, mit der Sitzung des
+   * Benutzers) plus die Zahlen aus dem Projekte-Stapel. `text` ist ein Satz fuer die Push-Meldung. Nur lesen.
+   */
+  async morning({ sb, user, auth }) {
+    const projects = await projectDigest(sb, user);
+    let mail: any = null;
+    try {
+      const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/email-api`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: auth }, body: JSON.stringify({ action: "digest" }),
+      });
+      const j = await r.json().catch(() => null);
+      mail = j?.ok ? j.data : null;
+    } catch { /* ohne Mail-Teil weiter */ }
+    const mailText = String(mail?.text ?? "");
+    const parts = [mailText && !/nichts offen/.test(mailText) ? mailText : "", projects.text].filter(Boolean);
+    return { ...(mail ?? {}), projects, text: parts.join(" ") || "Nichts offen." };
   },
 
   /** Wiedervorlage legen: Karte verschwindet aus dem Stapel und kommt am Tag wieder (rein lokal). */
@@ -267,6 +323,14 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
     }
     if (body.excluded !== undefined) patch.excluded = !!body.excluded;
     if (body.closeness !== undefined) patch.closeness = Math.round(Number(body.closeness)) || 0;
+    if (body.wipLimit !== undefined) {
+      if (body.wipLimit === null || body.wipLimit === "") patch.wip_limit = null;
+      else {
+        const w = Math.round(Number(body.wipLimit));
+        if (!(w >= 0 && w <= 999)) throw new Error("WIP-Limit: 0 bis 999 oder leer.");
+        patch.wip_limit = w;
+      }
+    }
     if (!Object.keys(patch).length) throw new Error("Nichts zu ändern.");
     must(await sb.from("project_step_settings").update(patch).eq("step_id", Number(body.stepId)));
     return { ok: true };
@@ -346,7 +410,7 @@ Deno.serve(async (req) => {
   if (!h) return fail("Unbekannte Aktion.");
   if (ADMIN_ONLY.has(action) && !isAdmin(user)) return fail("Nur für Admins.", { code: "forbidden" });
   try {
-    return ok(await h({ sb, user, body }));
+    return ok(await h({ sb, user, body, auth: req.headers.get("authorization") || "" }));
   } catch (e) {
     return fail(String((e as Error)?.message || e).slice(0, 300));
   }
