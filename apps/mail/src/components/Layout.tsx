@@ -2,11 +2,12 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ChevronRight, Folder, Inbox, ListTree, LogOut, Menu, MessagesSquare, PenSquare, RefreshCw, Send, Settings as Cog, Trash2, X } from "lucide-react";
+import { Briefcase, ChevronRight, Folder, Inbox, ListTree, LogOut, Menu, MessagesSquare, PenSquare, RefreshCw, Send, Settings as Cog, Trash2, X } from "lucide-react";
 import { api, invokeFn } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { supabase } from "@/lib/supabase";
 import type { Overview } from "@/lib/types";
+import { papi, type ProjectOverview } from "@/lib/projects";
 import { CATEGORIES, CATEGORY_LABELS, INBOX_CATEGORIES } from "@/lib/shared";
 import { Badge, Button, ErrorBox } from "@/components/ui";
 import { cn, errorText } from "@/lib/utils";
@@ -37,6 +38,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const me = useMe();
   const overview = useQuery({ queryKey: ["overview"], queryFn: () => api<Overview>("overview"), refetchInterval: 60_000, enabled: me.isSuccess });
+  const projects = useQuery({ queryKey: ["projects", "overview"], queryFn: () => papi<ProjectOverview>("overview"), refetchInterval: 60_000, enabled: me.isSuccess, retry: false });
   const sync = useSyncNow();
   const [menu, setMenu] = useState(false);
   // Nach jedem Seitenwechsel (auch Ordner-Filter) das Handy-Menue schliessen.
@@ -85,13 +87,13 @@ export default function Layout({ children }: { children: ReactNode }) {
               <span className="text-sm font-semibold">Mail-Assistent</span>
               <Button variant="ghost" size="icon" onClick={() => setMenu(false)} aria-label="Menü schließen"><X className="h-5 w-5" /></Button>
             </div>
-            <SidebarContent open={open} overview={overview.data} meOk={me.isSuccess} name={me.data?.name} hidden={me.data?.hiddenCategories ?? []} syncButton={syncButton("mb-1 w-full justify-start")} />
+            <SidebarContent open={open} overview={overview.data} meOk={me.isSuccess} name={me.data?.name} hidden={me.data?.hiddenCategories ?? []} projectCount={projects.data ? projects.data.cards + projects.data.cleanup : undefined} syncButton={syncButton("mb-1 w-full justify-start")} />
           </nav>
         </div>
       )}
       <nav className="hidden w-56 shrink-0 flex-col gap-1 border-r bg-muted/40 p-3 md:flex [&>*]:shrink-0">
         <div className="px-3 py-2 text-sm font-semibold">Mail-Assistent</div>
-        <SidebarContent open={open} overview={overview.data} meOk={me.isSuccess} name={me.data?.name} hidden={me.data?.hiddenCategories ?? []} syncButton={syncButton("mb-1 justify-start")} />
+        <SidebarContent open={open} overview={overview.data} meOk={me.isSuccess} name={me.data?.name} hidden={me.data?.hiddenCategories ?? []} projectCount={projects.data ? projects.data.cards + projects.data.cleanup : undefined} syncButton={syncButton("mb-1 justify-start")} />
       </nav>
       <main className="min-w-0 flex-1 p-4 md:p-6">
         {overview.data?.budgetExceeded && (
@@ -112,8 +114,8 @@ export default function Layout({ children }: { children: ReactNode }) {
 }
 
 /** Inhalt der Seitenleiste – auf dem Desktop links fest, auf dem Handy im aufklappbaren Menue. */
-function SidebarContent({ open, overview, meOk, name, hidden, syncButton }: {
-  open: number; overview: Overview | undefined; meOk: boolean; name?: string; hidden: string[]; syncButton: ReactNode;
+function SidebarContent({ open, overview, meOk, name, hidden, syncButton, projectCount }: {
+  projectCount?: number; open: number; overview: Overview | undefined; meOk: boolean; name?: string; hidden: string[]; syncButton: ReactNode;
 }) {
   const loc = useLocation();
   const item = "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium hover:bg-accent";
@@ -126,6 +128,10 @@ function SidebarContent({ open, overview, meOk, name, hidden, syncButton }: {
       <NavLink to="/" end className={({ isActive }) => cn(item, isActive && "bg-accent")}>
         <Inbox className="h-4 w-4" /> Zu entscheiden
         {open > 0 && <Badge variant="danger" className="ml-auto">{open}</Badge>}
+      </NavLink>
+      <NavLink to="/projekte" className={({ isActive }) => cn(item, isActive && "bg-accent")}>
+        <Briefcase className="h-4 w-4" /> Projekte
+        {!!projectCount && <Badge variant="danger" className="ml-auto">{projectCount}</Badge>}
       </NavLink>
       <NavLink to="/themen" className={({ isActive }) => cn(item, isActive && "bg-accent")}>
         <MessagesSquare className="h-4 w-4" /> Themen

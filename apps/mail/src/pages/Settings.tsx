@@ -11,6 +11,7 @@ import Ai from "./settings/Ai";
 import Log from "./settings/Log";
 import Users from "./settings/Users";
 import Notifications from "./settings/Notifications";
+import ProjectSettingsPage from "./settings/ProjectSettings";
 
 const tabs = [
   { to: "benachrichtigungen", label: "Benachrichtigungen", all: true },
@@ -19,6 +20,7 @@ const tabs = [
   { to: "wissen", label: "Wissen" },
   { to: "referenz", label: "Referenzwissen" },
   { to: "regeln", label: "Absenderregeln" },
+  { to: "projekte", label: "Projekte" },
   { to: "firma", label: "Firma & HERO" },
   { to: "ki", label: "KI" },
   { to: "protokoll", label: "Protokoll" },
@@ -51,6 +53,7 @@ export default function Settings() {
             <Route path="wissen" element={<Knowledge />} />
             <Route path="referenz" element={<ReferenceDocs />} />
             <Route path="regeln" element={<Rules />} />
+            <Route path="projekte" element={<ProjectSettingsPage />} />
             <Route path="firma" element={<Company />} />
             <Route path="ki" element={<Ai />} />
             <Route path="protokoll" element={<Log />} />
