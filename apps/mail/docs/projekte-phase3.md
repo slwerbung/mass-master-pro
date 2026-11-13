@@ -10,6 +10,10 @@
 - Admin → Projekte: Nachfass-Vorlagen je Regel und Stufe, Versandfenster, Grenzen je Lauf/Tag.
 - Kontaktdaten: `hero_projects.kunde_email` / `kunde_telefon` (aus HERO `customer { email phone_mobile phone_home }`, live geprüft: E-Mail bei 47 von 50, Telefon bei 34 von 50 Projekten).
 
+## Wortlaut und Signatur (Stand 13.11.2026)
+- **Vorlagen**: neutral formuliert (weder „Du“ noch „Sie“), letzte Zeile immer **„Beste Grüße“**, **keine Firmennennung**. Das erzwingt `checkTemplateText` beim Speichern einer Vorlage (Adminmenü); „Ihr/Ihre/dein …“ und „SL WERBUNG“ werden abgelehnt.
+- **Signatur**: immer die des **zuständigen Mitarbeiters** (`_shared/projects/signature.ts`): erster HERO-Bearbeiter des Projekts, dessen Adresse einem Postfach mit Signatur entspricht (sl@, jl@ …), sonst wer klickt – **nie** die Signatur des Postfachs, über das die Mail läuft. Gibt es keine, schlägt der Versand fehl (per Klick: Meldung am Entwurf; Autopilot: Entwurf gestoppt). Absender-Postfach, Thread und Kopie in „Gesendet“ bleiben wie bisher.
+
 ## So wird gesendet (wichtig)
 Die Projekte-Functions senden **nie selbst**. Gesendet wird ein **gespeicherter Entwurf** über den bestehenden Weg `email-send` → `send` (HTML-Signatur des Postfachs, Thread zur letzten Kundenmail, Kopie in „Gesendet“, `email_sent.project_id` → HERO-Logbuch wie bei jeder Mail der Mail-App). Zwei neue Aktionen in `email-send`:
 - `send_followup` – per Klick, Sitzung des Benutzers (eigene Postfächer, Sichtbarkeit des Projekts).

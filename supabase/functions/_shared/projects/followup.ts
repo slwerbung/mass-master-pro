@@ -79,3 +79,21 @@ export function pickRecipient(lastIncomingFrom: string | null | undefined, kunde
   }
   return null;
 }
+
+export const FOLLOWUP_GREETING = "Beste Grüße";
+// Anrede-Woerter, die Du ODER Sie verraten (gross geschrieben, wie am Satzanfang bzw. in der Hoeflichkeitsform; „sie“ = die Leute bleibt erlaubt).
+const FORMAL = /\b(Sie|Ihnen|Ihr|Ihre|Ihrem|Ihren|Ihrer|Ihres)\b/;
+const INFORMAL = /\b(du|dir|dich|dein|deine|deinem|deinen|deiner|deines)\b/i;
+
+/**
+ * Regeln fuer Nachfass-Vorlagen: neutral (weder Du noch Sie), Gruss genau „Beste Grüße“ als letzte Zeile, keine Firmennennung.
+ * Die Signatur des Mitarbeiters haengt beim Senden automatisch an. null = in Ordnung, sonst die Fehlermeldung.
+ */
+export function checkTemplateText(subject: string, body: string): string | null {
+  const text = `${subject}\n${body}`;
+  if (FORMAL.test(text) || INFORMAL.test(text)) return "Bitte neutral formulieren – weder „Du“ noch „Sie“ (auch nicht „Ihr/Ihre“, „dein/deine“).";
+  if (/SL\s*WERBUNG/i.test(text)) return "Keine Firmennennung im Text – die Signatur des Mitarbeiters hängt automatisch an.";
+  const last = body.split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? "";
+  if (last !== FOLLOWUP_GREETING) return `Die letzte Zeile muss „${FOLLOWUP_GREETING}“ sein (danach folgt automatisch die Signatur).`;
+  return null;
+}

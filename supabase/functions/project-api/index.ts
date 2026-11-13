@@ -11,7 +11,7 @@ import { assertThread } from "../_shared/email/access.ts";
 import { canSee, isShadow } from "../_shared/projects/access.ts";
 import { projectDigest } from "../_shared/projects/digest.ts";
 import { evaluateAll } from "../_shared/projects/evaluate.ts";
-import { berlinDayStartIso, effectiveAutopilot, parseWindow } from "../_shared/projects/followup.ts";
+import { berlinDayStartIso, checkTemplateText, effectiveAutopilot, parseWindow } from "../_shared/projects/followup.ts";
 import { daysBetween } from "../_shared/projects/rules.ts";
 import { normalizeDocuments } from "../_shared/projects/docs.ts";
 import { DEFAULT_CHECKLISTS, parseChecklists, type TaskKind } from "../_shared/projects/heroTask.ts";
@@ -359,6 +359,8 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
     if (!(stage >= 1 && stage <= 3)) throw new Error("Stufe: 1 bis 3.");
     if (!subject || subject.length > 300) throw new Error("Betreff: 1 bis 300 Zeichen.");
     if (!text || text.length > 10_000) throw new Error("Text: 1 bis 10.000 Zeichen.");
+    const bad = checkTemplateText(subject, text);
+    if (bad) throw new Error(bad);
     const { data: rule } = must(await sb.from("project_rules").select("key, channel").eq("key", ruleKey).maybeSingle());
     if (!rule || rule.channel !== "mail") throw new Error("Für diese Regel gibt es keinen Mailweg.");
     must(await sb.from("project_followup_templates").upsert({ rule_key: ruleKey, stage, subject, body: text }, { onConflict: "rule_key,stage" }));

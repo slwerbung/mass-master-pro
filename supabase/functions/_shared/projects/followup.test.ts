@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { berlinDayStartIso, effectiveAutopilot, fmtDateDe, inSendWindow, parseWindow, pickRecipient, renderTemplate, DEFAULT_WINDOW } from "./followup.ts";
+import { berlinDayStartIso, effectiveAutopilot, fmtDateDe, inSendWindow, parseWindow, pickRecipient, renderTemplate, DEFAULT_WINDOW, checkTemplateText } from "./followup.ts";
 
 describe("Autopilot", () => {
   it("Projekt schlaegt Regel, ungueltiges faellt auf off", () => {
@@ -53,5 +53,25 @@ describe("Vorlage und Empfaenger", () => {
     expect(pickRecipient("info@slwerbung.de", "x@y.de", own)).toBe("x@y.de");
     expect(pickRecipient("kaputt", "", own)).toBeNull();
     expect(pickRecipient(null, " a@b.de ", own)).toBe("a@b.de");
+  });
+});
+
+describe("Nachfass-Vorlagen: neutral, Gruss, keine Firma", () => {
+  const ok = "Hallo,\nkurze Nachfrage zu unserem Angebot „{projekt}“.\nPasst alles?\nBeste Grüße";
+  it("neutrale Vorlage mit Beste Grüße ist in Ordnung", () => {
+    expect(checkTemplateText("Angebot: {projekt}", ok)).toBeNull();
+  });
+  it("Sie- und Du-Formen werden abgelehnt (auch im Betreff), „sie“ als Pronomen nicht", () => {
+    const withLine = (line: string) => `Hallo,\n${line}\nBeste Grüße`;
+    for (const line of ["Haben Sie Fragen?", "Wir melden uns bei Ihnen.", "Passt Ihre Zeit?", "Hast du kurz Zeit?", "Das ist dein Angebot.", "Gib uns Bescheid, wenn dir etwas fehlt."]) {
+      expect(checkTemplateText("Angebot", withLine(line)), line).toMatch(/neutral/);
+    }
+    expect(checkTemplateText("Ihr Angebot: {projekt}", ok)).toMatch(/neutral/);
+    expect(checkTemplateText("Angebot", withLine("Wenn sie noch Fragen haben, gern melden."))).toBeNull();
+  });
+  it("Firmenname und falscher Gruss werden abgelehnt, der Gruss muss die letzte Zeile sein", () => {
+    expect(checkTemplateText("Angebot", "Hallo,\nkurze Nachfrage.\nBeste Grüße\nSL WERBUNG")).toMatch(/Firmennennung/);
+    expect(checkTemplateText("Angebot", "Hallo,\nkurze Nachfrage.\nViele Grüße")).toMatch(/Beste Grüße/);
+    expect(checkTemplateText("Angebot", "Hallo,\nkurze Nachfrage.\nBeste Grüße\n\n")).toBeNull(); // Leerzeilen am Ende stoeren nicht
   });
 });
