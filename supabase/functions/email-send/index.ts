@@ -5,13 +5,17 @@
 //   { action: "prepare", replyTo, mode }                 Vorbelegung fuer Antworten / Allen antworten / Weiterleiten
 //   { action: "send", accountId, to, cc, bcc, subject, text, replyTo?, mode?, forwardAttachmentIds?, uploads?, discardDraft?, projectId? }
 //
-// Gesendet wird nur hier und nur per Klick (Admin-Sitzung) – siehe composeSend.ts. Die gesendete Mail wird in den
+//   { action: "send_followup", draftId }                 Nachfass-Mail aus der Projekte-Ansicht: sendet den GESPEICHERTEN Entwurf (Klick)
+//   { action: "send_followup_auto", draftId }            dasselbe fuer den Autopilot (nur mit pg_cron-Secret, Regeln in followupSend.ts)
+//
+// Gesendet wird nur hier und nur per Klick (Admin-Sitzung) – siehe composeSend.ts. Einzige Ausnahme: Nachfass-Mails mit
+// Autopilot „Automatisch“ (Projekte, Phase 3, ausdruecklich freigegeben): `send_followup_auto`, nur Entwuerfe, nur im Versandfenster. Die gesendete Mail wird in den
 // Gesendet-Ordner gelegt; der naechste Abruf uebernimmt sie von dort (Richtung „out“, HERO-Logbuch wie bei Thunderbird).
 // Mit `projectId` (beim Senden gewaehlt, bei Antworten aus dem Thread vorbelegt) landet sie sicher im Logbuch dieses Projekts.
 // Antwort immer HTTP 200 mit { ok, data | error }.
 
 import { createClient } from "@supabase/supabase-js";
-import { fail, ok, preflight, readJson, requireMailUser, type MailUser } from "../_shared/email/http.ts";
+import { fail, isCronCall, ok, preflight, readJson, requireMailUser, type MailUser } from "../_shared/email/http.ts";
 import { AccessError, assertAccount, assertVisible, scopeAccounts } from "../_shared/email/access.ts";
 import { accountPassword } from "../_shared/email/config.ts";
 import { addKeywords, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
@@ -23,6 +27,9 @@ import {
 } from "../_shared/email/compose.ts";
 import { buildComposedMime, sendComposed } from "../_shared/email/composeSend.ts";
 import { loadCompanyName, senderName } from "../_shared/email/company.ts";
+import { addLogbookEntry, loadHeroKey } from "../_shared/email/hero.ts";
+import { canSee } from "../_shared/projects/access.ts";
+import { FollowupError, sendFollowup, type Deliver } from "../_shared/projects/followupSend.ts";
 
 const MSG_COLS = "id, account_id, category, thread_id, message_id, refs, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, body_text, folder, current_folder, draft_message_id, draft_uid, draft_text, hero_project_match_id, hero_logged_at, match_info";
 type Mode = "reply" | "replyAll" | "forward";
@@ -77,7 +84,28 @@ function chosenProject(v: unknown): number | null {
 
 const fromLabel = (m: any) => (m.from_name ? `${m.from_name} <${m.from_addr}>` : m.from_addr);
 
+/** Nachfass-Mail (Projekte-Ansicht): sendet den GESPEICHERTEN Entwurf ueber `handlers.send` – Empfaenger, Betreff und Text
+ *  kommen nie aus der Anfrage. Die Sicherheitsregeln (Schattenmodus, Autopilot, Fenster, Limit) stehen in followupSend.ts. */
+async function runFollowup(sb: any, body: any, user: MailUser | null, auto: boolean) {
+  // Autopilot hat keine Sitzung: Admin-Rechte nur fuer diesen einen Weg, `sent_by` bleibt leer.
+  const actor: MailUser = user ?? { id: null as unknown as string, email: null, name: "Autopilot", role: "admin", accountIds: null, hiddenCategories: [] };
+  const deliver: Deliver = async (a) => (await handlers.send(sb, {
+    accountId: a.accountId, to: a.to, subject: a.subject, text: a.text, replyTo: a.replyTo, mode: "reply", withQuote: false, projectId: a.projectId,
+  }, actor)) as { messageId: string; warnings: string[] };
+  const key = await loadHeroKey(sb);
+  return await sendFollowup(sb, deliver, {
+    draftId: String(body.draftId || ""), auto,
+    actor: { name: user ? (user.name || user.email || "Mitarbeiter") : "Autopilot", id: user?.id ?? null, canSee: user ? (p) => canSee(user, p) : undefined },
+    logbook: key ? (id, text) => addLogbookEntry(key, id, text) : undefined,
+  });
+}
+
 const handlers: Record<string, (sb: any, body: any, user: MailUser) => Promise<unknown>> = {
+  /** Nachfass-Mail per Klick (Karte, Sammelkarte). */
+  async send_followup(sb, body, user) {
+    return await runFollowup(sb, body, user, false);
+  },
+
   async accounts(sb, _body, user) {
     const { data } = await scopeAccounts(sb.from("email_accounts").select("id, label, address, signature_html, smtp_host, folder_map, enabled"), user, "id").order("created_at");
     return (data || []).map((a: any) => ({
@@ -210,18 +238,32 @@ const handlers: Record<string, (sb: any, body: any, user: MailUser) => Promise<u
   },
 };
 
+const codeOf = (e: unknown) => (e instanceof ComposeError || e instanceof FollowupError ? { code: "invalid" } : e instanceof AccessError ? { code: "forbidden" } : {});
+
 Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const body = await readJson(req);
+  const action = String(body.action || "");
+
+  // Autopilot (followup-runner, pg_cron-Secret): einziger Weg ohne Mitarbeiter-Sitzung, nur fuer gespeicherte Nachfass-Entwuerfe.
+  if (action === "send_followup_auto") {
+    if (!(await isCronCall(req, sb))) return fail("Nicht erlaubt.", { code: "forbidden" });
+    try {
+      return ok(await runFollowup(sb, body, null, true));
+    } catch (e) {
+      return fail(String((e as Error)?.message || e).slice(0, 300), codeOf(e));
+    }
+  }
+
   const user = await requireMailUser(req, sb);
   if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
-  const body = await readJson(req);
-  const h = handlers[String(body.action || "")];
+  const h = handlers[action];
   if (!h) return fail("Unbekannte Aktion.");
   try {
     return ok(await h(sb, body, user));
   } catch (e) {
-    return fail(String((e as Error)?.message || e).slice(0, 300), e instanceof ComposeError ? { code: "invalid" } : e instanceof AccessError ? { code: "forbidden" } : {});
+    return fail(String((e as Error)?.message || e).slice(0, 300), codeOf(e));
   }
 });
