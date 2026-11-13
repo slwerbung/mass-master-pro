@@ -6,7 +6,7 @@ export function fakeDb(tables: Record<string, any[]>) {
   class Q {
     filters: ((r: any) => boolean)[] = [];
     op: "select" | "update" | "insert" | "delete" = "select";
-    payload: any; head = false; single = false;
+    payload: any; head = false; single = false; max = Infinity;
     constructor(private t: string) {}
     select(_c?: string, o?: any) { if (this.op === "select") this.head = !!o?.head; return this; }
     update(p: any) { this.op = "update"; this.payload = p; return this; }
@@ -16,7 +16,12 @@ export function fakeDb(tables: Record<string, any[]>) {
     in(c: string, v: any[]) { this.filters.push((r) => v.includes(r[c])); return this; }
     gt(c: string, v: any) { this.filters.push((r) => r[c] > v); return this; }
     is(c: string, v: any) { this.filters.push((r) => (r[c] ?? null) === v); return this; }
+    gte(c: string, v: any) { this.filters.push((r) => r[c] >= v); return this; }
+    lt(c: string, v: any) { this.filters.push((r) => r[c] < v); return this; }
+    neq(c: string, v: any) { this.filters.push((r) => r[c] !== v); return this; }
+    not(c: string, op: string, v: any) { if (op === "is") this.filters.push((r) => (r[c] ?? null) !== v); return this; }
     order() { return this; }
+    limit(n: number) { this.max = n; return this; }
     maybeSingle() { this.single = true; return this; }
     then(res: any, rej: any) { return Promise.resolve(this.run()).then(res, rej); }
     run() {
@@ -36,9 +41,9 @@ export function fakeDb(tables: Record<string, any[]>) {
       }
       const hit = rows.filter((r) => this.filters.every((f) => f(r)));
       if (this.op === "delete") { for (const r of hit) rows.splice(rows.indexOf(r), 1); return { data: null, error: null }; }
-      if (this.op === "update") { hit.forEach((r) => Object.assign(r, flip(this.payload))); return { data: null, error: null }; }
+      if (this.op === "update") { hit.forEach((r) => Object.assign(r, flip(this.payload))); return { data: hit.map((r) => ({ ...r })), error: null }; }
       if (this.head) return { count: hit.length, data: null, error: null };
-      return { data: this.single ? (hit[0] ?? null) : hit.map((r) => ({ ...r })), error: null };
+      return { data: this.single ? (hit[0] ?? null) : hit.slice(0, this.max).map((r) => ({ ...r })), error: null };
     }
   }
   return { from: (t: string) => new Q(t) } as any;

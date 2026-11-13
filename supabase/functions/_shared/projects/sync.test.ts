@@ -4,7 +4,7 @@ import { normalizeDocuments } from "./docs.ts";
 
 const pm = (id: number, over: any = {}) => ({
   id, is_deleted: false, project_nr: `WER-${id}`, name: "Schild", created: "2026-01-01T00:00:00Z",
-  customer: { first_name: "Max", last_name: "Muster", company_name: "" }, address: { city: "Ulm" },
+  customer: { first_name: "Max", last_name: "Muster", company_name: "", email: " Max@Muster.DE ", phone_mobile: "", phone_home: "0731 123" }, address: { city: "Ulm" },
   current_project_match_status: { created: "2026-11-01T08:00:00Z", step_id: 266512, step: { id: 266512, name: "🚧 Projektplanung" } },
   project_match_assignments: [{ user: { email: "JL@slwerbung.de" } }, { user: { email: "jl@slwerbung.de" } }, { user: { email: "info@slwerbung.de" } }],
   customer_documents: [{ nr: "A-1", type: "offer", created: "2026-10-20", status_name: "Versendet", value: 100 }, { nr: "A-2", type: "offer", created: "2026-10-21", status_name: "Gelöscht" }],
@@ -16,6 +16,7 @@ describe("hero-sync", () => {
     const r = mapProject(pm(5), ["info@slwerbung.de"])!;
     expect(r).toMatchObject({ hero_id: 5, kunde: "Max Muster", ort: "Ulm", gewerk: "Werbetechnik", step_id: 266512, step_key: "planung", step_since: "2026-11-01T08:00:00Z" });
     expect(r.assignee_emails).toEqual(["jl@slwerbung.de"]);
+    expect(r).toMatchObject({ kunde_email: "max@muster.de", kunde_telefon: "0731 123" });
     expect(r.documents).toHaveLength(1);
   });
   it("laesst geloeschte sowie abgeschlossene/archivierte Projekte weg", () => {

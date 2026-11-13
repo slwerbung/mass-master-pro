@@ -12,6 +12,7 @@ const rules = [
   R("reklamation", "kunde"), R("freigabe_offen", "kunde", 5), R("abholung", "kunde", 7), R("anfrage_ohne_angebot", "auftrag"),
   R("anfrage_status_alt", "auftrag"), R("angebot_entwurf", "auftrag"), R("nachfassen", "auftrag", 7), R("ab_fehlt", "auftrag", 2),
   R("termine_fehlen", "termine", 7), R("haengt", "termine"), R("waise", "pflege"),
+  R("nachfassen_anruf", "auftrag", 7), R("nachfassen_verloren", "auftrag", 30), R("kunde_antwort", "kunde"),
 ];
 const NAMES: Record<string, string> = {
   anfragen: "📬Anfragen", angebot: "📄 Angeboterstellung", warten_auftrag: "⏳ Warten auf Auftrag", planung: "🚧 Projektplanung",
@@ -25,9 +26,9 @@ const ctx = (over: Partial<EvalContext> = {}): EvalContext => ({
   now: NOW, bundleAfterDays: 60, rules: new Map(rules.map((r) => [r.key, r])), steps: new Map(steps.map((s) => [s.step_id, s])), ...over,
 });
 const doc = (type: string, status: string, daysAgo: number) => ({ nr: "X-1", type, status_name: status, created: ago(daysAgo) });
-const project = (key: string, days: number, documents: unknown[] = []): ProjectRow => {
+const project = (key: string, days: number, documents: unknown[] = [], followups: ProjectRow["followups"] = []): ProjectRow => {
   const s = steps.find((x) => x.key === key)!;
-  return { hero_id: 1, project_nr: "WER-1", name: "Test", step_id: s.step_id, step_name: NAMES[key], step_key: key, step_since: ago(days), hero_created: ago(200), documents };
+  return { hero_id: 1, project_nr: "WER-1", name: "Test", step_id: s.step_id, step_name: NAMES[key], step_key: key, step_since: ago(days), hero_created: ago(200), documents, followups };
 };
 const rule = (p: ProjectRow, c = ctx()) => evaluateProject(p, c)?.ruleKey ?? null;
 
@@ -58,6 +59,24 @@ describe("Regeln", () => {
     const s = evaluateProject(project("warten_auftrag", 30, [doc("offer", "Erneut versendet", 8)]), ctx());
     expect(s?.ruleKey).toBe("nachfassen");
     expect(s?.days).toBe(8);
+  });
+  it("Nachfass-Kette: Mail (Stufe 1) -> Anruf (Stufe 2) -> verloren (Stufe 3)", () => {
+    const offer = (d: number) => [doc("offer", "Versendet", d)];
+    const sent = (stage: number, d: number) => ({ rule_key: "nachfassen", stage, sent_at: ago(d) });
+    // Angebot vor 8 Tagen, noch keine Nachfass-Mail: Stufe 1
+    expect(rule(project("warten_auftrag", 10, offer(8)))).toBe("nachfassen");
+    // Stufe 1 vor 2 Tagen gesendet: ruhig (kein Anruf, keine zweite Mail)
+    expect(rule(project("warten_auftrag", 3, offer(10), [sent(1, 2)]))).toBeNull();
+    // Stufe 1 vor 7 Tagen gesendet: Anruf
+    const call = evaluateProject(project("warten_auftrag", 3, offer(15), [sent(1, 7)]), ctx());
+    expect(call?.ruleKey).toBe("nachfassen_anruf");
+    expect(call?.days).toBe(7);
+    // Anruf erledigt (Stufe 2): wieder ruhig
+    expect(rule(project("warten_auftrag", 3, offer(20), [sent(1, 13), sent(2, 1)]))).toBeNull();
+    // 30 Tage nach Angebot: „verloren?“ schlaegt alles andere
+    expect(rule(project("warten_auftrag", 3, offer(30), [sent(1, 20)]))).toBe("nachfassen_verloren");
+    // Ein NEUES Angebot beginnt die Kette von vorn (alte Stufe 1 zaehlt nicht)
+    expect(rule(project("warten_auftrag", 3, offer(8), [sent(1, 20)]))).toBe("nachfassen");
   });
   it("AB fehlt / Termine fehlen", () => {
     expect(rule(project("planung", 2))).toBeNull();

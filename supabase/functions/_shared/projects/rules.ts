@@ -12,9 +12,12 @@ export interface RuleRow {
   channel: string; followup_days: number | null; followup_reason: string; autopilot: string; sort: number; active: boolean;
 }
 export interface StepSetting { step_id: number; name: string; key: string; target_days: number; excluded: boolean; closeness: number }
+/** Bereits gesendete Nachfass-Mails bzw. erledigte Anrufe (Stufe 2) eines Projekts. */
+export interface SentFollowup { rule_key: string; stage: number; sent_at: string }
 export interface ProjectRow {
   hero_id: number; project_nr: string; name: string; step_id: number | null; step_name: string; step_key: string;
   step_since: string | null; hero_created: string | null; documents: unknown;
+  followups?: SentFollowup[];
 }
 export interface Signal {
   ruleKey: string; category: Category; days: number; closeness: number; bundled: boolean; priority: number;
@@ -56,6 +59,12 @@ export function evaluateProject(p: ProjectRow, ctx: EvalContext): Signal | null 
   const hasAb = confirmations(docs).length > 0;
   const lastSent = latest(sent);
   const offerDays = lastSent ? daysBetween(lastSent.created, ctx.now) : 0;
+  // Nachfass-Kette gilt je Angebot: ein neues (erneut versendetes) Angebot beginnt wieder bei Stufe 1.
+  const sinceOffer = (stage: number) => (p.followups ?? [])
+    .filter((f) => f.rule_key === "nachfassen" && f.stage === stage && (!lastSent?.created || Date.parse(f.sent_at) >= Date.parse(lastSent.created)))
+    .sort((a, b) => Date.parse(b.sent_at) - Date.parse(a.sent_at))[0] ?? null;
+  const stage1 = sinceOffer(1);
+  const stage2 = sinceOffer(2);
 
   const make = (ruleKey: string, d: number, text: string, extra: Partial<Signal["reasons"]> = {}): Signal | null => {
     const rule = ctx.rules.get(ruleKey);
@@ -81,7 +90,14 @@ export function evaluateProject(p: ProjectRow, ctx: EvalContext): Signal | null 
       ? make("anfrage_status_alt", days, `Angebot ist schon versendet, der Status steht noch auf „${stepName}“.`, { offerDate: lastSent.created }) : null),
     () => (key === "angebot" || (!lastSent && unsent.length > 0 && !hasAb && key !== "warten_auftrag" && key !== "anfragen")
       ? make("angebot_entwurf", days, `Angebot ist noch nicht fertig versendet (seit ${tage(days)} im Status „${stepName}“).`) : null),
-    () => (key === "warten_auftrag" && lastSent && offerDays >= thr("nachfassen", 7)
+    // Stufe 3: 30 Tage nach Angebotsversand „Angebot verloren?“ (Vorschlag: archivieren).
+    () => (key === "warten_auftrag" && lastSent && offerDays >= thr("nachfassen_verloren", 30)
+      ? make("nachfassen_verloren", offerDays, `Angebot vor ${tage(offerDays)} versendet und nie beantwortet – verloren?`, { offerDate: lastSent.created }) : null),
+    // Stufe 2: 7 Tage nach der Nachfass-Mail anrufen.
+    () => (key === "warten_auftrag" && lastSent && stage1 && !stage2 && daysBetween(stage1.sent_at, ctx.now) >= thr("nachfassen_anruf", 7)
+      ? make("nachfassen_anruf", daysBetween(stage1.sent_at, ctx.now), `Nachfass-Mail vor ${tage(daysBetween(stage1.sent_at, ctx.now))} gesendet, keine Antwort – bitte anrufen.`, { offerDate: lastSent.created }) : null),
+    // Stufe 1: Mail 7 Tage nach Angebotsversand (nur, solange noch keine Nachfass-Mail zu diesem Angebot raus ist).
+    () => (key === "warten_auftrag" && lastSent && !stage1 && offerDays >= thr("nachfassen", 7)
       ? make("nachfassen", offerDays, `Angebot vor ${tage(offerDays)} versendet, noch keine Antwort.`, { offerDate: lastSent.created }) : null),
     () => ((key === "planung" || key === "material") && !hasAb && days > thr("ab_fehlt", 2)
       ? make("ab_fehlt", days, `Seit ${tage(days)} im Status „${stepName}“, aber keine Auftragsbestätigung.`) : null),

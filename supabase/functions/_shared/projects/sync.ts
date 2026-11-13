@@ -10,7 +10,7 @@ const PAGE = 50;
 
 export const PROJECTS_QUERY = `query($offset: Int) { project_matches(offset: $offset) {
   id is_deleted project_nr name created
-  customer { first_name last_name company_name }
+  customer { first_name last_name company_name email phone_mobile phone_home }
   address { city }
   current_project_match_status { created step_id step { id name } }
   project_match_assignments { user { email } }
@@ -27,6 +27,7 @@ export function gewerkOf(nr: string): string {
 
 export interface ProjectUpsert {
   hero_id: number; project_nr: string; name: string; kunde: string; ort: string; gewerk: string;
+  kunde_email: string; kunde_telefon: string;
   step_id: number | null; step_name: string; step_key: string; step_since: string | null;
   assignee_emails: string[]; documents: unknown[]; hero_created: string | null; synced_at: string;
 }
@@ -51,6 +52,8 @@ export function mapProject(pm: any, ignoredEmails: string[], now = new Date()): 
     name: String(pm.name || ""),
     kunde,
     ort: String(pm.address?.city || ""),
+    kunde_email: String(c?.email || "").trim().toLowerCase(),
+    kunde_telefon: String(c?.phone_mobile || c?.phone_home || "").trim(),
     gewerk: gewerkOf(pm.project_nr),
     step_id: stepId != null ? Number(stepId) : null,
     step_name: stepName,
