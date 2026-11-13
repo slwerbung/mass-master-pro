@@ -4,17 +4,25 @@ import { invokeFn } from "./api";
 export type PCategory = "kunde" | "auftrag" | "termine" | "pflege";
 
 export interface ProjectView {
-  heroId: number; nr: string; name: string; kunde: string; ort: string; gewerk: string; stepName: string; days: number; assignees: string[];
+  heroId: number; nr: string; name: string; kunde: string; kundeEmail: string; kundeTelefon: string; ort: string; gewerk: string; stepName: string; days: number; assignees: string[];
 }
+export type AutopilotMode = "off" | "suggest" | "auto";
+export interface FollowupDraft { id: string; to: string; subject: string; body: string; stage: number; error: string | null }
 export interface ProjectCard {
   id: string; ruleKey: string; ruleLabel: string; suggestion: string; channel: string; followupDays: number | null; followupReason: string;
   category: PCategory; reasons: { text?: string; days?: number; stepName?: string }; project: ProjectView;
+  /** Nachfassen: Autopilot dieser Regel am Projekt (Projekt vor Regel), Override am Projekt, Entwurf. */
+  autopilot: AutopilotMode; autopilotOverride: AutopilotMode | null; draft: FollowupDraft | null;
 }
 export interface FollowupItem { id: string; dueAt: string; reason: string; stage: number; project: ProjectView }
 export interface ProjectList { bundleAfterDays: number; stack: ProjectCard[]; cleanup: ProjectCard[]; followups: FollowupItem[] }
 export interface RunInfo { created_at: string; ok: boolean; error: string | null; stats: Record<string, number> }
 export interface ProjectOverview {
-  shadow: boolean; cards: number; cleanup: number; followups: number; lastSync: RunInfo | null; lastEvaluate: RunInfo | null; now: string;
+  shadow: boolean; cards: number; cleanup: number; followups: number; lastSync: RunInfo | null; lastEvaluate: RunInfo | null; now: string; autoSent: number;
+}
+export interface AutopilotOverview {
+  rules: { key: string; label: string; suggestion: string; autopilot: AutopilotMode; active: boolean }[];
+  window: { days: number[]; from: number; to: number }; maxPerRun: number; maxPerDay: number; shadow: boolean; autoSentToday: number; autoSentTotal: number;
 }
 export interface ProjectDetail { project: ProjectView; events: { at: string; text: string }[]; summary: string }
 
@@ -23,7 +31,11 @@ export interface ProjectRule {
   key: string; label: string; category: PCategory; threshold_days: number | null; suggestion: string; channel: string;
   followup_days: number | null; followup_reason: string; autopilot: "off" | "suggest" | "auto"; sort: number; active: boolean;
 }
-export interface ProjectSettings { steps: StepSetting[]; rules: ProjectRule[]; bundleAfterDays: number; writeEnabled: boolean }
+export interface FollowupTemplate { rule_key: string; stage: number; subject: string; body: string }
+export interface ProjectSettings {
+  steps: StepSetting[]; rules: ProjectRule[]; templates: FollowupTemplate[]; bundleAfterDays: number; writeEnabled: boolean;
+  window: { days: number[]; from: number; to: number }; limits: { perRun: number; perDay: number };
+}
 
 export const papi = <T = unknown>(action: string, params: Record<string, unknown> = {}) => invokeFn<T>("project-api", { action, ...params });
 
@@ -37,7 +49,7 @@ export const CATEGORY_STYLE: Record<PCategory, string> = {
 export const tageText = (n: number) => (n === 1 ? "1 Tag" : `${n} Tage`);
 
 // ------------------------------------------------------------------ Aktionen (project-action)
-export interface ActionResult { ok: true; shadow: boolean; message: string; warnings?: string[]; done?: number[]; failed?: { heroId: number; error: string }[] }
+export interface ActionResult { ok: true; shadow: boolean; message: string; warnings?: string[]; done?: (number | string)[]; failed?: { heroId?: number; draftId?: string; error: string }[] }
 export const pact = <T = ActionResult>(action: string, params: Record<string, unknown> = {}) => invokeFn<T>("project-action", { action, ...params });
 
 export interface StepsInfo { shadow: boolean; current: number | null; steps: { id: number; name: string; key: string }[] }

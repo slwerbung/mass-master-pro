@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CATEGORY_NAMES, papi, type ProjectRule, type ProjectSettings, type StepSetting } from "@/lib/projects";
+import { CATEGORY_NAMES, papi, type FollowupTemplate, type ProjectRule, type ProjectSettings, type StepSetting } from "@/lib/projects";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, ErrorBox, Field, Input, Select, Spinner, Switch } from "@/components/ui";
 import { errorText } from "@/lib/utils";
 
@@ -52,6 +52,19 @@ export default function ProjectSettingsPage() {
         <CardContent className="space-y-1">
           <p className="pb-2 text-xs text-muted-foreground">„Ausgeschlossen“ = keine Karten. Buchhaltung (Warten auf Bezahlung, Fertig zur Abrechnung) ist standardmäßig ausgeschlossen. „Nähe zum Abschluss“ bestimmt die Reihenfolge im Stapel (höher = zuerst).</p>
           {s.steps.map((st) => <StepRow key={st.step_id} step={st} onSaved={refresh} />)}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Autopilot: Versandfenster und Grenzen</CardTitle></CardHeader>
+        <CardContent><AutoSettings window={s.window} limits={s.limits} onSaved={refresh} /></CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Nachfass-Vorlagen</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">Platzhalter: <code>{"{kunde}"}</code> <code>{"{projekt}"}</code> <code>{"{angebot_nr}"}</code> <code>{"{angebot_datum}"}</code>. Ton kurz und locker, Firmenname „SL WERBUNG“. Geändert wird nur der Text für <i>neue</i> Entwürfe; offene Entwürfe bleiben, wie sie sind.</p>
+          {s.templates.map((t) => <TemplateRow key={`${t.rule_key}:${t.stage}`} t={t} label={s.rules.find((r) => r.key === t.rule_key)?.label ?? t.rule_key} onSaved={refresh} />)}
         </CardContent>
       </Card>
 
@@ -115,6 +128,61 @@ function RuleRow({ rule, onSaved }: { rule: ProjectRule; onSaved: () => void }) 
           </Select>
         </Field>
       </div>
+    </div>
+  );
+}
+
+const DAY_NAMES = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+
+function AutoSettings({ window: w, limits, onSaved }: { window: ProjectSettings["window"]; limits: ProjectSettings["limits"]; onSaved: () => void }) {
+  const [days, setDays] = useState<number[]>(w.days.map((d) => (d === 0 ? 7 : d)));
+  const [from, setFrom] = useState(String(w.from));
+  const [to, setTo] = useState(String(w.to));
+  const [perRun, setPerRun] = useState(String(limits.perRun));
+  const [perDay, setPerDay] = useState(String(limits.perDay));
+  const save = useMutation({
+    mutationFn: async () => {
+      await papi("save_window", { days, from: Number(from), to: Number(to) });
+      await papi("save_limits", { perRun: Number(perRun), perDay: Number(perDay) });
+    },
+    onSuccess: () => { toast.success("Gespeichert."); onSaved(); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  const toggle = (d: number) => setDays((x) => (x.includes(d) ? x.filter((y) => y !== d) : [...x, d].sort()));
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {DAY_NAMES.map((n, i) => (
+          <label key={n} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={days.includes(i + 1)} onChange={() => toggle(i + 1)} /> {n}</label>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="von (Uhr)"><Input type="number" className="h-8 w-20" min={0} max={23} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+        <Field label="bis (Uhr)"><Input type="number" className="h-8 w-20" min={1} max={24} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+        <Field label="höchstens je Lauf"><Input type="number" className="h-8 w-24" value={perRun} onChange={(e) => setPerRun(e.target.value)} /></Field>
+        <Field label="höchstens je Tag"><Input type="number" className="h-8 w-24" value={perDay} onChange={(e) => setPerDay(e.target.value)} /></Field>
+        <Button onClick={() => save.mutate()} disabled={save.isPending}>Speichern</Button>
+      </div>
+      <p className="text-xs text-muted-foreground">Berliner Ortszeit. Automatisch gesendet wird nur im Fenster, nie mehr als die Grenzen erlauben und nie, solange der Schattenmodus an ist.</p>
+    </div>
+  );
+}
+
+function TemplateRow({ t, label, onSaved }: { t: FollowupTemplate; label: string; onSaved: () => void }) {
+  const [subject, setSubject] = useState(t.subject);
+  const [body, setBody] = useState(t.body);
+  const dirty = subject !== t.subject || body !== t.body;
+  const save = useMutation({
+    mutationFn: () => papi("save_template", { ruleKey: t.rule_key, stage: t.stage, subject, body }),
+    onSuccess: () => { toast.success("Vorlage gespeichert."); onSaved(); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  return (
+    <div className="space-y-2 rounded-md border p-3 text-sm">
+      <div className="font-medium">{label} <span className="text-xs text-muted-foreground">· Stufe {t.stage}</span></div>
+      <Field label="Betreff"><Input value={subject} onChange={(e) => setSubject(e.target.value)} /></Field>
+      <Field label="Text"><textarea className="min-h-32 w-full rounded-md border bg-background p-2 text-sm" value={body} onChange={(e) => setBody(e.target.value)} /></Field>
+      <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>Speichern</Button>
     </div>
   );
 }
