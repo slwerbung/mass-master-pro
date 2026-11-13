@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { pact, papi, type ActionResult, type EventRow, type EventSetup, type ProjectView, type StepsInfo } from "@/lib/projects";
 import { Button, ErrorBox, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
@@ -86,6 +87,20 @@ function workday(from: Date, plus: number): Date {
   return d;
 }
 
+/** Hoechstens so viele Termine je Klick (wie im Backend, `MAX_EVENTS`). */
+const MAX_EVENT_ROWS = 6;
+/** Dauer in Minuten -> „1,5 Std“, „30 Min“, „2 Std 15 Min“. */
+export function fmtDuration(min: number): string {
+  if (!Number.isFinite(min) || min <= 0) return "–";
+  const h = Math.floor(min / 60), m = min % 60;
+  if (!h) return `${m} Min`;
+  if (!m) return `${h} Std`;
+  if (m === 30) return `${h},5 Std`;
+  return `${h} Std ${m} Min`;
+}
+/** Auswahl: halbe Stunden bis 4 Std, dann volle Stunden bis 8, dann 10/12/24 Std. */
+const DURATION_CHOICES = [30, 60, 90, 120, 150, 180, 210, 240, 300, 360, 420, 480, 600, 720, 1440];
+
 export function EventsDialog({ project, onClose, onDone }: { project: ProjectView; onClose: () => void; onDone: (r: ActionResult) => void }) {
   const setup = useQuery({ queryKey: ["projects", "event_setup"], queryFn: () => papi<EventSetup>("event_setup"), staleTime: 300_000 });
   const initial = useMemo<EventRow[]>(() => {
@@ -99,8 +114,15 @@ export function EventsDialog({ project, onClose, onDone }: { project: ProjectVie
   const [rows, setRows] = useState<EventRow[] | null>(null);
   const list = rows ?? initial;
   const patch = (i: number, p: Partial<EventRow>) => setRows(list.map((r, j) => (j === i ? { ...r, ...p } : r)));
+  const remove = (i: number) => setRows(list.filter((_, j) => j !== i));
+  const add = () => {
+    const last = list[list.length - 1];
+    const date = last ? isoDay(workday(new Date(`${last.date}T12:00:00`), 1)) : isoDay(workday(new Date(), 1));
+    setRows([...list, { title: "", date, time: "08:00", durationMinutes: 120, employeeId: "" }]);
+  };
+  const incomplete = list.some((r) => !r.title.trim() || !r.date);
   const save = useMutation({
-    mutationFn: () => pact("create_events", { heroId: project.heroId, events: list.map((r) => ({ ...r, employeeId: r.employeeId || null })) }),
+    mutationFn: () => pact("create_events", { heroId: project.heroId, events: list.map((r) => ({ ...r, title: r.title.trim(), employeeId: r.employeeId || null })) }),
     onSuccess: (r) => { reportResult(r); onDone(r); },
     onError: (e) => toast.error(errorText(e)),
   });
@@ -108,25 +130,36 @@ export function EventsDialog({ project, onClose, onDone }: { project: ProjectVie
     <Modal title={`Termine anlegen: ${project.nr} ${project.name}`} onClose={onClose} wide>
       {setup.isLoading && <Spinner />}
       <ErrorBox error={setup.error} />
+      <datalist id="event-titles">{setup.data?.types.map((t) => <option key={t.id} value={t.name} />)}</datalist>
       <div className="space-y-2">
-        {list.map((r, i) => (
-          <div key={i} className="grid gap-2 rounded-md border p-2 sm:grid-cols-[7rem_9rem_6rem_6rem_1fr]">
-            <Input value={r.title} onChange={(e) => patch(i, { title: e.target.value })} aria-label="Titel" />
-            <Input type="date" value={r.date} onChange={(e) => patch(i, { date: e.target.value })} aria-label="Datum" />
-            <Input type="time" value={r.time} onChange={(e) => patch(i, { time: e.target.value })} aria-label="Uhrzeit" />
-            <Input type="number" min={15} step={15} value={r.durationMinutes} onChange={(e) => patch(i, { durationMinutes: Number(e.target.value) })} aria-label="Dauer in Minuten" title="Dauer in Minuten" />
-            <Select value={r.employeeId} onChange={(e) => patch(i, { employeeId: e.target.value })} aria-label="Mitarbeiter">
-              <option value="">ohne Mitarbeiter</option>
-              {setup.data?.employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </Select>
-          </div>
-        ))}
-        {setup.data && !list.length && <p className="text-sm text-muted-foreground">Keine Terminarten angelegt (Admin → Projekte).</p>}
+        {list.map((r, i) => {
+          const choices = DURATION_CHOICES.includes(r.durationMinutes) ? DURATION_CHOICES : [...DURATION_CHOICES, r.durationMinutes].sort((a, b) => a - b);
+          return (
+            <div key={i} className="grid gap-2 rounded-md border p-2 sm:grid-cols-[9rem_9rem_6rem_6.5rem_1fr_2.25rem]">
+              <Input value={r.title} list="event-titles" placeholder="Titel" onChange={(e) => patch(i, { title: e.target.value })} aria-label="Titel" />
+              <Input type="date" value={r.date} onChange={(e) => patch(i, { date: e.target.value })} aria-label="Datum" />
+              <Input type="time" value={r.time} onChange={(e) => patch(i, { time: e.target.value })} aria-label="Uhrzeit" />
+              <Select value={String(r.durationMinutes)} onChange={(e) => patch(i, { durationMinutes: Number(e.target.value) })} aria-label="Dauer" title="Dauer">
+                {choices.map((m) => <option key={m} value={m}>{fmtDuration(m)}</option>)}
+              </Select>
+              <Select value={r.employeeId} onChange={(e) => patch(i, { employeeId: e.target.value })} aria-label="Mitarbeiter">
+                <option value="">ohne Mitarbeiter</option>
+                {setup.data?.employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+              </Select>
+              <Button variant="ghost" size="sm" onClick={() => remove(i)} aria-label="Termin entfernen" title="Termin entfernen"><Trash2 className="h-4 w-4" /></Button>
+            </div>
+          );
+        })}
+        {setup.data && !list.length && <p className="text-sm text-muted-foreground">Keine Termine – mit „Termin hinzufügen“ einen anlegen.</p>}
       </div>
-      <p className="text-xs text-muted-foreground">Uhrzeit ist Berliner Ortszeit, Dauer in Minuten. Ein Klick legt alle Termine in HERO an.</p>
+      <div className="flex items-center justify-between">
+        <Button variant="outline" size="sm" onClick={add} disabled={list.length >= MAX_EVENT_ROWS}><Plus className="h-3.5 w-3.5" /> Termin hinzufügen</Button>
+        {list.length >= MAX_EVENT_ROWS && <span className="text-xs text-muted-foreground">Höchstens {MAX_EVENT_ROWS} Termine auf einmal.</span>}
+      </div>
+      <p className="text-xs text-muted-foreground">Uhrzeit ist Berliner Ortszeit. Ein Klick legt alle Termine in HERO an.</p>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onClose}>Abbrechen</Button>
-        <Button onClick={() => save.mutate()} disabled={save.isPending || !list.length}>{list.length} Termine anlegen</Button>
+        <Button onClick={() => save.mutate()} disabled={save.isPending || !list.length || incomplete}>{list.length === 1 ? "1 Termin anlegen" : `${list.length} Termine anlegen`}</Button>
       </div>
     </Modal>
   );
