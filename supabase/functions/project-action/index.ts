@@ -4,15 +4,17 @@
 //   POST { action, heroId, ... }  ->  { ok: true, data } | { ok: false, error }
 //   steps | set_step | complete | archive | logbook_note | create_events | bulk_archive (nur Admin)
 //   Nachfassen: save_draft | send_followup | bulk_followup | set_autopilot | call_done
+//   Arbeitsmodus (Phase 4): lock_for_hero (Karte 30 Min sperren, Vorher-Stand merken; die Rueckkehr macht hero-task-callback)
 //   Mails sendet diese Function NIE selbst: send_followup/bulk_followup reichen die Sitzung des Benutzers an email-send weiter.
 
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
-import { addLogbookEntry, loadHeroKey, projectSteps, setStep } from "../_shared/email/hero.ts";
+import { addLogbookEntry, heroGraphql, loadHeroKey, projectSteps, setStep } from "../_shared/email/hero.ts";
 import { heroCreateAppointment } from "../_shared/booking/hero.ts";
 import { canSee, isShadow } from "../_shared/projects/access.ts";
 import { MAX_BULK, archiveAction, bulkArchiveAction, callDoneAction, completeAction, eventsAction, noteAction, saveDraftAction, setAutopilotAction, setStepAction, type ActionCtx, type HeroOps } from "../_shared/projects/actions.ts";
 import { isMode } from "../_shared/projects/followup.ts";
+import { lockForHero, parseChecklists, readProjectState } from "../_shared/projects/heroTask.ts";
 import { stepKey } from "../_shared/projects/steps.ts";
 
 Deno.serve(async (req) => {
@@ -23,7 +25,7 @@ Deno.serve(async (req) => {
   if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
   const body = await readJson(req);
   const action = String(body.action || "");
-  if (!["steps", "set_step", "complete", "archive", "logbook_note", "create_events", "bulk_archive", "save_draft", "send_followup", "bulk_followup", "set_autopilot", "call_done"].includes(action)) return fail("Unbekannte Aktion.");
+  if (!["steps", "set_step", "complete", "archive", "logbook_note", "create_events", "bulk_archive", "save_draft", "send_followup", "bulk_followup", "set_autopilot", "call_done", "lock_for_hero"].includes(action)) return fail("Unbekannte Aktion.");
   if (action === "bulk_archive" && user.role !== "admin") return fail("Nur für Admins.", { code: "forbidden" });
 
   try {
@@ -99,6 +101,11 @@ Deno.serve(async (req) => {
       case "logbook_note": return ok(await noteAction(ctx, heroId, String(body.text || "")));
       case "bulk_archive": return ok(await bulkArchiveAction(ctx, ids));
       case "call_done": return ok(await callDoneAction(ctx, heroId));
+      case "lock_for_hero": {
+        const { data: cl } = await sb.from("app_config").select("value").eq("key", "projects_checklists").maybeSingle();
+        return ok(await lockForHero(sb, { readState: (id) => readProjectState((k, q, v) => heroGraphql(k, q, v), key, id), checklists: parseChecklists(cl?.value) },
+          { heroId, actor: { id: user.id, name: ctx.user, isAdmin: user.role === "admin" } }));
+      }
       case "set_autopilot": {
         const mode = body.mode === null ? null : body.mode;
         if (mode !== null && !isMode(mode)) return fail("Autopilot: off, suggest oder auto.");

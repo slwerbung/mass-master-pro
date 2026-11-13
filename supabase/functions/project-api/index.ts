@@ -12,6 +12,7 @@ import { evaluateAll } from "../_shared/projects/evaluate.ts";
 import { berlinDayStartIso, effectiveAutopilot, parseWindow } from "../_shared/projects/followup.ts";
 import { daysBetween } from "../_shared/projects/rules.ts";
 import { normalizeDocuments } from "../_shared/projects/docs.ts";
+import { DEFAULT_CHECKLISTS, parseChecklists, type TaskKind } from "../_shared/projects/heroTask.ts";
 
 type Ctx = { sb: any; user: MailUser; body: Record<string, any> };
 
@@ -51,7 +52,7 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
   async overview({ sb, user }) {
     const now = new Date();
     const [cards, fus, run, sync, autoSent] = await Promise.all([
-      sb.from("project_cards").select("hero_id, bundled").eq("state", "open"),
+      sb.from("project_cards").select("hero_id, bundled").in("state", ["open", "in_hero"]),
       sb.from("followups").select("hero_id").eq("target_type", "project").is("done_at", null),
       sb.from("project_runs").select("created_at, ok, error, stats").eq("kind", "evaluate").order("created_at", { ascending: false }).limit(1).maybeSingle(),
       sb.from("project_runs").select("created_at, ok, error, stats").eq("kind", "sync").order("created_at", { ascending: false }).limit(1).maybeSingle(),
@@ -90,15 +91,24 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
   /** Stapel, Aufraeum-Karte und Wiedervorlagen in einem Aufruf. */
   async list({ sb, user }) {
     const now = new Date();
-    const [cards, fus, rules, cfg, drafts, overrides] = await Promise.all([
-      sb.from("project_cards").select("id, hero_id, rule_key, category, priority, state, bundled, reasons, created_at").eq("state", "open").order("priority", { ascending: true }),
+    const [cards, fus, rules, cfg, drafts, overrides, tasks, checklistCfg] = await Promise.all([
+      sb.from("project_cards").select("id, hero_id, rule_key, category, priority, state, bundled, reasons, created_at, locked_until").in("state", ["open", "in_hero"]).order("priority", { ascending: true }),
       sb.from("followups").select("id, hero_id, due_at, reason, stage").eq("target_type", "project").is("done_at", null).order("due_at", { ascending: true }),
       sb.from("project_rules").select("key, label, suggestion, channel, followup_days, followup_reason, autopilot"),
       sb.from("app_config").select("value").eq("key", "projects_bundle_after_days").maybeSingle(),
       sb.from("project_followup_mails").select("id, hero_id, rule_key, stage, subject, body, to_email, error").eq("state", "draft"),
       sb.from("project_autopilot").select("hero_id, rule_key, mode"),
+      sb.from("hero_tasks").select("id, card_id, task, created_by, created_by_name, finished_at, check_result").or(`finished_at.is.null,finished_at.gt.${new Date(now.getTime() - 3 * 86_400_000).toISOString()}`),
+      sb.from("app_config").select("value").eq("key", "projects_checklists").maybeSingle(),
     ]);
-    must(cards); must(fus); must(rules); must(drafts); must(overrides);
+    must(cards); must(fus); must(rules); must(drafts); must(overrides); must(tasks);
+    const lists = parseChecklists(checklistCfg.data?.value);
+    // Arbeitsmodus: offene Aufgabe je Karte und letzter Hinweis aus einer nicht bestandenen Rueckkehr.
+    const openTask = new Map<string, any>(), hintBy = new Map<string, string>();
+    for (const t of tasks.data || []) {
+      if (!t.finished_at) openTask.set(t.card_id, t);
+      else if (t.check_result?.passed === false && t.check_result?.message) hintBy.set(t.card_id, String(t.check_result.message));
+    }
     const draftBy = new Map<string, any>((drafts.data || []).map((d: any) => [`${d.hero_id}:${d.rule_key}`, d]));
     const modeBy = new Map<string, string>((overrides.data || []).map((o: any) => [`${o.hero_id}:${o.rule_key}`, o.mode]));
     const ids = [...new Set([...(cards.data || []), ...(fus.data || [])].map((r: any) => Number(r.hero_id)))];
@@ -115,6 +125,14 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
           // Nachfassen: Autopilot (Projekt vor Regel), Override am Projekt und der Entwurf, falls vorhanden.
           autopilot: effectiveAutopilot(r?.autopilot, modeBy.get(key)), autopilotOverride: modeBy.get(key) ?? null,
           draft: d ? { id: d.id, to: d.to_email || "", subject: d.subject, body: d.body, stage: d.stage, error: d.error ?? null } : null,
+          state: c.state,
+          heroTask: (() => {
+            const t = openTask.get(c.id);
+            if (!t) return null;
+            const k: TaskKind = (t.task as TaskKind) in DEFAULT_CHECKLISTS ? (t.task as TaskKind) : "generic";
+            return { id: t.id, kind: k, label: lists[k].label, checklist: lists[k].items, by: t.created_by_name || "", mine: t.created_by === user.id, lockedUntil: c.locked_until ?? null };
+          })(),
+          hint: openTask.has(c.id) ? null : hintBy.get(c.id) ?? null,
         }
         : null;
     };
@@ -198,7 +216,7 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
     const [steps, rules, cfg, templates] = await Promise.all([
       sb.from("project_step_settings").select("*").order("closeness", { ascending: true }),
       sb.from("project_rules").select("*").order("sort", { ascending: true }),
-      sb.from("app_config").select("key, value").in("key", ["projects_bundle_after_days", "projects_write_enabled", "projects_followup_hours", "projects_auto_max_per_run", "projects_auto_max_per_day"]),
+      sb.from("app_config").select("key, value").in("key", ["projects_bundle_after_days", "projects_write_enabled", "projects_followup_hours", "projects_auto_max_per_run", "projects_auto_max_per_day", "projects_checklists"]),
       sb.from("project_followup_templates").select("rule_key, stage, subject, body").order("rule_key", { ascending: true }).order("stage", { ascending: true }),
     ]);
     must(steps); must(rules); must(templates);
@@ -206,7 +224,21 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
     return {
       steps: steps.data, rules: rules.data, templates: templates.data, bundleAfterDays: Number(c.get("projects_bundle_after_days")) || 60, writeEnabled: c.get("projects_write_enabled") === "true",
       window: parseWindow(c.get("projects_followup_hours")), limits: { perRun: Number(c.get("projects_auto_max_per_run")) || 5, perDay: Number(c.get("projects_auto_max_per_day")) || 20 },
+      checklists: parseChecklists(c.get("projects_checklists")),
     };
+  },
+  /** Checkliste einer HERO-Aufgabe (Arbeitsmodus): Name und Punkte. */
+  async save_checklist({ sb, body }) {
+    const kind = String(body.kind || "") as TaskKind;
+    if (!(kind in DEFAULT_CHECKLISTS)) throw new Error("Unbekannte Aufgabe.");
+    const label = String(body.label ?? "").trim();
+    const items = (Array.isArray(body.items) ? body.items : []).map((x: unknown) => String(x).trim()).filter(Boolean);
+    if (!label || label.length > 80) throw new Error("Name: 1 bis 80 Zeichen.");
+    if (!items.length || items.length > 20 || items.some((x: string) => x.length > 200)) throw new Error("1 bis 20 Punkte, je höchstens 200 Zeichen.");
+    const { data } = must(await sb.from("app_config").select("value").eq("key", "projects_checklists").maybeSingle());
+    const all = { ...parseChecklists(data?.value), [kind]: { label, items } };
+    must(await sb.from("app_config").upsert({ key: "projects_checklists", value: JSON.stringify(all) }, { onConflict: "key" }));
+    return { ok: true };
   },
   async save_step({ sb, body }) {
     const patch: Record<string, unknown> = {};
@@ -282,7 +314,7 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
 };
 
 /** Nur Admins. */
-const ADMIN_ONLY = new Set(["settings", "save_step", "save_rule", "save_bundle_days", "save_write_enabled", "save_template", "save_window", "save_limits"]);
+const ADMIN_ONLY = new Set(["settings", "save_step", "save_rule", "save_bundle_days", "save_write_enabled", "save_template", "save_window", "save_limits", "save_checklist"]);
 
 Deno.serve(async (req) => {
   const pre = preflight(req);

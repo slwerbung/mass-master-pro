@@ -8,11 +8,14 @@ export interface ProjectView {
 }
 export type AutopilotMode = "off" | "suggest" | "auto";
 export interface FollowupDraft { id: string; to: string; subject: string; body: string; stage: number; error: string | null }
+export interface HeroTaskInfo { id: string; kind: string; label: string; checklist: string[]; by: string; mine: boolean; lockedUntil: string | null }
 export interface ProjectCard {
   id: string; ruleKey: string; ruleLabel: string; suggestion: string; channel: string; followupDays: number | null; followupReason: string;
   category: PCategory; reasons: { text?: string; days?: number; stepName?: string }; project: ProjectView;
   /** Nachfassen: Autopilot dieser Regel am Projekt (Projekt vor Regel), Override am Projekt, Entwurf. */
   autopilot: AutopilotMode; autopilotOverride: AutopilotMode | null; draft: FollowupDraft | null;
+  /** Arbeitsmodus: Karte ist in HERO gesperrt (`in_hero`), offene Aufgabe und Hinweis aus der letzten Rückkehr. */
+  state: "open" | "in_hero"; heroTask: HeroTaskInfo | null; hint: string | null;
 }
 export interface FollowupItem { id: string; dueAt: string; reason: string; stage: number; project: ProjectView }
 export interface ProjectList { bundleAfterDays: number; stack: ProjectCard[]; cleanup: ProjectCard[]; followups: FollowupItem[] }
@@ -35,6 +38,7 @@ export interface FollowupTemplate { rule_key: string; stage: number; subject: st
 export interface ProjectSettings {
   steps: StepSetting[]; rules: ProjectRule[]; templates: FollowupTemplate[]; bundleAfterDays: number; writeEnabled: boolean;
   window: { days: number[]; from: number; to: number }; limits: { perRun: number; perDay: number };
+  checklists: Record<string, { label: string; items: string[] }>;
 }
 
 export const papi = <T = unknown>(action: string, params: Record<string, unknown> = {}) => invokeFn<T>("project-api", { action, ...params });
