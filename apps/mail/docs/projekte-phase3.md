@@ -23,7 +23,7 @@ Empfänger, Betreff und Text kommen ausschließlich aus dem Entwurf (nie aus der
 5. **Fehler:** per Klick bleibt der Entwurf offen mit Fehlermeldung; automatisch wird der Entwurf gestoppt (kein zweiter Versuch, ein Mensch entscheidet).
 6. Nach dem Senden: Wiedervorlage nach der Regel (Standard 7 Tage) und Karte zurückgestellt. Fehlt die Kopie im Gesendet-Ordner (Warnung), schreibt `email-send` ersatzweise einen Logbuch-Eintrag.
 
-Voreinstellung: `nachfassen`, `freigabe_offen`, `abholung` stehen auf **Vorschlagen**, alle anderen auf Aus. Nichts steht auf Automatisch, und der Schattenmodus ist an.
+Voreinstellung: `nachfassen`, `freigabe_offen`, `abholung` stehen auf **Vorschlagen**, alle anderen auf Aus. Nichts steht auf Automatisch. Der Schalter „Schreiben nach HERO“ (`projects_write_enabled`) wurde vom Inhaber am 13.11.2026 eingeschaltet – Klick-Versand und HERO-Aktionen sind also live, der Autopilot sendet erst, wenn jemand eine Regel oder ein Projekt auf „Automatisch“ stellt.
 
 ## Absicherung
 `send-guard.test.ts` prüft im Quelltext: Die Projekte-Functions enthalten kein `sendComposed`/`sendMail`/`createTransport`/Resend/HERO-`send_mail`; `sendComposed` bleibt in `email-send` einmalig in `send`; `send_followup_auto` verlangt das Cron-Secret vor allem anderen; Empfänger/Text kommen nicht aus der Anfrage; im Versandkern stehen Schattenmodus, Autopilot-, Fenster- und Limit-Prüfung vor dem Senden; der Runner ruft nur `send_followup_auto`.
@@ -37,8 +37,11 @@ supabase db push
 supabase functions deploy hero-sync project-evaluate project-api project-action email-send followup-runner --no-verify-jwt
 ```
 
+## Stand Deploy (13.11.2026)
+Migrationen, `hero-sync`, `project-evaluate`, `project-api`, `project-action`, `followup-runner` und der Cron sind live (per MCP; `hero.ts` dort gekürzt, ein CLI-Deploy ersetzt das durch die volle Fassung). **`email-send` (neue Aktionen `send_followup`/`send_followup_auto`) muss per CLI deployt werden** – bis dahin meldet „Senden“ einen Fehler und es geht nichts raus.
+
 ## Abnahme (live, offen)
-Mit Schalter **aus** (Schattenmodus):
+Mit Schalter **aus** (Schattenmodus, nur noch zum Testen nach erneutem Ausschalten):
 - [ ] Entwürfe erscheinen in den Karten (Regel `nachfassen`); „Senden“ und Sammelkarte melden „Schattenmodus“, es geht keine Mail raus.
 - [ ] `followup-runner` läuft und meldet `skipped: Schattenmodus`.
 
