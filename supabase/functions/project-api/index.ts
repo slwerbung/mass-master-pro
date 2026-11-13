@@ -7,6 +7,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, type MailUser } from "../_shared/email/http.ts";
 import { requireMailUser } from "../_shared/email/http.ts";
+import { assertThread } from "../_shared/email/access.ts";
 import { canSee, isShadow } from "../_shared/projects/access.ts";
 import { evaluateAll } from "../_shared/projects/evaluate.ts";
 import { berlinDayStartIso, effectiveAutopilot, parseWindow } from "../_shared/projects/followup.ts";
@@ -164,6 +165,23 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
       project: projectView(p, now),
       events: events.slice(0, 3),
       summary: `${p.kunde || "Kunde unbekannt"} · ${p.name} · ${count("offer")} Angebot(e), ${count("confirmation")} AB`,
+    };
+  },
+
+  /** Mail-Karte: meine offene HERO-Aufgabe zu diesem Thema (Arbeitsmodus), falls es eine gibt. */
+  async topic_task({ sb, user, body }) {
+    const threadId = String(body.threadId || "");
+    if (!threadId) throw new Error("Thema fehlt.");
+    await assertThread(sb, user, threadId);
+    const since = new Date(Date.now() - 24 * 3_600_000).toISOString();
+    const { data: t } = must(await sb.from("hero_tasks").select("id, task, created_at, created_by_name, hero_id").eq("email_id", threadId).eq("created_by", user.id).is("finished_at", null).gt("created_at", since).maybeSingle());
+    if (!t) return { task: null, heroId: null };
+    const { data: cfg } = await sb.from("app_config").select("value").eq("key", "projects_checklists").maybeSingle();
+    const lists = parseChecklists(cfg?.value);
+    const k: TaskKind = (t.task as TaskKind) in DEFAULT_CHECKLISTS ? (t.task as TaskKind) : "generic";
+    return {
+      heroId: Number(t.hero_id),
+      task: { id: t.id, kind: k, label: lists[k].label, checklist: lists[k].items, by: t.created_by_name || "", mine: true, lockedUntil: new Date(Date.parse(t.created_at) + 30 * 60_000).toISOString() },
     };
   },
 

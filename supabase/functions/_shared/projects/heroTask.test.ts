@@ -141,3 +141,40 @@ describe("finishTask", () => {
     await expect(finishTask(db, deps, { taskId, result: "done", actor: me })).rejects.toThrow("schon abgeschlossen");
   });
 });
+
+describe("Mail-Karte (Thema)", () => {
+  const thread = "th1";
+  it("startet auch ohne Projekt-Karte, merkt das Thema und waehlt die gewaehlte Aufgabe", async () => {
+    const db = world({ project_cards: [] });
+    const r = await lockForHero(db, { readState: reader(snap()), now: NOW }, { heroId: 100, actor: me, kind: "create_confirmation", threadId: thread });
+    expect(r).toMatchObject({ kind: "create_confirmation", reused: false });
+    expect((await db.from("hero_tasks").select("*")).data[0]).toMatchObject({ card_id: null, email_id: thread, task: "create_confirmation", hero_id: 100 });
+  });
+  it("sperrt eine offene Projekt-Karte mit; zweiter Klick verlaengert nur", async () => {
+    const db = world();
+    const deps = { readState: reader(snap()), now: NOW };
+    const a = await lockForHero(db, deps, { heroId: 100, actor: me, kind: "create_confirmation", threadId: thread });
+    expect((await db.from("project_cards").select("*").eq("id", "c1")).data[0].state).toBe("in_hero");
+    const b = await lockForHero(db, deps, { heroId: 100, actor: me, kind: "create_confirmation", threadId: thread });
+    expect(b.taskId).toBe(a.taskId);
+  });
+  it("ohne Karte und ohne Thema, mit unbekannter Aufgabe: Fehler", async () => {
+    await expect(lockForHero(world({ project_cards: [] }), { readState: reader(snap()), now: NOW }, { heroId: 100, actor: me })).rejects.toThrow("keine offene Karte");
+    await expect(lockForHero(world(), { readState: reader(snap()), now: NOW }, { heroId: 100, actor: me, kind: "hack", threadId: thread })).rejects.toThrow("Unbekannte Aufgabe");
+  });
+  it("Erledigt + Abgleich passt: Thema wird abgeschlossen, Logbuch nennt die Mail-Ansicht", async () => {
+    const db = world({ project_cards: [] }); const closed: string[][] = []; const logs: string[] = [];
+    const t = await lockForHero(db, { readState: reader(snap()), now: NOW }, { heroId: 100, actor: me, kind: "create_confirmation", threadId: thread });
+    const r = await finishTask(db, { readState: reader(snap({ docs: [doc("confirmation")] })), closeTopic: async (id, l) => { closed.push([id, l]); }, logbook: async (_h, x) => { logs.push(x); }, now: NOW }, { taskId: t.taskId, result: "done", actor: me });
+    expect(r).toMatchObject({ passed: true, closed: true, topicClosed: true });
+    expect(closed).toEqual([[thread, "AB erstellen in HERO erledigt"]]);
+    expect(logs[0]).toContain("Mail-Ansicht");
+  });
+  it("kein Treffer in HERO: Thema bleibt offen", async () => {
+    const db = world({ project_cards: [] }); let closed = 0;
+    const t = await lockForHero(db, { readState: reader(snap()), now: NOW }, { heroId: 100, actor: me, kind: "create_confirmation", threadId: thread });
+    const r = await finishTask(db, { readState: reader(snap()), closeTopic: async () => { closed++; }, now: NOW }, { taskId: t.taskId, result: "done", actor: me });
+    expect(r.passed).toBe(false);
+    expect(closed).toBe(0);
+  });
+});

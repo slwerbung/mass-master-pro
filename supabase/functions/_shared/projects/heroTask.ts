@@ -102,48 +102,58 @@ export interface TaskDeps {
   logbook?: (heroId: number, text: string) => Promise<void>;
   shadow?: boolean;
   checklists?: Record<TaskKind, Checklist>;
+  /** Mail-Karte: Thema nach bestandenem Abgleich abschliessen („Mail wird abgelegt“). */
+  closeTopic?: (threadId: string, label: string) => Promise<void>;
   now?: Date;
 }
 export interface TaskActor { id: string | null; name: string; isAdmin?: boolean }
 export class TaskError extends Error {}
 
 export interface LockResult { taskId: string; kind: TaskKind; label: string; checklist: string[]; lockedUntil: string; reused: boolean }
+export const isTaskKind = (k: unknown): k is TaskKind => typeof k === "string" && k in DEFAULT_CHECKLISTS;
 
-/** „In HERO erledigen“: Karte 30 Min sperren, Vorher-Stand merken. */
-export async function lockForHero(sb: any, deps: TaskDeps, a: { heroId: number; actor: TaskActor }): Promise<LockResult> {
+/**
+ * „In HERO erledigen“: Karte 30 Min sperren, Vorher-Stand merken. Aus einer Mail-Karte (`threadId`) geht es auch ohne
+ * Projekt-Karte; gibt es eine offene Karte zum Projekt, wird sie mitgesperrt (damit niemand doppelt arbeitet).
+ */
+export async function lockForHero(sb: any, deps: TaskDeps, a: { heroId: number; actor: TaskActor; kind?: string | null; threadId?: string | null }): Promise<LockResult> {
   const now = deps.now ?? new Date();
   const lists = deps.checklists ?? DEFAULT_CHECKLISTS;
   const { data: card } = await sb.from("project_cards").select("id, hero_id, rule_key, state, locked_until, locked_by").eq("hero_id", a.heroId).in("state", ["open", "in_hero"]).maybeSingle();
-  if (!card) throw new TaskError("Für dieses Projekt gibt es keine offene Karte.");
-  const lockedByOther = card.state === "in_hero" && card.locked_until && Date.parse(card.locked_until) > now.getTime() && card.locked_by && card.locked_by !== a.actor.id;
+  if (!card && !a.threadId) throw new TaskError("Für dieses Projekt gibt es keine offene Karte.");
+  if (a.kind && !isTaskKind(a.kind)) throw new TaskError("Unbekannte Aufgabe.");
+  const lockedByOther = card && card.state === "in_hero" && card.locked_until && Date.parse(card.locked_until) > now.getTime() && card.locked_by && card.locked_by !== a.actor.id;
   if (lockedByOther) {
     const { data: t } = await sb.from("hero_tasks").select("created_by_name").eq("card_id", card.id).is("finished_at", null).maybeSingle();
     throw new TaskError(`Gerade von ${t?.created_by_name || "jemand anderem"} in HERO bearbeitet.`);
   }
   const lockedUntil = new Date(now.getTime() + LOCK_MINUTES * 60_000).toISOString();
-  const kind = TASK_BY_RULE[card.rule_key] ?? "generic";
+  const kind: TaskKind = isTaskKind(a.kind) ? a.kind : (card ? TASK_BY_RULE[card.rule_key] : undefined) ?? "generic";
   const cl = lists[kind];
+  const lockCard = async () => { if (card) await sb.from("project_cards").update({ state: "in_hero", locked_until: lockedUntil, locked_by: a.actor.id }).eq("id", card.id); };
 
-  const { data: open } = await sb.from("hero_tasks").select("id, task").eq("card_id", card.id).is("finished_at", null).maybeSingle();
-  if (open) { // eigene, noch offene Aufgabe: Sperre verlaengern
-    await sb.from("project_cards").update({ state: "in_hero", locked_until: lockedUntil, locked_by: a.actor.id }).eq("id", card.id);
-    const k = (open.task as TaskKind) in DEFAULT_CHECKLISTS ? (open.task as TaskKind) : kind;
+  // eigene, noch offene Aufgabe (an der Karte bzw. am Thema): Sperre verlaengern
+  const { data: open } = card
+    ? await sb.from("hero_tasks").select("id, task").eq("card_id", card.id).is("finished_at", null).maybeSingle()
+    : await sb.from("hero_tasks").select("id, task").eq("email_id", a.threadId).eq("created_by", a.actor.id).is("finished_at", null).maybeSingle();
+  if (open) {
+    await lockCard();
+    const k: TaskKind = isTaskKind(open.task) ? open.task : kind;
     return { taskId: open.id, kind: k, label: lists[k].label, checklist: lists[k].items, lockedUntil, reused: true };
   }
 
   const before = await deps.readState(a.heroId);
   if (!before) throw new TaskError("Projekt in HERO nicht gefunden.");
   const ins = await sb.from("hero_tasks").insert({
-    card_id: card.id, hero_id: a.heroId, task: kind, checklist: cl.items, before, created_by: a.actor.id, created_by_name: a.actor.name,
+    card_id: card?.id ?? null, email_id: a.threadId ?? null, hero_id: a.heroId, task: kind, checklist: cl.items, before, created_by: a.actor.id, created_by_name: a.actor.name,
   }).select("id").maybeSingle();
   if (ins.error || !ins.data) throw new TaskError(`Aufgabe nicht angelegt: ${ins.error?.message ?? "unbekannt"}`);
-  const up = await sb.from("project_cards").update({ state: "in_hero", locked_until: lockedUntil, locked_by: a.actor.id }).eq("id", card.id);
-  if (up.error) throw new TaskError(up.error.message);
+  await lockCard();
   return { taskId: ins.data.id, kind, label: cl.label, checklist: cl.items, lockedUntil, reused: false };
 }
 
 export type TaskResult = "done" | "partial" | "problem";
-export interface FinishResult { passed: boolean; closed: boolean; message: string; changes: string[]; warnings?: string[] }
+export interface FinishResult { passed: boolean; closed: boolean; message: string; changes: string[]; warnings?: string[]; topicClosed?: boolean }
 
 /** Rueckkehr aus HERO: Ergebnis speichern, bei „Erledigt“ in HERO nachpruefen. */
 export async function finishTask(sb: any, deps: TaskDeps, a: { taskId: string; result: TaskResult; note?: string; actor: TaskActor }): Promise<FinishResult> {
@@ -183,9 +193,15 @@ export async function finishTask(sb: any, deps: TaskDeps, a: { taskId: string; r
   await release({ check_result: { passed: true, message: check.message, note, changes: check.changes } });
   if (t.card_id) await sb.from("project_cards").update({ state: "done", closed_at: now.toISOString(), close_reason: "In HERO erledigt" }).eq("id", t.card_id).eq("state", "open");
   if (deps.logbook && !deps.shadow) {
-    try { await deps.logbook(heroId, `${label} in HERO erledigt (Projekte-Ansicht, ${a.actor.name}).${note ? ` ${note}` : ""}`); }
+    try { await deps.logbook(heroId, `${label} in HERO erledigt (${t.email_id ? "Mail-Ansicht" : "Projekte-Ansicht"}, ${a.actor.name}).${note ? ` ${note}` : ""}`); }
     catch (e) { warnings.push(`Logbuch-Eintrag fehlgeschlagen: ${(e as Error).message}`); }
   }
+  // Mail-Karte: das Thema ist erledigt, die Mail wird abgelegt (rein lokal, nichts in HERO/Postfach).
+  let topicClosed = false;
+  if (t.email_id && deps.closeTopic) {
+    try { await deps.closeTopic(String(t.email_id), `${label} in HERO erledigt`); topicClosed = true; }
+    catch (e) { warnings.push(`Thema nicht abgeschlossen: ${(e as Error).message}`); }
+  }
   await sb.from("project_actions_log").insert({ user: a.actor.name, action: "hero_task_done", hero_id: heroId, payload: { task: kind, changes: check.changes, note }, shadow: !!deps.shadow, hero_response: { warnings } });
-  return { passed: true, closed: true, message: check.message, changes: check.changes, ...(warnings.length ? { warnings } : {}) };
+  return { passed: true, closed: true, message: check.message, changes: check.changes, ...(topicClosed ? { topicClosed } : {}), ...(warnings.length ? { warnings } : {}) };
 }

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlarmClock, CheckCheck, Eye, FolderKanban, Reply, RotateCcw, UserRound, Wand2 } from "lucide-react";
+import { AlarmClock, CheckCheck, ExternalLink, Eye, FolderKanban, Reply, RotateCcw, UserRound, Wand2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { inDays, SNOOZE_PRESETS, type Topic } from "@/lib/topics";
 import type { TopicDecision } from "@/lib/shared";
@@ -11,6 +11,7 @@ import { InstructBox } from "@/components/InstructBox";
 import { AssignProject } from "@/components/AssignProject";
 import { AssignUser } from "@/components/AssignUser";
 import { HeroLink } from "@/components/HeroLink";
+import { TopicHeroWork } from "@/components/HeroWork";
 import { cn, errorText, formatDate } from "@/lib/utils";
 
 const DONE_TEXT: Record<TopicDecision, string> = {
@@ -68,11 +69,11 @@ export function TopicActions({ topic, showDecide = true, withReply = true }: {
   withReply?: boolean;
 }) {
   const decide = useTopicDecide(topic.id);
-  const [panel, setPanel] = useState<null | "snooze" | "instruct" | "project" | "user">(null);
+  const [panel, setPanel] = useState<null | "snooze" | "instruct" | "project" | "user" | "hero">(null);
   const shownIds = topic.newMessages.map((m) => m.id);
   const target = topic.newMessages[topic.newMessages.length - 1]?.id ?? topic.latestId;
   const busy = decide.isPending;
-  const toggle = (p: "snooze" | "instruct" | "project" | "user") => setPanel(panel === p ? null : p);
+  const toggle = (p: "snooze" | "instruct" | "project" | "user" | "hero") => setPanel(panel === p ? null : p);
 
   if (topic.state === "erledigt" && !topic.due) {
     return (
@@ -99,6 +100,12 @@ export function TopicActions({ topic, showDecide = true, withReply = true }: {
           </Button>
         )}
         {topic.projectId && <HeroLink id={topic.projectId} label="Projekt in HERO" className="h-8 px-2.5" />}
+        {topic.projectId && (
+          <Button size="sm" variant="outline" onClick={() => toggle("hero")} className={panel === "hero" ? "bg-accent" : ""}
+            title="Aufgabe in HERO erledigen (z. B. AB erstellen) und danach automatisch abgleichen">
+            <ExternalLink className="h-3.5 w-3.5" /> In HERO erledigen …
+          </Button>
+        )}
         <Button size="sm" variant="outline" onClick={() => toggle("user")} className={panel === "user" ? "bg-accent" : ""}
           title="Thema einem Mitarbeiter zuordnen – dann sieht es nur noch er, auch in der Wiedervorlage">
           <UserRound className="h-3.5 w-3.5" /> {topic.assignedTo ? `${topic.assignedTo.name} …` : "Mitarbeiter …"}
@@ -131,6 +138,12 @@ export function TopicActions({ topic, showDecide = true, withReply = true }: {
         <div className="space-y-2 rounded-md border bg-muted/40 p-3">
           <div className="text-sm font-medium">Thema einem Mitarbeiter zuordnen</div>
           <AssignUser threadId={topic.id} onDone={() => setPanel(null)} />
+        </div>
+      )}
+      {panel === "hero" && topic.projectId && (
+        <div className="space-y-2 rounded-md border bg-muted/40 p-3">
+          <div className="text-sm font-medium">In HERO erledigen</div>
+          <TopicHeroWork threadId={topic.id} heroId={topic.projectId} nr={`#${topic.projectId}`} onDone={() => setPanel(null)} />
         </div>
       )}
       {panel === "instruct" && target && (

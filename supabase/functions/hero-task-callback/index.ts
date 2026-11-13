@@ -1,13 +1,14 @@
 // Rueckkehr aus HERO (Phase 4, Arbeitsmodus): Ergebnis speichern (Erledigt / Teilweise / Problem), bei „Erledigt“ das Projekt
 // in HERO neu LESEN und mit dem Vorher-Stand vergleichen. Passt es, wird die Karte geschlossen (Logbuch nur ausserhalb des
 // Schattenmodus); passt es nicht, bleibt sie offen mit Hinweis. Diese Function sendet nie Mails und aendert nichts in HERO
-// ausser dem Logbuch-Eintrag.
+// ausser dem Logbuch-Eintrag. Gehoert die Aufgabe zu einer Mail-Karte, wird nach bestandenem Abgleich das Thema abgeschlossen.
 //
 //   POST { taskId, result: "done" | "partial" | "problem", note? }  ->  { ok: true, data: { passed, closed, message, changes } }
 
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
 import { addLogbookEntry, heroGraphql, loadHeroKey } from "../_shared/email/hero.ts";
+import { decideTopic } from "../_shared/email/topicsDb.ts";
 import { isShadow } from "../_shared/projects/access.ts";
 import { finishTask, parseChecklists, readProjectState, type TaskResult } from "../_shared/projects/heroTask.ts";
 
@@ -27,6 +28,8 @@ Deno.serve(async (req) => {
       logbook: (id, text) => addLogbookEntry(key, id, text),
       shadow: await isShadow(sb),
       checklists: parseChecklists(cl?.value),
+      // Mail-Karte: nach bestandenem Abgleich wird das Thema abgeschlossen (rein lokal).
+      closeTopic: async (threadId, label) => { await decideTopic(sb, threadId, { decision: "erledigt", until: null, note: null, label }); },
     }, { taskId: String(body.taskId || ""), result: String(body.result || "") as TaskResult, note: body.note, actor: { id: user.id, name: user.name || user.email || "Mitarbeiter", isAdmin: user.role === "admin" } });
     return ok(r);
   } catch (e) {

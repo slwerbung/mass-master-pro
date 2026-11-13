@@ -19,6 +19,9 @@
 
 Abgelaufene Sperren gibt ein pg_cron-Job (`project_release_hero_locks`, alle 5 Min, reines SQL) wieder frei.
 
+## Mail-Karten („Zu entscheiden“)
+In der Karte eines Themas mit Projekt gibt es **„In HERO erledigen …“**: Aufgabe wählen (AB erstellen, Angebot erstellen, Angebot fertigstellen, etwas anderes) → `lock_for_hero` mit `kind` und `threadId` (Postfach-Zugriff und Projekt-Zugehörigkeit des Themas werden geprüft) → HERO in neuem Tab → Rückkehr → derselbe Abgleich. **Gelingt er, wird das Thema abgeschlossen** („abgelegt“, `decideTopic` mit Etikett „AB erstellen in HERO erledigt“); sonst bleibt es offen. Die Aufgabe hängt am Thema (`hero_tasks.email_id`); gibt es zum Projekt eine offene Projekt-Karte, wird sie mitgesperrt. Die Projekt-Karte „AB fehlt“ verschwindet beim nächsten Sync von selbst, sobald die AB in HERO da ist (daraus wird bei Bedarf „Termine anlegen“). Die offene Aufgabe zu einem Thema liefert `project-api` `topic_task` (nur eigene, höchstens 24 h alt).
+
 ## Checklisten
 `app_config.projects_checklists` (JSON je Aufgabe: Name + Punkte), pflegbar im Adminmenü → Projekte → „Checklisten“ (`project-api` `save_checklist`, nur Admin). Fehlende Einträge fallen auf die Standardwerte in `_shared/projects/heroTask.ts` zurück.
 
@@ -33,7 +36,7 @@ Deployt (13.11.2026, über den Lader – siehe unten): Migration, `project-api`,
 - [ ] Eine AB in HERO erzeugen und beim Zurückkehren erkannt bekommen (Karte `ab_fehlt`, „In HERO erledigen“ → AB anlegen → „Erledigt“). **Live noch nicht geprüft.**
 - [ ] „Erledigt“ ohne Änderung in HERO lässt die Karte mit Hinweis offen.
 - [ ] Zweiter Benutzer sieht die Sperre; nach 30 Minuten ist die Karte wieder frei.
-- [ ] **Mail-Karten** („Mail mit Zusage → AB in HERO erstellen → Mail ablegen, Projektkarte wechselt zu Termine anlegen“): **noch nicht gebaut**. Die Tabelle `hero_tasks` hat `email_id` dafür vorgesehen; Sperre, Abgleich und Panel sind wiederverwendbar.
+- [ ] **Mail-Karte** („Mail mit Zusage → AB in HERO erstellen → zurück → Abgleich → Mail abgelegt“): gebaut (siehe unten), **live noch nicht geprüft**.
 
 ## Deploy-Hinweis: Lader
 Wie `email-send` (siehe `docs/mail-assistent/betrieb.md`) laufen `project-api`, `project-action` und `hero-task-callback` als **Lader**: der gebündelte Code (esbuild, CJS, `--charset=utf8`, nur `@supabase/supabase-js` extern) liegt in `public.edge_code` (`<function>@<commit>`), der Lader prüft die SHA-256. Ein normales `supabase functions deploy <name> --no-verify-jwt` ersetzt den Lader durch den Quelltext (der saubere Weg).

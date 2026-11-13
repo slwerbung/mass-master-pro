@@ -4,7 +4,7 @@
 //   POST { action, heroId, ... }  ->  { ok: true, data } | { ok: false, error }
 //   steps | set_step | complete | archive | logbook_note | create_events | bulk_archive (nur Admin)
 //   Nachfassen: save_draft | send_followup | bulk_followup | set_autopilot | call_done
-//   Arbeitsmodus (Phase 4): lock_for_hero (Karte 30 Min sperren, Vorher-Stand merken; die Rueckkehr macht hero-task-callback)
+//   Arbeitsmodus (Phase 4): lock_for_hero (Karte 30 Min sperren, Vorher-Stand merken; optional `kind` und `threadId` aus einer Mail-Karte; die Rueckkehr macht hero-task-callback)
 //   Mails sendet diese Function NIE selbst: send_followup/bulk_followup reichen die Sitzung des Benutzers an email-send weiter.
 
 import { createClient } from "@supabase/supabase-js";
@@ -14,6 +14,7 @@ import { heroCreateAppointment } from "../_shared/booking/hero.ts";
 import { canSee, isShadow } from "../_shared/projects/access.ts";
 import { MAX_BULK, archiveAction, bulkArchiveAction, callDoneAction, completeAction, eventsAction, noteAction, saveDraftAction, setAutopilotAction, setStepAction, type ActionCtx, type HeroOps } from "../_shared/projects/actions.ts";
 import { isMode } from "../_shared/projects/followup.ts";
+import { assertThread } from "../_shared/email/access.ts";
 import { lockForHero, parseChecklists, readProjectState } from "../_shared/projects/heroTask.ts";
 import { stepKey } from "../_shared/projects/steps.ts";
 
@@ -102,9 +103,20 @@ Deno.serve(async (req) => {
       case "bulk_archive": return ok(await bulkArchiveAction(ctx, ids));
       case "call_done": return ok(await callDoneAction(ctx, heroId));
       case "lock_for_hero": {
+        // Aus einer Mail-Karte: Thema muss zu den Postfaechern des Benutzers und zu diesem Projekt gehoeren.
+        const threadId = body.threadId ? String(body.threadId) : null;
+        if (threadId) {
+          await assertThread(sb, user, threadId);
+          const [th, ms] = await Promise.all([
+            sb.from("email_threads").select("hero_project_match_id").eq("id", threadId).maybeSingle(),
+            sb.from("email_messages").select("hero_project_match_id").eq("thread_id", threadId).not("hero_project_match_id", "is", null).limit(200),
+          ]);
+          const ids = new Set([th.data?.hero_project_match_id, ...(ms.data || []).map((m: any) => m.hero_project_match_id)].filter((x) => x != null).map(Number));
+          if (!ids.has(heroId)) return fail("Dieses Thema gehört nicht zu diesem Projekt.");
+        }
         const { data: cl } = await sb.from("app_config").select("value").eq("key", "projects_checklists").maybeSingle();
         return ok(await lockForHero(sb, { readState: (id) => readProjectState((k, q, v) => heroGraphql(k, q, v), key, id), checklists: parseChecklists(cl?.value) },
-          { heroId, actor: { id: user.id, name: ctx.user, isAdmin: user.role === "admin" } }));
+          { heroId, kind: body.kind ? String(body.kind) : null, threadId, actor: { id: user.id, name: ctx.user, isAdmin: user.role === "admin" } }));
       }
       case "set_autopilot": {
         const mode = body.mode === null ? null : body.mode;
