@@ -1,6 +1,6 @@
 // Dokumente eines HERO-Projekts (customer_documents). Geloeschte und stornierte werden ignoriert.
 
-export interface HeroDoc { nr: string; type: string; created: string | null; status: string; value?: number | null }
+export interface HeroDoc { nr: string; type: string; created: string | null; status: string; value?: number | null; /** Name der HERO-Dokumentart, z. B. „Abschlussrechnung“ (leer bei älteren Spiegelzeilen). */ kind?: string }
 
 const IGNORED = ["gelöscht", "geloescht", "storniert"];
 const SENT = ["versendet", "erneut versendet"];
@@ -17,6 +17,7 @@ export function normalizeDocuments(raw: unknown): HeroDoc[] {
       created: d?.created ? String(d.created) : null,
       status,
       value: d?.value != null && !Number.isNaN(Number(d.value)) ? Number(d.value) : null,
+      kind: String(d?.document_type?.name ?? d?.kind ?? "").trim(),
     });
   }
   return out;

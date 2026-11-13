@@ -14,7 +14,7 @@ export const PROJECTS_QUERY = `query($offset: Int) { project_matches(offset: $of
   address { city }
   current_project_match_status { created step_id step { id name } }
   project_match_assignments { user { email } }
-  customer_documents { nr type created status_name value }
+  customer_documents { nr type created status_name value document_type { name } }
 } }`;
 
 /** Nummernpraefix -> Gewerk (Spec: WER- Werbetechnik, TEX- Textildruck). */

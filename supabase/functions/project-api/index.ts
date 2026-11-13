@@ -20,7 +20,9 @@ const must = <T extends { error: any }>(r: T): T => {
   return r;
 };
 const isAdmin = (u: MailUser) => u.role === "admin";
-const DOC_LABEL: Record<string, string> = { offer: "Angebot", confirmation: "Auftragsbestätigung", delivery_note: "Lieferschein", measurement: "Aufmaß", calculation: "Kalkulation", letter: "Brief" };
+const DOC_LABEL: Record<string, string> = { offer: "Angebot", confirmation: "Auftragsbestätigung", delivery_note: "Lieferschein", measurement: "Aufmaß", calculation: "Kalkulation", letter: "Brief", invoice: "Rechnung", reversal_invoice: "Stornorechnung" };
+/** „Abschlussrechnung RG-… – Versendet“: der HERO-Dokumentname gewinnt, sonst die Art. Allgemeine Uploads heißen „Dokument“. */
+const docLabel = (d: { type: string; kind?: string }) => (d.kind && d.type !== "generic" ? d.kind : DOC_LABEL[d.type] ?? (d.kind || "Dokument"));
 
 async function log(sb: any, user: MailUser, action: string, heroId: number | null, payload: Record<string, unknown>) {
   await sb.from("project_actions_log").insert({ user: user.name || user.email || user.id, action, hero_id: heroId, payload, shadow: await isShadow(sb) });
@@ -134,10 +136,10 @@ const handlers: Record<string, (c: Ctx) => Promise<unknown>> = {
     const { data: p } = must(await sb.from("hero_projects").select("*").eq("hero_id", heroId).maybeSingle());
     if (!p || !canSee(user, p)) throw new Error("Projekt nicht gefunden.");
     const now = new Date();
-    const docs = normalizeDocuments(p.documents).filter((d) => d.type !== "invoice");
+    const docs = normalizeDocuments(p.documents);
     const events: { at: string; text: string }[] = [];
     if (p.step_since) events.push({ at: p.step_since, text: `Status „${p.step_name.replace(/^[^\p{L}\p{N}]+/u, "")}“ gesetzt` });
-    for (const d of docs) if (d.created) events.push({ at: d.created, text: `${DOC_LABEL[d.type] ?? "Dokument"} ${d.nr} – ${d.status}` });
+    for (const d of docs) if (d.created) events.push({ at: d.created, text: `${docLabel(d)}${d.nr ? ` ${d.nr}` : ""} – ${d.status}` });
     events.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
     const count = (t: string) => docs.filter((d) => d.type === t).length;
     return {
