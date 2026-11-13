@@ -29,15 +29,18 @@ export function fakeDb(tables: Record<string, any[]>) {
       // Wie jsonb: Schluessel kommen in anderer Reihenfolge zurueck als geschrieben.
       const flip = (r: any) => (r && r.reasons ? { ...r, reasons: Object.fromEntries(Object.entries(r.reasons).reverse()) } : r);
       if (this.op === "insert") {
+        const made: any[] = [];
         for (const raw of this.payload) {
           const r = flip(raw);
           if (this.t === "project_cards" && ["open", "in_hero", "snoozed", "muted", "auto"].includes(r.state ?? "open")
             && rows.some((x) => x.hero_id === r.hero_id && ["open", "in_hero", "snoozed", "muted", "auto"].includes(x.state))) {
             return { data: null, error: { message: "duplicate live card" } };
           }
-          rows.push({ id: `id${++seq}`, bundled: false, ...r });
+          const row = { id: `id${++seq}`, bundled: false, ...r };
+          rows.push(row);
+          made.push({ ...row });
         }
-        return { data: null, error: null };
+        return { data: this.single ? (made[0] ?? null) : made, error: null };
       }
       const hit = rows.filter((r) => this.filters.every((f) => f(r)));
       if (this.op === "delete") { for (const r of hit) rows.splice(rows.indexOf(r), 1); return { data: null, error: null }; }

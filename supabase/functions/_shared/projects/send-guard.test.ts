@@ -18,7 +18,7 @@ const read = (p: string) => readFileSync(p, "utf8");
 const projectSources = [
   ...files(join(root, "_shared", "projects")),
   // Nur die Projekte-Functions (project-invite u. a. sind bestehende, andere Functions).
-  ...["project-api", "project-action", "project-evaluate", "hero-sync", "followup-runner"].flatMap((d) => files(join(root, d))),
+  ...["project-api", "project-action", "project-evaluate", "hero-sync", "followup-runner", "hero-task-callback"].flatMap((d) => files(join(root, d))),
 ];
 
 describe("Projekte senden nie selbst", () => {

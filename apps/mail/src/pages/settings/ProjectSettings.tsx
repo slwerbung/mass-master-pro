@@ -69,6 +69,14 @@ export default function ProjectSettingsPage() {
       </Card>
 
       <Card>
+        <CardHeader><CardTitle>Checklisten (In HERO erledigen)</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">Erscheinen in der Karte, solange sie in HERO bearbeitet wird. Ein Punkt je Zeile. Der Abgleich beim Zurückkehren hängt an der Aufgabe, nicht am Text.</p>
+          {Object.entries(s.checklists).map(([kind, c]) => <ChecklistRow key={kind} kind={kind} c={c} onSaved={refresh} />)}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader><CardTitle>Regeln</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           {s.rules.map((r) => <RuleRow key={r.key} rule={r} onSaved={refresh} />)}
@@ -183,6 +191,25 @@ function TemplateRow({ t, label, onSaved }: { t: FollowupTemplate; label: string
       <Field label="Betreff"><Input value={subject} onChange={(e) => setSubject(e.target.value)} /></Field>
       <Field label="Text"><textarea className="min-h-32 w-full rounded-md border bg-background p-2 text-sm" value={body} onChange={(e) => setBody(e.target.value)} /></Field>
       <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>Speichern</Button>
+    </div>
+  );
+}
+
+function ChecklistRow({ kind, c, onSaved }: { kind: string; c: { label: string; items: string[] }; onSaved: () => void }) {
+  const [label, setLabel] = useState(c.label);
+  const [text, setText] = useState(c.items.join("\n"));
+  const items = text.split("\n").map((x) => x.trim()).filter(Boolean);
+  const dirty = label !== c.label || items.join("\n") !== c.items.join("\n");
+  const save = useMutation({
+    mutationFn: () => papi("save_checklist", { kind, label, items }),
+    onSuccess: () => { toast.success("Checkliste gespeichert."); onSaved(); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+  return (
+    <div className="space-y-2 rounded-md border p-3 text-sm">
+      <Field label="Name"><Input value={label} onChange={(e) => setLabel(e.target.value)} /></Field>
+      <Field label="Punkte"><textarea className="min-h-24 w-full rounded-md border bg-background p-2 text-sm" value={text} onChange={(e) => setText(e.target.value)} /></Field>
+      <Button size="sm" disabled={!dirty || !items.length || save.isPending} onClick={() => save.mutate()}>Speichern</Button>
     </div>
   );
 }

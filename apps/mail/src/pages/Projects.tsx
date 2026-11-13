@@ -9,6 +9,7 @@ import { Badge, Button, Card, CardContent, ErrorBox, Field, Input, Spinner } fro
 import { HeroLink, heroProjectUrl } from "@/components/HeroLink";
 import { ConfirmDialog, EventsDialog, NoteDialog, StatusDialog, reportResult } from "@/components/ProjectActions";
 import { AutopilotDialog, BulkFollowupDialog, CallPanel, DraftPanel } from "@/components/ProjectFollowup";
+import { HeroWorkPanel, HeroWorkStart } from "@/components/HeroWork";
 import { cn, errorText } from "@/lib/utils";
 
 const QK = ["projects"];
@@ -152,7 +153,7 @@ export default function Projects() {
               <CardPane key={selected.id} card={selected} busy={busy} shadow={!!o?.shadow}
                 onSnooze={() => setSnoozeFor(selected)} onComplete={() => complete.mutate(selected)}
                 onDialog={(kind) => setDialog({ kind, card: selected })}
-                onSent={(r) => afterAction(selected, r, false)} onChanged={refresh} />
+                onSent={(r) => afterAction(selected, r, false)} onHeroDone={(r) => afterAction(selected, r, true)} onChanged={refresh} />
             )}
             {showCleanup && <CleanupPane items={cleanup} days={list.data.bundleAfterDays} admin={!!me.data?.admin} onDone={refresh} />}
           </div>
@@ -207,9 +208,9 @@ function suggestedAction(card: ProjectCard): { label: string; dialog?: DialogKin
   return null;
 }
 
-function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog, onSent, onChanged }: {
+function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog, onSent, onHeroDone, onChanged }: {
   card: ProjectCard; busy: boolean; shadow: boolean; onSnooze: () => void; onComplete: () => void; onDialog: (k: DialogKind) => void;
-  onSent: (r: ActionResult) => void; onChanged: () => void;
+  onSent: (r: ActionResult) => void; onHeroDone: (r: ActionResult) => void; onChanged: () => void;
 }) {
   const p = card.project;
   const main = suggestedAction(card);
@@ -253,15 +254,16 @@ function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog, onSent, 
 
         {card.channel === "mail" && <DraftPanel card={card} busy={busy} onSent={onSent} onChanged={onChanged} />}
         {card.ruleKey === "nachfassen_anruf" && <CallPanel card={card} busy={busy} onDone={onSent} />}
+        <HeroWorkPanel card={card} onChanged={onChanged} onClosed={onHeroDone} />
 
         <div className="flex flex-wrap items-center gap-2">
-          {main && (
-            <Button variant="secondary" disabled={busy} onClick={() => (main.dialog ? onDialog(main.dialog) : window.open(heroProjectUrl(p.heroId), "_blank", "noopener"))}>{main.label}</Button>
-          )}
+          {main && !main.hero && main.dialog && <Button variant="secondary" disabled={busy} onClick={() => onDialog(main.dialog!)}>{main.label}</Button>}
+          {main?.hero && <HeroWorkStart card={card} busy={busy} label={main.label.replace(/ \(in HERO\)$/, "")} onStarted={onChanged} />}
           <Button disabled={busy} onClick={onComplete} title="Setzt den Status in HERO auf „Abgeschlossen“ und trägt es im Logbuch ein">
             <Check className="h-4 w-4" /> Abschließen <kbd className="ml-1 rounded border px-1 text-[10px]">E</kbd>
           </Button>
           <Button variant="outline" onClick={onSnooze}><AlarmClock className="h-4 w-4" /> Wiedervorlage <kbd className="ml-1 rounded border px-1 text-[10px]">W</kbd></Button>
+          {!main?.hero && <HeroWorkStart card={card} busy={busy} variant="outline" onStarted={onChanged} />}
           <Button variant="outline" onClick={() => window.open(heroProjectUrl(p.heroId), "_blank", "noopener")}>In HERO öffnen <kbd className="ml-1 rounded border px-1 text-[10px]">H</kbd></Button>
         </div>
 
