@@ -10,8 +10,8 @@
 - **Fluss-Ansicht** (Reiter „Fluss“ in Projekte, `project-api` `flow`): je Status Anzahl der Projekte, Ø und längste Verweildauer, Projekte außerhalb der Sollzeit, Anzahl Karten und **Ampel gegen das WIP-Limit** (grün im Limit, gelb bis 25 % darüber, rot darüber, ohne Limit keine Ampel). **Klick auf einen Status filtert den Stapel** (Chip „Status: …“, „Filter aufheben“). WIP-Limit je Status im Adminmenü → Projekte → Status (`project_step_settings.wip_limit`).
 - **Morgenübersicht**: `project-api` `morning` = die Mail-Übersicht von `email-api` (`digest`, mit der Sitzung des Aufrufers) plus Zahlen aus dem Stapel (Karten je Kategorie, Aufräum-Karte, Wiedervorlagen heute, erste Kunden-Karten) und **ein Satz `text`** für die 7-Uhr-Meldung. Rein lesend. `email-api` bleibt unverändert.
 
-## Wichtig für den 7-Uhr-Task
-Der Task liegt außerhalb dieses Repos und ruft bisher `email-api` `digest` auf. Damit die Projekt-Zahlen in die Meldung kommen, muss er stattdessen `project-api` `{"action":"morning"}` aufrufen (gleiche Anmeldung, gleiches Antwortformat plus `projects`; `data.text` ist der Meldungstext).
+## 7-Uhr-Task
+Wird nicht mehr gebraucht (Entscheidung 13.11.2026). `project-api` `morning` bleibt als rein lesende Schnittstelle bestehen, wird aber von nichts aufgerufen.
 
 ## Technik
 - Logik in `_shared/projects/evaluate.ts` (`loadOpenMails`, `wakeTrigger`), `rules.ts` (Regel), `digest.ts`; Tests `evaluate.test.ts` (Wecken: Mail/Status/Toleranz/Werbung/ausgehend/alte Zeilen; Regel: Schwelle, beantwortet, erledigt, Werbung, gelöscht, älteste) und `digest.test.ts`.
@@ -24,4 +24,3 @@ Live geprüft: Sync-Lauf mit der neuen Auswertung fehlerfrei (359 Projekte, 335 
 - [ ] Eine Kundenmail zu einem Projekt mit Wiedervorlage holt die Karte binnen 10 Min nach vorn. **Live noch nicht geprüft** (Logik per Test abgedeckt; im Moment gibt es kein Projekt mit künftiger Wiedervorlage und neuer Mail).
 - [ ] Die Fluss-Ansicht zeigt je Status Anzahl und Durchschnittsdauer; Klick filtert den Stapel. **In der Oberfläche noch nicht angesehen.**
 - [ ] „Heute“ zeigt Mail- und Projektkarten gemeinsam. **In der Oberfläche noch nicht angesehen.**
-- [ ] 7-Uhr-Task auf `morning` umstellen (siehe oben).

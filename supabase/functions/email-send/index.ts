@@ -30,6 +30,7 @@ import { loadCompanyName, senderName } from "../_shared/email/company.ts";
 import { addLogbookEntry, loadHeroKey } from "../_shared/email/hero.ts";
 import { canSee } from "../_shared/projects/access.ts";
 import { FollowupError, sendFollowup, type Deliver } from "../_shared/projects/followupSend.ts";
+import { pickSignature } from "../_shared/projects/signature.ts";
 
 const MSG_COLS = "id, account_id, category, thread_id, message_id, refs, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, body_text, folder, current_folder, draft_message_id, draft_uid, draft_text, hero_project_match_id, hero_logged_at, match_info";
 type Mode = "reply" | "replyAll" | "forward";
@@ -89,9 +90,19 @@ const fromLabel = (m: any) => (m.from_name ? `${m.from_name} <${m.from_addr}>` :
 async function runFollowup(sb: any, body: any, user: MailUser | null, auto: boolean) {
   // Autopilot hat keine Sitzung: Admin-Rechte nur fuer diesen einen Weg, `sent_by` bleibt leer.
   const actor: MailUser = user ?? { id: null as unknown as string, email: null, name: "Autopilot", role: "admin", accountIds: null, hiddenCategories: [] };
-  const deliver: Deliver = async (a) => (await handlers.send(sb, {
-    accountId: a.accountId, to: a.to, subject: a.subject, text: a.text, replyTo: a.replyTo, mode: "reply", withQuote: false, projectId: a.projectId,
-  }, actor)) as { messageId: string; warnings: string[] };
+  // Signatur: die des zustaendigen Mitarbeiters (HERO-Bearbeiter des Projekts, sonst wer klickt) – nie die des Postfachs, ueber das die Mail laeuft.
+  // Wird in `deliver` ermittelt, also NACH dem Beanspruchen des Entwurfs: fehlt sie, schlaegt der Versand sauber fehl (Autopilot: Entwurf gestoppt).
+  const deliver: Deliver = async (a) => {
+    const [{ data: p }, { data: accs }] = await Promise.all([
+      sb.from("hero_projects").select("assignee_emails").eq("hero_id", a.projectId).maybeSingle(),
+      sb.from("email_accounts").select("address, signature_html"),
+    ]);
+    const sig = pickSignature((p?.assignee_emails as string[] | null) ?? [], user?.email ?? null, accs ?? []);
+    if (!sig) throw new FollowupError("Keine Signatur gefunden: Weder für die Zuständigen im Projekt noch für dich gibt es ein Postfach mit Signatur (Einstellungen → Postfächer).");
+    return (await handlers.send(sb, {
+      accountId: a.accountId, to: a.to, subject: a.subject, text: a.text, replyTo: a.replyTo, mode: "reply", withQuote: false, projectId: a.projectId, followupSignatureHtml: sig.html,
+    }, actor)) as { messageId: string; warnings: string[] };
+  };
   const key = await loadHeroKey(sb);
   return await sendFollowup(sb, deliver, {
     draftId: String(body.draftId || ""), auto,
@@ -185,7 +196,7 @@ const handlers: Record<string, (sb: any, body: any, user: MailUser) => Promise<u
     const quote = orig && body.withQuote !== false
       ? quoteBlock({ from: fromLabel(orig), date: orig.sent_at, text: orig.body_text, subject: orig.subject, to: orig.to_addrs }, mode === "forward" ? "forward" : "reply")
       : null;
-    const parts = composeBody(String(body.text ?? ""), acc.signature_html, quote);
+    const parts = composeBody(String(body.text ?? ""), typeof body.followupSignatureHtml === "string" ? body.followupSignatureHtml.slice(0, MAX_SIGNATURE_CHARS) : acc.signature_html, quote);
     const chain = orig && mode !== "forward" ? referenceChain(orig) : { inReplyTo: null, references: [] };
     const messageId = newMessageId(acc.address);
     const raw = await buildComposedMime({
@@ -246,6 +257,7 @@ Deno.serve(async (req) => {
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const body = await readJson(req);
   const action = String(body.action || "");
+  delete body.followupSignatureHtml; // nur intern (runFollowup) setzbar, nie aus der Anfrage
 
   // Autopilot (followup-runner, pg_cron-Secret): einziger Weg ohne Mitarbeiter-Sitzung, nur fuer gespeicherte Nachfass-Entwuerfe.
   if (action === "send_followup_auto") {

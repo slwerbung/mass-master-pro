@@ -63,7 +63,7 @@ export default function ProjectSettingsPage() {
       <Card>
         <CardHeader><CardTitle>Nachfass-Vorlagen</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <p className="text-xs text-muted-foreground">Platzhalter: <code>{"{kunde}"}</code> <code>{"{projekt}"}</code> <code>{"{angebot_nr}"}</code> <code>{"{angebot_datum}"}</code>. Ton kurz und locker, Firmenname „SL WERBUNG“. Geändert wird nur der Text für <i>neue</i> Entwürfe; offene Entwürfe bleiben, wie sie sind.</p>
+          <p className="text-xs text-muted-foreground">Platzhalter: <code>{"{kunde}"}</code> <code>{"{projekt}"}</code> <code>{"{angebot_nr}"}</code> <code>{"{angebot_datum}"}</code>. Ton kurz und locker, <b>neutral</b> (weder „Du“ noch „Sie“), letzte Zeile genau „Beste Grüße“, keine Firmennennung – die Signatur des zuständigen Mitarbeiters hängt beim Senden automatisch an. Geändert wird nur der Text für <i>neue</i> Entwürfe; offene Entwürfe bleiben, wie sie sind.</p>
           {s.templates.map((t) => <TemplateRow key={`${t.rule_key}:${t.stage}`} t={t} label={s.rules.find((r) => r.key === t.rule_key)?.label ?? t.rule_key} onSaved={refresh} />)}
         </CardContent>
       </Card>
