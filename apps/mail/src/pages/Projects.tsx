@@ -1,24 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AlarmClock, Archive, Bot, CalendarPlus, Check, Mail, NotebookPen, RefreshCw, Shuffle } from "lucide-react";
 import { invokeFn } from "@/lib/api";
 import { useMe } from "@/lib/me";
-import { CATEGORY_NAMES, CATEGORY_STYLE, pact, papi, tageText, type ActionResult, type FollowupItem, type ProjectCard, type ProjectDetail, type ProjectList, type ProjectOverview, type ProjectView } from "@/lib/projects";
+import { CATEGORY_NAMES, CATEGORY_STYLE, pact, papi, tageText, type ActionResult, type FlowStep, type FollowupItem, type ProjectCard, type ProjectDetail, type ProjectList, type ProjectOverview, type ProjectView } from "@/lib/projects";
 import { Badge, Button, Card, CardContent, ErrorBox, Field, Input, Spinner } from "@/components/ui";
 import { HeroLink, heroProjectUrl } from "@/components/HeroLink";
 import { ConfirmDialog, EventsDialog, NoteDialog, StatusDialog, reportResult } from "@/components/ProjectActions";
 import { AutopilotDialog, BulkFollowupDialog, CallPanel, DraftPanel } from "@/components/ProjectFollowup";
 import { HeroWorkPanel, HeroWorkStart } from "@/components/HeroWork";
+import { FlowView } from "@/components/FlowView";
 import { cn, errorText } from "@/lib/utils";
 
 const QK = ["projects"];
-type View = "stapel" | "wiedervorlagen";
+type View = "stapel" | "wiedervorlagen" | "fluss";
 
 export default function Projects() {
   const qc = useQueryClient();
   const [view, setView] = useState<View>("stapel");
-  const [sel, setSel] = useState<string | null>(null); // Karten-ID oder "cleanup"
+  const [params] = useSearchParams();
+  const [sel, setSel] = useState<string | null>(params.get("card")); // Karten-ID oder "cleanup" (?card=… kommt aus „Heute“)
+  const [stepFilter, setStepFilter] = useState<{ id: number; name: string } | null>(null); // Fluss-Ansicht: nur dieser Status
   const [snoozeFor, setSnoozeFor] = useState<ProjectCard | null>(null);
   const [dialog, setDialog] = useState<null | { kind: "status" | "note" | "events" | "archive"; card: ProjectCard }>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -40,10 +44,11 @@ export default function Projects() {
     onError: (e) => toast.error(errorText(e)),
   });
 
-  const stack = list.data?.stack ?? [];
+  const byStep = <T extends { project: ProjectView }>(rows: T[]) => (stepFilter ? rows.filter((c) => c.project.stepId === stepFilter.id) : rows);
+  const stack = byStep(list.data?.stack ?? []);
   // Sammelkarte: nur wenn mindestens zwei Entwuerfe bereitliegen und die Regel auf „Vorschlagen“ steht.
   const bulkCards = stack.filter((c) => c.draft && !c.draft.error && c.autopilot === "suggest");
-  const cleanup = list.data?.cleanup ?? [];
+  const cleanup = byStep(list.data?.cleanup ?? []);
   const selected = stack.find((c) => c.id === sel) ?? null;
   const showCleanup = sel === "cleanup";
 
@@ -116,12 +121,19 @@ export default function Projects() {
       </div>
 
       <div className="flex gap-1 border-b">
-        {([["stapel", `Stapel${o ? ` (${o.cards + o.cleanup})` : ""}`], ["wiedervorlagen", `Wiedervorlagen${o ? ` (${o.followups})` : ""}`]] as const).map(([v, label]) => (
+        {([["stapel", `Stapel${o ? ` (${o.cards + o.cleanup})` : ""}`], ["wiedervorlagen", `Wiedervorlagen${o ? ` (${o.followups})` : ""}`], ["fluss", "Fluss"]] as const).map(([v, label]) => (
           <button key={v} type="button" onClick={() => setView(v)}
             className={cn("-mb-px border-b-2 px-3 py-2 text-sm", view === v ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground")}>{label}</button>
         ))}
       </div>
 
+      {view === "fluss" && <FlowView onPick={(st: FlowStep) => { setStepFilter({ id: st.stepId, name: st.name }); setSel(null); setView("stapel"); }} />}
+      {view === "stapel" && stepFilter && (
+        <div className="flex items-center gap-2 text-sm">
+          <Badge variant="secondary">Status: {stepFilter.name}</Badge>
+          <button type="button" className="text-xs text-muted-foreground underline hover:text-foreground" onClick={() => { setStepFilter(null); setSel(null); }}>Filter aufheben</button>
+        </div>
+      )}
       {list.isLoading && <Spinner />}
       <ErrorBox error={list.error} />
       {sync.isError && o?.lastSync?.ok === false && <ErrorBox error={o.lastSync.error} />}
@@ -200,7 +212,8 @@ function StackItem({ card, active, onClick }: { card: ProjectCard; active: boole
 type DialogKind = "status" | "note" | "events" | "archive";
 
 /** Hauptaktion zum Vorschlag der Regel – nur wo es sie schon gibt (Mailwege folgen mit „Nachfassen“). */
-function suggestedAction(card: ProjectCard): { label: string; dialog?: DialogKind; hero?: boolean } | null {
+function suggestedAction(card: ProjectCard): { label: string; dialog?: DialogKind; hero?: boolean; href?: string } | null {
+  if (card.ruleKey === "kunde_mail_offen" && card.reasons.messageId) return { label: "Antworten", href: `/verfassen?reply=${card.reasons.messageId}&mode=reply` };
   if (card.ruleKey === "termine_fehlen") return { label: "Termine anlegen", dialog: "events" };
   if (card.ruleKey === "nachfassen_verloren") return { label: "Archivieren", dialog: "archive" };
   if (["anfrage_status_alt", "haengt", "waise"].includes(card.ruleKey)) return { label: "Status ändern", dialog: "status" };
@@ -257,6 +270,7 @@ function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog, onSent, 
         <HeroWorkPanel card={card} onChanged={onChanged} onClosed={onHeroDone} />
 
         <div className="flex flex-wrap items-center gap-2">
+          {main?.href && <Link to={main.href}><Button variant="secondary" disabled={busy}>{main.label}</Button></Link>}
           {main && !main.hero && main.dialog && <Button variant="secondary" disabled={busy} onClick={() => onDialog(main.dialog!)}>{main.label}</Button>}
           {main?.hero && <HeroWorkStart card={card} busy={busy} label={main.label.replace(/ \(in HERO\)$/, "")} onStarted={onChanged} />}
           <Button disabled={busy} onClick={onComplete} title="Setzt den Status in HERO auf „Abgeschlossen“ und trägt es im Logbuch ein">

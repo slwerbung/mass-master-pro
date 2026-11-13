@@ -14,14 +14,17 @@ export interface RuleRow {
 export interface StepSetting { step_id: number; name: string; key: string; target_days: number; excluded: boolean; closeness: number }
 /** Bereits gesendete Nachfass-Mails bzw. erledigte Anrufe (Stufe 2) eines Projekts. */
 export interface SentFollowup { rule_key: string; stage: number; sent_at: string }
+/** Aelteste unbeantwortete Kundenmail zu einem Projekt (Phase 5, Regel `kunde_mail_offen`). */
+export interface OpenMail { id: string; subject: string; sentAt: string }
 export interface ProjectRow {
   hero_id: number; project_nr: string; name: string; step_id: number | null; step_name: string; step_key: string;
   step_since: string | null; hero_created: string | null; documents: unknown;
   followups?: SentFollowup[];
+  openMail?: OpenMail | null;
 }
 export interface Signal {
   ruleKey: string; category: Category; days: number; closeness: number; bundled: boolean; priority: number;
-  reasons: { text: string; days: number; stepName: string; offerDate?: string | null };
+  reasons: { text: string; days: number; stepName: string; offerDate?: string | null; messageId?: string | null; subject?: string };
 }
 export interface EvalContext {
   now: Date;
@@ -81,6 +84,13 @@ export function evaluateProject(p: ProjectRow, ctx: EvalContext): Signal | null 
   // Reihenfolge = Reihenfolge der Spec; die erste passende, aktive Regel gewinnt.
   const candidates: (() => Signal | null)[] = [
     () => (key === "reklamation" ? make("reklamation", days, `Reklamation seit ${tage(days)} offen.`) : null),
+    // Phase 5: Kundenmail zum Projekt seit mehr als N Tagen (Standard 2) unbeantwortet.
+    () => {
+      if (!p.openMail) return null;
+      const d = daysBetween(p.openMail.sentAt, ctx.now);
+      return d > thr("kunde_mail_offen", 2)
+        ? make("kunde_mail_offen", d, `Kundenmail „${p.openMail.subject}“ seit ${tage(d)} unbeantwortet.`, { messageId: p.openMail.id, subject: p.openMail.subject }) : null;
+    },
     () => (key === "freigabe" && days > thr("freigabe_offen", 5)
       ? make("freigabe_offen", days, `Seit ${tage(days)} wartet das Layout auf die Freigabe des Kunden.`) : null),
     () => (key === "abholung" && days > thr("abholung", 7)

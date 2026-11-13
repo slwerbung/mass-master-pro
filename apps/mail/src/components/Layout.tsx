@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Briefcase, ChevronRight, Folder, Inbox, ListTree, LogOut, Menu, MessagesSquare, PenSquare, RefreshCw, Send, Settings as Cog, Trash2, X } from "lucide-react";
+import { Briefcase, CalendarCheck, ChevronRight, Folder, Inbox, ListTree, LogOut, Menu, MessagesSquare, PenSquare, RefreshCw, Send, Settings as Cog, Trash2, X } from "lucide-react";
 import { api, invokeFn } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { supabase } from "@/lib/supabase";
@@ -128,6 +128,9 @@ function SidebarContent({ open, overview, meOk, name, hidden, syncButton, projec
       <NavLink to="/" end className={({ isActive }) => cn(item, isActive && "bg-accent")}>
         <Inbox className="h-4 w-4" /> Zu entscheiden
         {open > 0 && <Badge variant="danger" className="ml-auto">{open}</Badge>}
+      </NavLink>
+      <NavLink to="/heute" className={({ isActive }) => cn(item, isActive && "bg-accent")}>
+        <CalendarCheck className="h-4 w-4" /> Heute
       </NavLink>
       <NavLink to="/projekte" className={({ isActive }) => cn(item, isActive && "bg-accent")}>
         <Briefcase className="h-4 w-4" /> Projekte

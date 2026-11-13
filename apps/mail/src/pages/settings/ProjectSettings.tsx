@@ -89,6 +89,7 @@ export default function ProjectSettingsPage() {
 function StepRow({ step, onSaved }: { step: StepSetting; onSaved: () => void }) {
   const [t, setT] = useState(String(step.target_days));
   const [c, setC] = useState(String(step.closeness));
+  const [w, setW] = useState(step.wip_limit == null ? "" : String(step.wip_limit));
   const save = useMutation({
     mutationFn: (patch: Record<string, unknown>) => papi("save_step", { stepId: step.step_id, ...patch }),
     onSuccess: onSaved, onError: (e) => toast.error(errorText(e)),
@@ -101,6 +102,10 @@ function StepRow({ step, onSaved }: { step: StepSetting; onSaved: () => void }) 
       </label>
       <label className="flex items-center gap-1 text-xs text-muted-foreground">Nähe
         <Input type="number" className="h-8 w-20" value={c} onChange={(e) => setC(e.target.value)} onBlur={() => c !== String(step.closeness) && save.mutate({ closeness: Number(c) })} />
+      </label>
+      <label className="flex items-center gap-1 text-xs text-muted-foreground" title="Höchstzahl gleichzeitiger Projekte in diesem Status (Fluss-Ansicht). Leer = kein Limit.">WIP-Limit
+        <Input type="number" min={0} className="h-8 w-20" value={w} placeholder="–" onChange={(e) => setW(e.target.value)}
+          onBlur={() => w !== (step.wip_limit == null ? "" : String(step.wip_limit)) && save.mutate({ wipLimit: w === "" ? null : Number(w) })} />
       </label>
       <Switch checked={step.excluded} onChange={(v) => save.mutate({ excluded: v })} label="Ausgeschlossen" />
     </div>
