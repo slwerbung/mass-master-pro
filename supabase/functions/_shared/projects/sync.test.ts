@@ -24,6 +24,14 @@ describe("hero-sync", () => {
     expect(mapProject(pm(2, { current_project_match_status: { created: "x", step_id: 2836, step: { id: 2836, name: "✅ Abgeschlossen" } } }), [])).toBeNull();
     expect(mapProject(pm(3, { current_project_match_status: { created: "x", step_id: 2837, step: { id: 2837, name: "📦 Archiviert" } } }), [])).toBeNull();
   });
+  it("merkt den HERO-Dokumentnamen (Abschlussrechnung) und liest ihn aus dem Spiegel wieder", () => {
+    const docs = normalizeDocuments([{ nr: "RG-1", type: "invoice", created: "2026-11-01", status_name: "Versendet", document_type: { name: "Abschlussrechnung" } }]);
+    expect(docs[0]).toMatchObject({ type: "invoice", kind: "Abschlussrechnung", status: "Versendet" });
+    // bereits gespiegelte Zeile (kind statt document_type) bleibt erhalten
+    expect(normalizeDocuments(docs)[0].kind).toBe("Abschlussrechnung");
+    // ältere Spiegelzeile ohne Namen
+    expect(normalizeDocuments([{ nr: "RG-2", type: "invoice", status: "Versendet" }])[0].kind).toBe("");
+  });
   it("Gewerk aus Nummernpraefix", () => {
     expect(gewerkOf("TEX-12")).toBe("Textildruck");
     expect(gewerkOf("XYZ-1")).toBe("");
