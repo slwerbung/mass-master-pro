@@ -11,7 +11,7 @@
 
 import { ImapFlow } from "imapflow";
 import { decodeCharset, decodeTransfer, pickDisplayParts, type PartRef } from "./mailHtml.ts";
-import { type AttachmentRef, attachmentRefs, BIG_MAIL_BYTES, decodePart, htmlToText, slimSource, slimText, tooBigNote } from "./bigMail.ts";
+import { type AttachmentRef, attachmentRefs, decodePart, SLIM_MAIL_BYTES, htmlToText, slimSource, slimText, tooBigNote } from "./bigMail.ts";
 import { MAX_ATTACHMENT_BYTES } from "./sync.ts";
 
 export interface ImapCreds {
@@ -114,7 +114,7 @@ export interface FetchResult {
 export async function fetchNew(
   client: ImapFlow,
   folder: string,
-  opts: { lastUid: number | null; uidValidity: string | null; limit: number; backfill: number; skipFirst?: boolean },
+  opts: { lastUid: number | null; uidValidity: string | null; limit: number; backfill: number; skipFirst?: boolean; slimAll?: boolean },
 ): Promise<FetchResult> {
   const lock = await client.getMailboxLock(folder, { readOnly: true });
   try {
@@ -172,7 +172,8 @@ export async function fetchNew(
     for (const uid of take) {
       if (bytes >= MAX_BATCH_BYTES) break;
       const size = sizes.get(uid) ?? 0;
-      if (size > BIG_MAIL_BYTES) {
+      // Größere Mails und jeder Wiederholungsversuch nach einem Abbruch (slimAll): ohne mailparser.
+      if (size > SLIM_MAIL_BYTES || opts.slimAll) {
         await flushSmall();
         const slim = await fetchSlim(client, uid, size);
         if (slim) { messages.push(slim); bytes += slim.source.byteLength; }
@@ -215,6 +216,18 @@ async function fetchSlim(client: ImapFlow, uid: number, _size: number): Promise<
   const tooBig = parts.filter((p) => p.size > MAX_ATTACHMENT_BYTES).map((p) => ({ name: p.filename, size: p.size }));
   const note = tooBig.length ? tooBigNote(tooBig) : null;
   return { uid, flags: [...(head.flags ?? [])], source: slimSource(new Uint8Array(head.headers), slimText(text, note)), parts };
+}
+
+/** Eine bestimmte Mail schonend holen (Kopfzeilen + Text, Anhänge einzeln) – zum Nachholen übersprungener Mails. */
+export async function fetchOneSlim(client: ImapFlow, folder: string, uid: number): Promise<{ state: FolderState; message: RawMessage | null }> {
+  const lock = await client.getMailboxLock(folder, { readOnly: true });
+  try {
+    const mb: any = client.mailbox;
+    const state: FolderState = { uidValidity: String(mb.uidValidity ?? ""), uidNext: Number(mb.uidNext ?? 0), exists: Number(mb.exists ?? 0) };
+    return { state, message: await fetchSlim(client, uid, 0) };
+  } finally {
+    lock.release();
+  }
 }
 
 /** Groesse und BODYSTRUCTURE einer Mail (billig, ohne Inhalt). null, wenn es die UID nicht (mehr) gibt. */

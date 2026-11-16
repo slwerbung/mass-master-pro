@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AccountRow, type MessageInsert, type SyncDeps, type SyncStore, STUCK_SKIP, SYNC_LIMIT, syncAccount } from "./sync.ts";
+import { type AccountRow, importOne, type MessageInsert, type SyncDeps, type SyncStore, STUCK_SKIP, SYNC_LIMIT, syncAccount } from "./sync.ts";
 import type { ParsedMail } from "./parse.ts";
 
 const acc = (over: Partial<AccountRow> = {}): AccountRow => ({
@@ -210,8 +210,25 @@ describe("syncAccount", () => {
     it("2. Versuch an derselben Stelle holt nur eine Mail", async () => {
       const { deps, log } = fake({}, { INBOX: { uids: [11, 12, 13] }, Sent: { uids: [], validity: "9" } });
       await syncAccount(acc({ sync_stuck: { key: "INBOX#7#10", tries: 1 } }), deps);
-      expect(log.fetchCalls[0]).toMatchObject({ folder: "INBOX", limit: 1 });
+      expect(log.fetchCalls[0]).toMatchObject({ folder: "INBOX", limit: 1, slimAll: true }); // ohne mailparser (CPU-Limit)
       expect(log.msgs.map((m) => m.uid)).toEqual([11]);
+    });
+
+    it("normaler Lauf holt nicht schonend (slimAll aus)", async () => {
+      const { deps, log } = fake({}, { INBOX: { uids: [11] }, Sent: { uids: [], validity: "9" } });
+      await syncAccount(acc(), deps);
+      expect(log.fetchCalls[0].slimAll).toBe(false);
+    });
+
+    it("übersprungene Mail nachholen: speichert sie, Cursor bleibt, zweimal = Dublette", async () => {
+      const { deps, log } = fake({}, { INBOX: { uids: [] } });
+      deps.imap.fetchOne = async (_folder, uid) => ({ uidValidity: "7", message: { uid, flags: [], source: new TextEncoder().encode(String(uid)) } });
+      expect(await importOne(acc(), deps, "inbox", 76944)).toBe("stored");
+      expect(log.msgs[0]).toMatchObject({ uid: 76944, folder: "INBOX", direction: "in" });
+      expect(log.cursors).toEqual([]);
+      expect(await importOne(acc(), deps, "inbox", 76944)).toBe("duplicate");
+      deps.imap.fetchOne = async () => ({ uidValidity: "7", message: null });
+      expect(await importOne(acc(), deps, "sent", 3)).toBe("missing");
     });
 
     it("ab dem 3. Versuch wird die Mail uebersprungen und der Cursor weitergeschoben", async () => {
