@@ -8,6 +8,12 @@ import { decodeTransfer, type StructNode } from "./mailHtml.ts";
 
 /** Ab dieser Groesse (RFC822.SIZE) wird nur der Text geholt. */
 export const BIG_MAIL_BYTES = 8 * 1024 * 1024;
+/**
+ * Ab dieser Größe nie durch mailparser (Kopfzeilen + Text, Anhänge einzeln): mailparser braucht für Mails mit
+ * mehreren Anhängen schon bei wenigen MB mehr als die 2 s CPU-Zeit der Edge Function (live: 16.11.2026, UID 76944,
+ * „CPU Time exceeded“ → Mail nach zwei Abbrüchen übersprungen).
+ */
+export const SLIM_MAIL_BYTES = 1024 * 1024;
 
 export interface OmittedPart { name: string; size: number }
 

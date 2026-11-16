@@ -8,10 +8,10 @@ import { createClient } from "@supabase/supabase-js";
 import { fail, isCronCall, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
 import { canAccount } from "../_shared/email/access.ts";
 import { accountPassword } from "../_shared/email/config.ts";
-import { fetchNew, fetchPart, withImap } from "../_shared/email/imap.ts";
+import { fetchNew, fetchOneSlim, fetchPart, withImap } from "../_shared/email/imap.ts";
 import { parseRaw } from "../_shared/email/parseRaw.ts";
 import { claimAccount, recordRun, releaseAccount, syncStore } from "../_shared/email/store.ts";
-import { type AccountRow, syncAccount } from "../_shared/email/sync.ts";
+import { type AccountRow, importOne, syncAccount } from "../_shared/email/sync.ts";
 
 async function syncOne(sb: any, id: string, origin: string, cronSecret: string | null, authHeaders: Record<string, string>) {
   const acc = await claimAccount(sb, id);
@@ -34,6 +34,10 @@ async function syncOne(sb: any, id: string, origin: string, cronSecret: string |
             fetchNew: async (folder, o) => {
               const r = await fetchNew(client, folder, o);
               return { state: r.state, baseline: r.baseline, messages: r.messages, more: r.more, skipped: r.skipped ?? null };
+            },
+            fetchOne: async (folder, uid) => {
+              const r = await fetchOneSlim(client, folder, uid);
+              return { uidValidity: r.state.uidValidity, message: r.message };
             },
             // Anhaenge grosser Mails einzeln (ohne mailparser, siehe bigMail.ts).
             fetchPart: (folder, uid, ref) => fetchPart(client, folder, uid, ref),
@@ -77,6 +81,39 @@ Deno.serve(async (req) => {
   const authHeaders: Record<string, string> = cron
     ? { "x-cron-secret": cronSecret! }
     : { authorization: req.headers.get("authorization") || "" };
+  // Übersprungene Mail nachholen: { accountId, refetch: { folder: "inbox" | "sent", uid } } (Cron-Secret oder Admin).
+  if (body.refetch) {
+    if (user && user.accountIds !== null) return fail("Nur für Admins.", { code: "forbidden" });
+    const id = String(body.accountId || "");
+    const key = body.refetch.folder === "sent" ? "sent" : "inbox";
+    const uid = Number(body.refetch.uid);
+    if (!id || !Number.isInteger(uid) || uid <= 0) return fail("accountId und uid nötig.");
+    const acc = await claimAccount(sb, id);
+    if (!acc) return fail("Postfach gerade gesperrt oder unbekannt – gleich nochmal versuchen.");
+    try {
+      const pass = await accountPassword(acc);
+      const r = await withImap({ host: acc.imap_host, port: acc.imap_port, user: acc.username, pass }, (client) =>
+        importOne(acc as AccountRow, {
+          store: syncStore(sb), parse: parseRaw,
+          imap: {
+            fetchNew: () => Promise.reject(new Error("nicht benutzt")),
+            fetchPart: (folder, u, ref) => fetchPart(client, folder, u, ref),
+            fetchOne: async (folder, u) => { const x = await fetchOneSlim(client, folder, u); return { uidValidity: x.state.uidValidity, message: x.message }; },
+          },
+        }, key, uid));
+      await releaseAccount(sb, id);
+      await recordRun(sb, { account_id: id, kind: "sync", started_at: new Date().toISOString(), fetched: 1, processed: r === "stored" ? 1 : 0, errors: 0, note: `Mail UID ${uid} (${key}) nachgeholt: ${r}` });
+      if (r === "stored") {
+        const p = fetch(`${origin}/functions/v1/email-process`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ accountId: id }) }).catch(() => {});
+        (globalThis as any).EdgeRuntime?.waitUntil?.(p);
+      }
+      return ok({ result: r });
+    } catch (e) {
+      await releaseAccount(sb, id);
+      return fail(String((e as Error)?.message || e).slice(0, 300));
+    }
+  }
+
   let ids: string[] = body.accountId ? [String(body.accountId)] : [];
   if (!ids.length) {
     const { data } = await sb.from("email_accounts").select("id").eq("enabled", true);

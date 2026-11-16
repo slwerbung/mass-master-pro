@@ -58,7 +58,9 @@ export interface FetchedFolder {
 }
 
 export interface SyncImap {
-  fetchNew(folder: string, o: { lastUid: number | null; uidValidity: string | null; limit: number; backfill: number; skipFirst?: boolean }): Promise<FetchedFolder>;
+  fetchNew(folder: string, o: { lastUid: number | null; uidValidity: string | null; limit: number; backfill: number; skipFirst?: boolean; slimAll?: boolean }): Promise<FetchedFolder>;
+  /** Eine bestimmte Mail schonend holen (Nachholen übersprungener Mails). */
+  fetchOne?(folder: string, uid: number): Promise<{ uidValidity: string; message: RawFetched | null }>;
   /** Einen Anhang einer grossen Mail einzeln holen (dekodiert). */
   fetchPart?(folder: string, uid: number, ref: AttachmentRef): Promise<Uint8Array | null>;
 }
@@ -150,7 +152,9 @@ export async function syncAccount(acc: AccountRow, d: SyncDeps, limit = SYNC_LIM
       }
       return;
     }
-    const res = await d.imap.fetchNew(p.folder, { lastUid, uidValidity: validity, limit: tries >= STUCK_SINGLE ? 1 : room, backfill: acc.backfill });
+    // 2. Versuch nach einem Abbruch: nur eine Mail und ohne mailparser (Kopfzeilen + Text, Anhänge einzeln).
+    const retry = tries >= STUCK_SINGLE;
+    const res = await d.imap.fetchNew(p.folder, { lastUid, uidValidity: validity, limit: retry ? 1 : room, backfill: acc.backfill, slimAll: retry });
     sum.fetched += res.messages.length;
     sum.more = sum.more || res.more;
 
@@ -179,6 +183,19 @@ export async function syncAccount(acc: AccountRow, d: SyncDeps, limit = SYNC_LIM
       : { sent_uidvalidity: res.state.uidValidity, ...(cursor != null ? { sent_last_uid: cursor } : {}) };
     await d.store.saveCursor(acc.id, patch);
   }
+}
+
+/**
+ * Eine übersprungene Mail nachholen (schonend). Der Cursor bleibt unverändert; doppelte fängt die Message-ID ab.
+ */
+export async function importOne(acc: AccountRow, d: SyncDeps, key: "inbox" | "sent", uid: number): Promise<"stored" | "duplicate" | "missing"> {
+  const fm = acc.folder_map || {};
+  const folder = key === "inbox" ? fm.inbox || "INBOX" : fm.sent;
+  if (!folder) throw new Error("Kein Gesendet-Ordner bekannt.");
+  if (!d.imap.fetchOne) throw new Error("Nachholen nicht möglich.");
+  const r = await d.imap.fetchOne(folder, uid);
+  if (!r.message) return "missing";
+  return await storeOne(acc, folder, key === "inbox" ? "in" : "out", r.message, r.uidValidity, d);
 }
 
 async function storeOne(

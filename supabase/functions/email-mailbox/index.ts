@@ -12,7 +12,7 @@ import { fail, isCronCall, ok, preflight, readJson, requireMailUser } from "../_
 import { assertMessages } from "../_shared/email/access.ts";
 import { accountPassword } from "../_shared/email/config.ts";
 import { fetchDisplay, fetchPart, fetchSource, fetchStructure, findUidByMessageId, moveMessage, withImap } from "../_shared/email/imap.ts";
-import { attachmentRefs, BIG_MAIL_BYTES } from "../_shared/email/bigMail.ts";
+import { attachmentRefs, SLIM_MAIL_BYTES } from "../_shared/email/bigMail.ts";
 import type { ParsedAttachment } from "../_shared/email/parse.ts";
 import { parseRaw } from "../_shared/email/parseRaw.ts";
 import { syncStore } from "../_shared/email/store.ts";
@@ -71,7 +71,7 @@ const handlers: Record<string, (sb: any, body: any) => Promise<unknown>> = {
 
   /**
    * Fehlende Anhaenge nachladen (z. B. nach einem Speicherfehler beim Abholen). Vorhandene Dateien bleiben unveraendert.
-   * Kleine Mails ganz durch mailparser; grosse (> BIG_MAIL_BYTES) Anhang fuer Anhang per IMAP – die ganze Quelle
+   * Kleine Mails ganz durch mailparser; grosse (> SLIM_MAIL_BYTES, 1 MB) Anhang fuer Anhang per IMAP – die ganze Quelle
    * durch mailparser sprengt dort das CPU-Limit (2 s) der Edge Function (HTTP 546).
    */
   async attachments_reload(sb, body) {
@@ -126,7 +126,7 @@ const handlers: Record<string, (sb: any, body: any) => Promise<unknown>> = {
       if (!at) return false;
       const st = await fetchStructure(client, at.folder, at.uid);
       if (!st) return false;
-      if (st.size > BIG_MAIL_BYTES) {
+      if (st.size > SLIM_MAIL_BYTES) {
         let n = 0;
         for (const ref of attachmentRefs(st.bodyStructure)) {
           n++;
