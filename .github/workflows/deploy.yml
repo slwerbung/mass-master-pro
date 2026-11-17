@@ -1,0 +1,23 @@
+name: Deploy Supabase Functions
+
+on:
+  push:
+    branches:
+      - main  # Oder dein Standard-Branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-supabase@v1
+        with:
+          supabase-version: latest
+
+      - name: Deploy Function
+        run: |
+          supabase functions deploy email-api --no-verify-jwt --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
