@@ -73,7 +73,7 @@ function applyMessageFilters(q: any, body: Record<string, any>, user: MailUser, 
   if (body.from) q = q.gte("sent_at", String(body.from));
   if (body.to) q = q.lte("sent_at", String(body.to));
   const s = likeSafe(String(body.q || ""));
-  if (s) q = q.or(`subject.ilike.%${s}%,from_addr.ilike.%${s}%,summary.ilike.%${s}%,from_name.ilike.%${s}%`);
+  if (s) q = q.or(`subject.ilike.%${s}%,from_addr.ilike.%${s}%,summary.ilike.%${s}%,from_name.ilike.%${s}%,body_text.ilike.%${s}%`);
   return q;
 }
 
@@ -148,7 +148,8 @@ const must = <T>(r: { data: T; error: any }): T => {
 };
 
 /** Suchtext fuer PostgREST-`or` entschaerfen (Kommas, Klammern, Platzhalter). */
-const likeSafe = (q: string) => q.replace(/[%_,()\\]/g, " ").trim().slice(0, 80);
+// "_" bleibt erhalten (Adressen wie max_muster@…; im LIKE passt es ohnehin auf jedes Zeichen, also auch auf "_").
+const likeSafe = (q: string) => q.replace(/[%,()\\]/g, " ").trim().slice(0, 80);
 
 const handlers: Record<string, Handler> = {
   async me({ user }) {
