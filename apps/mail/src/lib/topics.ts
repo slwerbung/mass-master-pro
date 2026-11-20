@@ -6,6 +6,8 @@ export interface TopicMail {
   summary: string | null; category: Category | null; has_attachments: boolean; decided_at: string | null;
   /** ausdruecklich an diesen Mitarbeiter gerichtet; null = an alle mit Zugriff */
   addressedTo?: string | null;
+  /** es gibt einen Antwortentwurf zur Mail (dann `&draft=1` beim Antworten) */
+  hasDraft?: boolean;
   /** Anhaenge mit kurzlebigem Link (nur in „Zu entscheiden“) */
   attachments?: { id: string; filename: string; mime: string; size: number; url: string | null }[];
 }
@@ -22,6 +24,8 @@ export interface Topic {
   note: string | null;
   closedAt: string | null;
   projectId: number | null;
+  /** Nummer, Name, Kunde des Projekts aus der Zuordnung der Mail; fehlt bei einer aelteren email-api */
+  project?: { nr: string | null; name: string | null; kunde: string | null; certain: boolean } | null;
   lastActivity: string | null;
   from: string;
   latestId: string;
