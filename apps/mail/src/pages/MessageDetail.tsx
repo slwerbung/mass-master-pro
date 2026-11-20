@@ -320,11 +320,11 @@ export default function MessageDetail() {
 
       {/* 4. Mail-Leiste (Handy: klebt unten) */}
       <div className="z-20 -mx-4 flex flex-wrap items-center gap-2 border-t bg-background px-4 py-2 max-md:sticky max-md:bottom-0 max-md:flex-nowrap max-md:pb-[max(0.5rem,env(safe-area-inset-bottom))] md:mx-0 md:border-0 md:bg-transparent md:p-0">
-        <Link to={`/verfassen?reply=${m.id}&mode=reply`} className={cn(buttonVariants({ size: "sm" }), "max-md:h-11 max-md:flex-1")}><Reply className="h-3.5 w-3.5" /> Antworten</Link>
+        <Link to={`/verfassen?reply=${m.id}&mode=reply`} className={cn(buttonVariants({ size: "sm" }), "max-md:h-11 max-md:min-w-0 max-md:flex-1")}><Reply className="h-3.5 w-3.5" /> Antworten</Link>
         {(m.to_addrs?.length ?? 0) + (m.cc_addrs?.length ?? 0) > 1 && (
-          <Link to={`/verfassen?reply=${m.id}&mode=replyAll`} className={cn(buttonVariants({ size: "sm", variant: "outline" }), "max-md:h-11")}><ReplyAll className="h-3.5 w-3.5" /> Allen antworten</Link>
+          <Link to={`/verfassen?reply=${m.id}&mode=replyAll`} aria-label="Allen antworten" className={cn(buttonVariants({ size: "sm", variant: "outline" }), "max-md:h-11 max-md:w-11 max-md:shrink-0 max-md:px-0")}><ReplyAll className="h-3.5 w-3.5" /> <span className="max-md:sr-only">Allen antworten</span></Link>
         )}
-        <Link to={`/verfassen?reply=${m.id}&mode=forward`} className={cn(buttonVariants({ size: "sm", variant: "outline" }), "max-md:h-11")}><Forward className="h-3.5 w-3.5" /> Weiterleiten</Link>
+        <Link to={`/verfassen?reply=${m.id}&mode=forward`} className={cn(buttonVariants({ size: "sm", variant: "outline" }), "max-md:h-11 max-md:shrink-0")}><Forward className="h-3.5 w-3.5" /> Weiterleiten</Link>
         <MoreMenu>
           {(close) => {
             const go = (x: Dlg) => () => { close(); setDlg(x); };
