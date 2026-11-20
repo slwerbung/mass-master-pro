@@ -9,8 +9,10 @@ const load = (): Record<string, boolean> => { try { return JSON.parse(localStora
  * Einklappbarer Bereich der Mail-Ansicht. Zugeklappt zeigt die Kopfzeile eine Kurzinfo (`summary`);
  * ob ein Bereich offen ist, merkt sich der Browser je Bereich (nicht je Mail).
  */
-export function Section({ id, title, icon, summary, defaultOpen = false, tone, children }: {
+export function Section({ id, title, icon, summary, defaultOpen = false, tone, flat, children }: {
   id: string; title: string; icon?: ReactNode; summary?: ReactNode; defaultOpen?: boolean; tone?: "warn"; children: ReactNode;
+  /** ohne eigenen Rahmen (mehrere Bereiche in einem gemeinsamen Rahmen) */
+  flat?: boolean;
 }) {
   const [open, setOpen] = useState<boolean>(() => load()[id] ?? defaultOpen);
   const toggle = () => {
@@ -19,8 +21,8 @@ export function Section({ id, title, icon, summary, defaultOpen = false, tone, c
     try { localStorage.setItem(KEY, JSON.stringify({ ...load(), [id]: next })); } catch { /* privater Modus */ }
   };
   return (
-    <section className={cn("rounded-lg border bg-card", tone === "warn" && "border-amber-300")}>
-      <button type="button" onClick={toggle} aria-expanded={open} className="flex w-full items-center gap-2 px-4 py-3 text-left">
+    <section className={cn(!flat && "rounded-lg border bg-card", tone === "warn" && "border-amber-300")}>
+      <button type="button" onClick={toggle} aria-expanded={open} className="flex w-full touch-manipulation items-center gap-2 px-4 py-3 text-left hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:min-h-11">
         <ChevronRight className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
         {icon}
         <span className="font-medium">{title}</span>
