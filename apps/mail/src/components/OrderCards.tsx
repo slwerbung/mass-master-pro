@@ -4,7 +4,8 @@ import { ExternalLink, RefreshCw, Send } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Suggestion } from "@/lib/suggestions";
 import { Badge, Button, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
-import { Buttons, ExistingCustomerChoice, quoted, SuggestionCard, useDecide, type ExistingCustomer } from "@/components/SuggestionParts";
+import { ExistingCustomerChoice, useDecide, type ExistingCustomer } from "@/components/SuggestionParts";
+import type { FieldsProps } from "@/components/SuggestionFields";
 import { cn, formatDate } from "@/lib/utils";
 
 const euro = (n: number) => n.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
@@ -15,44 +16,32 @@ interface Position {
 }
 
 /**
- * Bestellung -> Projekt + Auftragsbestätigung. Positionen, Einheiten und Preise stammen aus einer früheren AB
- * bzw. dem Angebot in HERO; hier lassen sich nur Auswahl und Menge ändern. Angelegt wird ein ENTWURF.
+ * Bestellung -> Projekt + Auftragsbestätigung (Felder der Zeile „AB-Entwurf anlegen“). Positionen, Einheiten und Preise
+ * stammen aus einer früheren AB bzw. dem Angebot in HERO; hier lassen sich nur Auswahl und Menge ändern. Angelegt wird ein ENTWURF.
  */
-export function ConfirmationCard({ s, embedded }: { s: Suggestion; embedded?: boolean }) {
-  const decide = useDecide(s, (r) => `AB-Entwurf in HERO angelegt${r.projectNr ? ` (${r.projectNr})` : ""} – bitte dort prüfen und abschließen.`);
+export function ConfirmationFields({ s, edits, onChange }: FieldsProps) {
   const p = s.payload;
-  const [positions, setPositions] = useState<Position[]>(p.positions ?? []);
-  const [name, setName] = useState<string>(p.project?.name ?? "");
-  const [contact, setContact] = useState<Record<string, string | null>>(p.contact ?? {});
-  const [toStepId, setToStepId] = useState<number | "">(p.toStepId ?? "");
-  const upd = (i: number, x: Partial<Position>) => setPositions(positions.map((y, j) => (j === i ? { ...y, ...x } : y)));
+  const positions = (edits.positions ?? []) as Position[];
+  const name = (edits.name ?? "") as string;
+  const contact = (edits.contact ?? {}) as Record<string, string | null>;
+  const toStepId = (edits.toStepId ?? "") as number | "";
+  const set = (patch: Record<string, unknown>) => onChange({ ...edits, ...patch });
+  const setContact = (c: Record<string, string | null>) => set({ contact: c });
+  const setName = (v: string) => set({ name: v });
+  const setToStepId = (v: number | "") => set({ toStepId: v });
+  const setUseExisting = (v: boolean) => set({ useExisting: v });
+  const useExisting = !!edits.useExisting;
+  const upd = (i: number, x: Partial<Position>) => set({ positions: positions.map((y, j) => (j === i ? { ...y, ...x } : y)) });
   const sum = positions.filter((x) => x.include).reduce((n, x) => n + x.quantity * x.netPrice, 0);
   const sources = (p.sources ?? []) as { id: number; nr: string; kind: string; date: string | null; projectNr: string | null }[];
   const steps = (p.stepOptions ?? []) as { stepId: number; label: string }[];
   const open = (p.openPoints ?? []) as string[];
   const newProject = !p.projectId;
   const existing = (p.existingCustomer ?? null) as ExistingCustomer | null;
-  const [useExisting, setUseExisting] = useState(!!existing);
   const fromExisting = newProject && !!existing && useExisting;
-  const included = positions.filter((x) => x.include).length;
 
   return (
-    <SuggestionCard
-      s={s} embedded={embedded} brief={`${!newProject ? (p.projectNr ?? `#${p.projectId}`) : fromExisting ? `neues Projekt bei ${existing!.name}` : "neues Projekt + neuer Kontakt"} · ${included} Position(en)${included ? ` · ${euro(sum)} netto` : ""}`}
-      actions={
-        <div className="space-y-2">
-          <Buttons
-            s={s} busy={decide.isPending}
-            acceptLabel={!newProject ? `AB-Entwurf in ${p.projectNr ?? `#${p.projectId}`} anlegen`
-              : fromExisting ? `Neues Projekt ${quoted(name)} beim bestehenden Kunden ${existing!.name} + AB-Entwurf anlegen`
-              : `Neuen Kontakt, Projekt ${quoted(name)} und AB-Entwurf in HERO anlegen`}
-            onAccept={() => decide.mutate({ decision: "accept", edits: { positions, toStepId: toStepId || null, ...(newProject ? { project: { ...p.project, name }, contact, useExisting: fromExisting } : {}) } })}
-            onReject={(reason) => decide.mutate({ decision: "reject", edits: { reason } })}
-          />
-          <p className="text-xs text-muted-foreground">Es wird nichts versendet. Die AB entsteht als Entwurf; danach erscheint hier „Prüfen &amp; versenden“.</p>
-        </div>
-      }
-    >
+    <>
         {newProject ? (
           <div className="space-y-2 rounded-md border border-dashed p-3">
             <p className="text-sm font-medium">Neues Projekt anlegen</p>
@@ -125,7 +114,8 @@ export function ConfirmationCard({ s, embedded }: { s: Suggestion; embedded?: bo
           </Field>
         )}
 
-    </SuggestionCard>
+      <p className="text-xs text-muted-foreground">Es wird nichts versendet. Die AB entsteht als Entwurf; danach erscheint hier „Prüfen &amp; versenden“.</p>
+    </>
   );
 }
 
@@ -134,8 +124,11 @@ interface DocInfo {
   hasPdf: boolean; sent: boolean; templates: { id: number; name: string }[]; suggestedTemplateId: number | null;
 }
 
-/** Geprüftes Dokument (AB oder Angebot) per Klick über HERO an den Kunden senden – mit HERO-Vorlage und PDF. */
-export function SendDocumentCard({ s, embedded }: { s: Suggestion; embedded?: boolean }) {
+/**
+ * Geprüftes Dokument (AB oder Angebot) per Klick über HERO an den Kunden senden – mit HERO-Vorlage und PDF.
+ * Nicht Teil von „Ausführen“: eigener Versand-Knopf, Bestätigung und „Nicht versenden“.
+ */
+export function SendDocumentPanel({ s, onDone }: { s: Suggestion; onDone?: () => void }) {
   const p = s.payload;
   const kindLabel = p.kind === "offer" ? "Angebot" : "Auftragsbestätigung";
   const decide = useDecide(s, (r) => (r.alreadySent ? "War schon versendet – erledigt." : `${r.documentNr ?? kindLabel} an ${r.recipient} versendet.`));
@@ -152,28 +145,11 @@ export function SendDocumentCard({ s, embedded }: { s: Suggestion; embedded?: bo
 
   const send = () => {
     if (!confirm(`${d?.nr ?? kindLabel} jetzt über HERO an ${recipient.trim()} senden?`)) return;
-    decide.mutate({ decision: "accept", edits: { recipient: recipient.trim(), templateId: Number(tpl) } });
+    decide.mutate({ decision: "accept", edits: { recipient: recipient.trim(), templateId: Number(tpl) } }, { onSuccess: onDone });
   };
 
   return (
-    <SuggestionCard
-      s={s} embedded={embedded} brief={`${kindLabel} ${d?.nr || p.documentNr || `#${p.documentId}`} an ${recipient || "?"}${d ? ` · ${d.sent ? "schon versendet" : d.hasPdf ? "bereit" : "noch Entwurf"}` : ""}`}
-      actions={
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
-            {d?.sent ? (
-              <Button onClick={() => decide.mutate({ decision: "accept", edits: { recipient: recipient.trim(), templateId: Number(tpl) } })} disabled={decide.isPending}>Als erledigt markieren</Button>
-            ) : (
-              <Button onClick={send} disabled={!ready || !tpl || !validRecipient || decide.isPending} className="h-auto min-h-9 whitespace-normal py-2 text-left">
-                {decide.isPending ? <Spinner /> : <Send className="h-4 w-4" />} {d?.nr || p.documentNr || kindLabel} jetzt über HERO an {recipient.trim() || "?"} senden
-              </Button>
-            )}
-            <Button variant="outline" onClick={() => decide.mutate({ decision: "reject", edits: { reason: "Nicht versenden" } })} disabled={decide.isPending}>Nicht versenden</Button>
-          </div>
-          {d && !d.hasPdf && <p className="text-xs text-amber-800">Noch ein Entwurf ohne PDF – unter „Vorschlag“ steht, was zu tun ist.</p>}
-        </div>
-      }
-    >
+    <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span>{kindLabel} <b>{d?.nr || p.documentNr || `#${p.documentId}`}</b> · Projekt <b>{p.projectNr ?? p.projectId}</b></span>
           {d && <Badge variant={d.sent ? "good" : d.hasPdf ? "default" : "warn"}>{d.statusName || (d.hasPdf ? "Erstellt" : "Entwurf")}</Badge>}
@@ -208,6 +184,20 @@ export function SendDocumentCard({ s, embedded }: { s: Suggestion; embedded?: bo
         <p className="text-xs text-muted-foreground">
           Echter Versand an den Kunden: HERO verschickt die Mail mit der gewählten Vorlage (Betreff und Text aus HERO) und dem PDF; der Versand steht im HERO-Verlauf und im Logbuch.
         </p>
-    </SuggestionCard>
+
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {d?.sent ? (
+              <Button onClick={() => decide.mutate({ decision: "accept", edits: { recipient: recipient.trim(), templateId: Number(tpl) } }, { onSuccess: onDone })} disabled={decide.isPending}>Als erledigt markieren</Button>
+            ) : (
+              <Button onClick={send} disabled={!ready || !tpl || !validRecipient || decide.isPending} className="h-auto min-h-9 whitespace-normal py-2 text-left">
+                {decide.isPending ? <Spinner /> : <Send className="h-4 w-4" />} {d?.nr || p.documentNr || kindLabel} jetzt über HERO an {recipient.trim() || "?"} senden
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => decide.mutate({ decision: "reject", edits: { reason: "Nicht versenden" } }, { onSuccess: onDone })} disabled={decide.isPending}>Nicht versenden</Button>
+          </div>
+          {d && !d.hasPdf && <p className="text-xs text-amber-800">Noch ein Entwurf ohne PDF – oben steht, was zu tun ist.</p>}
+        </div>
+    </div>
   );
 }

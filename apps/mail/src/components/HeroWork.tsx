@@ -122,7 +122,7 @@ const MAIL_TASKS = [
  * Mail-Karte (Zu entscheiden): Aufgabe in HERO wählen → HERO in neuem Tab → Rückkehr → Abgleich.
  * Gelingt er, wird das Thema abgeschlossen (die Mail ist abgelegt); sonst bleibt es offen.
  */
-export function TopicHeroWork({ threadId, heroId, nr, onDone }: { threadId: string; heroId: number; nr: string; onDone?: () => void }) {
+export function TopicHeroWork({ threadId, heroId, nr, onDone, onStarted }: { threadId: string; heroId: number; nr: string; onDone?: () => void; onStarted?: () => void }) {
   const qc = useQueryClient();
   const tabRef = useRef<Window | null>(null);
   const q = useQuery({ queryKey: ["projects", "topic_task", threadId], queryFn: () => papi<{ task: HeroTaskInfo | null; heroId: number | null }>("topic_task", { threadId }) });
@@ -137,6 +137,7 @@ export function TopicHeroWork({ threadId, heroId, nr, onDone }: { threadId: stri
       else window.open(heroProjectUrl(heroId), "_blank");
       toast.info(`${r.label}: in HERO bis ${hhmm(r.lockedUntil)}.`);
       refresh();
+      onStarted?.();
     },
     onError: (e) => { const tab = tabRef.current; if (tab && !tab.closed) tab.close(); toast.error(errorText(e)); },
   });
