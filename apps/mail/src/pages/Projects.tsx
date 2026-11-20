@@ -12,6 +12,7 @@ import { ConfirmDialog, EventsDialog, NoteDialog, StatusDialog, reportResult } f
 import { AutopilotDialog, BulkFollowupDialog, CallPanel, DraftPanel } from "@/components/ProjectFollowup";
 import { HeroWorkPanel, HeroWorkStart } from "@/components/HeroWork";
 import { FlowView } from "@/components/FlowView";
+import { StackItemFrame, useStackKeys } from "@/components/Stack";
 import { cn, errorText } from "@/lib/utils";
 
 const QK = ["projects"];
@@ -86,21 +87,15 @@ export default function Projects() {
     if (n) setSel(n.id);
   };
 
-  // Tastatur: J/K naechste/vorige, W Wiedervorlage, H In HERO. (E/A/S/Enter folgen mit den scharfen Aktionen.)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (snoozeFor || dialog || e.metaKey || e.ctrlKey || e.altKey || (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) || view !== "stapel") return;
-      const k = e.key.toLowerCase();
-      if (k === "j") step(1);
-      else if (k === "k") step(-1);
-      else if (k === "w" && selected) setSnoozeFor(selected);
-      else if (k === "e" && selected && !busy) complete.mutate(selected);
-      else if (k === "a" && selected && !busy) setDialog({ kind: "archive", card: selected });
-      else if (k === "h" && selected) window.open(heroProjectUrl(selected.project.heroId), "_blank", "noopener");
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+  // Tastatur: J/K naechste/vorige, W Wiedervorlage, E abschliessen, A archivieren, H In HERO.
+  useStackKeys({
+    onNext: () => step(1), onPrev: () => step(-1), disabled: !!(snoozeFor || dialog) || view !== "stapel",
+    keys: {
+      w: () => { if (selected) setSnoozeFor(selected); },
+      e: () => { if (selected && !busy) complete.mutate(selected); },
+      a: () => { if (selected && !busy) setDialog({ kind: "archive", card: selected }); },
+      h: () => { if (selected) window.open(heroProjectUrl(selected.project.heroId), "_blank", "noopener"); },
+    },
   });
 
   const o = overview.data;
@@ -196,7 +191,7 @@ function CategoryTag({ c }: { c: ProjectCard["category"] }) {
 function StackItem({ card, active, onClick }: { card: ProjectCard; active: boolean; onClick: () => void }) {
   const p = card.project;
   return (
-    <button type="button" onClick={onClick} className={cn("w-full rounded-md border p-3 text-left hover:bg-accent", active && "border-primary bg-accent")}>
+    <StackItemFrame active={active} onClick={onClick}>
       <div className="flex items-center gap-2">
         <CategoryTag c={card.category} />
         <span className="text-xs text-muted-foreground">{p.nr}</span>
@@ -205,7 +200,7 @@ function StackItem({ card, active, onClick }: { card: ProjectCard; active: boole
       </div>
       <div className="mt-1 truncate text-sm font-medium">{p.name || "(ohne Namen)"}</div>
       <div className="truncate text-xs text-muted-foreground">{p.kunde || "Kunde unbekannt"} · {card.suggestion || card.ruleLabel}</div>
-    </button>
+    </StackItemFrame>
   );
 }
 

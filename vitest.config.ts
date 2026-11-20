@@ -19,6 +19,7 @@ export default defineConfig({
       "supabase/functions/_shared/archive.test.ts",
       "src/components/review/**/*.test.ts",
       "src/lib/**/*.test.ts",
+      "apps/mail/src/lib/**/*.test.ts",
     ],
     environment: "node",
   },

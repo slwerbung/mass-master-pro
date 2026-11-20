@@ -15,6 +15,10 @@ export interface TopicMail {
   summary: string | null; category: string | null; has_attachments: boolean; decided_at: string | null;
   /** ausdruecklich an diesen Mitarbeiter gerichtet (Name); null = an alle mit Zugriff auf das Postfach */
   addressedTo?: string | null;
+  /** Es gibt einen Antwortentwurf zur Mail (nur lesend, fuer „Antworten“ mit `&draft=1`) */
+  hasDraft?: boolean;
+  /** Beleg-Zustand (portal_offen | weiterleiten_offen | weitergeleitet …), null = kein Beleg-Vorgang */
+  belegState?: string | null;
   /** Anhaenge mit kurzlebigem Link (nur in list_topics) */
   attachments?: { id: string; filename: string; mime: string; size: number; url: string | null }[];
 }
@@ -31,6 +35,8 @@ export interface Topic {
   note: string | null;
   closedAt: string | null;
   projectId: number | null;
+  /** Nummer, Name und Kunde des Projekts aus der Zuordnung der Mail (match_info); nur lesend, null ohne Projekt */
+  project: { nr: string | null; name: string | null; kunde: string | null; certain: boolean } | null;
   lastActivity: string | null;
   /** Gegenueber: Absender der juengsten eingehenden Mail */
   from: string;
@@ -50,7 +56,7 @@ export interface Topic {
 
 export type TopicView = "entscheiden" | "laufend" | "wiedervorlage" | "erledigt";
 
-const MSG_COLS = "id, account_id, thread_id, direction, from_name, from_addr, subject, sent_at, created_at, summary, category, status, beleg_state, has_attachments, decided_at, hero_project_match_id";
+const MSG_COLS = "id, account_id, thread_id, direction, from_name, from_addr, subject, sent_at, created_at, summary, category, status, beleg_state, has_attachments, decided_at, hero_project_match_id, match_info";
 const CHUNK = 80;
 
 function must<T>(r: { data: T; error: any }): T {
@@ -154,6 +160,13 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
   }
   const mine = (m: any) => !viewer?.userId || !addr.has(m.id) || addr.get(m.id)!.id === viewer.userId;
 
+  // Antwortentwurf vorhanden? Nur fuer die vorzulegenden Mails (wenige), nur ein Ja/Nein – der Text bleibt in get_message.
+  const draftIds = new Set<string>();
+  const wantDraft = msgs.filter((m) => m.direction === "in" && !m.decided_at).map((m) => m.id);
+  for (const c of chunks(wantDraft)) {
+    for (const r of must(await sb.from("email_messages").select("id, draft_text").in("id", c)) as any[]) if (r.draft_text) draftIds.add(r.id);
+  }
+
   const topics: Topic[] = [];
   const irrelevant: string[] = [];
   for (const th of threads) {
@@ -185,12 +198,17 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
     const st: TopicStatus = othersTopic && raw.due && raw.reason !== "wiedervorlage" ? { ...raw, due: false, reason: null } : raw;
     const latest = all[all.length - 1] ?? rel[rel.length - 1];
     const lastInMail = [...rel].reverse()[0] ?? all.find((m) => m.direction === "in");
+    const projectId: number | null = th.hero_project_match_id ?? [...all].reverse().find((m) => m.hero_project_match_id)?.hero_project_match_id ?? null;
+    const pm = projectId ? [...all].reverse().find((m) => m.hero_project_match_id === projectId && m.match_info) : null;
+    const project = projectId
+      ? { nr: pm?.match_info?.projectNr ?? null, name: pm?.match_info?.projectName ?? null, kunde: pm?.match_info?.customer?.name ?? null, certain: pm?.match_info?.certain === true }
+      : null;
     topics.push({
       id: th.id,
       subject: (lastInMail ?? latest)?.subject || th.subject_norm || "(ohne Betreff)",
       state: th.topic_state, due: st.due, reason: st.reason, reasonText: reasonText(st, th.topic_note),
       nextCheck: st.nextCheck, snoozedUntil: th.snoozed_until, note: th.topic_note, closedAt: th.closed_at,
-      projectId: th.hero_project_match_id ?? [...all].reverse().find((m) => m.hero_project_match_id)?.hero_project_match_id ?? null,
+      projectId, project,
       lastActivity: lastOf(all),
       from: lastInMail ? (lastInMail.from_name || lastInMail.from_addr) : "",
       latestId: latest?.id ?? "",
@@ -201,7 +219,7 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
       newMessages: undecided.map((m) => ({
         id: m.id, direction: m.direction, from_name: m.from_name, from_addr: m.from_addr, subject: m.subject, sent_at: m.sent_at,
         summary: m.summary, category: m.category, has_attachments: m.has_attachments, decided_at: m.decided_at,
-        addressedTo: addr.get(m.id)?.name ?? null,
+        addressedTo: addr.get(m.id)?.name ?? null, hasDraft: draftIds.has(m.id), belegState: m.beleg_state ?? null,
       })),
       suggestionIds: sIds,
     });

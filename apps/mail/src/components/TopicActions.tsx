@@ -24,21 +24,30 @@ const DONE_TEXT: Record<TopicDecision, string> = {
 export function useTopicDecide(topicId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (p: { decision: TopicDecision; until?: string; note?: string; messageIds?: string[] }) =>
+    // `silent`: der Aufrufer meldet selbst (z. B. „Thema abgeschlossen, offene Vorschläge verworfen.“)
+    mutationFn: ({ silent: _silent, ...p }: { decision: TopicDecision; until?: string; note?: string; messageIds?: string[]; silent?: boolean }) =>
       api<{ state: string; snoozedUntil: string | null }>("topic_decide", { threadId: topicId, ...p }),
-    onSuccess: (r, p) => toast.success(p.decision === "wiedervorlage" && r.snoozedUntil ? `Wiedervorlage am ${formatDate(r.snoozedUntil)}.` : DONE_TEXT[p.decision]),
+    onSuccess: (r, p) => !p.silent && toast.success(p.decision === "wiedervorlage" && r.snoozedUntil ? `Wiedervorlage am ${formatDate(r.snoozedUntil)}.` : DONE_TEXT[p.decision]),
     onError: (e) => toast.error(errorText(e)),
     onSettled: () => ["topics", "suggestions", "overview", "message", "messages"].forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
   });
 }
 
 /** Wiedervorlage: Schnellwahl oder Datum, dazu optional, worauf zu achten ist. */
-export function SnoozePanel({ onSnooze, busy, onCancel }: { onSnooze: (until: string, note: string) => void; busy: boolean; onCancel: () => void }) {
+export function SnoozePanel({ onSnooze, busy, onCancel, title = "Wiedervorlage – das Thema ruht bis dahin und kommt dann wieder unter „Zu entscheiden“", submitLabel, bare }: {
+  onSnooze: (until: string, note: string) => void; busy: boolean; onCancel?: () => void;
+  /** Überschrift (null = keine) */
+  title?: string | null;
+  /** Beschriftung des Knopfs, z. B. „Wiedervorlage am 27.11.“ */
+  submitLabel?: (date: string) => string;
+  /** ohne eigenen Rahmen (im Dialog) */
+  bare?: boolean;
+}) {
   const [date, setDate] = useState(inDays(7));
   const [note, setNote] = useState("");
   return (
-    <div className="space-y-2 rounded-md border bg-muted/40 p-3">
-      <div className="text-sm font-medium">Wiedervorlage – das Thema ruht bis dahin und kommt dann wieder unter „Zu entscheiden“</div>
+    <div className={cn("space-y-2", !bare && "rounded-md border bg-muted/40 p-3")}>
+      {title && <div className="text-sm font-medium">{title}</div>}
       <div className="flex flex-wrap gap-1.5">
         {SNOOZE_PRESETS.map((p) => (
           <button
@@ -49,11 +58,11 @@ export function SnoozePanel({ onSnooze, busy, onCancel }: { onSnooze: (until: st
       </div>
       <div className="flex flex-wrap gap-2">
         <Input type="date" className="h-8 w-40" min={inDays(1)} value={date} onChange={(e) => setDate(e.target.value)} />
-        <Input className="h-8 min-w-48 flex-1" maxLength={300} placeholder="Worauf achten? (optional, z. B. „Freigabe da?“)" value={note} onChange={(e) => setNote(e.target.value)} />
+        <Input className="h-8 min-w-48 flex-1" maxLength={300} placeholder="Grund (optional), z. B. „Freigabe da?“ …" aria-label="Grund" value={note} onChange={(e) => setNote(e.target.value)} />
       </div>
       <div className="flex gap-2">
-        <Button size="sm" onClick={() => onSnooze(date, note)} disabled={busy || !date}>{busy && <Spinner />} Auf Wiedervorlage legen</Button>
-        <Button size="sm" variant="ghost" onClick={onCancel}>Abbrechen</Button>
+        <Button size="sm" onClick={() => onSnooze(date, note)} disabled={busy || !date}>{busy && <Spinner />} {submitLabel ? submitLabel(date) : "Auf Wiedervorlage legen"}</Button>
+        {onCancel && <Button size="sm" variant="ghost" onClick={onCancel}>Abbrechen</Button>}
       </div>
     </div>
   );

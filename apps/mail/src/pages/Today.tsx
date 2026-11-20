@@ -29,7 +29,7 @@ export default function Today() {
   const items = useMemo<Item[]>(() => {
     const out: Item[] = [];
     for (const t of topics.data ?? []) {
-      out.push({ key: `m:${t.id}`, kind: "mail", category: "kunde", title: t.subject || "(ohne Betreff)", sub: `${t.from}${t.reasonText ? ` · ${t.reasonText}` : ""}`, meta: t.lastActivity ? formatDate(t.lastActivity) : "", to: "/" });
+      out.push({ key: `m:${t.id}`, kind: "mail", category: "kunde", title: t.subject || "(ohne Betreff)", sub: `${t.from}${t.reasonText ? ` · ${t.reasonText}` : ""}`, meta: t.lastActivity ? formatDate(t.lastActivity) : "", to: `/?topic=${t.id}` });
     }
     for (const c of projects.data?.stack ?? []) {
       out.push({ key: `p:${c.id}`, kind: "projekt", category: c.category, title: `${c.project.nr} ${c.project.name || ""}`.trim(), sub: c.reasons.text || c.ruleLabel, meta: `${c.project.stepName.replace(/^[^\p{L}\p{N}]+/u, "")} · ${tageText(c.project.days)}`, to: `/projekte?card=${c.id}` });

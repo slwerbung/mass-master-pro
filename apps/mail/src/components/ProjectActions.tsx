@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -6,16 +6,27 @@ import { pact, papi, type ActionResult, type EventRow, type EventSetup, type Pro
 import { Button, ErrorBox, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { errorText } from "@/lib/utils";
 
+/**
+ * Dialog: Escape und Klick daneben schließen; Fokus beim Öffnen in den Dialog, beim Schließen zurück auf den Auslöser.
+ * Auf dem Handy ein Blatt von unten (volle Breite, oben abgerundet); `overscroll-behavior: contain`.
+ */
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+  const panel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  useEffect(() => {
+    const before = document.activeElement as HTMLElement | null;
+    panel.current?.focus({ preventScroll: true }); // der Container, nicht ein Feld: auf dem Handy geht so keine Tastatur auf
+    return () => { if (before && document.contains(before)) before.focus({ preventScroll: true }); };
+  }, []);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={title}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center md:items-center md:p-4" role="dialog" aria-modal="true" aria-label={title}>
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className={`relative max-h-[90vh] w-full space-y-4 overflow-y-auto rounded-lg border bg-background p-5 shadow-xl ${wide ? "max-w-2xl" : "max-w-md"}`}>
+      <div ref={panel} tabIndex={-1}
+        className={`relative max-h-[90vh] w-full space-y-4 overflow-y-auto overscroll-contain rounded-t-xl border bg-background p-5 shadow-xl outline-none max-md:pb-[max(1.25rem,env(safe-area-inset-bottom))] md:rounded-lg ${wide ? "max-w-2xl" : "max-w-md"}`}>
         <h2 className="font-semibold">{title}</h2>
         {children}
       </div>

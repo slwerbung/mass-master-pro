@@ -113,3 +113,21 @@ describe("Zugeordnete Themen: nur noch der Zugeordnete", () => {
     expect(other.find((t) => t.id === "t1")?.assignedTo?.name).toBe("Jonas Lang");
   });
 });
+
+describe("Projektdaten und Entwurf je Thema (nur lesend, für die Karte in „Zu entscheiden“)", () => {
+  const withProject = { ...mail("m9", "t9", "Hallo,\nanbei das Layout."), hero_project_match_id: 1947, match_info: { certain: true, projectNr: "WER-1947", projectName: "Fahrzeugbeschriftung", customer: { id: 5, name: "Müller GmbH" } }, draft_text: "Hallo Frau Müller …" };
+  const sb3 = fakeSb({
+    email_config: [], email_suggestions: [],
+    email_threads: [{ ...thread("t9"), hero_project_match_id: 1947 }, thread("t8")],
+    email_messages: [withProject, mail("m8", "t8", "Hallo,\nneue Anfrage.")],
+  });
+  it("liefert Nummer, Name, Kunde und Entwurf-Flag", async () => {
+    const all = await listTopics(sb3, "entscheiden", now, null);
+    const t9 = all.find((t) => t.id === "t9")!;
+    expect(t9.project).toEqual({ nr: "WER-1947", name: "Fahrzeugbeschriftung", kunde: "Müller GmbH", certain: true });
+    expect(t9.newMessages[0].hasDraft).toBe(true);
+    const t8 = all.find((t) => t.id === "t8")!;
+    expect(t8.project).toBeNull();
+    expect(t8.newMessages[0].hasDraft).toBe(false);
+  });
+});
