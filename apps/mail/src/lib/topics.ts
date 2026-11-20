@@ -8,6 +8,8 @@ export interface TopicMail {
   addressedTo?: string | null;
   /** es gibt einen Antwortentwurf zur Mail (dann `&draft=1` beim Antworten) */
   hasDraft?: boolean;
+  /** Beleg-Zustand (weitergeleitet = schon an Lexware), null = kein Beleg-Vorgang */
+  belegState?: string | null;
   /** Anhaenge mit kurzlebigem Link (nur in „Zu entscheiden“) */
   attachments?: { id: string; filename: string; mime: string; size: number; url: string | null }[];
 }

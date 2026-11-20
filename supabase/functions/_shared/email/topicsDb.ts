@@ -17,6 +17,8 @@ export interface TopicMail {
   addressedTo?: string | null;
   /** Es gibt einen Antwortentwurf zur Mail (nur lesend, fuer „Antworten“ mit `&draft=1`) */
   hasDraft?: boolean;
+  /** Beleg-Zustand (portal_offen | weiterleiten_offen | weitergeleitet …), null = kein Beleg-Vorgang */
+  belegState?: string | null;
   /** Anhaenge mit kurzlebigem Link (nur in list_topics) */
   attachments?: { id: string; filename: string; mime: string; size: number; url: string | null }[];
 }
@@ -217,7 +219,7 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
       newMessages: undecided.map((m) => ({
         id: m.id, direction: m.direction, from_name: m.from_name, from_addr: m.from_addr, subject: m.subject, sent_at: m.sent_at,
         summary: m.summary, category: m.category, has_attachments: m.has_attachments, decided_at: m.decided_at,
-        addressedTo: addr.get(m.id)?.name ?? null, hasDraft: draftIds.has(m.id),
+        addressedTo: addr.get(m.id)?.name ?? null, hasDraft: draftIds.has(m.id), belegState: m.beleg_state ?? null,
       })),
       suggestionIds: sIds,
     });
