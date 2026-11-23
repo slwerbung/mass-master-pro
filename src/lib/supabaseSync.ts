@@ -746,7 +746,7 @@ async function syncProjectInternal(projectId: string, afterMerge = false): Promi
   const employeeId = existingProject?.employee_id ?? project.employeeId ?? (session?.role === 'employee' ? session.id : null);
   const userId = existingProject?.user_id ?? (project.employeeId || (session?.role === 'employee' ? session.id : project.id));
 
-  const { data: savedProject } = await supabase.from('projects').upsert({
+  const { data: savedProject, error: projectError } = await supabase.from('projects').upsert({
     id: project.id,
     project_number: project.projectNumber,
     project_type: project.projectType || (existingProject as any)?.project_type || 'aufmass',
@@ -757,6 +757,11 @@ async function syncProjectInternal(projectId: string, afterMerge = false): Promi
     created_at: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),
     updated_at: syncTimestamp,
   } as any, { onConflict: 'id' }).select('updated_at').maybeSingle();
+  // Ohne Projektzeile scheitert jeder Standort/Plan am Fremdschluessel. Laut
+  // abbrechen, damit die Sync-Anzeige rot wird – frueher lief das still weiter
+  // und das Aufmass lag tagelang nur auf dem Handy (WER-978: Projekttyp
+  // 'aufmass_mit_plan' von der Datenbank abgelehnt).
+  if (projectError) throw new Error(`Projekt ${project.projectNumber} konnte nicht hochgeladen werden: ${projectError.message}`);
   // Ein Trigger setzt projects.updated_at auf die SERVER-Zeit. Lokal genau
   // diesen Wert merken – sonst haelt ein Handy, dessen Uhr etwas nachgeht,
   // die Online-Fassung nach jedem eigenen Sync fuer neuer und laedt sie
