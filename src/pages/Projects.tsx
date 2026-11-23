@@ -167,8 +167,13 @@ const Projects = () => {
         setArchiveWarn(warn);
       }).catch(() => null);
 
+      // Projekte, die (noch) nur auf diesem Geraet liegen, immer zeigen – auch
+      // Mitarbeitern. localSummary ist bereits auf die Projekte des
+      // angemeldeten Mitarbeiters gefiltert. Frueher blieben sie fuer
+      // Mitarbeiter unsichtbar: ein Aufmass, dessen Upload scheiterte, wirkte
+      // dann "verschwunden", obwohl es auf dem Handy lag (WER-978).
       const supabaseIds = new Set(supabaseProjects.map(sp => sp.id));
-      if (session?.role !== "employee") {
+      {
         for (const lp of localSummary) {
           if (!supabaseIds.has(lp.id)) {
             merged.push({
