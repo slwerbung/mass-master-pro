@@ -83,7 +83,7 @@ function hasHashEntry(key: string): boolean {
 // damit es auch offline ausgeloeste Loeschungen nachholt.
 
 const TOMBSTONE_KEY = 'mmp_deleted_v1';
-type TombstoneKind = 'locations' | 'details';
+type TombstoneKind = 'locations' | 'details' | 'floorPlans';
 
 function readTombstones(): Record<TombstoneKind, string[]> {
   try {
@@ -91,9 +91,10 @@ function readTombstones(): Record<TombstoneKind, string[]> {
     return {
       locations: Array.isArray(raw.locations) ? raw.locations : [],
       details: Array.isArray(raw.details) ? raw.details : [],
+      floorPlans: Array.isArray(raw.floorPlans) ? raw.floorPlans : [],
     };
   } catch {
-    return { locations: [], details: [] };
+    return { locations: [], details: [], floorPlans: [] };
   }
 }
 
@@ -381,12 +382,17 @@ async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Prom
     await waitForQuiet();
     await syncFloorPlan(projectId, fp);
   }
+  // Nur ausdruecklich hier geloeschte Plaene (Loeschvermerk) verschwinden online.
+  const deleted = new Set(readTombstones().floorPlans);
+  if (deleted.size === 0) return;
   const { data: existingRows, error } = await (supabase as any).from('floor_plans').select('id, storage_path').eq('project_id', projectId);
   if (error) return;
-  const rowsToDelete = (existingRows || []).filter((row: any) => !currentIds.has(row.id));
+  const rowsToDelete = (existingRows || []).filter((row: any) => deleted.has(row.id) && !currentIds.has(row.id));
   if (rowsToDelete.length) {
     await removeStoragePaths(rowsToDelete.map((row: any) => row.storage_path));
-    await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).in('id', rowsToDelete.map((row: any) => row.id));
+    const { error: delError } = await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).in('id', rowsToDelete.map((row: any) => row.id));
+    if (delError) return;
+    clearTombstones('floorPlans', rowsToDelete.map((row: any) => row.id));
     rowsToDelete.forEach((row: any) => invalidateImageCache(`floor_${row.id}`));
   }
 }
@@ -543,7 +549,10 @@ async function hydrateAndMerge(projectId: string): Promise<{ project: Project; k
     };
   });
 
-  const { locations, kept } = await mergeWithLocal(projectId, remoteLocations);
+  const merged = await mergeWithLocal(projectId, remoteLocations);
+  const locations = merged.locations;
+  const plans = await mergeFloorPlansWithLocal(projectId, floorPlans);
+  const kept = merged.kept + plans.kept;
 
   // Note: saveProject only writes image blobs for NEW locations.
   // Existing location blobs are preserved in IndexedDB regardless of imageData value here.
@@ -559,7 +568,7 @@ async function hydrateAndMerge(projectId: string): Promise<{ project: Project; k
       ...((assignmentRows || []).map((row: any) => row.employee_id)),
     ].filter(Boolean))),
     locations,
-    floorPlans,
+    floorPlans: plans.floorPlans,
     createdAt: new Date(projectRow.created_at),
     updatedAt: new Date(projectRow.updated_at),
   };
@@ -640,6 +649,39 @@ export async function mergeWithLocal(projectId: string, remoteLocations: Locatio
 
   merged.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   return { locations: merged, kept };
+}
+
+/**
+ * Plaene wie Standorte zusammenfuehren: ein Plan, den es nur lokal gibt, bleibt
+ * (WER-978: ein zweiter, paralleler Sync lud die noch leere Online-Fassung und
+ * loeschte dabei den Plan samt Markierungen vom Handy). Markierungen werden
+ * vereinigt – eine lokal gesetzte Markierung geht nie verloren. Lokal
+ * behaltene Plaene tragen leere Bilddaten, damit ihr Blob unangetastet bleibt.
+ */
+export async function mergeFloorPlansWithLocal(projectId: string, remotePlans: FloorPlan[]): Promise<{ floorPlans: FloorPlan[]; kept: number }> {
+  const deleted = new Set(readTombstones().floorPlans);
+  const remote = remotePlans.filter((fp) => !deleted.has(fp.id));
+  const local = await indexedDBStorage.getFloorPlansByProject(projectId, false);
+  const localById = new Map(local.map((fp) => [fp.id, fp]));
+  const remoteIds = new Set(remote.map((fp) => fp.id));
+  let kept = 0;
+
+  const merged: FloorPlan[] = remote.map((fp) => {
+    const lp = localById.get(fp.id);
+    if (!lp) return fp;
+    const remoteMarkerIds = new Set((fp.markers || []).map((m) => m.id));
+    const extra = (lp.markers || []).filter((m) => !remoteMarkerIds.has(m.id));
+    if (extra.length === 0) return fp;
+    kept++;
+    return { ...fp, markers: [...(fp.markers || []), ...extra] };
+  });
+  for (const lp of local) {
+    if (remoteIds.has(lp.id) || deleted.has(lp.id)) continue;
+    merged.push({ ...lp, imageData: "" });
+    kept++;
+  }
+  merged.sort((a, b) => (a.pageIndex ?? 0) - (b.pageIndex ?? 0));
+  return { floorPlans: merged, kept };
 }
 
 export async function hydrateProjectFromSupabase(projectId: string): Promise<Project | null> {
@@ -790,6 +832,22 @@ async function syncProjectInternal(projectId: string, afterMerge = false): Promi
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+// Nie zwei Syncs fuer dasselbe Projekt gleichzeitig: der zweite hielt die
+// gerade vom ersten angelegte Online-Fassung fuer neuer und lud sie in den
+// lokalen Stand (WER-978). Ein zweiter Aufruf wartet auf den ersten.
+const _projectLocks = new Map<string, Promise<unknown>>();
+
+async function withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = _projectLocks.get(projectId) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(fn);
+  _projectLocks.set(projectId, run);
+  try {
+    return await run;
+  } finally {
+    if (_projectLocks.get(projectId) === run) _projectLocks.delete(projectId);
+  }
+}
+
 export async function syncAllToSupabase(): Promise<void> {
   startSync();
   const projectIds = await indexedDBStorage.getProjectIds(getSession());
@@ -798,7 +856,7 @@ export async function syncAllToSupabase(): Promise<void> {
   for (const id of projectIds) {
     try {
       await waitForQuiet();
-      await syncProjectInternal(id);
+      await withProjectLock(id, () => syncProjectInternal(id));
     } catch (e) {
       errors.push(id);
       console.error(`Sync failed for project ${id}:`, e);
@@ -814,7 +872,7 @@ export async function syncAllToSupabase(): Promise<void> {
 export async function syncProjectToSupabase(projectId: string): Promise<'uploaded' | 'remote-won' | 'merged' | 'skipped'> {
   startSync();
   try {
-    const result = await syncProjectInternal(projectId);
+    const result = await withProjectLock(projectId, () => syncProjectInternal(projectId));
     finishSyncSuccess();
     return result;
   } catch (e) {
@@ -828,9 +886,11 @@ export async function syncLocationToSupabase(projectId: string, _locationId: str
 }
 
 export async function deleteFloorPlanFromSupabase(projectId: string, floorPlanId: string): Promise<void> {
+  addTombstone('floorPlans', floorPlanId);
   const { data } = await (supabase as any).from('floor_plans').select('storage_path').eq('project_id', projectId).eq('id', floorPlanId).maybeSingle();
   await removeStoragePaths([data?.storage_path]);
-  await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).eq('id', floorPlanId);
+  const { error } = await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).eq('id', floorPlanId);
+  if (!error) clearTombstones('floorPlans', [floorPlanId]);
   invalidateImageCache(`floor_${floorPlanId}`);
 }
 

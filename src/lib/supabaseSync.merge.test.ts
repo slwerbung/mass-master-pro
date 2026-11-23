@@ -2,7 +2,7 @@
 // verwerfen (WER-1937: Detailbilder nach dem Speichern weg, nachtraeglich
 // eingetragene Masse weg).
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DetailImage, Location, Project } from "@/types/project";
+import type { DetailImage, FloorPlan, Location, Project } from "@/types/project";
 
 const store: Record<string, string> = {};
 (globalThis as any).localStorage = {
@@ -12,6 +12,7 @@ const store: Record<string, string> = {};
 };
 
 let localProject: Project | null = null;
+let localPlans: FloorPlan[] = [];
 let flags = { locations: new Map<string, boolean | undefined>(), details: new Map<string, { locationId: string; synced: boolean | undefined }>() };
 
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
@@ -24,10 +25,11 @@ vi.mock("./indexedDBStorage", () => ({
   indexedDBStorage: {
     getProject: async () => localProject,
     getSyncFlags: async () => flags,
+    getFloorPlansByProject: async () => localPlans,
   },
 }));
 
-const { mergeWithLocal, markLocationDeleted } = await import("./supabaseSync");
+const { mergeWithLocal, mergeFloorPlansWithLocal, markLocationDeleted } = await import("./supabaseSync");
 
 const T0 = new Date("2026-11-11T09:00:00Z");
 const later = (s: number) => new Date(T0.getTime() + s * 1000);
@@ -43,6 +45,7 @@ const project = (locations: Location[]): Project => ({
 beforeEach(() => {
   for (const k of Object.keys(store)) delete store[k];
   localProject = null;
+  localPlans = [];
   flags = { locations: new Map(), details: new Map() };
 });
 
@@ -113,5 +116,34 @@ describe("mergeWithLocal", () => {
     markLocationDeleted("L2");
     const { locations } = await mergeWithLocal("p", [loc("L1"), loc("L2")]);
     expect(locations.map((l) => l.id)).toEqual(["L1"]);
+  });
+});
+
+const plan = (id: string, markers: { id: string }[] = []): FloorPlan => ({
+  id, name: "Plan", imageData: "img", pageIndex: 0, createdAt: T0,
+  markers: markers.map((m) => ({ ...m, locationId: "L-" + m.id, x: 0.5, y: 0.5 })),
+});
+
+describe("mergeFloorPlansWithLocal", () => {
+  it("keeps a plan that exists only locally (WER-978: online version still empty)", async () => {
+    localPlans = [plan("P1", [{ id: "m1" }])];
+    const { floorPlans, kept } = await mergeFloorPlansWithLocal("p", []);
+    expect(floorPlans.map((f) => f.id)).toEqual(["P1"]);
+    expect(floorPlans[0].markers.map((m) => m.id)).toEqual(["m1"]);
+    expect(floorPlans[0].imageData).toBe(""); // local blob stays untouched
+    expect(kept).toBe(1);
+  });
+
+  it("unions markers so a locally placed marker is never lost", async () => {
+    localPlans = [plan("P1", [{ id: "m1" }, { id: "m2" }])];
+    const { floorPlans, kept } = await mergeFloorPlansWithLocal("p", [plan("P1", [{ id: "m1" }])]);
+    expect(floorPlans[0].markers.map((m) => m.id)).toEqual(["m1", "m2"]);
+    expect(kept).toBe(1);
+  });
+
+  it("takes the remote plan unchanged when nothing is local", async () => {
+    const { floorPlans, kept } = await mergeFloorPlansWithLocal("p", [plan("P1", [{ id: "m1" }])]);
+    expect(floorPlans[0].imageData).toBe("img");
+    expect(kept).toBe(0);
   });
 });
