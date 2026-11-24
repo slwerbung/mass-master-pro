@@ -8,7 +8,7 @@ import SlugRoute from "@/components/SlugRoute";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { getSession, clearSession, getRememberedLogin, renewEmployeeSession, sessionNeedsRenewal } from "@/lib/session";
 import { toast } from "sonner";
-import { syncAllToSupabase } from "@/lib/supabaseSync";
+import { startSyncEngine } from "@/lib/sync/engine";
 import { startHeroUploadWorker } from "@/lib/heroUploadWorker";
 import { supabase } from "@/integrations/supabase/client";
 import Projects from "./pages/Projects";
@@ -158,8 +158,10 @@ const RoleGuardInner = ({ allowedRoles, children }: { allowedRoles: string[]; ch
   useEffect(() => {
     if (!session || (session.role !== "employee" && session.role !== "customer")) return;
     let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted || data.session) return;
+    supabase.auth.getSession().then(({ data, error }) => {
+      // Ohne Netz kann Supabase ein abgelaufenes Token nicht auffrischen –
+      // das ist kein Grund zum Abmelden (Offline-Arbeit).
+      if (!mounted || data.session || error || !navigator.onLine) return;
       clearSession();
       toast.error("Bitte einmal neu anmelden – die Sitzung ist nicht mehr vollständig.");
       setSupabaseSessionMissing(true);
@@ -206,12 +208,10 @@ const RoleGuardInner = ({ allowedRoles, children }: { allowedRoles: string[]; ch
 
 const App = () => {
   // When coming back online, sync all pending local changes to Supabase
+  // Sync v2: Warteschlange beobachten (Netz zurueck, App wieder im
+  // Vordergrund) und Ausstehendes hochladen – auch nach einem Neustart.
   useEffect(() => {
-    const handleOnline = () => {
-      if (getSession()) syncAllToSupabase();
-    };
-    window.addEventListener("online", handleOnline);
-    return () => window.removeEventListener("online", handleOnline);
+    startSyncEngine();
   }, []);
 
   // Background worker that drains the HERO upload queue. Starts once on

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 vi.mock("@/lib/indexedDBStorage", () => ({ indexedDBStorage: {} }));
-vi.mock("@/lib/supabaseSync", () => ({ hasPendingSync: () => false }));
+vi.mock("@/lib/sync/engine", () => ({ hasLocalChanges: async () => false }));
 vi.mock("@/lib/session", () => ({ getSession: () => null }));
 
 import { shouldEvict } from "./archiveEviction";

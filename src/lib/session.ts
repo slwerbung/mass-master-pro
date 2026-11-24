@@ -16,6 +16,15 @@ export function getSession(): Session | null {
     if (!raw) return null;
     const session = JSON.parse(raw) as Session;
     if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) {
+      // Offline-Arbeit (Gebaeude ohne Netz): ein gemerkter Mitarbeiter bleibt
+      // ohne Verbindung bis zu 7 Tage angemeldet. Alles wird lokal
+      // gespeichert; sobald wieder Netz da ist, erneuert SessionKeeper das
+      // Token und der Sync laedt hoch.
+      const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+      const graceUntil = new Date(session.expiresAt).getTime() + 7 * 24 * 60 * 60 * 1000;
+      if (offline && session.role === "employee" && getRememberedLogin()?.id === session.id && Date.now() < graceUntil) {
+        return session;
+      }
       localStorage.removeItem(SESSION_KEY);
       return null;
     }

@@ -17,8 +17,12 @@ export const StorageIndicator = () => {
   if (!storage || storage.quota === 0) return null;
   const isWarning = storage.percentage > 80;
   const SyncIcon = !syncState.isOnline ? CloudOff : syncState.isSyncing ? RefreshCw : syncState.lastError ? AlertCircle : Cloud;
+  const pending = syncState.pendingProjects ?? 0;
+  const conflicts = syncState.conflicts ?? 0;
   const syncText = !syncState.isOnline
-    ? 'Offline – Änderungen werden nur lokal gespeichert'
+    ? `Offline – alles wird auf dem Gerät gespeichert${pending ? ` (${pending} Projekt${pending === 1 ? '' : 'e'} wartet auf Upload)` : ''} und automatisch hochgeladen, sobald wieder Netz da ist`
+    : conflicts > 0
+      ? `${conflicts} gleichzeitige Änderung${conflicts === 1 ? '' : 'en'} – bitte im Projekt entscheiden`
     : syncState.isSyncing
       ? 'Synchronisiert gerade…'
       : syncState.lastError

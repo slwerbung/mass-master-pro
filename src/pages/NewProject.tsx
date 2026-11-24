@@ -9,6 +9,8 @@ import { ArrowLeft, Ruler, Map, Car, Search, X } from "lucide-react";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
 import { Project } from "@/types/project";
 import { supabase } from "@/integrations/supabase/client";
+import { scheduleSyncProject } from "@/lib/supabaseSync";
+import { cachedQuery } from "@/lib/offlineCache";
 import { getSession } from "@/lib/session";
 import { toast } from "sonner";
 import { Textarea } from "@/components/ui/textarea";
@@ -50,7 +52,7 @@ const NewProject = () => {
       if (data?.hero?.enabled) setHeroEnabled(true);
     }).catch(() => {});
 
-    supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order").then(({ data }) => {
+    cachedQuery("project_field_config:active", () => supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order")).then((data) => {
       setProjectFieldConfigs(mergeWithDefaultProjectFields((data || []) as any[]));
     }).catch(() => {
       setProjectFieldConfigs(mergeWithDefaultProjectFields([]));
@@ -154,21 +156,9 @@ const NewProject = () => {
 
       await indexedDBStorage.saveProject(newProject);
 
-      try {
-        await supabase.from("projects").upsert({
-          id: projectId,
-          project_number: fullProjectNumber,
-          project_type: projectType,
-          customer_name: customerName || null,
-          custom_fields: Object.keys(customProjectFields).length > 0 ? customProjectFields : null,
-          user_id: employeeId || projectId,
-          employee_id: employeeId,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        } as any, { onConflict: "id" });
-      } catch (e) {
-        console.warn("Supabase sync failed (non-fatal):", e);
-      }
+      // Hochladen uebernimmt die Sync-Engine – auch spaeter, falls gerade
+      // kein Netz ist (Projekt ist sofort auf dem Geraet nutzbar).
+      scheduleSyncProject(projectId);
 
       toast.success("Projekt erstellt");
       navigate(`/projects/${newProject.id}`);

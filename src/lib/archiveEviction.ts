@@ -1,7 +1,7 @@
 // Spec E: Archivierte Projekte verschwinden aus dem lokalen Speicher der Geräte (nur lokal – nie auf dem Server löschen).
 // Projekte mit noch nicht synchronisierten Änderungen bleiben, bis der Sync durch ist.
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { hasPendingSync } from "@/lib/supabaseSync";
+import { hasLocalChanges } from "@/lib/sync/engine";
 
 /** Lokal entfernen? archiviert, kein Sync offen, lokaler Stand nicht neuer als der Server (1 s Toleranz). */
 export function shouldEvict(o: { archived: boolean; pending: boolean; localUpdatedAt: Date | null; serverUpdatedAt: Date | null }): boolean {
@@ -19,8 +19,10 @@ export async function evictArchivedProjects(server: { id: string; archived_at: s
       const sp = byId.get(local.id);
       if (!sp?.archived_at) continue;
       const evict = shouldEvict({
-        archived: true, pending: hasPendingSync(local.id), localUpdatedAt: local.updatedAt,
-        serverUpdatedAt: sp.updated_at ? new Date(sp.updated_at) : null,
+        // Sync v2: "offen" = irgendetwas lokal noch nicht auf dem Server
+        // (Basisvergleich statt Zeitstempel – Handy-Uhren gehen falsch).
+        archived: true, pending: await hasLocalChanges(local.id), localUpdatedAt: null,
+        serverUpdatedAt: null,
       });
       if (!evict) continue;
       await indexedDBStorage.deleteProject(local.id);

@@ -3,6 +3,12 @@ export type SyncState = {
   isSyncing: boolean;
   lastSyncedAt: string | null;
   lastError: string | null;
+  /** Sync v2: Projekte mit noch nicht hochgeladenen Aenderungen. */
+  pendingProjects?: number;
+  /** Sync v2: Bilder, die gerade heruntergeladen werden. */
+  pendingDownloads?: number;
+  /** Sync v2: offene Konflikte (Entscheidung noetig). */
+  conflicts?: number;
 };
 
 const STORAGE_KEY = 'app_sync_status';
