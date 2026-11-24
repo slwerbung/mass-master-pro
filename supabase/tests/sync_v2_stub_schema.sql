@@ -1,6 +1,6 @@
 -- Minimal-Schema, um die Migration sync_v2 lokal (Postgres 16) zu pruefen.
 -- Nur fuer Tests: bildet die betroffenen Tabellen der Live-DB nach.
-do $$ begin if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated; end if; if not exists (select 1 from pg_roles where rolname='anon') then create role anon; end if; end $$;
+do $$ begin if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated; end if; if not exists (select 1 from pg_roles where rolname='anon') then create role anon; end if; if not exists (select 1 from pg_roles where rolname='service_role') then create role service_role; end if; end $$;
 create schema storage;
 create table storage.objects (id uuid default gen_random_uuid(), bucket_id text, name text);
 create publication supabase_realtime;

@@ -365,13 +365,15 @@ begin
   return jsonb_build_object('status', 'ok', 'free_paths', to_jsonb(v_free));
 end $$;
 
-grant execute on function public.sync_push(text, uuid, jsonb, jsonb, text[]) to authenticated;
-grant execute on function public.sync_set_image(text, uuid, text, text, text, boolean) to authenticated;
-grant execute on function public.sync_delete(text, uuid) to authenticated;
-revoke execute on function public.sync_push(text, uuid, jsonb, jsonb, text[]) from anon;
-revoke execute on function public.sync_set_image(text, uuid, text, text, text, boolean) from anon;
-revoke execute on function public.sync_delete(text, uuid) from anon;
-revoke execute on function public.sync_path_in_use(text) from anon;
+-- Funktionen sind standardmaessig fuer PUBLIC (also auch anon) ausfuehrbar.
+revoke execute on function public.sync_push(text, uuid, jsonb, jsonb, text[]) from public, anon;
+revoke execute on function public.sync_set_image(text, uuid, text, text, text, boolean) from public, anon;
+revoke execute on function public.sync_delete(text, uuid) from public, anon;
+revoke execute on function public.sync_path_in_use(text) from public, anon;
+grant execute on function public.sync_push(text, uuid, jsonb, jsonb, text[]) to authenticated, service_role;
+grant execute on function public.sync_set_image(text, uuid, text, text, text, boolean) to authenticated, service_role;
+grant execute on function public.sync_delete(text, uuid) to authenticated, service_role;
+grant execute on function public.sync_path_in_use(text) to authenticated, service_role;
 
 -- ── Realtime ──────────────────────────────────────────────────────────────
 -- Realtime prueft RLS: Mitarbeiter sehen alles, Kunden nur ihre Projekte.
