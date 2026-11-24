@@ -63,6 +63,9 @@ interface AufmassDBSchema extends DBSchema {
       locationId: string;
       type: 'annotated' | 'original';
       blob: Blob;
+      // Sync v2: Speicherpfad auf dem Server, dem dieser Blob entspricht.
+      // Fehlt er, ist das Bild hier neu bzw. geaendert und muss hoch.
+      path?: string;
     };
     indexes: { 'by-location': string };
   };
@@ -87,6 +90,7 @@ interface AufmassDBSchema extends DBSchema {
       detailImageId: string;
       type: 'annotated' | 'original';
       blob: Blob;
+      path?: string; // Sync v2, siehe images.path
     };
     indexes: { 'by-detail-image': string };
   };
@@ -108,6 +112,7 @@ interface AufmassDBSchema extends DBSchema {
       id: string;
       floorPlanId: string;
       blob: Blob;
+      path?: string; // Sync v2, siehe images.path
     };
     indexes: { 'by-floor-plan': string };
   };
@@ -132,10 +137,51 @@ interface AufmassDBSchema extends DBSchema {
     };
     indexes: { 'by-next-attempt': number; 'by-project': string };
   };
+  // Sync v2 (src/lib/sync): zuletzt vom Server bestaetigte Fassung je Einheit.
+  // Lokal != base = hier geaendert; Server != base = woanders geaendert.
+  'sync-base': {
+    key: string; // "<kind>:<id>"
+    value: SyncBaseRecord;
+    indexes: { 'by-project': string };
+  };
+  // Sync v2: offene Konflikte (hier UND woanders unterschiedlich geaendert).
+  'sync-conflicts': {
+    key: string; // "<kind>:<id>:<field>"
+    value: SyncConflictRecord;
+    indexes: { 'by-project': string };
+  };
+}
+
+export interface SyncBaseRecord {
+  key: string;
+  kind: 'project' | 'location' | 'detail' | 'floor_plan';
+  id: string;
+  projectId: string;
+  parentId?: string;
+  revision: number;
+  fields: Record<string, any>;
+  /** Bildpfade auf dem Server (annotated/original bzw. image beim Grundriss). */
+  images: Record<string, string | null>;
+}
+
+export interface SyncConflictRecord {
+  key: string;
+  projectId: string;
+  kind: 'project' | 'location' | 'detail' | 'floor_plan';
+  id: string;
+  /** Feldname, "image.annotated"/"image.original" oder "deleted". */
+  field: string;
+  mine: any;
+  theirs: any;
+  /** Bei Bildkonflikten: schon hochgeladene eigene Fassung. */
+  minePath?: string | null;
+  /** Anzeige: Standortnummer o. ae. */
+  label?: string;
+  createdAt: number;
 }
 
 const DB_NAME = 'aufmass-db';
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 
 let dbInstance: IDBPDatabase<AufmassDBSchema> | null = null;
 
@@ -182,8 +228,21 @@ function createDB() {
         queueStore.createIndex('by-next-attempt', 'nextAttemptAt');
         queueStore.createIndex('by-project', 'projectId');
       }
+      if (oldVersion < 8) {
+        const baseStore = db.createObjectStore('sync-base', { keyPath: 'key' });
+        baseStore.createIndex('by-project', 'projectId');
+        const conflictStore = db.createObjectStore('sync-conflicts', { keyPath: 'key' });
+        conflictStore.createIndex('by-project', 'projectId');
+      }
     },
   });
+}
+
+export type AufmassDB = IDBPDatabase<AufmassDBSchema>;
+
+/** Direkter Zugriff fuer die Sync-Engine (src/lib/sync). */
+export async function getSyncDB(): Promise<AufmassDB> {
+  return getDB();
 }
 
 async function getDB(): Promise<IDBPDatabase<AufmassDBSchema>> {
@@ -205,7 +264,7 @@ async function getDB(): Promise<IDBPDatabase<AufmassDBSchema>> {
 }
 
 // Convert base64 to Blob for efficient storage
-function base64ToBlob(base64: string): Blob {
+export function base64ToBlob(base64: string): Blob {
   const parts = base64.split(';base64,');
   const contentType = parts[0].split(':')[1] || 'image/jpeg';
   const raw = atob(parts[1]);
@@ -220,7 +279,7 @@ function base64ToBlob(base64: string): Blob {
 }
 
 // Convert Blob back to base64 for display
-async function blobToBase64(blob: Blob): Promise<string> {
+export async function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result as string);
@@ -230,11 +289,11 @@ async function blobToBase64(blob: Blob): Promise<string> {
 }
 
 // Helper to create image ID
-function createImageId(locationId: string, type: 'annotated' | 'original'): string {
+export function createImageId(locationId: string, type: 'annotated' | 'original'): string {
   return `${locationId}_${type}`;
 }
 
-function createDetailBlobId(detailImageId: string, type: 'annotated' | 'original'): string {
+export function createDetailBlobId(detailImageId: string, type: 'annotated' | 'original'): string {
   return `${detailImageId}_${type}`;
 }
 
@@ -690,8 +749,12 @@ export const indexedDBStorage = {
       const currentDetailIds = new Set((location.detailImages || []).map(di => di.id));
       const existingDetailImages = await db.getAllFromIndex('detail-images', 'by-location', location.id);
 
+      const knownDetailIds = new Set(existingDetailImages.map((d) => d.id));
       for (const detailImage of location.detailImages || []) {
-        await this.saveDetailImage(location.id, detailImage, { touch: false });
+        // Vorhandene Detailbilder nicht neu schreiben: ein neu geschriebener
+        // Blob verliert seinen Serverpfad und gaelte als geaendert (Sync v2).
+        const known = knownDetailIds.has(detailImage.id);
+        await this.saveDetailImage(location.id, known ? { ...detailImage, imageData: '', originalImageData: '' } : detailImage, { touch: false });
       }
 
       for (const existingDetail of existingDetailImages) {
@@ -706,8 +769,10 @@ export const indexedDBStorage = {
     const existingFloorPlans = await db.getAllFromIndex('floor-plans', 'by-project', project.id);
     const currentFloorPlanIds = new Set((project.floorPlans || []).map(fp => fp.id));
 
+    const knownFloorPlanIds = new Set(existingFloorPlans.map((fp) => fp.id));
     for (const floorPlan of project.floorPlans || []) {
-      await this.saveFloorPlan(project.id, floorPlan);
+      // Vorhandene Grundrissbilder nicht neu schreiben (Serverpfad bliebe sonst weg).
+      await this.saveFloorPlan(project.id, knownFloorPlanIds.has(floorPlan.id) ? { ...floorPlan, imageData: '' } : floorPlan);
     }
 
     for (const existingFloorPlan of existingFloorPlans) {
@@ -836,6 +901,57 @@ export const indexedDBStorage = {
     }
     
     await db.delete('projects', id);
+    // Sync v2: ohne lokale Kopie auch keine Basis mehr – sonst hielte die
+    // Engine die fehlenden Standorte fuer "hier geloescht".
+    for (const store of ['sync-base', 'sync-conflicts'] as const) {
+      for (const key of await db.getAllKeysFromIndex(store, 'by-project', id)) await db.delete(store, key);
+    }
+  },
+
+  /**
+   * Neuen Standort anlegen, OHNE die anderen Standorte des Projekts neu zu
+   * schreiben (saveProject schrieb alle zurueck – mit dem Stand von vor dem
+   * Laden; dazwischen heruntergeladene Aenderungen anderer gingen so verloren).
+   */
+  async addLocation(projectId: string, location: Location): Promise<void> {
+    const db = await getDB();
+    await db.put('locations', {
+      id: location.id,
+      projectId,
+      locationNumber: location.locationNumber,
+      locationName: location.locationName,
+      comment: location.comment,
+      system: location.system,
+      label: location.label,
+      locationType: location.locationType,
+      customFields: location.customFields ? JSON.stringify(location.customFields) : undefined,
+      guestInfo: location.guestInfo,
+      areaMeasurements: location.areaMeasurements ? JSON.stringify(location.areaMeasurements) : undefined,
+      createdAt: location.createdAt.toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    if (location.imageData) {
+      await db.put('images', { id: createImageId(location.id, 'annotated'), locationId: location.id, type: 'annotated', blob: base64ToBlob(location.imageData) });
+    }
+    if (location.originalImageData) {
+      await db.put('images', { id: createImageId(location.id, 'original'), locationId: location.id, type: 'original', blob: base64ToBlob(location.originalImageData) });
+    }
+    for (const detailImage of location.detailImages || []) {
+      await this.saveDetailImage(location.id, detailImage, { touch: false });
+    }
+  },
+
+  /** Standort lokal loeschen (die Sync-Engine loescht ihn dann online). */
+  async deleteLocation(locationId: string): Promise<void> {
+    const db = await getDB();
+    for (const di of await db.getAllFromIndex('detail-images', 'by-location', locationId)) {
+      await db.delete('detail-image-blobs', createDetailBlobId(di.id, 'annotated'));
+      await db.delete('detail-image-blobs', createDetailBlobId(di.id, 'original'));
+      await db.delete('detail-images', di.id);
+    }
+    await db.delete('images', createImageId(locationId, 'annotated'));
+    await db.delete('images', createImageId(locationId, 'original'));
+    await db.delete('locations', locationId);
   },
 
   async getStorageEstimate(): Promise<{ used: number; quota: number; percentage: number }> {
@@ -899,7 +1015,7 @@ export const indexedDBStorage = {
   async clearAll(): Promise<void> {
     try {
       const db = await getDB();
-      const storeNames = ['projects', 'locations', 'images', 'detail-images', 'detail-image-blobs', 'floor-plans', 'floor-plan-images'] as const;
+      const storeNames = ['projects', 'locations', 'images', 'detail-images', 'detail-image-blobs', 'floor-plans', 'floor-plan-images', 'sync-base', 'sync-conflicts'] as const;
       const tx = db.transaction([...storeNames], 'readwrite');
       await Promise.all(storeNames.map(s => tx.objectStore(s).clear()));
       await tx.done;

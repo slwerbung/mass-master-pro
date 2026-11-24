@@ -902,8 +902,8 @@ const PhotoEditor = () => {
               toast.success("Detailbild aktualisiert");
             } else if (locationId) {
               await indexedDBStorage.updateLocationImage(projectId, locationId, dataUrl);
-              // Merge new area measurements with existing
-              const project = await indexedDBStorage.getProject(projectId);
+              // Merge new area measurements with existing (ohne Bilder laden – Speicher)
+              const project = await indexedDBStorage.getProject(projectId, undefined, { withImages: false });
               const existingLoc = project?.locations.find(l => l.id === locationId);
               const existingMeasurements = existingLoc?.areaMeasurements || [];
               const mergedMeasurements = [...existingMeasurements, ...areaMeasurements];

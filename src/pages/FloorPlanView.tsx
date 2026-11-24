@@ -5,7 +5,9 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Plus, MapPin, List, Upload, Trash2, RefreshCw, Camera } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { indexedDBStorage } from "@/lib/indexedDBStorage";
-import { deleteFloorPlanFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, syncProjectToSupabase } from "@/lib/supabaseSync";
+import { hydrateProjectFromSupabase, scheduleSyncProject } from "@/lib/supabaseSync";
+import { onProjectUpdated, watchProject } from "@/lib/sync/engine";
+import { SyncConflictBanner } from "@/components/SyncConflictBanner";
 import { Project, FloorPlanMarker } from "@/types/project";
 import { toast } from "sonner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -46,10 +48,10 @@ const FloorPlanView = () => {
     try {
       // Without original photos: only markers/annotated images are shown here,
       // and the camera is opened from this page (memory, see getProject).
+      // Lokal zuerst (geht auch ohne Netz). Abgleich mit online laeuft ueber
+      // watchProject im Hintergrund; nur wenn lokal gar nichts da ist, warten.
       const loaded = await indexedDBStorage.getProject(projectId, undefined, { withOriginals: false });
-      const remoteUpdatedAt = loaded ? await getProjectRemoteTimestamp(projectId) : null;
-      const shouldHydrate = !loaded || (remoteUpdatedAt && remoteUpdatedAt.getTime() > loaded.updatedAt.getTime() + 1000);
-      const resolvedProject = shouldHydrate ? await hydrateProjectFromSupabase(projectId) : loaded;
+      const resolvedProject = loaded ?? await hydrateProjectFromSupabase(projectId);
       if (resolvedProject) {
         setProject(resolvedProject);
         const floorPlans = resolvedProject.floorPlans || [];
@@ -65,6 +67,13 @@ const FloorPlanView = () => {
   }, [projectId, activeFloorPlanId]);
 
   useEffect(() => { loadProject(); }, [loadProject]);
+  // Live: Aenderungen anderer Geraete holen und anzeigen.
+  useEffect(() => {
+    if (!projectId) return;
+    const stopWatch = watchProject(projectId);
+    const stopListen = onProjectUpdated(projectId, () => { void loadProject(); });
+    return () => { stopWatch(); stopListen(); };
+  }, [projectId, loadProject]);
   const activeFloorPlan = project?.floorPlans?.find((fp) => fp.id === activeFloorPlanId);
 
   const handleImageClick = async (e: React.MouseEvent<HTMLDivElement>) => {
@@ -73,9 +82,10 @@ const FloorPlanView = () => {
     const markerId = crypto.randomUUID();
     const locationId = crypto.randomUUID();
     const newMarker: FloorPlanMarker = { id: markerId, locationId, x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)) };
-    await indexedDBStorage.updateFloorPlanMarkers(projectId, activeFloorPlan.id, [...activeFloorPlan.markers, newMarker]);
-    const syncResult = await syncProjectToSupabase(projectId);
-    if (syncResult === 'remote-won') { toast.warning('Neuere Online-Version übernommen'); await loadProject(); return; }
+    // Aktuellen lokalen Stand lesen (kann inzwischen per Live-Abgleich gewachsen sein).
+    const fresh = (await indexedDBStorage.getFloorPlansByProject(projectId, false)).find((fp) => fp.id === activeFloorPlan.id);
+    await indexedDBStorage.updateFloorPlanMarkers(projectId, activeFloorPlan.id, [...(fresh?.markers ?? activeFloorPlan.markers), newMarker]);
+    scheduleSyncProject(projectId);
     setPlacingMarker(false);
     setPendingLocationId(locationId);
     setShowCaptureDialog(true);
@@ -92,10 +102,8 @@ const FloorPlanView = () => {
     if (!projectId || !activeFloorPlan) return;
     try {
       await indexedDBStorage.deleteFloorPlan(activeFloorPlan.id);
-      await deleteFloorPlanFromSupabase(projectId, activeFloorPlan.id);
-      const syncResult = await syncProjectToSupabase(projectId);
-      if (syncResult === 'remote-won') toast.warning('Neuere Online-Version übernommen');
-      else toast.success('Grundriss gelöscht');
+      scheduleSyncProject(projectId);
+      toast.success('Grundriss gelöscht');
       await loadProject();
     } catch (error) {
       console.error('Error deleting floor plan:', error);
@@ -137,6 +145,7 @@ const FloorPlanView = () => {
   return (
     <div className="min-h-screen bg-background pb-24">
       <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-4">
+        <SyncConflictBanner projectId={projectId!} />
         <div className="flex items-center justify-between gap-2">
           <Button variant="ghost" onClick={() => navigate(`/projects/${projectId}`)} size="sm"><ArrowLeft className="mr-1 h-4 w-4" /><span className="hidden sm:inline">Zurück</span></Button>
           <div className="flex gap-2">

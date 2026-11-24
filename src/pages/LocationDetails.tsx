@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { compressImage } from "@/lib/imageCompression";
 import { supabase } from "@/integrations/supabase/client";
 import { scheduleSyncProject } from "@/lib/supabaseSync";
+import { cachedQuery } from "@/lib/offlineCache";
 import { updateHeroNotesIfLinked } from "@/lib/heroNotesSync";
 import { enqueueHeroUploadIfLinked, dataUrlToBlob, getHeroProjectMatchId } from "@/lib/heroSyncHelpers";
 import { getSession } from "@/lib/session";
@@ -111,7 +112,7 @@ const LocationDetails = () => {
   // Load project type
   useEffect(() => {
     if (projectId) {
-      indexedDBStorage.getProject(projectId).then(proj => {
+      indexedDBStorage.getProject(projectId, undefined, { withImages: false }).then(proj => {
         if (proj) setProjectType(proj.projectType);
       });
     }
@@ -119,7 +120,8 @@ const LocationDetails = () => {
 
   // Load field configs from Supabase
   useEffect(() => {
-    supabase.from("location_field_config").select("*").eq("is_active", true).order("sort_order").then(({ data }) => {
+    // Offline: zuletzt geladene Feldliste.
+    cachedQuery("location_field_config:active", () => supabase.from("location_field_config").select("*").eq("is_active", true).order("sort_order")).then((data) => {
       if (data) setFieldConfigs(data as FieldConfig[]);
     });
   }, []);
@@ -135,7 +137,7 @@ const LocationDetails = () => {
   useEffect(() => {
     if (isEditMode && projectId && locationId) {
       const loadLocation = async () => {
-        const project = await indexedDBStorage.getProject(projectId);
+        const project = await indexedDBStorage.getProject(projectId, undefined, { withOriginals: false });
         if (!project) { navigate("/"); return; }
         const loc = project.locations.find(l => l.id === locationId);
         if (!loc) { navigate(`/projects/${projectId}`); return; }
@@ -148,6 +150,7 @@ const LocationDetails = () => {
         if (loc.comment) vals["comment"] = loc.comment;
         if (loc.customFields) Object.assign(vals, loc.customFields);
         setFieldValues(vals);
+        initialValuesRef.current = { ...vals };
         if (loc.areaMeasurements) setExistingAreaMeasurements(loc.areaMeasurements);
         setIsLoaded(true);
       };
@@ -168,6 +171,12 @@ const LocationDetails = () => {
       loadDetail();
     }
   }, [isDetailEditMode, locationId, detailId, projectId, navigate]);
+
+  // Werte beim Oeffnen: gespeichert werden nur die Felder, die hier
+  // tatsaechlich geaendert wurden. Sonst wuerde das Formular eine
+  // inzwischen auf einem anderen Geraet geaenderte Angabe mit dem alten Wert
+  // zuruecksetzen (Sync v2 nimmt lokale Werte als bewusste Aenderung).
+  const initialValuesRef = useRef<Record<string, string>>({});
 
   const setFieldValue = (key: string, value: string) => {
     setFieldValues(prev => ({ ...prev, [key]: value }));
@@ -199,14 +208,29 @@ const LocationDetails = () => {
         toast.success("Detailbild aktualisiert");
         navigate(`/projects/${projectId}`);
       } else if (isEditMode && locationId) {
-        await indexedDBStorage.updateLocationMetadata(projectId, locationId, {
-          locationName: fieldValues["locationName"]?.trim() || undefined,
-          comment: fieldValues["comment"]?.trim() || undefined,
-          system: fieldValues["system"]?.trim() || undefined,
-          label: fieldValues["label"]?.trim() || undefined,
-          locationType: fieldValues["locationType"]?.trim() || undefined,
-          customFields: Object.fromEntries(Object.entries(fieldValues).filter(([k]) => k.startsWith("custom_"))),
-        });
+        const initial = initialValuesRef.current;
+        const norm = (v?: string) => v?.trim() || undefined;
+        const changedKey = (k: string) => norm(fieldValues[k]) !== norm(initial[k]);
+        const update: Parameters<typeof indexedDBStorage.updateLocationMetadata>[2] = {};
+        for (const k of ["locationName", "comment", "system", "label", "locationType"] as const) {
+          if (changedKey(k)) update[k] = norm(fieldValues[k]);
+        }
+        const customKeys = new Set([...Object.keys(fieldValues), ...Object.keys(initial)].filter((k) => k.startsWith("custom_")));
+        const changedCustom = [...customKeys].filter(changedKey);
+        if (changedCustom.length > 0) {
+          // Aktuellen lokalen Stand nehmen (evtl. inzwischen aktualisiert) und nur
+          // die geaenderten Zusatzfelder darueberlegen.
+          const current = (await indexedDBStorage.getLocationsByProject(projectId, false, false)).find((l) => l.id === locationId);
+          const merged: Record<string, string> = { ...(current?.customFields || {}) };
+          for (const k of changedCustom) {
+            const v = norm(fieldValues[k]);
+            if (v === undefined) delete merged[k]; else merged[k] = fieldValues[k];
+          }
+          update.customFields = merged;
+        }
+        if (Object.keys(update).length > 0) {
+          await indexedDBStorage.updateLocationMetadata(projectId, locationId, update);
+        }
         scheduleSyncProject(projectId);
         // Sync area measurements into HERO notes if linked. Must await
         // before navigate() unmounts the component, otherwise the edge-
@@ -244,7 +268,7 @@ const LocationDetails = () => {
         // Mirror to HERO if project is linked. Fire-and-forget: the
         // queue write is fast (~1ms), actual upload happens in the
         // background worker without blocking this save flow.
-        const projectForHero = await indexedDBStorage.getProject(projectId);
+        const projectForHero = await indexedDBStorage.getProject(projectId, undefined, { withImages: false });
         if (projectForHero) {
           // Filename uses short location number (e.g. "100") plus a
           // per-detail sequence number, so HERO's file list stays
@@ -279,7 +303,7 @@ const LocationDetails = () => {
         // already assigned project-wide in the editor, so we just append.
         const detailAreas = (stateAreaMeasurements as AreaMeasurement[] | undefined) || [];
         if (detailAreas.length > 0) {
-          const parentProject = projectForHero || await indexedDBStorage.getProject(projectId);
+          const parentProject = projectForHero || await indexedDBStorage.getProject(projectId, undefined, { withImages: false });
           const parentLoc = parentProject?.locations.find(l => l.id === targetLocationId);
           const existing = parentLoc?.areaMeasurements || [];
           await indexedDBStorage.updateLocationMetadata(projectId, targetLocationId, {
@@ -302,7 +326,8 @@ const LocationDetails = () => {
         imageDataRef.current = null;
         originalImageDataRef.current = null;
 
-        const project = await indexedDBStorage.getProject(projectId);
+        // Ohne Bilder laden: nur fuer die naechste Standortnummer noetig (Speicher).
+        const project = await indexedDBStorage.getProject(projectId, undefined, { withImages: false });
         if (!project) { toast.error("Projekt nicht gefunden"); setIsSaving(false); return; }
 
         toast.loading("Bild wird gespeichert...");
@@ -333,7 +358,8 @@ const LocationDetails = () => {
           newLocation.areaMeasurements = allAreaMeasurements;
         }
         project.locations.push(newLocation);
-        await indexedDBStorage.saveProject(project);
+        // Nur den neuen Standort schreiben – nie die anderen mit altem Stand.
+        await indexedDBStorage.addLocation(projectId, newLocation);
 
         // Automation-Trigger: erster Standort im Projekt angelegt.
         // Feuert nur beim Übergang 0 -> 1 Standort. Server-seitig laufen dann

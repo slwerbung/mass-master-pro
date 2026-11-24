@@ -56,7 +56,10 @@ Kunden können Projekte online einsehen und freigeben.
 - `hero-integration` verlangt einen echten Admin- oder Employee-Token.
 
 ## Wichtige Dateien
-- `src/lib/supabaseSync.ts` – Sync-Logik mit SHA-256 Image-Hash Cache (v3)
+- **Sync v2** (Nov. 2026, `docs/sync-v2.md`): `src/lib/sync/engine.ts` (lokal zuerst, Basis je Einheit,
+  feldgenauer Abgleich, Konflikte, Realtime, offline), `src/lib/sync/fields.ts` (reine Logik),
+  `src/lib/supabaseSync.ts` (alte Funktionsnamen für die Seiten), Server-RPCs `sync_push`/`sync_set_image`/
+  `sync_delete` (Migration `20261124120000_sync_v2.sql`), Konfliktdialog `SyncConflictBanner.tsx`
 - `src/lib/indexedDBStorage.ts` – lokaler Speicher (Blobs statt Base64), defensive updateLocationMetadata
 - `src/lib/session.ts` – Session-Management mit Ablaufzeit
 - `src/pages/Auth.tsx` – Login (Admin/Employee/Customer), Rate Limiting
@@ -149,6 +152,9 @@ Kunden können Projekte online einsehen und freigeben.
   (z. B. 0,5×) und „Kamera wechseln“ zwischen allen Rückkameras aus
   `enumerateDevices` (iPhone-Ultraweitwinkel, Android mit mehreren
   Rückkameras); die Wahl bleibt pro Gerät gemerkt.
+  Querformat (Nov. 2026): Vorschau füllt den Bildschirm, Bedienleiste rechts. Volle Fotoqualität über
+  `ImageCapture.takePhoto()` (Android/Chrome, max. 4000 px lange Seite, Drehung an die Vorschau angepasst);
+  iPhone/Safari und Fehlerfall: Standbild aus dem Videobild.
   „Handy-Kamera“ gibt es nur noch, wenn die In-App-Kamera nicht startet –
   die System-Kamera verlor im Feld weiter Fotos (Nov. 2026).
 - Speicher beim Fotografieren (Messung Sept. 2026, Feld-Diagnose: Abbrüche
@@ -164,8 +170,11 @@ Kunden können Projekte online einsehen und freigeben.
     liest Bilder einzeln (`getProject(..., { withImages: false })` +
     `getLocationImageData`), nie das ganze Projekt als base64 auf einmal.
 - Admin-Operationen gehen immer über `invoke("admin-manage", ...)` mit `adminToken`
-- Image Hash Cache (SHA-256) in localStorage verhindert Re-Uploads unveränderter Bilder
-- Sync läuft debounced (2,5 s) und batched (6er-Gruppen)
+- Sync v2: nur geänderte Felder/Bilder gehen hoch (Basisvergleich), Bilder je Fassung unter NEUEM Pfad
+  (`location_images.storage_path` ist maßgeblich, nie feste Pfade annehmen). Nach jeder lokalen Änderung
+  `scheduleSyncProject()`. Nie `saveProject` für Einzeländerungen an bestehenden Projekten (schreibt alle
+  Standorte mit altem Stand zurück) – `addLocation`/`deleteLocation`/`updateLocationMetadata` (nur geänderte
+  Felder!) benutzen. Integrationstest: `scripts/test-sync-integration.sh` (lokales Postgres, nie Produktion).
 - Deployment läuft ausschließlich über Vercel + Supabase
 
 ## Supabase Edge Functions
@@ -309,20 +318,9 @@ Jedes offene HERO-Projekt hat eine fällige Karte oder eine Wiedervorlage. Phase
    ~~`run-automations`, `hero-dropbox-poll` und `submit-vehicle-request`
    tragen noch die alte `aufmassPdf.ts` im Bundle~~ – erledigt (Sept. 2026,
    alle drei neu deployt und byte-genau gegen das Repo verifiziert).
-3. ~~Konflikt-Sync: last-write-wins auf Projekt-Ebene~~ – erledigt (Sept. 2026).
-   `locations.updated_at` + lokaler Stempel pro Standort; bei Konflikt wird
-   pro Standort entschieden statt das ganze Projekt zu verwerfen
-   (heute `mergeWithLocal` in `supabaseSync.ts`, siehe unten).
-   Offen bleibt der Fall, dass ZWEI Leute DENSELBEN Standort gleichzeitig
-   ändern – dort gilt weiter last-write-wins (auf Standort-Ebene).
-   Seit Nov. 2026 (WER-1937) passiert das Zusammenführen in
-   `hydrateAndMerge`/`mergeWithLocal` – also bei JEDEM Laden der
-   Online-Fassung (Projektseite, Grundriss, Sync), nicht nur im Sync. Noch nie
-   hochgeladene Standorte/Detailbilder (`synced`-Flag in IndexedDB fehlt)
-   bleiben immer erhalten. Online gelöscht wird nur noch mit Löschvermerk
-   (`markLocationDeleted`, `deleteDetailImageFromSupabase`), nie mehr nach
-   „fehlt lokal“. Jede lokale Änderung an einem Standort muss dessen Stempel
-   setzen (`saveDetailImage` tut es jetzt auch).
+3. ~~Konflikt-Sync~~ – neu gebaut als Sync v2 (Nov. 2026, `docs/sync-v2.md`): feldgenau mit
+   Serverprüfung, echte Konflikte entscheidet der Mitarbeiter, Bilder versioniert, Realtime, offline-fähig.
+   Der frühere Weg (`mergeWithLocal`, Löschvermerke, Hash-Cache) ist entfernt.
 
 ## Workflow
 1. Änderungen direkt im Repo vornehmen

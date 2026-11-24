@@ -163,10 +163,13 @@ const Export = () => {
 
         // Prefer IndexedDB (has full images as blobs) for PDF export.
         // Supabase hydration as fallback for online-only projects.
-        let loadedProject = await indexedDBStorage.getProject(projectId);
-        if (!loadedProject) {
-          loadedProject = await hydrateProjectFromSupabase(projectId);
+        // Sync v2: mit Netz vorher den neuesten Stand samt Bildern holen
+        // (eigene Aenderungen hoch, fremde herunter), damit das PDF aktuell ist.
+        // Ohne Netz gilt der Stand auf dem Geraet.
+        if (navigator.onLine) {
+          try { await hydrateProjectFromSupabase(projectId, { waitForImages: true }); } catch { /* lokaler Stand */ }
         }
+        const loadedProject = await indexedDBStorage.getProject(projectId);
 
         if (!loadedProject) {
           toast.error("Projekt nicht gefunden");

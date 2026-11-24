@@ -8,7 +8,10 @@ import { Project } from "@/types/project";
 import { toast } from "sonner";
 import { FileDropZone, dropToChange } from "@/components/FileDropZone";
 import { getSession } from "@/lib/session";
-import { deleteDetailImageFromSupabase, deleteProjectFromSupabase, getProjectRemoteTimestamp, hydrateProjectFromSupabase, markLocationDeleted, scheduleSyncProject } from "@/lib/supabaseSync";
+import { deleteProjectFromSupabase, hydrateProjectFromSupabase, scheduleSyncProject } from "@/lib/supabaseSync";
+import { onProjectUpdated, watchProject } from "@/lib/sync/engine";
+import { SyncConflictBanner } from "@/components/SyncConflictBanner";
+import { cachedQuery } from "@/lib/offlineCache";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -58,8 +61,6 @@ const ProjectDetail = () => {
   // Termineinladung MIT Projektbezug: der Link traegt Mitarbeiter und Projekt.
   const [terminOpen, setTerminOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
-  const [isOnlineOnly, setIsOnlineOnly] = useState(false);
-  const [conflictNotice, setConflictNotice] = useState<string | null>(null);
   const [fieldConfigs, setFieldConfigs] = useState<any[]>([]);
   const [projectFieldConfigs, setProjectFieldConfigs] = useState<any[]>([]);
   const [customerUploads, setCustomerUploads] = useState<any[]>([]);
@@ -81,9 +82,10 @@ const ProjectDetail = () => {
 
   useEffect(() => {
     const loadFieldConfigs = async () => {
-      const [{ data }, { data: projectData }] = await Promise.all([
-        supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order"),
-        supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order"),
+      // Ohne Netz: zuletzt geladene Feldliste (offlineCache).
+      const [data, projectData] = await Promise.all([
+        cachedQuery("location_field_config:list", () => supabase.from("location_field_config").select("id, field_key, field_label, field_type, is_active, customer_visible, sort_order").order("sort_order")),
+        cachedQuery("project_field_config:active", () => supabase.from("project_field_config").select("*").eq("is_active", true).order("sort_order")),
       ]);
       setFieldConfigs(mergeWithDefaultLocationFields((data || []) as any[]));
       setProjectFieldConfigs(mergeWithDefaultProjectFields((projectData || []) as any[]));
@@ -104,57 +106,29 @@ const ProjectDetail = () => {
         const localProject = await indexedDBStorage.getProject(projectId, currentSession, LITE);
 
         if (localProject) {
-          if (currentSession?.role === "employee") {
-            const [{ data: projRow }, { data: assignmentRows }] = await Promise.all([
-              supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle(),
-              (supabase as any).from("project_employee_assignments").select("employee_id").eq("project_id", projectId).eq("employee_id", currentSession.id),
-            ]);
-            const hasAssignment = Array.isArray(assignmentRows) && assignmentRows.length > 0;
-            if (projRow?.employee_id && projRow.employee_id !== currentSession.id && !hasAssignment) {
-              toast.error("Kein Zugriff auf dieses Projekt");
-              navigate("/projects");
-              return;
-            }
-          }
+          // Lokal zuerst: sofort anzeigen, auch ohne Netz. Abgleich und
+          // Live-Aktualisierung laufen ueber watchProject (unten).
           setProject(localProject);
           setIsLoading(false);
-
-          getProjectRemoteTimestamp(projectId).then(async (remoteUpdatedAt) => {
-            const remoteIsNewer = remoteUpdatedAt && remoteUpdatedAt.getTime() > localProject.updatedAt.getTime() + 1000;
-            if (!remoteIsNewer) return;
-            await hydrateProjectFromSupabase(projectId);
-            const refreshed = await indexedDBStorage.getProject(projectId, currentSession, LITE);
-            if (refreshed) {
-              setProject(refreshed);
-              setConflictNotice("Es wurde eine neuere Online-Version geladen.");
-            }
-          }).catch(console.error);
+          if (currentSession?.role === "employee" && navigator.onLine) {
+            void checkEmployeeAccess(projectId, currentSession.id);
+          }
           return;
         }
 
+        if (!navigator.onLine) {
+          toast.error("Dieses Projekt ist auf dem Gerät nicht gespeichert und es gibt gerade kein Internet.");
+          navigate("/projects");
+          return;
+        }
+        if (currentSession?.role === "employee" && !(await checkEmployeeAccess(projectId, currentSession.id))) return;
         const hydratedProject = await hydrateProjectFromSupabase(projectId);
         if (!hydratedProject) {
           toast.error("Projekt nicht gefunden");
           navigate("/projects");
           return;
         }
-
-        if (currentSession?.role === "employee") {
-          const [{ data: projRow }, { data: assignmentRows }] = await Promise.all([
-            supabase.from("projects").select("employee_id").eq("id", projectId).maybeSingle(),
-            (supabase as any).from("project_employee_assignments").select("employee_id").eq("project_id", projectId).eq("employee_id", currentSession.id),
-          ]);
-          const hasAssignment = Array.isArray(assignmentRows) && assignmentRows.length > 0;
-          if (projRow?.employee_id && projRow.employee_id !== currentSession.id && !hasAssignment) {
-            toast.error("Kein Zugriff auf dieses Projekt");
-            navigate("/projects");
-            return;
-          }
-        }
-
-        // Re-read from IndexedDB without the original photos (see LITE).
-        setProject((await indexedDBStorage.getProject(projectId, currentSession, LITE)) ?? hydratedProject);
-        setIsOnlineOnly(true);
+        setProject(hydratedProject);
       } catch (error) {
         console.error("Error loading project:", error);
         toast.error("Fehler beim Laden des Projekts");
@@ -163,8 +137,35 @@ const ProjectDetail = () => {
         setIsLoading(false);
       }
     };
+    const checkEmployeeAccess = async (pid: string, employeeId: string): Promise<boolean> => {
+      try {
+        const [{ data: projRow }, { data: assignmentRows }] = await Promise.all([
+          supabase.from("projects").select("employee_id").eq("id", pid).maybeSingle(),
+          (supabase as any).from("project_employee_assignments").select("employee_id").eq("project_id", pid).eq("employee_id", employeeId),
+        ]);
+        const hasAssignment = Array.isArray(assignmentRows) && assignmentRows.length > 0;
+        if (projRow?.employee_id && projRow.employee_id !== employeeId && !hasAssignment) {
+          toast.error("Kein Zugriff auf dieses Projekt");
+          navigate("/projects");
+          return false;
+        }
+      } catch { /* offline: lokale Kopie gilt */ }
+      return true;
+    };
     loadProject();
   }, [projectId, navigate]);
+
+  // Live-Abgleich: eigene Aenderungen hoch, Aenderungen anderer Geraete sofort
+  // herunter (Realtime) – die Seite liest danach neu aus IndexedDB.
+  useEffect(() => {
+    if (!projectId) return;
+    const stopWatch = watchProject(projectId);
+    const stopListen = onProjectUpdated(projectId, async () => {
+      const refreshed = await indexedDBStorage.getProject(projectId, getSession(), LITE);
+      if (refreshed) setProject(refreshed);
+    });
+    return () => { stopWatch(); stopListen(); };
+  }, [projectId]);
 
   const handleDeleteProject = async () => {
     if (!projectId) return;
@@ -182,13 +183,11 @@ const ProjectDetail = () => {
   const handleDeleteLocation = async (locationId: string) => {
     if (!project || !projectId) return;
     try {
-      const updatedProject = { ...project, locations: project.locations.filter((l) => l.id !== locationId) };
-      // Nur mit diesem Vermerk loescht der Sync den Standort auch online.
-      markLocationDeleted(locationId);
-      await indexedDBStorage.saveProject(updatedProject);
+      // Lokal loeschen; der Sync loescht online (auch spaeter, falls offline).
+      await indexedDBStorage.deleteLocation(locationId);
       const reloadedProject = await indexedDBStorage.getProject(projectId, undefined, LITE);
       scheduleSyncProject(projectId);
-      setProject(reloadedProject || updatedProject);
+      setProject(reloadedProject || { ...project, locations: project.locations.filter((l) => l.id !== locationId) });
       toast.success("Standort gelöscht");
     } catch (error) {
       console.error("Error deleting location:", error);
@@ -199,7 +198,6 @@ const ProjectDetail = () => {
   const handleDeleteDetailImage = async (_locationId: string, detailImageId: string) => {
     try {
       await indexedDBStorage.deleteDetailImage(detailImageId);
-      await deleteDetailImageFromSupabase(detailImageId);
       if (projectId) {
         const reloaded = await indexedDBStorage.getProject(projectId, getSession(), LITE);
         scheduleSyncProject(projectId);
@@ -354,12 +352,8 @@ const ProjectDetail = () => {
       {/* Page content */}
       <div className="container max-w-4xl mx-auto p-4 md:p-6 space-y-4">
 
-        {/* Online / conflict notice */}
-        {(isOnlineOnly || conflictNotice) && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
-            {conflictNotice || "Dieses Projekt wurde von Supabase auf dieses Gerät geladen."}
-          </div>
-        )}
+        {/* Sync: Offline-Hinweis und offene Konflikte */}
+        <SyncConflictBanner projectId={projectId!} />
 
         {/* Project summary */}
         <div className="pt-1">

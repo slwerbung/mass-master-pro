@@ -1,859 +1,101 @@
+/**
+ * Oeffentliche Sync-Schnittstelle der Seiten.
+ *
+ * Seit Sync v2 (Nov. 2026) steckt die Logik in `src/lib/sync/engine.ts`
+ * (lokal zuerst, feldgenauer Abgleich, Konflikte, Live-Aktualisierung). Diese
+ * Datei behaelt die bisherigen Funktionsnamen, damit die Seiten unveraendert
+ * "nach jeder lokalen Aenderung scheduleSyncProject()" aufrufen koennen.
+ *
+ * Wichtig: Loeschungen brauchen keinen Vermerk mehr. Was lokal fehlt, aber
+ * eine Basis (zuletzt bestaetigte Serverfassung) hat, wurde hier geloescht
+ * und wird online geloescht.
+ */
 import { supabase } from "@/integrations/supabase/client";
 import { indexedDBStorage } from "./indexedDBStorage";
-import { getSession } from "./session";
-import { Project, Location, DetailImage, FloorPlan } from "@/types/project";
-import { finishSyncError, finishSyncSuccess, startSync } from "./syncStatus";
-import { compressImage } from "./imageCompression";
-import { signedFileUrl } from "./storageUrl";
-import { waitForQuiet } from "./quietTime";
+import { Project } from "@/types/project";
+import { downloadsIdle, forgetProject, flushNow, hasPendingPush, pullProject, requestPush, syncAll } from "./sync/engine";
 
-// ─── Image hash cache ────────────────────────────────────────────────────────
-// Persists to localStorage. Skips re-upload of unchanged images across sessions.
-// Limited to MAX_HASH_ENTRIES to prevent unbounded localStorage growth.
-//
-// v3 (2026-04): Switched from length+snippet fingerprint to real SHA-256.
-// Two images of the same length with similar base64 edges no longer collide.
-// Cache key bump → all users re-sync once, then normal behaviour resumes.
-
-const HASH_CACHE_KEY   = 'mmp_img_hashes_v3';
-const MAX_HASH_ENTRIES = 500;
-let _hashCache: Record<string, { fp: string; ts: number }> | null = null;
-
-function getHashCache(): Record<string, { fp: string; ts: number }> {
-  if (!_hashCache) {
-    try { _hashCache = JSON.parse(localStorage.getItem(HASH_CACHE_KEY) || '{}'); }
-    catch { _hashCache = {}; }
-  }
-  return _hashCache;
-}
-
-function persistHashCache() {
-  const cache = getHashCache();
-  // Prune oldest entries if over limit
-  const keys = Object.keys(cache);
-  if (keys.length > MAX_HASH_ENTRIES) {
-    const sorted = keys.sort((a, b) => (cache[a].ts || 0) - (cache[b].ts || 0));
-    sorted.slice(0, keys.length - MAX_HASH_ENTRIES).forEach(k => delete cache[k]);
-  }
-  try { localStorage.setItem(HASH_CACHE_KEY, JSON.stringify(cache)); } catch {}
-}
-
-/** SHA-256 fingerprint of the base64 payload (async, crypto-safe). */
-async function imageFingerprint(data: string): Promise<string> {
-  if (!data) return '';
-  const bytes = new TextEncoder().encode(data);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  // Hex encode – short and stable
-  const view = new Uint8Array(digest);
-  let hex = '';
-  for (let i = 0; i < view.length; i++) hex += view[i].toString(16).padStart(2, '0');
-  return hex;
-}
-
-async function isImageSynced(key: string, data: string): Promise<boolean> {
-  if (!data) return false;
-  const entry = getHashCache()[key];
-  if (!entry) return false;
-  const fp = await imageFingerprint(data);
-  return entry.fp === fp;
-}
-
-async function markImageSynced(key: string, data: string): Promise<void> {
-  const fp = await imageFingerprint(data);
-  getHashCache()[key] = { fp, ts: Date.now() };
-  persistHashCache();
-}
-
-function invalidateImageCache(key: string) {
-  delete getHashCache()[key];
-  persistHashCache();
-}
-
-/** Hat DIESES Geraet das Bild schon einmal hochgeladen? (Altbestand ohne synced-Flag) */
-function hasHashEntry(key: string): boolean {
-  return !!getHashCache()[key];
-}
-
-// ─── Loeschvermerke ──────────────────────────────────────────────────────────
-// Auf dem Server wird ein Standort / Detailbild nur noch geloescht, wenn es auf
-// DIESEM Geraet ausdruecklich geloescht wurde. Frueher galt "fehlt lokal = auf
-// dem Server loeschen" – ein Geraet mit veraltetem Stand loeschte damit die
-// neuen Standorte und Detailbilder der Kollegen (gleiches Muster wie WER-1893
-// bei den Standortbildern). Der Vermerk bleibt, bis das Loeschen geklappt hat,
-// damit es auch offline ausgeloeste Loeschungen nachholt.
-
-const TOMBSTONE_KEY = 'mmp_deleted_v1';
-type TombstoneKind = 'locations' | 'details';
-
-function readTombstones(): Record<TombstoneKind, string[]> {
-  try {
-    const raw = JSON.parse(localStorage.getItem(TOMBSTONE_KEY) || '{}');
-    return {
-      locations: Array.isArray(raw.locations) ? raw.locations : [],
-      details: Array.isArray(raw.details) ? raw.details : [],
-    };
-  } catch {
-    return { locations: [], details: [] };
-  }
-}
-
-function writeTombstones(t: Record<TombstoneKind, string[]>) {
-  try { localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(t)); } catch {}
-}
-
-function addTombstone(kind: TombstoneKind, id: string) {
-  const t = readTombstones();
-  if (!t[kind].includes(id)) { t[kind].push(id); writeTombstones(t); }
-}
-
-function clearTombstones(kind: TombstoneKind, ids: string[]) {
-  if (ids.length === 0) return;
-  const t = readTombstones();
-  const drop = new Set(ids);
-  t[kind] = t[kind].filter((id) => !drop.has(id));
-  writeTombstones(t);
-}
-
-/** Vor dem lokalen Loeschen eines Standorts aufrufen, damit der Sync ihn auch auf dem Server loescht. */
-export function markLocationDeleted(locationId: string): void {
-  addTombstone('locations', locationId);
-}
-
-// ─── Storage URL helper ──────────────────────────────────────────────────────
-// Der Bucket ist privat: Dateien gibt es nur noch ueber einen signierten,
-// zeitlich begrenzten Link (siehe lib/storageUrl.ts).
-
-// ─── Sync debounce ────────────────────────────────────────────────────────────
-// Prevents rapid sequential changes from each triggering a full sync.
-// Call scheduleSyncProject(id) anywhere – it will wait 2.5s after the last call.
-
-const _debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const DEBOUNCE_MS = 2500;
-
-// One sync per project at a time; a request during a run syncs once more after it.
-const _running = new Set<string>();
-const _rerun = new Set<string>();
-
-/** Steht für dieses Projekt noch ein Sync aus (geplant oder laufend)? (Spec E: lokale Kopie erst danach entfernen) */
-export function hasPendingSync(projectId: string): boolean {
-  return _debounceTimers.has(projectId) || _running.has(projectId) || _rerun.has(projectId);
-}
-
+/** Nach jeder lokalen Aenderung aufrufen: wird im Hintergrund hochgeladen. */
 export function scheduleSyncProject(projectId: string): void {
-  const existing = _debounceTimers.get(projectId);
-  if (existing) clearTimeout(existing);
-  _debounceTimers.set(projectId, setTimeout(async () => {
-    _debounceTimers.delete(projectId);
-    if (_running.has(projectId)) { _rerun.add(projectId); return; }
-    _running.add(projectId);
-    try {
-      // Not while the camera / editor is open or the app is in the background
-      // (see quietTime.ts) – the data is safe in IndexedDB until then.
-      await waitForQuiet();
-      await syncProjectToSupabase(projectId);
-    } catch {
-      /* status is recorded by syncProjectToSupabase */
-    } finally {
-      _running.delete(projectId);
-      if (_rerun.delete(projectId)) scheduleSyncProject(projectId);
-    }
-  }, DEBOUNCE_MS));
+  requestPush(projectId);
 }
 
-// ─── Batched async helper ─────────────────────────────────────────────────────
+/** Steht fuer dieses Projekt noch ein Hochladen aus? */
+export function hasPendingSync(projectId: string): boolean {
+  return hasPendingPush(projectId);
+}
 
-async function loadInBatches<T>(items: T[], fn: (item: T) => Promise<void>, batchSize = 6): Promise<void> {
-  for (let i = 0; i < items.length; i += batchSize) {
-    await Promise.all(items.slice(i, i + batchSize).map(fn));
+/** Alles Lokale hochladen und die lokalen/eigenen Projekte abgleichen. */
+export async function syncAllToSupabase(extraProjectIds: string[] = []): Promise<void> {
+  await syncAll(extraProjectIds);
+}
+
+export async function syncProjectToSupabase(projectId: string): Promise<'uploaded' | 'skipped'> {
+  requestPush(projectId, 0);
+  await flushNow();
+  const exists = await pullProject(projectId);
+  return exists ? 'uploaded' : 'skipped';
+}
+
+export async function syncLocationToSupabase(projectId: string, _locationId: string): Promise<void> {
+  requestPush(projectId, 0);
+}
+
+/**
+ * Online-Fassung laden und mit dem lokalen Stand zusammenfuehren (nichts
+ * Lokales geht verloren). Ergebnis ohne Originalfotos (Speicher).
+ */
+export async function hydrateProjectFromSupabase(projectId: string, opts: { waitForImages?: boolean } = {}): Promise<Project | null> {
+  if (opts.waitForImages) {
+    requestPush(projectId, 0);
+    await flushNow();
   }
-}
-
-// ─── Path helpers ─────────────────────────────────────────────────────────────
-
-function getLocationImagePath(locationId: string, imageType: "annotated" | "original") {
-  return `images/${locationId}/${imageType}`;
-}
-function getDetailImagePath(locationId: string, detailImageId: string, imageType: "annotated" | "original") {
-  return `detail-images/${locationId}/${detailImageId}/${imageType}`;
-}
-function getFloorPlanPath(projectId: string, floorPlanId: string) {
-  return `floor-plans/${projectId}/${floorPlanId}`;
-}
-
-// ─── Storage helpers ──────────────────────────────────────────────────────────
-
-async function uploadImageToStorage(
-  path: string,
-  base64: string,
-  options?: { compress?: boolean; maxDimension?: number; quality?: number }
-): Promise<string | null> {
-  try {
-    if (!base64 || !base64.includes(';base64,')) return null;
-
-    // Compress only when explicitly enabled. For annotated images we
-    // want pixel-perfect output so the labels & dimension lines drawn
-    // on top stay sharp - any re-encode degrades the text. Original
-    // photos can be compressed since they're just reference shots.
-    // Default to no compression so callers have to opt in.
-    let data = base64;
-    const wantsCompress = options?.compress ?? false;
-    if (wantsCompress) {
-      const maxDim = options?.maxDimension ?? 2400;
-      const quality = options?.quality ?? 0.9;
-      const sizeKb = Math.round(base64.length * 0.75 / 1024);
-      if (sizeKb > 400) {
-        try { data = await compressImage(base64, maxDim, quality); } catch { /* keep original */ }
-      }
-    }
-
-    const parts = data.split(';base64,');
-    const contentType = parts[0].split(':')[1] || 'image/jpeg';
-    const raw = atob(parts[1]);
-    const uInt8Array = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) uInt8Array[i] = raw.charCodeAt(i);
-    const blob = new Blob([uInt8Array], { type: contentType });
-    const { error } = await supabase.storage.from('project-files').upload(path, blob, { contentType });
-    if (error) {
-      // File already exists → update instead
-      if ((error as any).statusCode === '409' || error.message?.includes('already exists')) {
-        const { error: updateError } = await supabase.storage.from('project-files').update(path, blob, { contentType });
-        if (updateError) return null;
-      } else {
-        return null;
-      }
-    }
-    return path;
-  } catch {
-    return null;
+  const exists = await pullProject(projectId);
+  if (!exists) return null;
+  if (opts.waitForImages) {
+    // Hoechstens 60 s auf die Bilder warten, dann mit dem vorhandenen Stand weiter.
+    await Promise.race([downloadsIdle(), new Promise((r) => setTimeout(r, 60_000))]);
   }
+  return indexedDBStorage.getProject(projectId, undefined, { withOriginals: false });
 }
-
-async function removeStoragePaths(paths: (string | null | undefined)[]) {
-  const uniquePaths = [...new Set(paths.filter(Boolean) as string[])];
-  if (uniquePaths.length === 0) return;
-  await supabase.storage.from('project-files').remove(uniquePaths);
-}
-
-// ─── Sync: location images ────────────────────────────────────────────────────
-
-async function syncImageVariant(locationId: string, imageType: "annotated" | "original", imageData: string, onServer: boolean): Promise<void> {
-  if (!imageData) return;
-  const cacheKey = `loc_${locationId}_${imageType}`;
-  // The hash cache only knows what THIS device once uploaded. If the server
-  // has lost the image since then, a cache hit alone would never re-upload it
-  // (WER-1893: 16 locations without images on the server, the photos only on
-  // the phone that took them). So skip only when the server has it, too.
-  if (onServer && await isImageSynced(cacheKey, imageData)) return;
-  const path = getLocationImagePath(locationId, imageType);
-  // Annotated images carry dimension labels / drawn-on text and need
-  // to stay sharp - no compression. Originals are reference photos and
-  // can be lightly compressed if they're huge.
-  const uploaded = await uploadImageToStorage(
-    path,
-    imageData,
-    imageType === "original" ? { compress: true, maxDimension: 2400, quality: 0.9 } : { compress: false }
-  );
-  if (!uploaded) return;
-  // Upsert relies on unique constraint (location_id, image_type) added in
-  // migration 20260415150000_location_images_unique_constraint.sql.
-  // This replaces the previous delete-then-insert pattern, which could lose the
-  // row if the connection dropped between the two statements.
-  const { error } = await supabase.from("location_images").upsert(
-    { location_id: locationId, image_type: imageType, storage_path: path },
-    { onConflict: "location_id,image_type" }
-  );
-  if (error) return;
-  await markImageSynced(cacheKey, imageData);
-}
-
-// Never deletes: a location without a local image is not a request to remove
-// the server's image. A device whose download failed (pathToBase64 -> null)
-// has exactly that state, and its next sync used to wipe the images for
-// everyone. Location images go away only together with their location
-// (removeDeletedLocationsFromSupabase / deleteProjectFromSupabase).
-async function syncLocationImages(locationId: string, annotatedImage?: string, originalImage?: string): Promise<void> {
-  if (!annotatedImage && !originalImage) return;
-  const { data: existingRows, error } = await supabase.from('location_images').select('image_type').eq('location_id', locationId);
-  if (error) return;
-  const onServer = new Set((existingRows || []).map((row) => row.image_type));
-
-  await Promise.all([
-    annotatedImage ? syncImageVariant(locationId, "annotated", annotatedImage, onServer.has("annotated")) : Promise.resolve(),
-    originalImage  ? syncImageVariant(locationId, "original",  originalImage,  onServer.has("original"))  : Promise.resolve(),
-  ]);
-}
-
-// ─── Sync: detail images ──────────────────────────────────────────────────────
-
-async function syncDetailImage(detailImage: DetailImage, locationId: string): Promise<void> {
-  const annotatedKey  = `detail_${detailImage.id}_annotated`;
-  const originalKey   = `detail_${detailImage.id}_original`;
-  const annotatedData = detailImage.imageData;
-  const originalData  = detailImage.originalImageData || detailImage.imageData;
-
-  const [annotatedAlreadySynced, originalAlreadySynced] = await Promise.all([
-    isImageSynced(annotatedKey, annotatedData),
-    isImageSynced(originalKey,  originalData),
-  ]);
-
-  const annotatedPath = getDetailImagePath(locationId, detailImage.id, 'annotated');
-  const originalPath  = getDetailImagePath(locationId, detailImage.id, 'original');
-
-  const [uploadedAnnotated, uploadedOriginal] = await Promise.all([
-    annotatedAlreadySynced
-      ? annotatedPath
-      : uploadImageToStorage(annotatedPath, annotatedData, { compress: false }),
-    originalAlreadySynced
-      ? originalPath
-      : uploadImageToStorage(originalPath, originalData, { compress: true, maxDimension: 2400, quality: 0.9 }),
-  ]);
-
-  if (!uploadedAnnotated || !uploadedOriginal) return;
-
-  const { error: detailUpsertError } = await supabase.from("detail_images").upsert({
-    id: detailImage.id,
-    location_id: locationId,
-    caption: detailImage.caption || null,
-    annotated_path: annotatedPath,
-    original_path: originalPath,
-    created_at: detailImage.createdAt instanceof Date ? detailImage.createdAt.toISOString() : new Date().toISOString(),
-  }, { onConflict: "id" });
-
-  if (detailUpsertError) return; // Don't mark as synced if DB write failed
-  if (!annotatedAlreadySynced) await markImageSynced(annotatedKey, annotatedData);
-  if (!originalAlreadySynced)  await markImageSynced(originalKey,  originalData);
-  await indexedDBStorage.markDetailImagesSynced([detailImage.id]);
-}
-
-async function syncDetailImages(locationId: string, detailImages?: DetailImage[]): Promise<void> {
-  const current = detailImages || [];
-  const currentIds = new Set(current.map((d) => d.id));
-  // One after the other (memory), pausing while the camera is open.
-  for (const d of current) {
-    await waitForQuiet();
-    await syncDetailImage(d, locationId);
-  }
-  // Nur ausdruecklich auf diesem Geraet geloeschte Detailbilder (Loeschvermerk)
-  // verschwinden auf dem Server – "fehlt lokal" allein heisst nichts.
-  const deleted = new Set(readTombstones().details);
-  if (deleted.size === 0) return;
-  const { data: existingRows } = await supabase.from('detail_images').select('id, annotated_path, original_path').eq('location_id', locationId);
-  const rowsToDelete = (existingRows || []).filter((row) => deleted.has(row.id) && !currentIds.has(row.id));
-  if (rowsToDelete.length) {
-    await removeStoragePaths(rowsToDelete.flatMap((row) => [row.annotated_path, row.original_path]));
-    const { error } = await supabase.from('detail_images').delete().eq('location_id', locationId).in('id', rowsToDelete.map((row) => row.id));
-    if (error) return;
-    clearTombstones('details', rowsToDelete.map((row) => row.id));
-    rowsToDelete.forEach(row => {
-      invalidateImageCache(`detail_${row.id}_annotated`);
-      invalidateImageCache(`detail_${row.id}_original`);
-    });
-  }
-}
-
-// ─── Sync: floor plans ────────────────────────────────────────────────────────
-
-async function syncFloorPlan(projectId: string, floorPlan: FloorPlan): Promise<void> {
-  const cacheKey = `floor_${floorPlan.id}`;
-  const path = getFloorPlanPath(projectId, floorPlan.id);
-
-  if (!(await isImageSynced(cacheKey, floorPlan.imageData))) {
-    const uploaded = await uploadImageToStorage(path, floorPlan.imageData, { compress: true, maxDimension: 2400, quality: 0.9 });
-    if (!uploaded) return;
-    await markImageSynced(cacheKey, floorPlan.imageData);
-  }
-
-  await (supabase as any).from("floor_plans").upsert({
-    id: floorPlan.id,
-    project_id: projectId,
-    name: floorPlan.name,
-    storage_path: path,
-    markers: floorPlan.markers as any,
-    page_index: floorPlan.pageIndex,
-    created_at: floorPlan.createdAt instanceof Date ? floorPlan.createdAt.toISOString() : new Date().toISOString(),
-  }, { onConflict: "id" });
-}
-
-async function syncFloorPlans(projectId: string, floorPlans?: FloorPlan[]): Promise<void> {
-  const current = floorPlans || [];
-  const currentIds = new Set(current.map((fp) => fp.id));
-  for (const fp of current) {
-    await waitForQuiet();
-    await syncFloorPlan(projectId, fp);
-  }
-  const { data: existingRows, error } = await (supabase as any).from('floor_plans').select('id, storage_path').eq('project_id', projectId);
-  if (error) return;
-  const rowsToDelete = (existingRows || []).filter((row: any) => !currentIds.has(row.id));
-  if (rowsToDelete.length) {
-    await removeStoragePaths(rowsToDelete.map((row: any) => row.storage_path));
-    await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).in('id', rowsToDelete.map((row: any) => row.id));
-    rowsToDelete.forEach((row: any) => invalidateImageCache(`floor_${row.id}`));
-  }
-}
-
-// ─── Download: path → base64 ──────────────────────────────────────────────────
-
-async function pathToBase64(path: string): Promise<string | null> {
-  try {
-    const url = await signedFileUrl(path);
-    if (!url) return null;
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    const blob = await response.blob();
-    return await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-}
-
-// ─── Hydrate project from Supabase ───────────────────────────────────────────
 
 export async function getProjectRemoteTimestamp(projectId: string): Promise<Date | null> {
   const { data } = await supabase.from('projects').select('updated_at').eq('id', projectId).maybeSingle();
   return data?.updated_at ? new Date(data.updated_at) : null;
 }
 
-/**
- * Laedt die Online-Fassung eines Projekts in IndexedDB – OHNE lokale, noch
- * nicht hochgeladene Arbeit zu verwerfen. Frueher ersetzte jedes Laden den
- * lokalen Stand komplett (ausser im Sync selbst); dabei gingen auf dem Handy
- * neue Detailbilder und nachtraeglich eingetragene Masse verloren (WER-1937).
- *
- * Erhalten bleibt:
- *  - ein Standort, dessen lokaler Stempel neuer ist als der auf dem Server,
- *    samt seiner lokalen Bilder, Masse und Detailbilder,
- *  - ein Standort, der nur lokal existiert und noch nie auf dem Server lag,
- *  - ein Detailbild, das noch nie auf dem Server lag.
- * Was schon einmal auf dem Server lag und dort fehlt, wurde dort geloescht
- * und verschwindet auch lokal.
- *
- * kept > 0 heisst: lokal ist etwas neuer als online und muss hochgeladen werden.
- */
-async function hydrateAndMerge(projectId: string): Promise<{ project: Project; kept: number } | null> {
-  const { data: projectRow, error: projectError } = await supabase
-    .from("projects")
-    .select("id, project_number, project_type, employee_id, customer_name, custom_fields, created_at, updated_at")
-    .eq("id", projectId)
-    .single();
-  if (projectError || !projectRow) return null;
+/** Nicht mehr noetig (Sync v2 erkennt Loeschungen selbst). Bleibt fuer alte Aufrufer. */
+export function markLocationDeleted(_locationId: string): void { /* noop */ }
+/** Nicht mehr noetig: lokal loeschen + scheduleSyncProject genuegt. */
+export async function deleteDetailImageFromSupabase(_detailImageId: string): Promise<void> { /* noop */ }
+/** Nicht mehr noetig: lokal loeschen + scheduleSyncProject genuegt. */
+export async function deleteFloorPlanFromSupabase(_projectId: string, _floorPlanId: string): Promise<void> { /* noop */ }
 
-  const { data: locationRows, error: locationError } = await supabase
-    .from("locations")
-    .select("id, location_number, location_name, comment, system, label, location_type, custom_fields, guest_info, created_at, updated_at")
-    .eq("project_id", projectId)
-    .order("created_at");
-  if (locationError) throw locationError;
-
-  const locationIds = (locationRows || []).map((row) => row.id);
-  const imageMap = new Map<string, { annotated?: string; original?: string }>();
-  const detailImageMap = new Map<string, DetailImage[]>();
-
-  if (locationIds.length > 0) {
-    // Load location images directly from known storage paths.
-    // We don't query location_images table to avoid dependency on that DB row existing.
-    // Path pattern: images/{locationId}/annotated and images/{locationId}/original
-    await loadInBatches(locationIds, async (locationId) => {
-      const [annotated, original] = await Promise.all([
-        pathToBase64(getLocationImagePath(locationId, "annotated")),
-        pathToBase64(getLocationImagePath(locationId, "original")),
-      ]);
-      if (annotated || original) {
-        imageMap.set(locationId, { annotated: annotated || undefined, original: original || undefined });
-      }
-    });
-
-    const { data: detailRows, error: detailError } = await supabase
-      .from("detail_images")
-      .select("id, location_id, caption, annotated_path, original_path, created_at")
-      .in("location_id", locationIds)
-      .order("created_at");
-    if (detailError) throw detailError;
-
-    await loadInBatches(detailRows || [], async (row) => {
-      const [annotated, original] = await Promise.all([
-        pathToBase64(row.annotated_path),
-        pathToBase64(row.original_path),
-      ]);
-      const detailImage: DetailImage = {
-        id: row.id,
-        imageData: annotated || original || "",
-        originalImageData: original || annotated || "",
-        caption: row.caption || undefined,
-        createdAt: new Date(row.created_at),
-      };
-      const existing = detailImageMap.get(row.location_id) || [];
-      existing.push(detailImage);
-      detailImageMap.set(row.location_id, existing);
-    });
-  }
-
-  const { data: assignmentRows } = await (supabase as any)
-    .from('project_employee_assignments')
-    .select('employee_id')
-    .eq('project_id', projectId);
-
-  const { data: floorPlanRows } = await (supabase as any)
-    .from("floor_plans")
-    .select("id, name, storage_path, markers, page_index, created_at")
-    .eq("project_id", projectId)
-    .order("page_index");
-
-  const floorPlans: FloorPlan[] = [];
-  await loadInBatches(floorPlanRows || [], async (row: any) => {
-    const imageData = await pathToBase64(row.storage_path);
-    floorPlans.push({
-      id: row.id,
-      name: row.name,
-      imageData: imageData || "",
-      markers: Array.isArray(row.markers) ? row.markers as any : [],
-      pageIndex: row.page_index,
-      createdAt: new Date(row.created_at),
-    });
-  });
-
-  const remoteLocations: Location[] = (locationRows || []).map((row) => {
-    const images = imageMap.get(row.id) || {};
-    const rawCustom = row.custom_fields && typeof row.custom_fields === 'object' ? row.custom_fields as Record<string, any> : {};
-    const areaMeasurements = Array.isArray(rawCustom.__areaMeasurements) ? rawCustom.__areaMeasurements : undefined;
-    const cleanCustom = { ...rawCustom };
-    delete cleanCustom.__areaMeasurements;
-    return {
-      id: row.id,
-      locationNumber: row.location_number,
-      locationName: row.location_name || undefined,
-      comment: row.comment || undefined,
-      system: row.system || undefined,
-      label: row.label || undefined,
-      locationType: row.location_type || undefined,
-      customFields: Object.keys(cleanCustom).length > 0 ? cleanCustom as Record<string, string> : undefined,
-      guestInfo: row.guest_info || undefined,
-      imageData: images.annotated || images.original || "",
-      originalImageData: images.original || images.annotated || "",
-      createdAt: new Date(row.created_at),
-      // Remote-Stempel uebernehmen, damit der lokale Stand nach dem Laden
-      // genau so alt ist wie der Server (nicht aelter, nicht neuer).
-      updatedAt: (row as any).updated_at ? new Date((row as any).updated_at) : undefined,
-      detailImages: detailImageMap.get(row.id) || [],
-      areaMeasurements,
-    };
-  });
-
-  const { locations, kept } = await mergeWithLocal(projectId, remoteLocations);
-
-  // Note: saveProject only writes image blobs for NEW locations.
-  // Existing location blobs are preserved in IndexedDB regardless of imageData value here.
-  const hydratedProject: Project = {
-    id: projectRow.id,
-    projectNumber: projectRow.project_number,
-    projectType: (['aufmass', 'aufmass_mit_plan', 'fahrzeugbeschriftung'].includes((projectRow as any).project_type) ? (projectRow as any).project_type : 'aufmass') as 'aufmass' | 'aufmass_mit_plan' | 'fahrzeugbeschriftung',
-    customerName: (projectRow as any).customer_name || undefined,
-    customFields: (projectRow as any).custom_fields && typeof (projectRow as any).custom_fields === 'object' ? (projectRow as any).custom_fields : undefined,
-    employeeId: (projectRow as any).employee_id || null,
-    accessEmployeeIds: Array.from(new Set([
-      ((projectRow as any).employee_id || null),
-      ...((assignmentRows || []).map((row: any) => row.employee_id)),
-    ].filter(Boolean))),
-    locations,
-    floorPlans,
-    createdAt: new Date(projectRow.created_at),
-    updatedAt: new Date(projectRow.updated_at),
-  };
-  await indexedDBStorage.saveProject(hydratedProject);
-  await indexedDBStorage.markLocationsSynced(remoteLocations.map((l) => l.id));
-  await indexedDBStorage.markDetailImagesSynced(
-    remoteLocations.flatMap((l) => (l.detailImages || []).map((d) => d.id)),
-  );
-  return { project: hydratedProject, kept };
-}
-
-/**
- * Fuehrt die Online-Standorte mit dem lokalen Stand zusammen (siehe
- * hydrateAndMerge). Lokal behaltene Bilder tragen leere Bilddaten: saveProject
- * schreibt dann keine Blobs und die lokalen Bilder bleiben unangetastet.
- */
-export async function mergeWithLocal(projectId: string, remoteLocations: Location[]): Promise<{ locations: Location[]; kept: number }> {
-  // Hier geloescht, auf dem Server noch nicht (offline): nicht zurueckholen.
-  const tomb = readTombstones();
-  const deletedLocations = new Set(tomb.locations);
-  const deletedDetails = new Set(tomb.details);
-  remoteLocations = remoteLocations
-    .filter((l) => !deletedLocations.has(l.id))
-    .map((l) => ({ ...l, detailImages: (l.detailImages || []).filter((d) => !deletedDetails.has(d.id)) }));
-
-  const local = await indexedDBStorage.getProject(projectId, undefined, { withImages: false });
-  if (!local) return { locations: remoteLocations, kept: 0 };
-  const flags = await indexedDBStorage.getSyncFlags(projectId);
-
-  const locationWasOnServer = (id: string) =>
-    flags.locations.get(id) === true || hasHashEntry(`loc_${id}_annotated`);
-  const detailWasOnServer = (id: string) =>
-    flags.details.get(id)?.synced === true || hasHashEntry(`detail_${id}_annotated`);
-
-  const localById = new Map(local.locations.map((l) => [l.id, l]));
-  const remoteIds = new Set(remoteLocations.map((l) => l.id));
-  const merged: Location[] = [];
-  let kept = 0;
-
-  for (const remoteLoc of remoteLocations) {
-    const localLoc = localById.get(remoteLoc.id);
-    if (!localLoc) { merged.push(remoteLoc); continue; }
-
-    const remoteStamp = remoteLoc.updatedAt?.getTime() ?? 0;
-    const localIsNewer = locationStamp(localLoc).getTime() > remoteStamp + 1000;
-    const remoteDetails = remoteLoc.detailImages || [];
-    const remoteDetailIds = new Set(remoteDetails.map((d) => d.id));
-    const localDetails = localLoc.detailImages || [];
-    // Noch nie hochgeladene lokale Detailbilder bleiben immer.
-    const pendingDetails = localDetails.filter((d) => !remoteDetailIds.has(d.id) && !detailWasOnServer(d.id));
-
-    if (localIsNewer) {
-      // Lokale Fassung gewinnt: Metadaten, Masse, Bilder (Blobs bleiben, da
-      // leere Bilddaten) und lokale Detailbilder. Neue Detailbilder anderer
-      // Geraete kommen dazu.
-      const localDetailIds = new Set(localDetails.map((d) => d.id));
-      const keptLocal = localDetails.filter((d) => remoteDetailIds.has(d.id) || !detailWasOnServer(d.id));
-      merged.push({
-        ...localLoc,
-        imageData: "",
-        originalImageData: "",
-        detailImages: [...keptLocal, ...remoteDetails.filter((d) => !localDetailIds.has(d.id))],
-      });
-      kept++;
-    } else {
-      merged.push({ ...remoteLoc, detailImages: [...remoteDetails, ...pendingDetails] });
-      if (pendingDetails.length > 0) kept++;
-    }
-  }
-
-  for (const localLoc of local.locations) {
-    if (remoteIds.has(localLoc.id)) continue;
-    // Lag schon auf dem Server und fehlt dort jetzt = dort geloescht.
-    if (locationWasOnServer(localLoc.id)) continue;
-    merged.push({ ...localLoc, imageData: "", originalImageData: "" });
-    kept++;
-  }
-
-  merged.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-  return { locations: merged, kept };
-}
-
-export async function hydrateProjectFromSupabase(projectId: string): Promise<Project | null> {
-  const result = await hydrateAndMerge(projectId);
-  if (!result) return null;
-  if (result.kept === 0) return result.project;
-  // Lokal Neueres muss noch hoch.
-  scheduleSyncProject(projectId);
-  // Behaltene Standorte tragen im Ergebnis keine Bilddaten – aus IndexedDB
-  // neu lesen (ohne Originale, wie die Seiten, die hier laden).
-  return (await indexedDBStorage.getProject(projectId, undefined, { withOriginals: false })) ?? result.project;
-}
-
-// ─── Build DB rows helper ─────────────────────────────────────────────────────
-
-function buildLocationRows(project: Project) {
-  return project.locations.map((l) => {
-    const customFields: Record<string, any> = { ...(l.customFields || {}) };
-    if (l.areaMeasurements && l.areaMeasurements.length > 0) {
-      customFields.__areaMeasurements = l.areaMeasurements;
-    }
-    return {
-      id: l.id,
-      project_id: project.id,
-      location_number: l.locationNumber,
-      location_name: l.locationName || null,
-      comment: l.comment || null,
-      system: l.system || null,
-      label: l.label || null,
-      location_type: l.locationType || null,
-      custom_fields: customFields,
-      created_at: l.createdAt instanceof Date ? l.createdAt.toISOString() : new Date().toISOString(),
-      updated_at: locationStamp(l).toISOString(),
-    };
-  });
-}
-
-/**
- * Zeitpunkt der letzten Aenderung an einem Standort. Altdaten ohne eigenen
- * Stempel fallen auf createdAt zurueck, damit der Vergleich nie auf NaN laeuft.
- */
-function locationStamp(l: { updatedAt?: Date; createdAt: Date }): Date {
-  const t = l.updatedAt instanceof Date && !Number.isNaN(l.updatedAt.getTime()) ? l.updatedAt : l.createdAt;
-  return t instanceof Date && !Number.isNaN(t.getTime()) ? t : new Date(0);
-}
-
-async function removeDeletedLocationsFromSupabase(project: Project) {
-  // Nur ausdruecklich auf diesem Geraet geloeschte Standorte (Loeschvermerk).
-  const deleted = new Set(readTombstones().locations);
-  if (deleted.size === 0) return;
-  const { data: remoteLocations } = await supabase.from('locations').select('id').eq('project_id', project.id);
-  const localLocationIds = new Set(project.locations.map((location) => location.id));
-  const deletedLocationIds = (remoteLocations || []).map((row) => row.id).filter((id) => deleted.has(id) && !localLocationIds.has(id));
-  if (deletedLocationIds.length === 0) return;
-  const locationStoragePathsToDelete = deletedLocationIds.flatMap(id => [
-    getLocationImagePath(id, "annotated"),
-    getLocationImagePath(id, "original"),
-  ]);
-  const { data: remoteDetailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', deletedLocationIds);
-  // Druckdateien: alle Versionen (Spec D1), nicht nur die aktuelle.
-  const { data: remotePdfs } = await supabase.from('location_pdfs').select('storage_path').in('location_id', deletedLocationIds);
-  await removeStoragePaths([
-    ...locationStoragePathsToDelete,
-    ...(remoteDetailImages || []).flatMap((row) => [row.annotated_path, row.original_path]),
-    ...(remotePdfs || []).map((row: any) => row.storage_path),
-  ]);
-  await (supabase as any).from('location_feedback').delete().in('location_id', deletedLocationIds);
-  await supabase.from('location_approvals').delete().in('location_id', deletedLocationIds);
-  await supabase.from('location_pdfs').delete().in('location_id', deletedLocationIds);
-  await supabase.from('detail_images').delete().in('location_id', deletedLocationIds);
-  await supabase.from('location_images').delete().in('location_id', deletedLocationIds);
-  const { error: deleteError } = await supabase.from('locations').delete().eq('project_id', project.id).in('id', deletedLocationIds);
-  if (!deleteError) clearTombstones('locations', deletedLocationIds);
-  deletedLocationIds.forEach(id => {
-    invalidateImageCache(`loc_${id}_annotated`);
-    invalidateImageCache(`loc_${id}_original`);
-  });
-}
-
-// ─── Core sync ────────────────────────────────────────────────────────────────
-
-async function syncProjectInternal(projectId: string, afterMerge = false): Promise<'uploaded' | 'remote-won' | 'merged' | 'skipped'> {
-  const session = getSession();
-  // Structure only – images are read one at a time below. Loading every image
-  // of the project at once (as base64) was the memory spike that got the app
-  // ended while the camera was open (see quietTime.ts).
-  const project = await indexedDBStorage.getProject(projectId, session, { withImages: false });
-  if (!project) return 'skipped';
-
-  const remoteUpdatedAt = await getProjectRemoteTimestamp(projectId);
-  if (!afterMerge && remoteUpdatedAt && remoteUpdatedAt.getTime() > project.updatedAt.getTime() + 1000) {
-    // Remote ist insgesamt neuer: Online-Fassung laden und dabei alles
-    // behalten, was lokal neuer bzw. noch nicht hochgeladen ist
-    // (hydrateAndMerge). Das Behaltene geht direkt danach hoch.
-    const result = await hydrateAndMerge(projectId);
-    if (!result) return 'skipped';
-    if (result.kept === 0) return 'remote-won';
-    await syncProjectInternal(projectId, true);
-    return 'merged';
-  }
-
-  const syncTimestamp = new Date().toISOString();
-  const { data: existingProject } = await supabase.from('projects').select('employee_id, user_id').eq('id', project.id).maybeSingle();
-  const employeeId = existingProject?.employee_id ?? project.employeeId ?? (session?.role === 'employee' ? session.id : null);
-  const userId = existingProject?.user_id ?? (project.employeeId || (session?.role === 'employee' ? session.id : project.id));
-
-  const { data: savedProject } = await supabase.from('projects').upsert({
-    id: project.id,
-    project_number: project.projectNumber,
-    project_type: project.projectType || (existingProject as any)?.project_type || 'aufmass',
-    customer_name: (project as any).customerName || null,
-    custom_fields: (project as any).customFields || null,
-    user_id: userId,
-    employee_id: employeeId,
-    created_at: project.createdAt instanceof Date ? project.createdAt.toISOString() : new Date().toISOString(),
-    updated_at: syncTimestamp,
-  } as any, { onConflict: 'id' }).select('updated_at').maybeSingle();
-  // Ein Trigger setzt projects.updated_at auf die SERVER-Zeit. Lokal genau
-  // diesen Wert merken – sonst haelt ein Handy, dessen Uhr etwas nachgeht,
-  // die Online-Fassung nach jedem eigenen Sync fuer neuer und laedt sie
-  // ständig neu.
-  const savedStamp = (savedProject as any)?.updated_at
-    ? new Date((savedProject as any).updated_at).toISOString()
-    : syncTimestamp;
-
-  if (project.locations?.length) {
-    const { error: locationsError } = await supabase.from('locations').upsert(buildLocationRows(project), { onConflict: 'id' });
-    if (!locationsError) await indexedDBStorage.markLocationsSynced(project.locations.map((l) => l.id));
-    for (const loc of project.locations) {
-      await waitForQuiet();
-      const { imageData, originalImageData } = await indexedDBStorage.getLocationImageData(loc.id);
-      await syncLocationImages(loc.id, imageData, originalImageData);
-      await syncDetailImages(loc.id, await indexedDBStorage.getDetailImagesByLocation(loc.id));
-    }
-  }
-
-  await removeDeletedLocationsFromSupabase(project);
-  await waitForQuiet();
-  await syncFloorPlans(project.id, await indexedDBStorage.getFloorPlansByProject(project.id));
-  await indexedDBStorage.updateProjectTimestamp(project.id, savedStamp);
-  return 'uploaded';
-}
-
-// ─── Public API ───────────────────────────────────────────────────────────────
-
-export async function syncAllToSupabase(): Promise<void> {
-  startSync();
-  const projectIds = await indexedDBStorage.getProjectIds(getSession());
-  const errors: string[] = [];
-  // Each project syncs independently – one failure doesn't abort the others
-  for (const id of projectIds) {
-    try {
-      await waitForQuiet();
-      await syncProjectInternal(id);
-    } catch (e) {
-      errors.push(id);
-      console.error(`Sync failed for project ${id}:`, e);
-    }
-  }
-  if (errors.length > 0) {
-    finishSyncError(new Error(`${errors.length} Projekt(e) konnten nicht synchronisiert werden`));
-  } else {
-    finishSyncSuccess();
+async function removeStoragePaths(paths: (string | null | undefined)[]) {
+  const uniquePaths = [...new Set(paths.filter(Boolean) as string[])];
+  for (let i = 0; i < uniquePaths.length; i += 100) {
+    await supabase.storage.from('project-files').remove(uniquePaths.slice(i, i + 100));
   }
 }
 
-export async function syncProjectToSupabase(projectId: string): Promise<'uploaded' | 'remote-won' | 'merged' | 'skipped'> {
-  startSync();
-  try {
-    const result = await syncProjectInternal(projectId);
-    finishSyncSuccess();
-    return result;
-  } catch (e) {
-    finishSyncError(e);
-    throw e;
-  }
-}
-
-export async function syncLocationToSupabase(projectId: string, _locationId: string): Promise<void> {
-  await syncProjectToSupabase(projectId);
-}
-
-export async function deleteFloorPlanFromSupabase(projectId: string, floorPlanId: string): Promise<void> {
-  const { data } = await (supabase as any).from('floor_plans').select('storage_path').eq('project_id', projectId).eq('id', floorPlanId).maybeSingle();
-  await removeStoragePaths([data?.storage_path]);
-  await (supabase as any).from('floor_plans').delete().eq('project_id', projectId).eq('id', floorPlanId);
-  invalidateImageCache(`floor_${floorPlanId}`);
-}
-
-export async function deleteDetailImageFromSupabase(detailImageId: string): Promise<void> {
-  // Vermerk zuerst: klappt das Loeschen jetzt nicht (offline), holt der Sync es nach.
-  addTombstone('details', detailImageId);
-  const { data } = await supabase.from('detail_images').select('annotated_path, original_path').eq('id', detailImageId).maybeSingle();
-  await removeStoragePaths([data?.annotated_path, data?.original_path]);
-  const { error } = await supabase.from('detail_images').delete().eq('id', detailImageId);
-  if (!error) clearTombstones('details', [detailImageId]);
-  invalidateImageCache(`detail_${detailImageId}_annotated`);
-  invalidateImageCache(`detail_${detailImageId}_original`);
-}
-
+/** Projekt online loeschen (nur mit Netz). */
 export async function deleteProjectFromSupabase(projectId: string): Promise<void> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    throw new Error("Projekt löschen geht nur mit Internetverbindung.");
+  }
   const { data: locations } = await supabase.from("locations").select("id").eq("project_id", projectId);
   const locationIds = (locations || []).map((l) => l.id);
   if (locationIds.length > 0) {
-    // Build storage paths directly (don't rely on location_images table having rows)
-    const locationStoragePaths = locationIds.flatMap(id => [
-      getLocationImagePath(id, "annotated"),
-      getLocationImagePath(id, "original"),
+    const [{ data: images }, { data: detailImages }, { data: pdfRows }] = await Promise.all([
+      supabase.from('location_images').select('storage_path').in('location_id', locationIds),
+      supabase.from('detail_images').select('annotated_path, original_path').in('location_id', locationIds),
+      // Druckdateien: alle Versionen (Spec D1), nicht nur die aktuelle.
+      supabase.from('location_pdfs').select('storage_path').in('location_id', locationIds),
     ]);
-    const { data: detailImages } = await supabase.from('detail_images').select('annotated_path, original_path').in('location_id', locationIds);
-    // Druckdateien: alle Versionen (Spec D1), nicht nur die aktuelle.
-    const { data: pdfRows } = await supabase.from('location_pdfs').select('storage_path').in('location_id', locationIds);
     await removeStoragePaths([
-      ...locationStoragePaths,
+      // Altbestand an festen Pfaden
+      ...locationIds.flatMap((id) => [`images/${id}/annotated`, `images/${id}/original`]),
+      ...(images || []).map((row: any) => row.storage_path),
       ...(detailImages || []).flatMap((row) => [row.annotated_path, row.original_path]),
       ...(pdfRows || []).map((row: any) => row.storage_path),
     ]);
@@ -862,17 +104,13 @@ export async function deleteProjectFromSupabase(projectId: string): Promise<void
     await supabase.from("location_images").delete().in("location_id", locationIds);
     await supabase.from("location_pdfs").delete().in("location_id", locationIds);
     await supabase.from("detail_images").delete().in("location_id", locationIds);
-    locationIds.forEach(id => {
-      invalidateImageCache(`loc_${id}_annotated`);
-      invalidateImageCache(`loc_${id}_original`);
-    });
   }
   const { data: floorPlans } = await (supabase as any).from('floor_plans').select('id, storage_path').eq('project_id', projectId);
   await removeStoragePaths((floorPlans || []).map((row: any) => row.storage_path));
   await (supabase as any).from('floor_plans').delete().eq('project_id', projectId);
-  (floorPlans || []).forEach((row: any) => invalidateImageCache(`floor_${row.id}`));
   await supabase.from("customer_project_assignments").delete().eq("project_id", projectId);
   await supabase.from("locations").delete().eq("project_id", projectId);
   const { error } = await supabase.from("projects").delete().eq('id', projectId);
   if (error) throw new Error("Projekt konnte nicht gelöscht werden: " + error.message);
+  forgetProject(projectId);
 }

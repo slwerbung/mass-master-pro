@@ -26,6 +26,12 @@ import { BookingInviteDialog } from "@/components/BookingInviteDialog";
 import { toast } from "sonner";
 import { getSession, clearSession } from "@/lib/session";
 import { syncAllToSupabase } from "@/lib/supabaseSync";
+import { cachedQuery } from "@/lib/offlineCache";
+import { getSyncDB } from "@/lib/indexedDBStorage";
+
+async function wasOnServer(projectId: string): Promise<boolean> {
+  try { return !!(await (await getSyncDB()).get("sync-base", `project:${projectId}`)); } catch { return false; }
+}
 import { deleteProjectFromSupabase } from "@/lib/supabaseSync";
 import { evictArchivedProjects } from "@/lib/archiveEviction";
 import { daysUntilArchive, getArchivePolicy, projectArchiveAction } from "@/lib/projectArchive";
@@ -90,11 +96,11 @@ const Projects = () => {
 
   const loadProjectFieldConfig = async () => {
     try {
-      const { data } = await supabase
+      const data = await cachedQuery("project_field_config:list-labels", () => supabase
         .from("project_field_config")
         .select("field_key, field_label, is_active, sort_order")
         .eq("is_active", true)
-        .order("sort_order", { ascending: true });
+        .order("sort_order", { ascending: true }));
       setProjectFieldConfig((data || []) as ProjectFieldConfig[]);
     } catch (error) {
       console.error("Error loading project field config:", error);
@@ -104,6 +110,16 @@ const Projects = () => {
   const loadProjects = async (syncAfter = true) => {
     try {
       await indexedDBStorage.migrateFromLocalStorage();
+
+      // Ohne Netz: nur die Projekte auf dem Geraet zeigen (Arbeit geht weiter).
+      if (!navigator.onLine) {
+        const localOnly = await indexedDBStorage.getProjectsSummary(session);
+        setProjects(localOnly.map((lp) => ({
+          id: lp.id, projectNumber: lp.projectNumber, projectType: lp.projectType, customerName: lp.customerName,
+          customFields: lp.customFields, createdAt: lp.createdAt, locationCount: lp.locationCount, isLocal: true,
+        })).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()));
+        return;
+      }
 
       const projectQuery = supabase
         .from("projects")
@@ -120,6 +136,7 @@ const Projects = () => {
         indexedDBStorage.getProjectsSummary(session),
       ]);
 
+      if ((ownedResult as any).error) throw (ownedResult as any).error;
       let supabaseProjects = ownedResult.data || [];
       if (session?.role === 'employee') {
         const assignedIds: string[] = Array.from(new Set(((assignedResult as any)?.data || []).map((row: any) => row.project_id).filter(Boolean))) as string[];
@@ -168,9 +185,13 @@ const Projects = () => {
       }).catch(() => null);
 
       const supabaseIds = new Set(supabaseProjects.map(sp => sp.id));
-      if (session?.role !== "employee") {
+      {
         for (const lp of localSummary) {
           if (!supabaseIds.has(lp.id)) {
+            // Schon einmal online gewesen, jetzt nicht mehr sichtbar (geloescht
+            // oder Zugriff entzogen) → nicht mehr anzeigen. Neu auf diesem
+            // Geraet angelegte (noch nicht hochgeladene) Projekte bleiben.
+            if (await wasOnServer(lp.id)) continue;
             merged.push({
               id: lp.id,
               projectNumber: lp.projectNumber,
@@ -191,12 +212,27 @@ const Projects = () => {
       if (syncAfter && !syncDoneRef.current) {
         syncDoneRef.current = true;
         setTimeout(() => {
-          syncAllToSupabase().then(() => loadProjects(false)).catch(() => {});
+          // Eigene, nicht archivierte Projekte komplett aufs Geraet holen,
+          // damit sie auch ohne Netz (Gebaeude ohne Empfang) verfuegbar sind.
+          const offlineIds = session?.role === "employee"
+            ? supabaseProjects.filter((p: any) => !p.archived_at).map((p: any) => p.id)
+            : [];
+          syncAllToSupabase(offlineIds).then(() => loadProjects(false)).catch(() => {});
         }, 2000);
       }
     } catch (error) {
       console.error("Error loading projects:", error);
-      toast.error("Fehler beim Laden der Projekte");
+      // Schwaches/kein Netz: wenigstens die Projekte auf dem Geraet zeigen.
+      try {
+        const localOnly = await indexedDBStorage.getProjectsSummary(session);
+        setProjects(localOnly.map((lp) => ({
+          id: lp.id, projectNumber: lp.projectNumber, projectType: lp.projectType, customerName: lp.customerName,
+          customFields: lp.customFields, createdAt: lp.createdAt, locationCount: lp.locationCount, isLocal: true,
+        })).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()));
+        toast.info("Keine Verbindung – es werden die Projekte auf diesem Gerät angezeigt.");
+      } catch {
+        toast.error("Fehler beim Laden der Projekte");
+      }
     } finally {
       setIsLoading(false);
     }
