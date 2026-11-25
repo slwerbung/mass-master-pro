@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlarmClock, CheckCheck, ExternalLink, Eye, FolderKanban, Reply, RotateCcw, UserRound, Wand2 } from "lucide-react";
+import { AlarmClock, CheckCheck, ExternalLink, Eye, FolderKanban, Reply, ReplyAll, RotateCcw, UserRound, Wand2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { inDays, SNOOZE_PRESETS, type Topic } from "@/lib/topics";
 import type { TopicDecision } from "@/lib/shared";
@@ -96,6 +96,9 @@ export function TopicActions({ topic, showDecide = true, withReply = true }: {
       <div className="flex flex-wrap gap-2">
         {withReply && target && (
           <Link to={`/verfassen?reply=${target}&mode=reply`}><Button size="sm"><Reply className="h-3.5 w-3.5" /> Antworten</Button></Link>
+        )}
+        {withReply && target && (topic.newMessages[topic.newMessages.length - 1]?.recipientCount ?? 0) > 1 && (
+          <Link to={`/verfassen?reply=${target}&mode=replyAll`}><Button size="sm" variant="outline"><ReplyAll className="h-3.5 w-3.5" /> Allen antworten</Button></Link>
         )}
         {withReply && target && (
           <Button size="sm" variant="outline" onClick={() => toggle("instruct")} className={panel === "instruct" ? "bg-accent" : ""}>

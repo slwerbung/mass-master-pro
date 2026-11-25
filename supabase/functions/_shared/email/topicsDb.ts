@@ -21,6 +21,8 @@ export interface TopicMail {
   belegState?: string | null;
   /** Anhaenge mit kurzlebigem Link (nur in list_topics) */
   attachments?: { id: string; filename: string; mime: string; size: number; url: string | null }[];
+  /** Empfaenger An + CC (mehr als einer → „Allen antworten“) */
+  recipientCount?: number;
 }
 
 export interface Topic {
@@ -56,7 +58,7 @@ export interface Topic {
 
 export type TopicView = "entscheiden" | "laufend" | "wiedervorlage" | "erledigt";
 
-const MSG_COLS = "id, account_id, thread_id, direction, from_name, from_addr, subject, sent_at, created_at, summary, category, status, beleg_state, has_attachments, decided_at, hero_project_match_id, match_info";
+const MSG_COLS = "id, account_id, thread_id, direction, from_name, from_addr, to_addrs, cc_addrs, subject, sent_at, created_at, summary, category, status, beleg_state, has_attachments, decided_at, hero_project_match_id, match_info";
 const CHUNK = 80;
 
 function must<T>(r: { data: T; error: any }): T {
@@ -220,6 +222,7 @@ async function buildTopics(sb: any, threadIds: string[], cfg: TopicConfig, sugg:
         id: m.id, direction: m.direction, from_name: m.from_name, from_addr: m.from_addr, subject: m.subject, sent_at: m.sent_at,
         summary: m.summary, category: m.category, has_attachments: m.has_attachments, decided_at: m.decided_at,
         addressedTo: addr.get(m.id)?.name ?? null, hasDraft: draftIds.has(m.id), belegState: m.beleg_state ?? null,
+        recipientCount: (m.to_addrs?.length ?? 0) + (m.cc_addrs?.length ?? 0),
       })),
       suggestionIds: sIds,
     });
