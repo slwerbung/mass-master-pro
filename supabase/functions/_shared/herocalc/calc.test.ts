@@ -28,8 +28,8 @@ describe("recalcDraft (Spec 2.4)", () => {
   it("Minutenpreise der Lohnzeile", () => {
     const w: any = wage(90);
     recalcDraft(draft([w]));
-    expect(w.base_price).toBe(22.4 / 60);
-    expect(w.net_price_per_unit).toBe(72 / 60);
+    expect(w.base_price).toBe(0.3733);
+    expect(w.net_price_per_unit).toBe(1.2);
   });
   it("idempotent, Rundungsrauschen", () => {
     const d = draft([material(3), wage(45)]);

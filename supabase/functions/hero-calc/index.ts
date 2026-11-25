@@ -6,6 +6,7 @@ import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import { applyCommand, type Command } from "../_shared/herocalc/ops.ts";
 import { assertUnchanged, assertWritableDraft } from "../_shared/herocalc/guard.ts";
 import { summarize } from "../_shared/herocalc/calc.ts";
+import { parseDraftFromEditHtml } from "../_shared/herocalc/parse.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,13 +18,15 @@ const reply = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 /**
- * Draft ohne Browser lesen – OFFEN (Spec 5.1). Kandidaten: HTML der Edit-Seite
- * (/partner/Documents/edit/<id>), /Api/graphql. Bis das live gegen WER-1984 geklärt ist,
- * gibt es bewusst KEINEN Lesepfad; ohne Lesen sind weder get noch Schreiben möglich
- * (Konfliktprüfung braucht den aktuellen Stand).
+ * Draft lesen: GET der Edit-Seite, JSON unter `DocumentStore.draft` (live belegt, Spec 5.1).
+ * WICHTIG: ohne `X-Requested-With`, sonst kommt nur eine leere Hülle zurück.
  */
-async function loadDraft(_apiKey: string, _documentId: number): Promise<any> {
-  throw new Error("Draft lesen ist noch nicht implementiert (Spec 5.1 offen)");
+async function loadDraft(apiKey: string, documentId: number): Promise<any> {
+  const resp = await fetch(`${HERO_BASE}/partner/Documents/edit/${documentId}`, {
+    headers: { "Authorization": `Bearer ${apiKey}` },
+  });
+  if (!resp.ok) throw new Error(`HERO Edit-Seite antwortete mit HTTP ${resp.status}`);
+  return parseDraftFromEditHtml(await resp.text(), documentId);
 }
 
 async function saveDraft(apiKey: string, draft: any): Promise<any> {

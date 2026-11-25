@@ -3,6 +3,8 @@
 
 export const round2 = (x: number): number => Math.round((x + Number.EPSILON) * 100) / 100;
 
+export const round4 = (x: number): number => Math.round((x + Number.EPSILON) * 10000) / 10000;
+
 const pct = (vk: number, ek: number): number => (ek === 0 ? 0 : round2(((vk - ek) / ek) * 100));
 
 export interface Line {
@@ -27,8 +29,8 @@ export function recalcWage(p: any): Line {
   const ekH = Number(p.wage_cost_price);
   const vkH = Number(p.wage_per_hour);
   p.time_minutes = m;
-  p.base_price = ekH / 60;
-  p.net_price_per_unit = vkH / 60;
+  p.base_price = round4(ekH / 60); // live: 0.3733 (4 Nachkommastellen)
+  p.net_price_per_unit = round4(vkH / 60);
   p.marge = pct(vkH, ekH);
   return { vk: round2((m / 60) * vkH), ek: round2((m / 60) * ekH), minutes: m, isWage: true };
 }
@@ -102,6 +104,7 @@ export function recalcDraft(draft: any) {
   };
   data.total_price = round2(net + vat);
   data.total_vat = vat;
+  if ("value" in draft) draft.value = net; // live: value == Netto
 
   return summarize(draft);
 }

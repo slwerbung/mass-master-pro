@@ -5,8 +5,8 @@ import { assertUnchanged, assertWritableDraft } from "./guard.ts";
 
 const base = () => {
   const d: any = {
-    id: 1, customer_document_id: 2, version: 3, modified: "m1", status_code: 0,
-    data: { totals: {}, items: [{ type: "table", items: [{ atType: "SupplyService", uid: "u1", quantity: 1, vat_percent: 19, positions: [
+    id: 1, customer_document_id: 2, modified: "m1", status_code: 0, value: 0,
+    data: { version: 3, totals: {}, items: [{ type: "table", items: [{ atType: "SupplyService", uid: "u1", quantity: 1, vat_percent: 19, positions: [
       { atType: "SupplyProduct", id: "p1", quantity: 2, base_price: 15, net_price_per_unit: 30 },
       { atType: "WageGroup", id: 6824, quantity: 90, wage_cost_price: 22.4, wage_per_hour: 72 },
     ] }] }] },
@@ -22,6 +22,7 @@ describe("applyCommand", () => {
     expect(r.before.vk).toBe(168);
     expect(r.after.vk).toBe(132);
     expect(d.data.totals.net).toBe(168);
+    expect(r.draft.value).toBe(132);
   });
   it("set_material mit neuem VK", () => {
     const r = applyCommand(base(), { cmd: "set_material", position_uid: "u1", product_id: "p1", quantity: 2, vk_per_unit: 40 });
@@ -55,6 +56,6 @@ describe("guard", () => {
     const a = base();
     expect(() => assertUnchanged(a, { ...a })).not.toThrow();
     expect(() => assertUnchanged(a, { ...a, modified: "m2" })).toThrow(/geändert/);
-    expect(() => assertUnchanged(a, { ...a, version: 4 })).toThrow(/geändert/);
+    expect(() => assertUnchanged(a, { ...a, data: { ...a.data, version: 4 } })).toThrow(/geändert/);
   });
 });

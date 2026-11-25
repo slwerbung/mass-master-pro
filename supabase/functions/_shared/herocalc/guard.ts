@@ -4,11 +4,12 @@
 export function assertWritableDraft(draft: any): void {
   if (!draft || typeof draft !== "object") throw new Error("Draft fehlt oder ist kein Objekt");
   if (draft.status_code !== 0) throw new Error(`Kein Entwurf (status_code ${draft.status_code}) – Schreiben verweigert`);
-  for (const k of ["id", "customer_document_id", "version", "modified"]) {
+  for (const k of ["id", "customer_document_id", "modified"]) {
     if (draft[k] === undefined || draft[k] === null) throw new Error(`Draft ohne Pflichtfeld ${k}`);
   }
   const data = draft.data;
   if (!data || typeof data !== "object") throw new Error("draft.data fehlt");
+  if (data.version === undefined || data.version === null) throw new Error("draft.data.version fehlt");
   if (!Array.isArray(data.items)) throw new Error("draft.data.items ist kein Array");
   if (!data.totals || typeof data.totals !== "object") throw new Error("draft.data.totals fehlt");
   for (const t of data.items) {
@@ -23,7 +24,7 @@ export function assertWritableDraft(draft: any): void {
 
 /** Abbruch, wenn sich der Draft seit dem Lesen geändert hat (paralleles Bearbeiten). */
 export function assertUnchanged(read: any, fresh: any): void {
-  if (String(read.modified) !== String(fresh.modified) || String(read.version) !== String(fresh.version)) {
-    throw new Error("Draft wurde seit dem Lesen geändert (version/modified) – abgebrochen");
+  if (String(read.modified) !== String(fresh.modified) || String(read.data?.version) !== String(fresh.data?.version)) {
+    throw new Error("Draft wurde seit dem Lesen geändert (data.version/modified) – abgebrochen");
   }
 }
