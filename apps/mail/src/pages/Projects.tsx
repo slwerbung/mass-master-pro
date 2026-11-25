@@ -138,7 +138,7 @@ export default function Projects() {
       )}
 
       {list.data && view === "stapel" && (
-        <div className="grid gap-4 md:grid-cols-[22rem_minmax(0,1fr)]">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-[22rem_minmax(0,1fr)]">
           <div className="space-y-2">
             {!stack.length && !cleanup.length && <p className="rounded-md border p-4 text-sm text-muted-foreground">Nichts zu tun – kein Projekt braucht gerade eine Entscheidung. 🎉</p>}
             {bulkCards.length >= 2 && (

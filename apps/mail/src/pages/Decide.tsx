@@ -138,7 +138,7 @@ export default function Decide() {
       )}
 
       {list.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-[22rem_minmax(0,1fr)]">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-[22rem_minmax(0,1fr)]">
           <div className="space-y-2">
             {list.map((tp) => {
               const open = mobile && tp.id === selected?.id && mobileOpen;
