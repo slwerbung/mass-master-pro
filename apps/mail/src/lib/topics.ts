@@ -12,6 +12,8 @@ export interface TopicMail {
   belegState?: string | null;
   /** Anhaenge mit kurzlebigem Link (nur in „Zu entscheiden“) */
   attachments?: { id: string; filename: string; mime: string; size: number; url: string | null }[];
+  /** Empfaenger An + CC (mehr als einer → „Allen antworten“) */
+  recipientCount?: number;
 }
 
 export interface Topic {

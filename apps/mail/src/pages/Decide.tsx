@@ -83,6 +83,14 @@ export default function Decide() {
     if (next) setScrollTo(next.id);
     ["topics", "suggestions", "overview", "messages"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   };
+  // Desktop: gewählten Eintrag in der Liste sichtbar halten, Karte oben beginnen.
+  const listRef = useRef<HTMLDivElement>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (mobile || !selected) return;
+    itemRefs.current[selected.id]?.scrollIntoView({ block: "nearest" });
+    paneRef.current?.scrollTo({ top: 0 });
+  }, [selected?.id, mobile]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!scrollTo || !mobile) return;
     const el = itemRefs.current[scrollTo];
@@ -138,8 +146,9 @@ export default function Decide() {
       )}
 
       {list.length > 0 && (
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-[22rem_minmax(0,1fr)]">
-          <div className="space-y-2">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-[22rem_minmax(0,1fr)] md:items-start">
+          {/* Desktop: Liste und Karte scrollen je für sich – man bleibt oben, statt weit unten zu landen. */}
+          <div ref={listRef} className="space-y-2 md:sticky md:top-4 md:max-h-[calc(100dvh-2rem)] md:overflow-y-auto md:overscroll-contain md:pr-1">
             {list.map((tp) => {
               const open = mobile && tp.id === selected?.id && mobileOpen;
               const sg = tp.suggestionIds.map((id) => byId.get(id)).filter((s): s is Suggestion => !!s);
@@ -151,7 +160,7 @@ export default function Decide() {
               );
             })}
           </div>
-          {!mobile && <div className="min-w-0">{selected && pane(selected, false)}</div>}
+          {!mobile && <div ref={paneRef} className="min-w-0 md:sticky md:top-4 md:max-h-[calc(100dvh-2rem)] md:overflow-y-auto md:overscroll-contain">{selected && pane(selected, false)}</div>}
         </div>
       )}
 
@@ -339,6 +348,8 @@ function TopicPane({ topic, suggestions, gewerke, dialogOpen, openDialog, onNext
   const targetMail = newest(topic) ?? null;
   const draft = !!targetMail?.hasDraft;
   const replyHref = `/verfassen?reply=${target}&mode=reply${draft ? "&draft=1" : ""}`;
+  // Mehrere Empfänger (An + CC): „Allen antworten“ (Absender + alle übrigen, ohne die eigenen Adressen)
+  const replyAllHref = (targetMail?.recipientCount ?? 0) > 1 ? `/verfassen?reply=${target}&mode=replyAll` : null;
   const forwardHref = `/verfassen?reply=${target}&mode=forward`;
   const withAtt = [...topic.newMessages].reverse().find((m) => m.has_attachments);
   const heroTask = useQuery({
@@ -352,6 +363,7 @@ function TopicPane({ topic, suggestions, gewerke, dialogOpen, openDialog, onNext
       enter: () => { if (suggestions.length || openRows.length) { if (!blocked) run.mutate(); } },
       e: () => close.mutate(),
       r: () => nav(replyHref),
+      a: () => { if (replyAllHref) nav(replyAllHref); },
       w: () => openDialog("later"),
       h: () => { if (topic.projectId) window.open(heroProjectUrl(topic.projectId), "_blank", "noopener"); },
     },
@@ -453,6 +465,7 @@ function TopicPane({ topic, suggestions, gewerke, dialogOpen, openDialog, onNext
             {close.isPending && <Spinner />} Abschließen <kbd className="ml-1 rounded border border-current/30 px-1 text-[10px] max-md:hidden">E</kbd>
           </Button>
           <Link to={replyHref} className={cn(buttonVariants({ variant: "outline" }), actionBtn)}>Antworten <kbd className="ml-1 rounded border px-1 text-[10px] max-md:hidden">R</kbd></Link>
+          {replyAllHref && <Link to={replyAllHref} className={cn(buttonVariants({ variant: "outline" }), actionBtn)}>Allen antworten <kbd className="ml-1 rounded border px-1 text-[10px] max-md:hidden">A</kbd></Link>}
           <Button className={actionBtn} variant="outline" onClick={() => openDialog("later")} disabled={busy}>Später <kbd className="ml-1 rounded border px-1 text-[10px] max-md:hidden">W</kbd></Button>
         </div>
 
@@ -467,7 +480,7 @@ function TopicPane({ topic, suggestions, gewerke, dialogOpen, openDialog, onNext
         </div>
 
         {/* 7. Fußnote */}
-        <p className="text-xs text-muted-foreground max-md:hidden">Tasten: J/K Thema, Enter ausführen, E abschließen, R antworten, W später, H HERO.</p>
+        <p className="text-xs text-muted-foreground max-md:hidden">Tasten: J/K Thema, Enter ausführen, E abschließen, R antworten, A allen antworten, W später, H HERO.</p>
       </CardContent>
     </Card>
   );
@@ -514,10 +527,7 @@ function WhyBox({ topic, onDropbox }: { topic: Topic; onDropbox: (messageId: str
         <p className="text-xs">{topic.snoozedUntil && <>fällig seit {formatDate(topic.snoozedUntil)}</>}{topic.note && <> · „{topic.note}“</>}</p>
       )}
       {last ? <MailLine m={last} onDropbox={onDropbox} /> : topic.lastMail && (
-        <p className="line-clamp-2 md:line-clamp-1">
-          <span className="text-xs opacity-80">Zuletzt {topic.lastMail.direction === "out" ? "wir" : topic.lastMail.from}, {formatDateTime(topic.lastMail.sent_at)}: </span>
-          {topic.lastMail.summary || "(ohne Inhalt)"}
-        </p>
+        <LastMailLine topic={topic} />
       )}
       {others.length > 0 && (
         <div className="space-y-2">
@@ -532,6 +542,28 @@ function WhyBox({ topic, onDropbox }: { topic: Topic; onDropbox: (messageId: str
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Keine neue Mail (z. B. Wiedervorlage): die letzte Mail des Themas – lesen und öffnen wie bei neuen Mails. */
+function LastMailLine({ topic }: { topic: Topic }) {
+  const [open, setOpen] = useState(false);
+  const lm = topic.lastMail!;
+  const id = topic.latestId;
+  return (
+    <div className="space-y-1.5">
+      <p className="line-clamp-2 md:line-clamp-1">
+        <span className="text-xs opacity-80">Zuletzt {lm.direction === "out" ? "wir" : lm.from}, {formatDateTime(lm.sent_at)}: </span>
+        {lm.summary || "(ohne Inhalt)"}
+      </p>
+      {id && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+          <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="touch-manipulation underline underline-offset-2 hover:no-underline max-md:min-h-9">{open ? "Mail zuklappen" : "Mail lesen"}</button>
+          <Link to={`/mails/${id}`} className="underline underline-offset-2 hover:no-underline">Ganze Mail öffnen</Link>
+        </div>
+      )}
+      {open && id && <div className="rounded-md border bg-background p-2 text-foreground"><MailBody messageId={id} fallbackText={null} /></div>}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -51,6 +51,9 @@ export default function Projects() {
   const bulkCards = stack.filter((c) => c.draft && !c.draft.error && c.autopilot === "suggest");
   const cleanup = byStep(list.data?.cleanup ?? []);
   const selected = stack.find((c) => c.id === sel) ?? null;
+  // Desktop: Karte beim Wechsel oben beginnen (Liste und Karte scrollen je für sich).
+  const paneRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { paneRef.current?.scrollTo({ top: 0 }); }, [selected?.id]);
   const showCleanup = sel === "cleanup";
 
   // Ohne Auswahl (oder nach einer Aktion) die erste Karte zeigen.
@@ -138,8 +141,9 @@ export default function Projects() {
       )}
 
       {list.data && view === "stapel" && (
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-[22rem_minmax(0,1fr)]">
-          <div className="space-y-2">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-[22rem_minmax(0,1fr)] md:items-start">
+          {/* Desktop: Liste und Karte scrollen je für sich. */}
+          <div className="space-y-2 md:sticky md:top-4 md:max-h-[calc(100dvh-2rem)] md:overflow-y-auto md:overscroll-contain md:pr-1">
             {!stack.length && !cleanup.length && <p className="rounded-md border p-4 text-sm text-muted-foreground">Nichts zu tun – kein Projekt braucht gerade eine Entscheidung. 🎉</p>}
             {bulkCards.length >= 2 && (
               <button type="button" onClick={() => setBulkOpen(true)} className="flex w-full items-center gap-2 rounded-md border border-sky-300 bg-sky-50 p-3 text-left text-sm font-medium text-sky-950 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100">
@@ -155,7 +159,7 @@ export default function Projects() {
               </button>
             )}
           </div>
-          <div className="min-w-0">
+          <div ref={paneRef} className="min-w-0 md:sticky md:top-4 md:max-h-[calc(100dvh-2rem)] md:overflow-y-auto md:overscroll-contain">
             {selected && (
               <CardPane key={selected.id} card={selected} busy={busy} shadow={!!o?.shadow}
                 onSnooze={() => setSnoozeFor(selected)} onComplete={() => complete.mutate(selected)}
