@@ -199,6 +199,8 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 - `hero-calc` – Detailkalkulation eines HERO-**Entwurfs** ändern (Material, Lohn, Menge, Rabatt, `undo`), verlangt Admin- oder
   Mitarbeiter-Token, `dry_run` ist Standard, Sperre + Hash-Prüfung + Undo-Sicherung (`docs/hero-calc.md`). Nutzt interne,
   undokumentierte HERO-Endpunkte; nie auf veröffentlichte Dokumente, nie ungetestete Fälle freischalten
+- `hero-calc-contract` – nächtlicher Vertrags-/Selbsttest für `hero-calc` gegen die Test-Entwürfe in WER-1984 (pg_cron 01:47 UTC,
+  `x-poll-secret` = `hero_calc_poll_secret`, Protokoll `hero_calc_contract_log`); rot = HERO hat den internen Endpoint geändert
 - `booking-api` – öffentliche Terminbuchung, projektbezogen (`context`/
   `availability`/`create`/`cancel`/`staff-action`). Rechnet Slots immer
   serverseitig, schreibt den Termin am HERO-Projekt (`docs/terminbuchung.md`).

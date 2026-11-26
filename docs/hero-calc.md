@@ -42,7 +42,19 @@ Antwort jeweils mit Vorher/Nachher: EK, VK, Aufschlag, Netto, MwSt., Brutto.
   der Fall von Hand in HERO nachgebaut und verglichen wurde.
 - Nie Key in Logs/Antworten; Key bleibt in `app_config.hero_api_key`.
 
+## Nächtlicher Vertragstest (`hero-calc-contract`)
+Eigene Function, Aufruf nur mit `x-poll-secret` (= `app_config.hero_calc_poll_secret`), `{ "mode": "contract" | "selftest" }`.
+Läuft **nur** gegen die Test-Entwürfe in WER-1984 (22589010 bzw. 22588702, Projekt wird geprüft), stellt sie danach exakt wieder her
+und protokolliert in `hero_calc_contract_log` (`ok`, `detail.steps`). pg_cron `hero_calc_contract`, täglich 01:47 UTC.
+- `contract`: lesen, `set_quantity` ändern, speichern, zurücklesen (Netto/`total_price`/`value`, `table.totals == data.totals`), rückgängig (Summen und Hash identisch).
+- `selftest`: `table.totals` nach Lohnänderung auf beiden Testentwürfen, drei parallele Schreibaufrufe (genau einer läuft durch).
+- **Rot = HERO hat den internen Endpoint (Edit-Seite / `ajax_save`) geändert.** Dann hero-calc nicht mehr benutzen.
+- Vorbedingung am Testentwurf: genau eine Tabelle mit einer Leistung, kein Rabatt.
+- Nachsehen: `select created_at, ok, detail from hero_calc_contract_log order by id desc limit 5;` (Alarmierung bei Rot gibt es noch nicht).
+
 ## Tests
 - `npx vitest run supabase/functions/_shared/herocalc` (Rechenkern, Befehle, Guards, Parser)
+- Offline-Ablauftests (`service.test.ts`, `contract.test.ts`) mit simuliertem HERO und simulierter DB (`testkit.ts`)
+- Typprüfung: `deno check --config supabase/functions/hero-calc/deno.json supabase/functions/hero-calc/index.ts` (ebenso `hero-calc-contract`)
 - `HERO_CALC_PG_URL=postgres://… scripts/test-hero-calc-lock.sh` (Sperre, Rechte, 8 parallele Aufrufe; lokales Postgres, leert die DB)
 - Live nur gegen die Test-Entwürfe in WER-1984 (22588702, 22588885, 22589010).
