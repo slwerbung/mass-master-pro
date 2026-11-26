@@ -1,6 +1,7 @@
 import type { Config } from "tailwindcss";
 
 export default {
+  darkMode: "class", // die App hat nur ein helles Theme: `dark:` darf nicht vom Betriebssystem ausgelöst werden
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {

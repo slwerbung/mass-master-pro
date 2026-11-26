@@ -92,7 +92,7 @@ export default function Projects() {
 
   // Tastatur: J/K naechste/vorige, W Wiedervorlage, E abschliessen, A archivieren, H In HERO.
   useStackKeys({
-    onNext: () => step(1), onPrev: () => step(-1), disabled: !!(snoozeFor || dialog) || view !== "stapel",
+    onNext: () => step(1), onPrev: () => step(-1), disabled: !!(snoozeFor || dialog || selected?.heroTask) || view !== "stapel",
     keys: {
       w: () => { if (selected) setSnoozeFor(selected); },
       e: () => { if (selected && !busy) complete.mutate(selected); },
@@ -268,25 +268,29 @@ function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog, onSent, 
         {card.ruleKey === "nachfassen_anruf" && <CallPanel card={card} busy={busy} onDone={onSent} />}
         <HeroWorkPanel card={card} onChanged={onChanged} onClosed={onHeroDone} />
 
-        <div className="flex flex-wrap items-center gap-2">
-          {main?.href && <Link to={main.href}><Button variant="secondary" disabled={busy}>{main.label}</Button></Link>}
-          {main && !main.hero && main.dialog && <Button variant="secondary" disabled={busy} onClick={() => onDialog(main.dialog!)}>{main.label}</Button>}
-          {main?.hero && <HeroWorkStart card={card} busy={busy} label={main.label.replace(/ \(in HERO\)$/, "")} onStarted={onChanged} />}
-          <Button disabled={busy} onClick={onComplete} title="Setzt den Status in HERO auf „Abgeschlossen“ und trägt es im Logbuch ein">
-            <Check className="h-4 w-4" /> Abschließen <kbd className="ml-1 rounded border px-1 text-[10px]">E</kbd>
-          </Button>
-          <Button variant="outline" onClick={onSnooze}><AlarmClock className="h-4 w-4" /> Wiedervorlage <kbd className="ml-1 rounded border px-1 text-[10px]">W</kbd></Button>
-          {!main?.hero && <HeroWorkStart card={card} busy={busy} variant="outline" onStarted={onChanged} />}
-          <Button variant="outline" onClick={() => window.open(heroProjectUrl(p.heroId), "_blank", "noopener")}>In HERO öffnen <kbd className="ml-1 rounded border px-1 text-[10px]">H</kbd></Button>
-        </div>
+        {!card.heroTask && (
+          <>
+          <div className="flex flex-wrap items-center gap-2">
+            {main?.href && <Link to={main.href}><Button variant="secondary" disabled={busy}>{main.label}</Button></Link>}
+            {main && !main.hero && main.dialog && <Button variant="secondary" disabled={busy} onClick={() => onDialog(main.dialog!)}>{main.label}</Button>}
+            {main?.hero && <HeroWorkStart card={card} busy={busy} label={main.label.replace(/ \(in HERO\)$/, "")} onStarted={onChanged} />}
+            <Button disabled={busy} onClick={onComplete} title="Setzt den Status in HERO auf „Abgeschlossen“ und trägt es im Logbuch ein">
+              <Check className="h-4 w-4" /> Abschließen <kbd className="ml-1 rounded border px-1 text-[10px]">E</kbd>
+            </Button>
+            <Button variant="outline" onClick={onSnooze}><AlarmClock className="h-4 w-4" /> Wiedervorlage <kbd className="ml-1 rounded border px-1 text-[10px]">W</kbd></Button>
+            {!main?.hero && <HeroWorkStart card={card} busy={busy} variant="outline" onStarted={onChanged} />}
+            <Button variant="outline" onClick={() => window.open(heroProjectUrl(p.heroId), "_blank", "noopener")}>In HERO öffnen <kbd className="ml-1 rounded border px-1 text-[10px]">H</kbd></Button>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">HERO</span>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("status")}><Shuffle className="h-3.5 w-3.5" /> Status ändern</Button>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("note")}><NotebookPen className="h-3.5 w-3.5" /> Logbuch-Notiz</Button>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("events")}><CalendarPlus className="h-3.5 w-3.5" /> Termine anlegen</Button>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("archive")}><Archive className="h-3.5 w-3.5" /> Archivieren <kbd className="ml-1 rounded border px-1 text-[10px]">A</kbd></Button>
-        </div>
+          <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">HERO</span>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("status")}><Shuffle className="h-3.5 w-3.5" /> Status ändern</Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("note")}><NotebookPen className="h-3.5 w-3.5" /> Logbuch-Notiz</Button>
+            {main?.dialog !== "events" && <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("events")}><CalendarPlus className="h-3.5 w-3.5" /> Termine anlegen</Button>}
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => onDialog("archive")}><Archive className="h-3.5 w-3.5" /> Archivieren <kbd className="ml-1 rounded border px-1 text-[10px]">A</kbd></Button>
+          </div>
+          </>
+        )}
         <p className="text-xs text-muted-foreground">
           {shadow ? "Schattenmodus: Aktionen werden nur protokolliert, nichts geht nach HERO. " : "Aktionen schreiben direkt nach HERO. "}
           Tasten: J/K Karte, E abschließen, A archivieren, W Wiedervorlage, H HERO.

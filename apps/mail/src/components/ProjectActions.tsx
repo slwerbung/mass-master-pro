@@ -26,7 +26,7 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
     <div className="fixed inset-0 z-50 flex items-end justify-center md:items-center md:p-4" role="dialog" aria-modal="true" aria-label={title}>
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div ref={panel} tabIndex={-1}
-        className={`relative max-h-[90vh] w-full space-y-4 overflow-y-auto overscroll-contain rounded-t-xl border bg-background p-5 shadow-xl outline-none max-md:pb-[max(1.25rem,env(safe-area-inset-bottom))] md:rounded-lg ${wide ? "max-w-2xl" : "max-w-md"}`}>
+        className={`relative max-h-[90vh] w-full space-y-4 overflow-y-auto overscroll-contain rounded-t-xl border bg-background p-5 text-foreground shadow-xl outline-none max-md:pb-[max(1.25rem,env(safe-area-inset-bottom))] md:rounded-lg ${wide ? "max-w-2xl" : "max-w-md"}`}>
         <h2 className="font-semibold">{title}</h2>
         {children}
       </div>
