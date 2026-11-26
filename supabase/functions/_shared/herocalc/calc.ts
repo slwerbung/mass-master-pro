@@ -8,6 +8,9 @@ const roundTo = (x: number, digits: number): number => {
   return Math.round(Number((x * f).toPrecision(12))) / f;
 };
 
+/** Abschneiden (nicht runden) auf 4 Stellen: HERO speichert den EK je Leistung abgeschnitten (live: 20.21667 -> 20.2166). */
+const floor4 = (x: number): number => Math.floor(Number((x * 1e4).toPrecision(12))) / 1e4;
+
 export const round2 = (x: number): number => roundTo(x, 2);
 
 export const round4 = (x: number): number => roundTo(x, 4);
@@ -33,7 +36,7 @@ export function recalcMaterial(p: any): Line {
   return { vk, ek, minutes: 0, isWage: false };
 }
 
-/** Lohnzeile: quantity = Minuten; Sätze (EK/h, VK/h) kommen aus wage_cost_price / wage_per_hour. */
+/** Lohnzeile: quantity = Minuten. Lohn-EK bleibt exakt (live belegt: HERO summiert ihn ungerundet), siehe recalcService. */
 export function recalcWage(p: any): Line {
   const m = Number(p.quantity);
   const ekH = Number(p.wage_cost_price);
@@ -42,7 +45,7 @@ export function recalcWage(p: any): Line {
   p.base_price = round4(ekH / 60); // live: 0.3733 (4 Nachkommastellen)
   p.net_price_per_unit = round4(vkH / 60);
   p.marge = pct(vkH, ekH);
-  return { vk: round2((m / 60) * vkH), ek: round2((m / 60) * ekH), minutes: m, isWage: true };
+  return { vk: round2((m / 60) * vkH), ek: (m / 60) * ekH, minutes: m, isWage: true };
 }
 
 export interface Totals {
@@ -55,12 +58,11 @@ const EK4 = new Set<string>(["ek", "materialEk"]);
 const roundTotal = (k: string, v: number): number => (EK4.has(k) ? round4(v) : round2(v));
 
 export function recalcService(s: any): Totals {
-  // Menge der Leistung (live belegt, Spec 5.3): Felder an der Leistung bleiben je EINE Einheit
-  // (net_price_per_unit, base_price, wage_costs, wage_base, time_minutes); Tabelle und Dokument rechnen Menge * Einheit.
+  // Menge der Leistung (live belegt, Spec 5.3): Felder an der Leistung bleiben je EINE Einheit; Tabelle/Dokument rechnen Menge * Einheit.
   const q = Number(s.quantity ?? 1);
   if (!Number.isFinite(q) || q <= 0) throw new Error(`Leistung ${s.uid}: quantity ${s.quantity} ungültig`);
+  // Rabatt bei Menge != 1 ist noch nicht mit der HERO-Oberfläche verglichen -> nicht raten.
   if (q !== 1 && Number(s.sales) > 0) {
-    // Rabatt zusammen mit Menge > 1 ist nicht getestet -> nicht raten.
     throw new Error(`Leistung ${s.uid}: Rabatt bei quantity ${q} != 1 ist noch nicht unterstützt`);
   }
   const t: Totals = { vk: 0, ek: 0, minutes: 0, wageVk: 0, wageEk: 0, materialVk: 0, materialEk: 0, discount: 0 };
@@ -69,9 +71,14 @@ export function recalcService(s: any): Totals {
     t.vk += l.vk; t.ek += l.ek; t.minutes += l.minutes;
     if (l.isWage) { t.wageVk += l.vk; t.wageEk += l.ek; } else { t.materialVk += l.vk; t.materialEk += l.ek; }
   }
+  // Live belegt (WER-1984, 2 Leistungen, Menge 3): EK je Leistung = Summe der Zeilen ABGESCHNITTEN auf 4 Stellen
+  // (A 49.08253 -> 49.0825, B 20.21667 -> 20.2166); Dokument = Summe (EK je Leistung * Menge) = 109.7323.
+  // Lohn-EK je Leistung auf 2 Stellen (2.61 / 7.72 / 3.73), Material-EK = EK - Lohn-EK.
+  t.ek = floor4(t.ek);
+  t.wageEk = round2(t.wageEk);
+  t.materialEk = round4(t.ek - t.wageEk);
   for (const k of Object.keys(t) as (keyof Totals)[]) t[k] = roundTotal(k, t[k]);
   // Positionsrabatt in Prozent (live belegt, Spec 5.2): service.sales = Rabatt %.
-  // net_price_per_unit bleibt der Preis VOR Rabatt; Aufschlag, Lohn-VK und alle Summen gelten nach Rabatt.
   s.net_price_per_unit = t.vk;
   const f = 1 - (Number(s.sales) || 0) / 100;
   const vkNet = round2(t.vk * f);
@@ -138,7 +145,7 @@ export function recalcDraft(draft: any) {
     table.total = Object.fromEntries(Object.entries(tVk).map(([k, v]) => [k, round2(v)]));
     table.totalBaseVat = Object.fromEntries(Object.entries(tEk).map(([k, v]) => [k, round4(v)]));
     table.totalWageVat = round2(Object.values(tWageVat).reduce((a, b) => a + b, 0));
-    // Nachbesserung: auch table.totals (Rest wie netOptional/margin bleibt erhalten)
+    // Auch table.totals (Rest wie netOptional/margin bleibt erhalten)
     table.totals = { ...(table.totals ?? {}), ...mkTotals(tSum, tVat) };
   }
 

@@ -93,7 +93,7 @@ export async function runOfferTest(ctx: Ctx, gql: Gql): Promise<{ steps: Step[];
     const fixed = { name: "API-Test Festpreis", unit_type: "Stk", vat_percent: 19, quantity: 1, description: "", is_fixed_net_price: true, net_price_per_unit: 100,
       productPositions: [{ id: PRODUCT, quantity: 2 }], wagePositions: [{ id: WAGE, timeMinutes: 90 }] };
     const { documentId } = await createDraft(gql, Number(project.id), [fixed]);
-    try { await ctx.supabase.from("hero_offer_log").insert({ caller: ctx.caller, command: "test", project_nr: project.project_nr, project_match_id: Number(project.id), document_id: documentId, ok: true, result: { festpreis: true } }); } catch { /* egal */ }
+    try { await ctx.supabase.from("hero_offer_log").insert({ caller: ctx.caller, project_nr: project.project_nr, document_id: documentId, result: JSON.stringify({ command: "test", ok: true, project_match_id: Number(project.id), festpreis: true }) }); } catch { /* egal */ }
     drafts.push({ label: "Festpreis", document_id: documentId, url: url(documentId) });
     const { draft, services } = await readBack(ctx, documentId);
     const s = services[0] ?? {};

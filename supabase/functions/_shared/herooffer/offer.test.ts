@@ -75,7 +75,7 @@ describe("createOffer", () => {
     const one: any = await createOffer(ctx, g.gql, single);
     expect([one.dry_run, one.wrote, one.recalc_will_be_skipped, one.services.length]).toEqual([true, false, false, 1]);
     const two: any = await createOffer(ctx, g.gql, { project_nr: "WER-1984", services: [single, single].map((s) => ({ name: s.name, products: s.products })) });
-    expect(two.recalc_will_be_skipped).toBe(true);
+    expect(two.recalc_will_be_skipped).toBe(false); // mehrere Leistungen sind freigegeben (SUPPORT)
     expect([g.creates().length, logRows.length]).toEqual([0, 0]);
   });
 
@@ -89,12 +89,13 @@ describe("createOffer", () => {
     expect(c.input).toEqual({ document_type_id: OFFER_TYPE, project_match_id: 12886720 });
     expect(c.actions).toHaveLength(1);
     expect(logRows).toHaveLength(1);
-    expect(logRows[0]).toMatchObject({ caller: "employee:42", project_nr: "WER-1984", project_match_id: 12886720, document_id: DOC, ok: true });
+    expect(logRows[0]).toMatchObject({ caller: "employee:42", project_nr: "WER-1984", document_id: DOC });
+    expect(JSON.parse(logRows[0].result)).toMatchObject({ command: "create_offer", ok: true, project_match_id: 12886720 });
     expect(hero.saves).toBe(1); // recalc schreibt (mit Undo-Sicherung), auch wenn sich nichts ändert
     expect(db.undo[0].command).toBe("recalc");
   });
 
-  it("mehrere Leistungen: eine create_supply_service-Action je Leistung in Reihenfolge, recalc übersprungen mit Grund", async () => {
+  it("mehrere Leistungen: eine create_supply_service-Action je Leistung in Reihenfolge, recalc läuft (freigegeben)", async () => {
     const g = fakeGql();
     const r: any = await createOffer(ctx, g.gql, { project_nr: "WER-1984", dry_run: false, services: [
       { name: "A", quantity: 2, products: [{ id: "p1", quantity: 1 }] }, { name: "B", wages: [{ id: 6824, minutes: 50 }] },
@@ -102,18 +103,19 @@ describe("createOffer", () => {
     const actions = g.creates()[0].variables.actions;
     expect(actions.map((a: any) => a.create_supply_service.name)).toEqual(["A", "B"]);
     expect(actions[0].create_supply_service.quantity).toBe(2);
-    expect([r.recalc_skipped, r.recalc]).toEqual([true, { skipped: true }]);
-    expect(r.recalc_skip_reason).toMatch(/Mehrere Leistungen/);
+    expect(r.recalc_skipped).toBe(false);
+    expect(r.recalc_skip_reason).toBeUndefined();
+    expect(r.recalc.vk).toBe(168);
     expect(r.services).toHaveLength(2);
     expect(r.service).toBeUndefined();
-    expect(hero.gets).toBe(0); // kein Zugriff auf hero-calc
-    expect(logRows[0].result).toMatchObject({ services: 2, recalc_skipped: true });
+    expect(hero.saves).toBe(1);
+    expect(JSON.parse(logRows[0].result)).toMatchObject({ services: 2, recalc_skipped: false });
   });
 
   it("Neuer Entwurf nicht eindeutig (zwei oder keiner): Abbruch mit Meldung, Protokoll ok=false", async () => {
     await expect(createOffer(ctx, fakeGql({ newDocs: [[301, 302]] }).gql, { ...single, dry_run: false })).rejects.toThrow(/nicht eindeutig \(2 neue Entwürfe: 301, 302\)/);
     await expect(createOffer(ctx, fakeGql({ newDocs: [[]] }).gql, { ...single, dry_run: false })).rejects.toThrow(/nicht eindeutig \(0 neue Entwürfe\)/);
-    expect(logRows.map((l) => l.ok)).toEqual([false, false]);
+    expect(logRows.map((l) => JSON.parse(l.result).ok)).toEqual([false, false]);
     expect(logRows[0].document_id).toBeNull();
   });
 

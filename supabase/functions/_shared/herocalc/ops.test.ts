@@ -98,10 +98,18 @@ describe("guard", () => {
     expect(await draftHash(a)).toBe(await draftHash(structuredClone(a)));
     expect(await draftHash(a)).toMatch(/^[0-9a-f]{64}$/);
   });
-  it("mehrere Leistungen/Tabellen und Festpreis werden beim Schreiben abgelehnt", () => {
+  it("mehrere Leistungen sind freigegeben: Summen addieren sich über beide Leistungen", () => {
     const two = base();
-    two.data.items[0].items.push(structuredClone(two.data.items[0].items[0]));
-    expect(() => applyCommand(two, { cmd: "set_quantity", position_uid: "u1", quantity: 2 })).toThrow(/Mehrere Leistungen/);
+    const second = structuredClone(two.data.items[0].items[0]);
+    second.uid = "u2";
+    two.data.items[0].items.push(second);
+    recalcDraft(two);
+    const r = applyCommand(two, { cmd: "set_quantity", position_uid: "u1", quantity: 2 });
+    expect([r.before.vk, r.after.vk]).toEqual([336, 504]);
+    expect(r.draft.data.items[0].totals.net).toBe(504);
+    expect(r.draft.data.items[0].items[1].quantity).toBe(1);
+  });
+  it("Festpreis und eigener Preis werden beim Schreiben abgelehnt", () => {
     const fixed = base();
     fixed.data.items[0].items[0].is_fixed_net_price = true;
     expect(() => applyCommand(fixed, { cmd: "set_quantity", position_uid: "u1", quantity: 2 })).toThrow(/Festpreis/);

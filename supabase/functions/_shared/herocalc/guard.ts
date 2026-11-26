@@ -37,10 +37,11 @@ export async function assertUnchanged(read: any, fresh: any): Promise<void> {
 }
 
 /**
- * Noch nicht live geprüfte Fälle werden beim Schreiben abgelehnt (Nachbesserung Abschnitt 5: nicht raten).
+ * Mehrere Leistungen: live belegt (WER-1984, 2 Leistungen, Menge 3, Vergleich mit der HERO-Oberfläche:
+ * VK, EK, MwSt, Brutto, Aufschlag identisch). Festpreis: noch nicht belegt -> gesperrt.
  * Erst auf true setzen, wenn der Fall von Hand in HERO nachgebaut und verglichen wurde.
  */
-export const SUPPORT = { multipleServices: false, fixedPrice: false } as const;
+export const SUPPORT = { multipleServices: true, fixedPrice: false } as const;
 
 export function assertSupportedStructure(draft: any): void {
   const tables = (draft.data?.items ?? []).filter((t: any) => t.type === "table");

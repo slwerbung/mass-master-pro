@@ -112,8 +112,16 @@ export async function createDraft(gql: Gql, projectMatchId: number, services: an
   return { documentId: fresh[0], returnedId: Number(res?.create_document?.id) };
 }
 
-async function logOffer(sb: any, row: Record<string, unknown>) {
-  try { await sb.from("hero_offer_log").insert(row); } catch { /* Protokoll darf nichts verdecken */ }
+/**
+ * Protokoll in hero_offer_log. Die Tabelle hat den Aufbau (caller, project_nr, document_id, result text):
+ * alles Weitere (command, ok, project_match_id, Ergebnis) steht als JSON in `result`.
+ */
+async function logOffer(sb: any, row: { caller: string; project_nr: string; document_id: number | null; result: Record<string, unknown> }) {
+  try {
+    await sb.from("hero_offer_log").insert({
+      caller: row.caller, project_nr: row.project_nr, document_id: row.document_id, result: JSON.stringify(row.result),
+    });
+  } catch { /* Protokoll darf nichts verdecken */ }
 }
 
 export interface OfferOptions {
@@ -139,7 +147,10 @@ export async function createOffer(ctx: Ctx, gql: Gql, p: any, opts: OfferOptions
 
   opts.projectGuard?.(project);
   const log = (ok: boolean, documentId: number | null, result: Record<string, unknown>) =>
-    logOffer(ctx.supabase, { caller: ctx.caller, command: opts.logCommand ?? "create_offer", project_nr: project.project_nr, project_match_id: Number(project.id), document_id: documentId, ok, result });
+    logOffer(ctx.supabase, {
+      caller: ctx.caller, project_nr: project.project_nr, document_id: documentId,
+      result: { command: opts.logCommand ?? "create_offer", ok, project_match_id: Number(project.id), ...result },
+    });
 
   let created: { documentId: number; returnedId: number };
   try {
