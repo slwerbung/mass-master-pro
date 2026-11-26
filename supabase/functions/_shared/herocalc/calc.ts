@@ -37,7 +37,7 @@ export function recalcWage(p: any): Line {
 
 export interface Totals {
   vk: number; ek: number; minutes: number; wageVk: number; wageEk: number;
-  materialVk: number; materialEk: number;
+  materialVk: number; materialEk: number; discount: number;
 }
 
 export function recalcService(s: any): Totals {
@@ -45,14 +45,22 @@ export function recalcService(s: any): Totals {
     // Mengenfaktor der Leistung ist laut Spec 5.3 noch nicht getestet -> nicht raten.
     throw new Error(`Leistung ${s.uid}: quantity ${s.quantity} != 1 ist noch nicht unterstützt`);
   }
-  const t: Totals = { vk: 0, ek: 0, minutes: 0, wageVk: 0, wageEk: 0, materialVk: 0, materialEk: 0 };
+  const t: Totals = { vk: 0, ek: 0, minutes: 0, wageVk: 0, wageEk: 0, materialVk: 0, materialEk: 0, discount: 0 };
   for (const p of s.positions ?? []) {
     const l = p.atType === 'WageGroup' ? recalcWage(p) : recalcMaterial(p);
     t.vk += l.vk; t.ek += l.ek; t.minutes += l.minutes;
     if (l.isWage) { t.wageVk += l.vk; t.wageEk += l.ek; } else { t.materialVk += l.vk; t.materialEk += l.ek; }
   }
   for (const k of Object.keys(t) as (keyof Totals)[]) t[k] = round2(t[k]);
+  // Positionsrabatt in Prozent (live belegt, Spec 5.2): service.sales = Rabatt %.
+  // net_price_per_unit bleibt der Preis VOR Rabatt; Aufschlag, Lohn-VK und alle Summen gelten nach Rabatt.
   s.net_price_per_unit = t.vk;
+  const f = 1 - (Number(s.sales) || 0) / 100;
+  const vkNet = round2(t.vk * f);
+  t.discount = round2(t.vk - vkNet);
+  t.wageVk = round2(t.wageVk * f);
+  t.materialVk = round2(t.materialVk * f);
+  t.vk = vkNet;
   s.base_price = t.ek;
   s.marge = pct(t.vk, t.ek);
   s.time_minutes = t.minutes;
@@ -67,11 +75,11 @@ const vatOf = (s: any): number => Number(s.vat_percent ?? 19);
 export function recalcDraft(draft: any) {
   const data = draft.data;
   const byVat = new Map<number, { net: number; base: number; wage: number }>();
-  const sum = { vk: 0, ek: 0, minutes: 0, wageVk: 0, wageEk: 0, materialVk: 0, materialEk: 0 };
+  const sum = { vk: 0, ek: 0, minutes: 0, wageVk: 0, wageEk: 0, materialVk: 0, materialEk: 0, discount: 0 };
 
   for (const table of data.items ?? []) {
     if (table.type !== 'table') continue;
-    const tt = { vk: 0, ek: 0, minutes: 0, wageVk: 0, wageEk: 0 };
+    const tt = { vk: 0, ek: 0, minutes: 0, wageVk: 0, wageEk: 0, discount: 0 };
     const tVk: Record<string, number> = {}, tEk: Record<string, number> = {}, tWageVat: Record<string, number> = {};
     for (const s of table.items ?? []) {
       const t = recalcService(s);
@@ -80,29 +88,32 @@ export function recalcDraft(draft: any) {
       e.net += t.vk; e.base += t.ek; e.wage += t.wageVk;
       byVat.set(v, e);
       tVk[v] = (tVk[v] ?? 0) + t.vk; tEk[v] = (tEk[v] ?? 0) + t.ek; tWageVat[v] = (tWageVat[v] ?? 0) + t.wageVk * (v / 100);
-      tt.vk += t.vk; tt.ek += t.ek; tt.minutes += t.minutes; tt.wageVk += t.wageVk; tt.wageEk += t.wageEk;
+      tt.vk += t.vk; tt.ek += t.ek; tt.minutes += t.minutes; tt.wageVk += t.wageVk; tt.wageEk += t.wageEk; tt.discount += t.discount;
       for (const k of Object.keys(sum) as (keyof typeof sum)[]) sum[k] += (t as any)[k];
     }
     table.total_sum = round2(tt.vk);
     table.totalTime = tt.minutes;
     table.totalBasePrice = round2(tt.ek);
     table.totalWageCosts = round2(tt.wageVk);
+    table.totalSales = round2(tt.discount);
     table.total = Object.fromEntries(Object.entries(tVk).map(([k, v]) => [k, round2(v)]));
     table.totalBaseVat = Object.fromEntries(Object.entries(tEk).map(([k, v]) => [k, round2(v)]));
     table.totalWageVat = round2(Object.values(tWageVat).reduce((a, b) => a + b, 0));
   }
 
   const net = round2(sum.vk);
-  const vat = round2([...byVat].reduce((a, [v, e]) => a + e.net * (v / 100), 0));
+  // Live: totals.vat ungerundet (28.728), data.total_vat auf 2 Stellen (28.73).
+  const vatExact = round4([...byVat].reduce((a, [v, e]) => a + e.net * (v / 100), 0));
+  const vat = round2(vatExact);
   data.totals = {
     ...(data.totals ?? {}),
     base: round2(sum.ek), net, time: sum.minutes,
     wage: round2(sum.wageVk), wage_base: round2(sum.wageEk),
-    material: round2(sum.materialVk), material_base: round2(sum.materialEk),
+    material: round2(sum.materialVk), material_base: round2(sum.materialEk), sales: round2(sum.discount),
     byVat: [...byVat].map(([v, e]) => ({ vat: v, net: round2(e.net), base: round2(e.base), wage: round2(e.wage) })),
-    vat,
+    vat: vatExact,
   };
-  data.total_price = round2(net + vat);
+  data.total_price = net; // live: total_price == Netto (nicht Brutto)
   data.total_vat = vat;
   if ("value" in draft) draft.value = net; // live: value == Netto
 
@@ -114,6 +125,6 @@ export function summarize(draft: any) {
   const t = draft.data.totals;
   return {
     ek: t.base, vk: t.net, aufschlag_pct: pct(t.net, t.base),
-    netto: t.net, mwst: draft.data.total_vat, brutto: draft.data.total_price,
+    netto: t.net, mwst: draft.data.total_vat, brutto: round2(t.net + draft.data.total_vat),
   };
 }

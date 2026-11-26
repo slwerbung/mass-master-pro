@@ -42,4 +42,18 @@ describe("recalcDraft (Spec 2.4)", () => {
     (d.data.items[0].items[0] as any).quantity = 2;
     expect(() => recalcDraft(d)).toThrow(/nicht unterstützt/);
   });
+
+  it("Positionsrabatt 10 % (live: 168 -> 151,20)", () => {
+    const d = draft([material(), wage(90)]);
+    (d.data.items[0].items[0] as any).sales = 10;
+    expect(recalcDraft(d)).toEqual({ ek: 63.6, vk: 151.2, aufschlag_pct: 137.74, netto: 151.2, mwst: 28.73, brutto: 179.93 });
+    const s = d.data.items[0].items[0] as any;
+    expect([s.net_price_per_unit, s.marge, s.wage_costs, s.wage_base]).toEqual([168, 137.74, 97.2, 33.6]);
+    const t = d.data.items[0] as any;
+    expect([t.total_sum, t.totalSales, t.totalWageCosts, t.totalWageVat]).toEqual([151.2, 16.8, 97.2, 18.47]);
+    const totals = (d.data as any).totals;
+    expect([totals.sales, totals.material, totals.wage, totals.vat]).toEqual([16.8, 54, 97.2, 28.728]);
+    expect((d.data as any).total_price).toBe(151.2);
+    expect((d.data as any).total_vat).toBe(28.73);
+  });
 });
