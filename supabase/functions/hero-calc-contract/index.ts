@@ -2,9 +2,11 @@
 // Aufruf: pg_cron mit Header x-poll-secret (= app_config.hero_calc_poll_secret), Body { mode: "contract" | "selftest" }.
 // Läuft NUR gegen die Test-Entwürfe in WER-1984 (hart verdrahtet in _shared/herocalc/contract.ts), nur Entwürfe,
 // stellt jeden Entwurf danach wieder her. Ergebnis immer HTTP 200 { ok, data: { mode, steps } } und in hero_calc_contract_log.
-// Schlägt der Vertragstest fehl, hat HERO den internen Endpoint (Edit-Seite / ajax_save) geändert.
+// Schlägt der Vertragstest fehl, hat HERO den internen Endpoint (Edit-Seite / ajax_save) geändert: dann Alarm
+// (Push an Admin-Geräte der Mail-App + Mail an info@slwerbung.de, höchstens einmal je 24 h, siehe _shared/herocalc/alert.ts).
 import { createClient } from "@supabase/supabase-js";
 import { allOk, runContract, runSelftest } from "../_shared/herocalc/contract.ts";
+import { alertOnFailure } from "../_shared/herocalc/alert.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,8 +42,13 @@ Deno.serve(async (req) => {
     const steps = mode === "contract" ? await runContract(ctx) : await runSelftest(ctx);
     const ok = allOk(steps);
     // Protokoll (ohne Key); ein Fehler beim Protokollieren darf das Ergebnis nicht verdecken
-    await supabase.from("hero_calc_contract_log").insert({ mode, ok, detail: { steps } }).then(() => {}, () => {});
-    return reply({ ok, data: { mode, steps } });
+    const { data: logRow } = await supabase.from("hero_calc_contract_log").insert({ mode, ok, detail: { steps } }).select("id").single()
+      .then((r: any) => r, () => ({ data: null }));
+    // Alarm nur für den Nachttest (nicht für manuelle Selbsttests), höchstens einmal je 24 h
+    const alert = mode === "contract"
+      ? await alertOnFailure(supabase, logRow?.id ?? null, mode, steps, { resendKey: Deno.env.get("RESEND_API_KEY") })
+      : null;
+    return reply({ ok, data: { mode, steps, alert } });
   } catch (e) {
     return reply({ ok: false, error: e instanceof Error ? e.message : "Unbekannter Fehler" });
   }
