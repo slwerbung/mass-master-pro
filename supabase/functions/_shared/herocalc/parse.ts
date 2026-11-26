@@ -21,8 +21,8 @@ export function extractJsonObject(src: string, start: number): string {
   throw new Error("JSON-Objekt in der Edit-Seite nicht abgeschlossen");
 }
 
-/** Gibt den Draft zurück oder wirft eine klare Fehlermeldung. `expectedDocumentId` schützt vor falscher Seite. */
-export function parseDraftFromEditHtml(html: string, expectedDocumentId?: number): any {
+/** Gibt Draft und document (z. B. project_match_id) zurück oder wirft eine klare Fehlermeldung. */
+export function parseEditPage(html: string, expectedDocumentId?: number): { draft: any; document: any } {
   const marker = '"DocumentStore":';
   const idx = html.indexOf(marker);
   if (idx < 0) throw new Error("Edit-Seite enthält keinen DocumentStore (Login/Header/Format geändert?)");
@@ -38,5 +38,10 @@ export function parseDraftFromEditHtml(html: string, expectedDocumentId?: number
   if (expectedDocumentId !== undefined && Number(draft.customer_document_id) !== expectedDocumentId) {
     throw new Error(`Draft gehört zu Dokument ${draft.customer_document_id}, erwartet ${expectedDocumentId}`);
   }
-  return draft;
+  return { draft, document: store.document ?? null };
+}
+
+/** Wie parseEditPage, aber nur der Draft. `expectedDocumentId` schützt vor falscher Seite. */
+export function parseDraftFromEditHtml(html: string, expectedDocumentId?: number): any {
+  return parseEditPage(html, expectedDocumentId).draft;
 }
