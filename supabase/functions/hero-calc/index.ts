@@ -4,7 +4,7 @@
 // Auth: adminToken UND employeeToken sind gewollt (jeder signierte Admin-/Mitarbeiter-Token).
 // Schreiben: Sperre je Dokument (30 s) + Hash-/modified-Prüfung gegen parallele Änderungen (siehe _shared/herocalc/service.ts).
 // Actions: get (include_draft?), set_wage_minutes, set_material, set_quantity, set_discount, add_position,
-//          remove_position, undo (undo_id?).
+//          remove_position, recalc (alle Summen neu rechnen, z. B. nach create_document), undo (undo_id?).
 import { createClient } from "@supabase/supabase-js";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import type { Command } from "../_shared/herocalc/ops.ts";
@@ -18,7 +18,7 @@ const corsHeaders = {
 const reply = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-const WRITE_CMDS = new Set(["set_wage_minutes", "set_material", "set_discount", "set_quantity", "add_position", "remove_position"]);
+const WRITE_CMDS = new Set(["set_wage_minutes", "set_material", "set_discount", "set_quantity", "add_position", "remove_position", "recalc"]);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });

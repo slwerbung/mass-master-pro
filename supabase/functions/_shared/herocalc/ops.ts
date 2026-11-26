@@ -8,7 +8,8 @@ export type Command =
   | { cmd: "set_quantity"; position_uid: string; quantity: number }
   | { cmd: "set_discount"; position_uid: string; percent?: number; amount?: number }
   | { cmd: "add_position"; position_uid: string; position: Record<string, unknown> }
-  | { cmd: "remove_position"; position_uid: string; atType: "SupplyProduct" | "WageGroup"; id: string | number };
+  | { cmd: "remove_position"; position_uid: string; atType: "SupplyProduct" | "WageGroup"; id: string | number }
+  | { cmd: "recalc" };
 
 const same = (a: unknown, b: unknown) => String(a) === String(b);
 const num = (v: unknown, name: string, min = 0) => {
@@ -39,9 +40,13 @@ export function applyCommand(original: any, c: Command) {
   assertSupportedStructure(original);
   const draft = structuredClone(original);
   const before = summarize(original);
-  const service = findService(draft, c.position_uid);
+  // recalc ändert keine Eingabe, rechnet nur alle Summen neu (z. B. nach create_document, wo HERO EK/Aufschlag nicht mitrechnet).
+  const service: any = c.cmd === "recalc" ? null : findService(draft, c.position_uid);
 
   switch (c.cmd) {
+    case "recalc": {
+      break;
+    }
     case "set_wage_minutes": {
       findPosition(service, "WageGroup", c.wage_group_id).quantity = num(c.minutes, "minutes");
       break;

@@ -1,9 +1,16 @@
 // Rechenkern für HERO-Detailkalkulationen (Spec 2.4). Reine Funktionen, keine I/O, kein Deno-spezifischer Code.
 // Das HERO-Frontend rechnet, der Server nicht: alle Summen müssen hier konsistent gesetzt werden.
 
-export const round2 = (x: number): number => Math.round((x + Number.EPSILON) * 100) / 100;
+// Live belegt: HERO rundet 9.405 auf 9.41. Binär ist 9.405*100 = 940.4999999999999, daher erst auf 12
+// signifikante Stellen glätten, dann kaufmännisch runden.
+const roundTo = (x: number, digits: number): number => {
+  const f = Math.pow(10, digits);
+  return Math.round(Number((x * f).toPrecision(12))) / f;
+};
 
-export const round4 = (x: number): number => Math.round((x + Number.EPSILON) * 10000) / 10000;
+export const round2 = (x: number): number => roundTo(x, 2);
+
+export const round4 = (x: number): number => roundTo(x, 4);
 
 const pct = (vk: number, ek: number): number => (ek === 0 ? 0 : round2(((vk - ek) / ek) * 100));
 
@@ -14,11 +21,14 @@ export interface Line {
   isWage: boolean;
 }
 
-/** Materialzeile: VK = q*net_price_per_unit, EK = q*base_price. Mutiert die Position. */
+/**
+ * Materialzeile: VK = q*net_price_per_unit (je Zeile auf 2 Stellen, live belegt an 13 HERO-Positionen),
+ * EK = q*base_price (auf 4 Stellen, live belegt: HERO speichert EK 85.7732). Mutiert die Position.
+ */
 export function recalcMaterial(p: any): Line {
   const q = Number(p.quantity);
   const vk = round2(q * Number(p.net_price_per_unit));
-  const ek = round2(q * Number(p.base_price));
+  const ek = round4(q * Number(p.base_price));
   p.marge = pct(vk, ek);
   return { vk, ek, minutes: 0, isWage: false };
 }
@@ -40,6 +50,10 @@ export interface Totals {
   materialVk: number; materialEk: number; discount: number;
 }
 
+// EK-Summen werden auf 4 Stellen gehalten (wie HERO), alle anderen auf 2.
+const EK4 = new Set<string>(["ek", "materialEk"]);
+const roundTotal = (k: string, v: number): number => (EK4.has(k) ? round4(v) : round2(v));
+
 export function recalcService(s: any): Totals {
   // Menge der Leistung (live belegt, Spec 5.3): Felder an der Leistung bleiben je EINE Einheit
   // (net_price_per_unit, base_price, wage_costs, wage_base, time_minutes); Tabelle und Dokument rechnen Menge * Einheit.
@@ -55,7 +69,7 @@ export function recalcService(s: any): Totals {
     t.vk += l.vk; t.ek += l.ek; t.minutes += l.minutes;
     if (l.isWage) { t.wageVk += l.vk; t.wageEk += l.ek; } else { t.materialVk += l.vk; t.materialEk += l.ek; }
   }
-  for (const k of Object.keys(t) as (keyof Totals)[]) t[k] = round2(t[k]);
+  for (const k of Object.keys(t) as (keyof Totals)[]) t[k] = roundTotal(k, t[k]);
   // Positionsrabatt in Prozent (live belegt, Spec 5.2): service.sales = Rabatt %.
   // net_price_per_unit bleibt der Preis VOR Rabatt; Aufschlag, Lohn-VK und alle Summen gelten nach Rabatt.
   s.net_price_per_unit = t.vk;
@@ -72,7 +86,7 @@ export function recalcService(s: any): Totals {
   s.wage_base = t.wageEk;
   if (q === 1) return t;
   const scaled = { ...t };
-  for (const k of Object.keys(scaled) as (keyof Totals)[]) scaled[k] = round2(t[k] * q);
+  for (const k of Object.keys(scaled) as (keyof Totals)[]) scaled[k] = roundTotal(k, t[k] * q);
   return scaled;
 }
 
@@ -82,14 +96,14 @@ type VatMap = Map<number, { net: number; base: number; wage: number }>;
 type Sum = Pick<Totals, "vk" | "ek" | "minutes" | "wageVk" | "wageEk" | "materialVk" | "materialEk" | "discount">;
 const emptySum = (): Sum => ({ vk: 0, ek: 0, minutes: 0, wageVk: 0, wageEk: 0, materialVk: 0, materialEk: 0, discount: 0 });
 
-/** Summenobjekt im Format von data.totals UND table.totals (live: vat ungerundet, 4 Stellen gegen Rauschen). */
+/** Summenobjekt im Format von data.totals UND table.totals (live: vat ungerundet, 4 Stellen gegen Rauschen; EK 4 Stellen). */
 function mkTotals(sum: Sum, byVat: VatMap) {
   const vat = round4([...byVat].reduce((a, [v, e]) => a + e.net * (v / 100), 0));
   return {
-    base: round2(sum.ek), net: round2(sum.vk), time: sum.minutes,
+    base: round4(sum.ek), net: round2(sum.vk), time: sum.minutes,
     wage: round2(sum.wageVk), wage_base: round2(sum.wageEk),
-    material: round2(sum.materialVk), material_base: round2(sum.materialEk), sales: round2(sum.discount),
-    byVat: [...byVat].map(([v, e]) => ({ vat: v, net: round2(e.net), base: round2(e.base), wage: round2(e.wage) })),
+    material: round2(sum.materialVk), material_base: round4(sum.materialEk), sales: round2(sum.discount),
+    byVat: [...byVat].map(([v, e]) => ({ vat: v, net: round2(e.net), base: round4(e.base), wage: round2(e.wage) })),
     vat,
   };
 }
@@ -118,11 +132,11 @@ export function recalcDraft(draft: any) {
     }
     table.total_sum = round2(tSum.vk);
     table.totalTime = tSum.minutes;
-    table.totalBasePrice = round2(tSum.ek);
+    table.totalBasePrice = round4(tSum.ek);
     table.totalWageCosts = round2(tSum.wageVk);
     table.totalSales = round2(tSum.discount);
     table.total = Object.fromEntries(Object.entries(tVk).map(([k, v]) => [k, round2(v)]));
-    table.totalBaseVat = Object.fromEntries(Object.entries(tEk).map(([k, v]) => [k, round2(v)]));
+    table.totalBaseVat = Object.fromEntries(Object.entries(tEk).map(([k, v]) => [k, round4(v)]));
     table.totalWageVat = round2(Object.values(tWageVat).reduce((a, b) => a + b, 0));
     // Nachbesserung: auch table.totals (Rest wie netOptional/margin bleibt erhalten)
     table.totals = { ...(table.totals ?? {}), ...mkTotals(tSum, tVat) };
