@@ -1,9 +1,9 @@
 # Projekte – Phase 4: HERO-Arbeitsmodus
 
 ## Ablauf (Projekt-Karten)
-1. **„In HERO erledigen“** (Hauptaktion bei Regeln mit Weg `hero`, sonst als zusätzlicher Knopf) → `project-action` `lock_for_hero`: Karte wird **30 Minuten gesperrt** (`state = in_hero`, `locked_by`, `locked_until`), der **Vorher-Stand** des Projekts (Status + Dokumente) kommt frisch aus HERO in `hero_tasks.before`. HERO öffnet sich in einem **neuen Tab** (im Klick vorab geöffnet, sonst blockiert der Browser ihn). Kein iframe – HERO blockiert das.
+1. **„In HERO erledigen“** (Hauptaktion bei Regeln mit Weg `hero`, sonst als zusätzlicher Knopf) → `project-action` `lock_for_hero`: Karte wird **30 Minuten gesperrt** (`state = in_hero`, `locked_by`, `locked_until`), der **Vorher-Stand** des Projekts (Status + Dokumente) kommt frisch aus HERO in `hero_tasks.before`. HERO öffnet sich als **Arbeitsfenster innerhalb der App** (Vollbild-Overlay mit eingebettetem HERO, Leiste mit „Fertig“, Checkliste daneben). Erlaubt HERO die Einbettung nicht (leere Fläche), gibt es „Neuer Tab“; nur dann greift die Rückkehr-Erkennung per `visibilitychange`. Während die Karte in HERO ist, sind Abschließen, Wiedervorlage, Archivieren usw. ausgeblendet; es bleiben „HERO-Fenster öffnen“ und „Fertig“.
 2. Die Karte zeigt die **Checkliste** der Aufgabe (Haken bleiben im Browser). Andere sehen „Gerade von … in HERO bearbeitet“, der Start ist für sie gesperrt.
-3. **Rückkehr:** Wechselt der Tab zurück nach vorn (`visibilitychange`), fragt ein Dialog **Erledigt / Teilweise / Problem**. Auch manuell über „Zurück aus HERO“.
+3. **Fertig:** Der Knopf „Fertig“ (im Fenster oder an der Karte) öffnet den Dialog **Erledigt / Noch nicht fertig / Problem**.
 4. `hero-task-callback` speichert das Ergebnis. Bei **Erledigt** liest die Function das Projekt **neu aus HERO** (nur lesen) und vergleicht mit dem Vorher-Stand:
 
    | Aufgabe (Regel) | gilt als erledigt, wenn … |
@@ -20,7 +20,7 @@
 Abgelaufene Sperren gibt ein pg_cron-Job (`project_release_hero_locks`, alle 5 Min, reines SQL) wieder frei.
 
 ## Mail-Karten („Zu entscheiden“)
-In der Karte eines Themas mit Projekt gibt es **„In HERO erledigen …“**: Aufgabe wählen (AB erstellen, Angebot erstellen, Angebot fertigstellen, etwas anderes) → `lock_for_hero` mit `kind` und `threadId` (Postfach-Zugriff und Projekt-Zugehörigkeit des Themas werden geprüft) → HERO in neuem Tab → Rückkehr → derselbe Abgleich. **Gelingt er, wird das Thema abgeschlossen** („abgelegt“, `decideTopic` mit Etikett „AB erstellen in HERO erledigt“); sonst bleibt es offen. Die Aufgabe hängt am Thema (`hero_tasks.email_id`); gibt es zum Projekt eine offene Projekt-Karte, wird sie mitgesperrt. Die Projekt-Karte „AB fehlt“ verschwindet beim nächsten Sync von selbst, sobald die AB in HERO da ist (daraus wird bei Bedarf „Termine anlegen“). Die offene Aufgabe zu einem Thema liefert `project-api` `topic_task` (nur eigene, höchstens 24 h alt).
+In der Karte eines Themas mit Projekt gibt es **„In HERO erledigen …“**: Aufgabe wählen (AB erstellen, Angebot erstellen, Angebot fertigstellen, etwas anderes) → `lock_for_hero` mit `kind` und `threadId` (Postfach-Zugriff und Projekt-Zugehörigkeit des Themas werden geprüft) → HERO-Fenster in der App → Fertig → derselbe Abgleich. **Gelingt er, wird das Thema abgeschlossen** („abgelegt“, `decideTopic` mit Etikett „AB erstellen in HERO erledigt“); sonst bleibt es offen. Die Aufgabe hängt am Thema (`hero_tasks.email_id`); gibt es zum Projekt eine offene Projekt-Karte, wird sie mitgesperrt. Die Projekt-Karte „AB fehlt“ verschwindet beim nächsten Sync von selbst, sobald die AB in HERO da ist (daraus wird bei Bedarf „Termine anlegen“). Die offene Aufgabe zu einem Thema liefert `project-api` `topic_task` (nur eigene, höchstens 24 h alt).
 
 ## Checklisten
 `app_config.projects_checklists` (JSON je Aufgabe: Name + Punkte), pflegbar im Adminmenü → Projekte → „Checklisten“ (`project-api` `save_checklist`, nur Admin). Fehlende Einträge fallen auf die Standardwerte in `_shared/projects/heroTask.ts` zurück.
