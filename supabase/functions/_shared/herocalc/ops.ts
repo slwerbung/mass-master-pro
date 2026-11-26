@@ -4,6 +4,7 @@ import { recalcDraft, recalcService, round4, summarize } from "./calc.ts";
 export type Command =
   | { cmd: "set_wage_minutes"; position_uid: string; wage_group_id: string | number; minutes: number }
   | { cmd: "set_material"; position_uid: string; product_id: string | number; quantity: number; vk_per_unit?: number }
+  | { cmd: "set_quantity"; position_uid: string; quantity: number }
   | { cmd: "set_discount"; position_uid: string; percent?: number; amount?: number }
   | { cmd: "add_position"; position_uid: string; position: Record<string, unknown> }
   | { cmd: "remove_position"; position_uid: string; atType: "SupplyProduct" | "WageGroup"; id: string | number };
@@ -47,6 +48,12 @@ export function applyCommand(original: any, c: Command) {
       const p = findPosition(service, "SupplyProduct", c.product_id);
       p.quantity = num(c.quantity, "quantity");
       if (c.vk_per_unit !== undefined) p.net_price_per_unit = num(c.vk_per_unit, "vk_per_unit");
+      break;
+    }
+    case "set_quantity": {
+      const q = num(c.quantity, "quantity");
+      if (q <= 0) throw new Error("quantity muss größer als 0 sein");
+      service.quantity = q;
       break;
     }
     case "set_discount": {

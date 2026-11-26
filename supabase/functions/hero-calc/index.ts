@@ -43,7 +43,7 @@ async function saveDraft(apiKey: string, draft: any): Promise<any> {
   return await resp.json();
 }
 
-const WRITE_CMDS = new Set(["set_wage_minutes", "set_material", "set_discount", "add_position", "remove_position"]);
+const WRITE_CMDS = new Set(["set_wage_minutes", "set_material", "set_discount", "set_quantity", "add_position", "remove_position"]);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });

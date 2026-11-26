@@ -52,6 +52,13 @@ describe("applyCommand", () => {
     const d = applyCommand(base(), { cmd: "set_discount", position_uid: "u1", percent: 10 }).draft;
     expect(applyCommand(d, { cmd: "set_discount", position_uid: "u1", percent: 0 }).after.vk).toBe(168);
   });
+  it("set_quantity 2 verdoppelt Summen, 1 stellt zurück; Rabatt+Menge abgelehnt", () => {
+    const r = applyCommand(base(), { cmd: "set_quantity", position_uid: "u1", quantity: 2 });
+    expect([r.before.vk, r.after.vk, r.after.ek, r.draft.value]).toEqual([168, 336, 127.2, 336]);
+    expect(applyCommand(r.draft, { cmd: "set_quantity", position_uid: "u1", quantity: 1 }).after.vk).toBe(168);
+    expect(() => applyCommand(r.draft, { cmd: "set_discount", position_uid: "u1", percent: 10 })).toThrow(/Rabatt bei quantity/);
+    expect(() => applyCommand(base(), { cmd: "set_quantity", position_uid: "u1", quantity: 0 })).toThrow(/größer als 0/);
+  });
   it("remove_position / add_position", () => {
     const r = applyCommand(base(), { cmd: "remove_position", position_uid: "u1", atType: "WageGroup", id: 6824 });
     expect(r.after.vk).toBe(60);

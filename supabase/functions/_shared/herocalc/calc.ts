@@ -41,9 +41,13 @@ export interface Totals {
 }
 
 export function recalcService(s: any): Totals {
-  if (Number(s.quantity ?? 1) !== 1) {
-    // Mengenfaktor der Leistung ist laut Spec 5.3 noch nicht getestet -> nicht raten.
-    throw new Error(`Leistung ${s.uid}: quantity ${s.quantity} != 1 ist noch nicht unterstützt`);
+  // Menge der Leistung (live belegt, Spec 5.3): Felder an der Leistung bleiben je EINE Einheit
+  // (net_price_per_unit, base_price, wage_costs, wage_base, time_minutes); Tabelle und Dokument rechnen Menge * Einheit.
+  const q = Number(s.quantity ?? 1);
+  if (!Number.isFinite(q) || q <= 0) throw new Error(`Leistung ${s.uid}: quantity ${s.quantity} ungültig`);
+  if (q !== 1 && Number(s.sales) > 0) {
+    // Rabatt zusammen mit Menge > 1 ist nicht getestet -> nicht raten.
+    throw new Error(`Leistung ${s.uid}: Rabatt bei quantity ${q} != 1 ist noch nicht unterstützt`);
   }
   const t: Totals = { vk: 0, ek: 0, minutes: 0, wageVk: 0, wageEk: 0, materialVk: 0, materialEk: 0, discount: 0 };
   for (const p of s.positions ?? []) {
@@ -66,7 +70,10 @@ export function recalcService(s: any): Totals {
   s.time_minutes = t.minutes;
   s.wage_costs = t.wageVk;
   s.wage_base = t.wageEk;
-  return t;
+  if (q === 1) return t;
+  const scaled = { ...t };
+  for (const k of Object.keys(scaled) as (keyof Totals)[]) scaled[k] = round2(t[k] * q);
+  return scaled;
 }
 
 const vatOf = (s: any): number => Number(s.vat_percent ?? 19);

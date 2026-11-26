@@ -37,12 +37,25 @@ describe("recalcDraft (Spec 2.4)", () => {
     expect(JSON.stringify(recalcDraft(d))).toBe(a);
     expect(round2(29.999999999999996)).toBe(30);
   });
-  it("Leistung mit quantity != 1 wird abgelehnt", () => {
-    const d = draft([material()]);
+  it("Menge 2 (live: 168 -> 336, Einheitswerte bleiben)", () => {
+    const d = draft([material(), wage(90)]);
     (d.data.items[0].items[0] as any).quantity = 2;
-    expect(() => recalcDraft(d)).toThrow(/nicht unterstützt/);
+    expect(recalcDraft(d)).toEqual({ ek: 127.2, vk: 336, aufschlag_pct: 164.15, netto: 336, mwst: 63.84, brutto: 399.84 });
+    const s = d.data.items[0].items[0] as any;
+    expect([s.net_price_per_unit, s.base_price, s.wage_costs, s.wage_base, s.time_minutes, s.marge]).toEqual([168, 63.6, 108, 33.6, 90, 164.15]);
+    const t = d.data.items[0] as any;
+    expect([t.total_sum, t.totalTime, t.totalBasePrice, t.totalWageCosts, t.totalWageVat]).toEqual([336, 180, 127.2, 216, 41.04]);
+    const totals = (d.data as any).totals;
+    expect([totals.time, totals.wage, totals.wage_base, totals.material, totals.material_base]).toEqual([180, 216, 67.2, 120, 60]);
   });
-
+  it("Menge ungültig oder zusammen mit Rabatt wird abgelehnt (ungetestet)", () => {
+    const d = draft([material()]);
+    (d.data.items[0].items[0] as any).quantity = 0;
+    expect(() => recalcDraft(d)).toThrow(/ungültig/);
+    (d.data.items[0].items[0] as any).quantity = 2;
+    (d.data.items[0].items[0] as any).sales = 5;
+    expect(() => recalcDraft(d)).toThrow(/Rabatt bei quantity/);
+  });
   it("Positionsrabatt 10 % (live: 168 -> 151,20)", () => {
     const d = draft([material(), wage(90)]);
     (d.data.items[0].items[0] as any).sales = 10;
