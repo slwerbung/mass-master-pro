@@ -1,5 +1,6 @@
 // Reine Änderungsoperationen auf einem HERO-Draft (Spec Abschnitt 3). Keine I/O.
 import { recalcDraft, recalcService, round4, summarize } from "./calc.ts";
+import { assertSupportedStructure } from "./guard.ts";
 
 export type Command =
   | { cmd: "set_wage_minutes"; position_uid: string; wage_group_id: string | number; minutes: number }
@@ -35,6 +36,7 @@ const REQUIRED_WAGE = ["id", "quantity", "wage_cost_price", "wage_per_hour", "na
 
 /** Wendet einen Befehl auf eine Kopie an. Vorher = gespeicherte Summen, Nachher = neu gerechnet. */
 export function applyCommand(original: any, c: Command) {
+  assertSupportedStructure(original);
   const draft = structuredClone(original);
   const before = summarize(original);
   const service = findService(draft, c.position_uid);

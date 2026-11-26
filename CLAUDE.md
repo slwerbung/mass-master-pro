@@ -196,6 +196,9 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 - `probo-catalog` – Probo-Reseller-API (`list`/`detail`/`image`-Proxy) für den
   internen Katalog-Generator, verlangt Admin- oder Employee-Token
   (`docs/probo-katalog.md`)
+- `hero-calc` – Detailkalkulation eines HERO-**Entwurfs** ändern (Material, Lohn, Menge, Rabatt, `undo`), verlangt Admin- oder
+  Mitarbeiter-Token, `dry_run` ist Standard, Sperre + Hash-Prüfung + Undo-Sicherung (`docs/hero-calc.md`). Nutzt interne,
+  undokumentierte HERO-Endpunkte; nie auf veröffentlichte Dokumente, nie ungetestete Fälle freischalten
 - `booking-api` – öffentliche Terminbuchung, projektbezogen (`context`/
   `availability`/`create`/`cancel`/`staff-action`). Rechnet Slots immer
   serverseitig, schreibt den Termin am HERO-Projekt (`docs/terminbuchung.md`).

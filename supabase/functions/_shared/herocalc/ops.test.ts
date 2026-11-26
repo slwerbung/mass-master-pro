@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { applyCommand } from "./ops.ts";
 import { recalcDraft } from "./calc.ts";
-import { assertUnchanged, assertWritableDraft } from "./guard.ts";
+import { assertUnchanged, assertWritableDraft, draftHash } from "./guard.ts";
+import { overview } from "./overview.ts";
 
 const base = () => {
   const d: any = {
@@ -83,10 +84,38 @@ describe("guard", () => {
     delete d.data.totals;
     expect(() => assertWritableDraft(d)).toThrow(/totals/);
   });
-  it("Konflikt bei geändertem modified/version", () => {
+  it("Konflikt bei geändertem modified/version", async () => {
     const a = base();
-    expect(() => assertUnchanged(a, { ...a })).not.toThrow();
-    expect(() => assertUnchanged(a, { ...a, modified: "m2" })).toThrow(/geändert/);
-    expect(() => assertUnchanged(a, { ...a, data: { ...a.data, version: 4 } })).toThrow(/geändert/);
+    await expect(assertUnchanged(a, structuredClone(a))).resolves.toBeUndefined();
+    await expect(assertUnchanged(a, { ...a, modified: "m2" })).rejects.toThrow(/geändert/);
+    await expect(assertUnchanged(a, { ...a, data: { ...a.data, version: 4 } })).rejects.toThrow(/geändert/);
+  });
+  it("Konflikt auch ohne Änderung von modified/version (Hash)", async () => {
+    const a = base();
+    const b = structuredClone(a);
+    b.data.items[0].items[0].positions[1].quantity = 91;
+    await expect(assertUnchanged(a, b)).rejects.toThrow(/geändert/);
+    expect(await draftHash(a)).toBe(await draftHash(structuredClone(a)));
+    expect(await draftHash(a)).toMatch(/^[0-9a-f]{64}$/);
+  });
+  it("mehrere Leistungen/Tabellen und Festpreis werden beim Schreiben abgelehnt", () => {
+    const two = base();
+    two.data.items[0].items.push(structuredClone(two.data.items[0].items[0]));
+    expect(() => applyCommand(two, { cmd: "set_quantity", position_uid: "u1", quantity: 2 })).toThrow(/Mehrere Leistungen/);
+    const fixed = base();
+    fixed.data.items[0].items[0].is_fixed_net_price = true;
+    expect(() => applyCommand(fixed, { cmd: "set_quantity", position_uid: "u1", quantity: 2 })).toThrow(/Festpreis/);
+    const custom = base();
+    custom.data.items[0].items[0].is_custom_price = true;
+    expect(() => applyCommand(custom, { cmd: "set_quantity", position_uid: "u1", quantity: 2 })).toThrow(/Festpreis/);
+  });
+});
+
+describe("overview", () => {
+  it("kompakte Übersicht ohne vollen Draft", () => {
+    const o = overview(base());
+    expect(o.summary.vk).toBe(168);
+    expect(o.tables[0].services[0].positions.map((x: any) => x.atType)).toEqual(["SupplyProduct", "WageGroup"]);
+    expect(JSON.stringify(o).length).toBeLessThan(2000);
   });
 });

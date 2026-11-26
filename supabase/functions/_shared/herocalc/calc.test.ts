@@ -69,4 +69,23 @@ describe("recalcDraft (Spec 2.4)", () => {
     expect((d.data as any).total_price).toBe(151.2);
     expect((d.data as any).total_vat).toBe(28.73);
   });
+  it("eine Tabelle: table.totals == data.totals", () => {
+    const d = draft([material(), wage(90)]);
+    (d.data.items[0] as any).totals = { net: 1, netOptional: 7, margin: 3 }; // veralteter Stand
+    recalcDraft(d);
+    const tt = (d.data.items[0] as any).totals;
+    expect(tt).toMatchObject({ ...(d.data as any).totals });
+    expect([tt.netOptional, tt.margin]).toEqual([7, 3]); // Fremdschlüssel bleiben
+    expect([tt.net, tt.time, tt.wage, tt.wage_base, tt.vat]).toEqual([168, 90, 108, 33.6, 31.92]);
+  });
+  it("zwei Tabellen: Summe der table.totals.net == data.totals.net", () => {
+    const d: any = draft([material(), wage(90)]);
+    d.data.items.push({ type: "table", items: [{ atType: "SupplyService", uid: "u2", quantity: 1, vat_percent: 19, positions: [material(3), wage(30)] }] });
+    recalcDraft(d);
+    const [a, b] = d.data.items;
+    expect(a.totals.net + b.totals.net).toBe(d.data.totals.net);
+    expect(a.totals.time + b.totals.time).toBe(d.data.totals.time);
+    expect(a.totals.net).toBe(168);
+    expect(b.totals.net).toBe(126);
+  });
 });
