@@ -3,14 +3,16 @@
 // Schattenmodus); passt es nicht, bleibt sie offen mit Hinweis. Diese Function sendet nie Mails und aendert nichts in HERO
 // ausser dem Logbuch-Eintrag. Gehoert die Aufgabe zu einer Mail-Karte, wird nach bestandenem Abgleich das Thema abgeschlossen.
 //
-//   POST { taskId, result: "done" | "partial" | "problem", note? }  ->  { ok: true, data: { passed, closed, message, changes } }
+//   POST { taskId, result: "done" | "partial" | "problem", note?, force? }  ->  { ok: true, data: { passed, closed, stillOpen?, message, changes } }
+//   „done“ ohne Treffer in HERO laesst Aufgabe und Sperre bestehen (stillOpen); force: true = manuell bestaetigt, ohne Abgleich.
+//   POST { action: "check", taskId }  ->  { ok: true, data: { passed, message, changes, lockedUntil } }  (nur lesen, verlaengert die Sperre)
 
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
 import { addLogbookEntry, heroGraphql, loadHeroKey } from "../_shared/email/hero.ts";
 import { decideTopic } from "../_shared/email/topicsDb.ts";
 import { isShadow } from "../_shared/projects/access.ts";
-import { finishTask, parseChecklists, readProjectState, type TaskResult } from "../_shared/projects/heroTask.ts";
+import { checkNow, finishTask, parseChecklists, readProjectState, type TaskResult } from "../_shared/projects/heroTask.ts";
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -23,15 +25,18 @@ Deno.serve(async (req) => {
     const key = await loadHeroKey(sb);
     if (!key) return fail("HERO ist nicht aktiv (app_config hero_enabled / hero_api_key).");
     const { data: cl } = await sb.from("app_config").select("value").eq("key", "projects_checklists").maybeSingle();
-    const r = await finishTask(sb, {
+    const deps = {
       readState: (id) => readProjectState((k, q, v) => heroGraphql(k, q, v), key, id),
       logbook: (id, text) => addLogbookEntry(key, id, text),
       shadow: await isShadow(sb),
       checklists: parseChecklists(cl?.value),
       // Mail-Karte: nach bestandenem Abgleich wird das Thema abgeschlossen (rein lokal).
       closeTopic: async (threadId, label) => { await decideTopic(sb, threadId, { decision: "erledigt", until: null, note: null, label }); },
-    }, { taskId: String(body.taskId || ""), result: String(body.result || "") as TaskResult, note: body.note, actor: { id: user.id, name: user.name || user.email || "Mitarbeiter", isAdmin: user.role === "admin" } });
-    return ok(r);
+    };
+    const actor = { id: user.id, name: user.name || user.email || "Mitarbeiter", isAdmin: user.role === "admin" };
+    // action "check": Zwischenstand abfragen (nur lesen, verlaengert die Sperre), ohne die Aufgabe zu beenden
+    if (body.action === "check") return ok(await checkNow(sb, deps, { taskId: String(body.taskId || ""), actor }));
+    return ok(await finishTask(sb, deps, { taskId: String(body.taskId || ""), result: String(body.result || "") as TaskResult, note: body.note, force: body.force === true, actor }));
   } catch (e) {
     return fail(String((e as Error)?.message || e).slice(0, 300));
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fakeDb } from "./testdb.ts";
-import { DEFAULT_CHECKLISTS, TaskError, checkTask, finishTask, lockForHero, parseChecklists, snapshotOf, type TaskSnapshot } from "./heroTask.ts";
+import { checkNow, DEFAULT_CHECKLISTS, TaskError, checkTask, finishTask, lockForHero, parseChecklists, snapshotOf, type TaskSnapshot } from "./heroTask.ts";
 
 const snap = (over: Partial<TaskSnapshot> = {}): TaskSnapshot => ({ stepId: 1, stepKey: "planung", stepName: "🚧 Projektplanung", docs: [], at: "2026-11-13T08:00:00Z", ...over });
 const doc = (type: string, status = "Erstellt", nr = "X") => ({ type, status, nr });
@@ -103,16 +103,44 @@ describe("finishTask", () => {
     expect(logs[0]).toContain("AB erstellen in HERO erledigt");
     expect((await db.from("hero_tasks").select("*")).data[0]).toMatchObject({ result: "done" });
   });
-  it("Erledigt ohne Aenderung in HERO: Karte bleibt offen mit Hinweis, kein Logbuch", async () => {
+  it("Erledigt ohne Aenderung in HERO: Aufgabe und Sperre bleiben, kein Logbuch", async () => {
     const db = world(); const logs: string[] = [];
     const taskId = await started(db);
     const r = await finishTask(db, { readState: reader(snap()), logbook: async (_h, t) => { logs.push(t); }, now: NOW }, { taskId, result: "done", actor: me });
-    expect(r).toMatchObject({ passed: false, closed: false });
-    expect(r.message).toContain("bleibt offen");
-    expect((await db.from("project_cards").select("*").eq("id", "c1")).data[0]).toMatchObject({ state: "open", locked_by: null });
+    expect(r).toMatchObject({ passed: false, closed: false, stillOpen: true });
+    expect((await db.from("project_cards").select("*").eq("id", "c1")).data[0]).toMatchObject({ state: "in_hero", locked_by: "u1" });
+    expect((await db.from("hero_tasks").select("*")).data[0].finished_at ?? null).toBe(null);
     expect(logs).toHaveLength(0);
-    const t = (await db.from("hero_tasks").select("*")).data[0];
-    expect(t.check_result.passed).toBe(false);
+  });
+  it("force: manuell bestaetigt, ohne Abgleich, Logbuch nennt es", async () => {
+    const db = world(); const logs: string[] = []; let reads = 0;
+    const taskId = await started(db);
+    const r = await finishTask(db, { readState: async () => { reads++; return snap(); }, logbook: async (_h, t) => { logs.push(t); }, now: NOW }, { taskId, result: "done", force: true, actor: me });
+    expect(r).toMatchObject({ passed: true, closed: true });
+    expect(reads).toBe(0);
+    expect(logs[0]).toContain("manuell bestätigt");
+    expect((await db.from("project_cards").select("*").eq("id", "c1")).data[0]).toMatchObject({ state: "done" });
+  });
+  it("checkNow: meldet den Zwischenstand, verlaengert die Sperre, beendet nichts", async () => {
+    const db = world();
+    const taskId = await started(db);
+    const later = new Date(NOW.getTime() + 20 * 60_000);
+    const miss = await checkNow(db, { readState: reader(snap()), now: later }, { taskId, actor: me });
+    expect(miss.passed).toBe(false);
+    expect(Date.parse(miss.lockedUntil!)).toBe(later.getTime() + 30 * 60_000);
+    const hit = await checkNow(db, { readState: reader(snap({ docs: [doc("confirmation")] })), now: later }, { taskId, actor: me });
+    expect(hit.passed).toBe(true);
+    expect((await db.from("hero_tasks").select("*")).data[0].finished_at ?? null).toBe(null);
+    expect((await db.from("project_cards").select("*").eq("id", "c1")).data[0].state).toBe("in_hero");
+  });
+  it("nach „Noch nicht fertig“ gilt beim naechsten Start der alte Vorher-Stand", async () => {
+    const db = world();
+    const first = await lockForHero(db, { readState: reader(snap()), now: NOW }, { heroId: 100, actor: me });
+    await finishTask(db, { readState: reader(snap()), now: NOW }, { taskId: first.taskId, result: "partial", actor: me });
+    // inzwischen ist die AB da (erste Sitzung): der zweite Anlauf muss sie noch als „neu“ erkennen
+    const second = await lockForHero(db, { readState: reader(snap({ docs: [doc("confirmation")] })), now: NOW }, { heroId: 100, actor: me });
+    const check = await checkNow(db, { readState: reader(snap({ docs: [doc("confirmation")] })), now: NOW }, { taskId: second.taskId, actor: me });
+    expect(check.passed).toBe(true);
   });
   it("Teilweise und Problem geben die Karte frei, ohne HERO zu lesen", async () => {
     for (const result of ["partial", "problem"] as const) {

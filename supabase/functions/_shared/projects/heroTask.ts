@@ -7,6 +7,8 @@ import { stepKey } from "./steps.ts";
 
 export type TaskKind = "create_offer" | "finish_offer" | "create_confirmation" | "complaint" | "generic";
 export const LOCK_MINUTES = 30;
+/** So lange gilt der Vorher-Stand einer abgebrochenen Aufgabe weiter. */
+export const CARRY_DAYS = 3;
 /** Regel -> Aufgabe. Alles andere ist eine allgemeine Aufgabe ("In HERO erledigen"). */
 export const TASK_BY_RULE: Record<string, TaskKind> = {
   anfrage_ohne_angebot: "create_offer", angebot_entwurf: "finish_offer", ab_fehlt: "create_confirmation", reklamation: "complaint",
@@ -142,7 +144,11 @@ export async function lockForHero(sb: any, deps: TaskDeps, a: { heroId: number; 
     return { taskId: open.id, kind: k, label: lists[k].label, checklist: lists[k].items, lockedUntil, reused: true };
   }
 
-  const before = await deps.readState(a.heroId);
+  // Vorher-Stand: nach „Noch nicht fertig“/„Problem“ gilt der ALTE Stand weiter (3 Tage), sonst zaehlt ein Angebot aus der ersten Sitzung beim
+  // zweiten Anlauf nicht mehr als „neu“ und der Abgleich koennte nie bestehen.
+  const since = new Date(now.getTime() - CARRY_DAYS * 86_400_000).toISOString();
+  const { data: prev } = await sb.from("hero_tasks").select("before, task").eq("hero_id", a.heroId).eq("task", kind).in("result", ["partial", "problem"]).gt("finished_at", since).order("finished_at", { ascending: false }).limit(1).maybeSingle();
+  const before: TaskSnapshot | null = (prev?.before as TaskSnapshot | undefined) ?? await deps.readState(a.heroId);
   if (!before) throw new TaskError("Projekt in HERO nicht gefunden.");
   const ins = await sb.from("hero_tasks").insert({
     card_id: card?.id ?? null, email_id: a.threadId ?? null, hero_id: a.heroId, task: kind, checklist: cl.items, before, created_by: a.actor.id, created_by_name: a.actor.name,
@@ -153,10 +159,10 @@ export async function lockForHero(sb: any, deps: TaskDeps, a: { heroId: number; 
 }
 
 export type TaskResult = "done" | "partial" | "problem";
-export interface FinishResult { passed: boolean; closed: boolean; message: string; changes: string[]; warnings?: string[]; topicClosed?: boolean }
+export interface FinishResult { passed: boolean; closed: boolean; stillOpen?: boolean; message: string; changes: string[]; warnings?: string[]; topicClosed?: boolean }
 
 /** Rueckkehr aus HERO: Ergebnis speichern, bei „Erledigt“ in HERO nachpruefen. */
-export async function finishTask(sb: any, deps: TaskDeps, a: { taskId: string; result: TaskResult; note?: string; actor: TaskActor }): Promise<FinishResult> {
+export async function finishTask(sb: any, deps: TaskDeps, a: { taskId: string; result: TaskResult; note?: string; force?: boolean; actor: TaskActor }): Promise<FinishResult> {
   const now = deps.now ?? new Date();
   if (!["done", "partial", "problem"].includes(a.result)) throw new TaskError("Ergebnis: done, partial oder problem.");
   const { data: t } = await sb.from("hero_tasks").select("*").eq("id", a.taskId).maybeSingle();
@@ -180,20 +186,25 @@ export async function finishTask(sb: any, deps: TaskDeps, a: { taskId: string; r
     return { passed: false, closed: false, message, changes: [] };
   }
 
-  const after = await deps.readState(heroId);
-  if (!after) throw new TaskError("Projekt in HERO nicht gefunden.");
-  const check = checkTask(kind, t.before as TaskSnapshot, after);
-  if (!check.passed) {
-    const message = `${check.message} Die Karte bleibt offen – in HERO weitermachen oder „Problem“ melden.`;
-    await release({ check_result: { passed: false, message, note, changes: check.changes } });
-    return { passed: false, closed: false, message, changes: check.changes };
+  let check: TaskCheck;
+  if (a.force) {
+    // Manuell bestaetigt („ist trotzdem erledigt“): kein Abgleich, wird aber im Logbuch so vermerkt.
+    check = { passed: true, message: "Manuell als erledigt bestätigt.", changes: [] };
+  } else {
+    const after = await deps.readState(heroId);
+    if (!after) throw new TaskError("Projekt in HERO nicht gefunden.");
+    check = checkTask(kind, t.before as TaskSnapshot, after);
+    if (!check.passed) {
+      // Aufgabe und Sperre bleiben bestehen: man kann in HERO weitermachen, ohne neu zu starten.
+      return { passed: false, closed: false, stillOpen: true, message: check.message, changes: check.changes };
+    }
   }
 
   const warnings: string[] = [];
   await release({ check_result: { passed: true, message: check.message, note, changes: check.changes } });
   if (t.card_id) await sb.from("project_cards").update({ state: "done", closed_at: now.toISOString(), close_reason: "In HERO erledigt" }).eq("id", t.card_id).eq("state", "open");
   if (deps.logbook && !deps.shadow) {
-    try { await deps.logbook(heroId, `${label} in HERO erledigt (${t.email_id ? "Mail-Ansicht" : "Projekte-Ansicht"}, ${a.actor.name}).${note ? ` ${note}` : ""}`); }
+    try { await deps.logbook(heroId, `${label} in HERO erledigt (${t.email_id ? "Mail-Ansicht" : "Projekte-Ansicht"}, ${a.actor.name}${a.force ? ", manuell bestätigt" : ""}).${note ? ` ${note}` : ""}`); }
     catch (e) { warnings.push(`Logbuch-Eintrag fehlgeschlagen: ${(e as Error).message}`); }
   }
   // Mail-Karte: das Thema ist erledigt, die Mail wird abgelegt (rein lokal, nichts in HERO/Postfach).
@@ -202,6 +213,30 @@ export async function finishTask(sb: any, deps: TaskDeps, a: { taskId: string; r
     try { await deps.closeTopic(String(t.email_id), `${label} in HERO erledigt`); topicClosed = true; }
     catch (e) { warnings.push(`Thema nicht abgeschlossen: ${(e as Error).message}`); }
   }
-  await sb.from("project_actions_log").insert({ user: a.actor.name, action: "hero_task_done", hero_id: heroId, payload: { task: kind, changes: check.changes, note }, shadow: !!deps.shadow, hero_response: { warnings } });
+  await sb.from("project_actions_log").insert({ user: a.actor.name, action: "hero_task_done", hero_id: heroId, payload: { task: kind, changes: check.changes, note, manual: !!a.force }, shadow: !!deps.shadow, hero_response: { warnings } });
   return { passed: true, closed: true, message: check.message, changes: check.changes, ...(topicClosed ? { topicClosed } : {}), ...(warnings.length ? { warnings } : {}) };
+}
+
+export interface CheckNow { passed: boolean; message: string; changes: string[]; lockedUntil: string | null }
+
+/**
+ * Zwischenstand, waehrend HERO offen ist (die App fragt alle ~20 s): liest HERO, gleicht ab, schreibt NICHTS ausser der verlaengerten Sperre.
+ * So merkt die Karte selbst, dass die AB da ist, und die Sperre laeuft nicht mitten in der Arbeit ab.
+ */
+export async function checkNow(sb: any, deps: TaskDeps, a: { taskId: string; actor: TaskActor }): Promise<CheckNow> {
+  const now = deps.now ?? new Date();
+  const { data: t } = await sb.from("hero_tasks").select("*").eq("id", a.taskId).maybeSingle();
+  if (!t) throw new TaskError("Aufgabe nicht gefunden.");
+  if (t.finished_at) throw new TaskError("Diese Aufgabe ist schon abgeschlossen.");
+  if (t.created_by && a.actor.id && t.created_by !== a.actor.id && !a.actor.isAdmin) throw new TaskError("Diese Aufgabe gehört jemand anderem.");
+  const kind = (t.task as TaskKind) in DEFAULT_CHECKLISTS ? (t.task as TaskKind) : "generic";
+  const after = await deps.readState(Number(t.hero_id));
+  if (!after) throw new TaskError("Projekt in HERO nicht gefunden.");
+  const check = checkTask(kind, t.before as TaskSnapshot, after);
+  let lockedUntil: string | null = null;
+  if (t.card_id) {
+    lockedUntil = new Date(now.getTime() + LOCK_MINUTES * 60_000).toISOString();
+    await sb.from("project_cards").update({ locked_until: lockedUntil }).eq("id", t.card_id).eq("state", "in_hero");
+  }
+  return { passed: check.passed, message: check.message, changes: check.changes, lockedUntil };
 }
