@@ -15,6 +15,8 @@ const base = () => {
   return d;
 };
 
+const findSales = (d: any) => d.data.items[0].items[0].sales;
+
 describe("applyCommand", () => {
   it("set_wage_minutes 90 -> 60 liefert Vorher/Nachher und mutiert das Original nicht", () => {
     const d = base();
@@ -27,6 +29,28 @@ describe("applyCommand", () => {
   it("set_material mit neuem VK", () => {
     const r = applyCommand(base(), { cmd: "set_material", position_uid: "u1", product_id: "p1", quantity: 2, vk_per_unit: 40 });
     expect(r.after.vk).toBe(188);
+  });
+  it("set_discount in Prozent und als Betrag (live: 5 € auf 168 € -> 2.9762 %)", () => {
+    const p = applyCommand(base(), { cmd: "set_discount", position_uid: "u1", percent: 10 });
+    expect([p.after.vk, p.after.mwst]).toEqual([151.2, 28.73]);
+    const a = applyCommand(base(), { cmd: "set_discount", position_uid: "u1", amount: 5 });
+    expect(findSales(a.draft)).toBe(2.9762);
+    expect(a.after).toEqual({ ek: 63.6, vk: 163, aufschlag_pct: 156.29, netto: 163, mwst: 30.97, brutto: 193.97 });
+    const s = a.draft.data.items[0].items[0];
+    expect([s.wage_costs, s.marge, s.net_price_per_unit]).toEqual([104.79, 156.29, 168]);
+    expect(a.draft.data.items[0].totalSales).toBe(5);
+    expect(a.draft.data.items[0].totalWageVat).toBe(19.91);
+    expect(a.draft.data.totals.material).toBe(58.21);
+  });
+  it("set_discount: ungültige Eingaben", () => {
+    expect(() => applyCommand(base(), { cmd: "set_discount", position_uid: "u1" })).toThrow(/genau eines/);
+    expect(() => applyCommand(base(), { cmd: "set_discount", position_uid: "u1", percent: 5, amount: 5 })).toThrow(/genau eines/);
+    expect(() => applyCommand(base(), { cmd: "set_discount", position_uid: "u1", amount: 500 })).toThrow(/kleiner/);
+    expect(() => applyCommand(base(), { cmd: "set_discount", position_uid: "u1", percent: 100 })).toThrow(/unter 100/);
+  });
+  it("Rabatt wieder auf 0 setzen stellt den Preis her", () => {
+    const d = applyCommand(base(), { cmd: "set_discount", position_uid: "u1", percent: 10 }).draft;
+    expect(applyCommand(d, { cmd: "set_discount", position_uid: "u1", percent: 0 }).after.vk).toBe(168);
   });
   it("remove_position / add_position", () => {
     const r = applyCommand(base(), { cmd: "remove_position", position_uid: "u1", atType: "WageGroup", id: 6824 });

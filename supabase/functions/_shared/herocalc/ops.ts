@@ -1,9 +1,10 @@
 // Reine Änderungsoperationen auf einem HERO-Draft (Spec Abschnitt 3). Keine I/O.
-import { recalcDraft, summarize } from "./calc.ts";
+import { recalcDraft, recalcService, round4, summarize } from "./calc.ts";
 
 export type Command =
   | { cmd: "set_wage_minutes"; position_uid: string; wage_group_id: string | number; minutes: number }
   | { cmd: "set_material"; position_uid: string; product_id: string | number; quantity: number; vk_per_unit?: number }
+  | { cmd: "set_discount"; position_uid: string; percent?: number; amount?: number }
   | { cmd: "add_position"; position_uid: string; position: Record<string, unknown> }
   | { cmd: "remove_position"; position_uid: string; atType: "SupplyProduct" | "WageGroup"; id: string | number };
 
@@ -46,6 +47,25 @@ export function applyCommand(original: any, c: Command) {
       const p = findPosition(service, "SupplyProduct", c.product_id);
       p.quantity = num(c.quantity, "quantity");
       if (c.vk_per_unit !== undefined) p.net_price_per_unit = num(c.vk_per_unit, "vk_per_unit");
+      break;
+    }
+    case "set_discount": {
+      // Live belegt (Spec 5.2): HERO speichert den Rabatt an der Leistung immer in Prozent (service.sales);
+      // ein Betrag wird in Prozent umgerechnet (5 € auf 168 € -> 2.9762, 4 Nachkommastellen).
+      if ((c.percent === undefined) === (c.amount === undefined)) throw new Error("set_discount: genau eines von percent oder amount angeben");
+      let pct: number;
+      if (c.percent !== undefined) {
+        pct = num(c.percent, "percent");
+      } else {
+        const amount = num(c.amount, "amount");
+        service.sales = 0;
+        const gross = recalcService(service).vk; // VK vor Rabatt
+        if (gross <= 0) throw new Error("Leistung hat keinen VK – Betrag nicht umrechenbar");
+        if (amount >= gross) throw new Error(`amount ${amount} muss kleiner als der VK ${gross} sein`);
+        pct = round4((amount / gross) * 100);
+      }
+      if (pct >= 100) throw new Error("Rabatt muss unter 100 % liegen");
+      service.sales = pct;
       break;
     }
     case "add_position": {
