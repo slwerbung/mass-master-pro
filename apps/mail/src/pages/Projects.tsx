@@ -7,7 +7,8 @@ import { invokeFn } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { CATEGORY_NAMES, CATEGORY_STYLE, pact, papi, tageText, type ActionResult, type FlowStep, type FollowupItem, type ProjectCard, type ProjectDetail, type ProjectList, type ProjectOverview, type ProjectView } from "@/lib/projects";
 import { Badge, Button, Card, CardContent, ErrorBox, Field, Input, Spinner } from "@/components/ui";
-import { HeroLink, heroProjectUrl } from "@/components/HeroLink";
+import { HeroLink } from "@/components/HeroLink";
+import { useHeroViewer } from "@/components/HeroViewer";
 import { ConfirmDialog, EventsDialog, NoteDialog, StatusDialog, reportResult } from "@/components/ProjectActions";
 import { AutopilotDialog, BulkFollowupDialog, CallPanel, DraftPanel } from "@/components/ProjectFollowup";
 import { HeroWorkPanel, HeroWorkStart } from "@/components/HeroWork";
@@ -19,6 +20,7 @@ const QK = ["projects"];
 type View = "stapel" | "wiedervorlagen" | "fluss";
 
 export default function Projects() {
+  const openHero = useHeroViewer();
   const qc = useQueryClient();
   const [view, setView] = useState<View>("stapel");
   const [params] = useSearchParams();
@@ -97,7 +99,7 @@ export default function Projects() {
       w: () => { if (selected) setSnoozeFor(selected); },
       e: () => { if (selected && !busy) complete.mutate(selected); },
       a: () => { if (selected && !busy) setDialog({ kind: "archive", card: selected }); },
-      h: () => { if (selected) window.open(heroProjectUrl(selected.project.heroId), "_blank", "noopener"); },
+      h: () => { if (selected) openHero(selected.project.heroId, selected.project.nr); },
     },
   });
 
@@ -224,6 +226,7 @@ function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog, onSent, 
   card: ProjectCard; busy: boolean; shadow: boolean; onSnooze: () => void; onComplete: () => void; onDialog: (k: DialogKind) => void;
   onSent: (r: ActionResult) => void; onHeroDone: (r: ActionResult) => void; onChanged: () => void;
 }) {
+  const openHero = useHeroViewer();
   const p = card.project;
   const main = suggestedAction(card);
   const detail = useQuery({ queryKey: [...QK, "detail", p.heroId], queryFn: () => papi<ProjectDetail>("detail", { heroId: p.heroId }) });
@@ -279,7 +282,7 @@ function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog, onSent, 
             </Button>
             <Button variant="outline" onClick={onSnooze}><AlarmClock className="h-4 w-4" /> Wiedervorlage <kbd className="ml-1 rounded border px-1 text-[10px]">W</kbd></Button>
             {!main?.hero && <HeroWorkStart card={card} busy={busy} variant="outline" onStarted={onChanged} />}
-            <Button variant="outline" onClick={() => window.open(heroProjectUrl(p.heroId), "_blank", "noopener")}>In HERO öffnen <kbd className="ml-1 rounded border px-1 text-[10px]">H</kbd></Button>
+            <Button variant="outline" onClick={() => openHero(p.heroId, p.nr)}>In HERO öffnen <kbd className="ml-1 rounded border px-1 text-[10px]">H</kbd></Button>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 border-t pt-3">

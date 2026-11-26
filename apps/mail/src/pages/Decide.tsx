@@ -14,7 +14,8 @@ import {
   type Edits, type Gewerk, type RunRow,
 } from "@/lib/decide";
 import { Button, buttonVariants, Card, CardContent, ErrorBox, Spinner } from "@/components/ui";
-import { HeroLink, heroProjectUrl } from "@/components/HeroLink";
+import { HeroLink } from "@/components/HeroLink";
+import { useHeroViewer } from "@/components/HeroViewer";
 import { ProjectNr, type ProjectNrKind } from "@/components/ProjectNr";
 import { prefersReducedMotion, StackItemFrame, useIsMobile, useStackKeys } from "@/components/Stack";
 import { SuggestionRow, type RowStatus } from "@/components/SuggestionRow";
@@ -342,6 +343,7 @@ function TopicPane({ topic, suggestions, gewerke, dialogOpen, openDialog, onNext
     onError: (e) => { toast.error(errorText(e)); onChanged(); },
   });
   const busy = run.isPending || close.isPending || decide.isPending;
+  const openHero = useHeroViewer();
 
   // ---- Mails, Antworten, Anhänge
   const target = targetOf(topic);
@@ -365,7 +367,7 @@ function TopicPane({ topic, suggestions, gewerke, dialogOpen, openDialog, onNext
       r: () => nav(replyHref),
       a: () => { if (replyAllHref) nav(replyAllHref); },
       w: () => openDialog("later"),
-      h: () => { if (topic.projectId) window.open(heroProjectUrl(topic.projectId), "_blank", "noopener"); },
+      h: () => { if (topic.projectId) openHero(topic.projectId, topic.project?.nr); },
     },
   });
 
