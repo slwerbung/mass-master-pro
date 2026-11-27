@@ -1,4 +1,3 @@
-// Kompakte Übersicht eines Drafts für `get` (der volle Draft nur mit include_draft: true).
 import { summarize } from "./calc.ts";
 
 export function overview(draft: any) {
@@ -11,12 +10,13 @@ export function overview(draft: any) {
     tables: (draft.data?.items ?? []).filter((t: any) => t.type === "table").map((t: any) => ({
       uid: t.uid,
       total_sum: t.total_sum,
-      services: (t.items ?? []).map((s: any) => ({
+      services: (t.items ?? []).filter((s: any) => s.type !== "title" && s.type !== "text").map((s: any) => ({
         uid: s.uid, name: s.name, quantity: s.quantity, sales: s.sales ?? 0, vat_percent: s.vat_percent,
         net_price_per_unit: s.net_price_per_unit, base_price: s.base_price, marge: s.marge, time_minutes: s.time_minutes,
         is_fixed_net_price: s.is_fixed_net_price ?? null,
+        // Lohnzeilen haben keine uid: ansprechen über id (= wage_group_id bzw. product_id/id), bei Dopplung zusätzlich activity oder index.
         positions: (s.positions ?? []).map((p: any) => ({
-          atType: p.atType, id: p.id, name: p.name, quantity: p.quantity, unit_type: p.unit_type,
+          atType: p.atType, id: p.id, nr: p.nr, name: p.name, activity: p.activity ?? "", quantity: p.quantity, unit_type: p.unit_type,
           net_price_per_unit: p.net_price_per_unit, base_price: p.base_price, marge: p.marge,
         })),
       })),

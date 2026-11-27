@@ -196,9 +196,12 @@ Deployed via CLI. Alle Functions haben `verify_jwt = false` (eigenes Token-Syste
 - `probo-catalog` – Probo-Reseller-API (`list`/`detail`/`image`-Proxy) für den
   internen Katalog-Generator, verlangt Admin- oder Employee-Token
   (`docs/probo-katalog.md`)
-- `hero-calc` – Detailkalkulation eines HERO-**Entwurfs** ändern (Material, Lohn, Menge, Rabatt, `undo`), verlangt Admin- oder
-  Mitarbeiter-Token, `dry_run` ist Standard, Sperre + Hash-Prüfung + Undo-Sicherung (`docs/hero-calc.md`). Nutzt interne,
-  undokumentierte HERO-Endpunkte; nie auf veröffentlichte Dokumente, nie ungetestete Fälle freischalten
+- `hero-calc` – Detailkalkulation eines HERO-**Entwurfs** ändern (Material, Lohn, Menge, Rabatt, eigener Preis, `replace_material`, `lookup_product`, `recalc`, `undo`),
+  verlangt Admin-/Mitarbeiter-Token oder `teamKey` (`hero_team_keys`, nur Hash), `dry_run` ist Standard, Sperre + Hash-Prüfung + Undo-Sicherung (`docs/hero-calc.md`).
+  Nutzt interne, undokumentierte HERO-Endpunkte; nie auf veröffentlichte Dokumente. Festpreis (`is_fixed_net_price`) bleibt gesperrt (`SUPPORT.fixedPrice`)
+- `hero-offer` – Angebots-Entwurf (171300) per API anlegen (verknüpfte Katalogleistungen, mehrere Leistungen, Titel, `create_catalog_service`) und Rechnungs-Entwurf
+  (171302) aus einem abgeschlossenen Angebot (`create_invoice_draft`); gleiche Auth wie `hero-calc`, `dry_run` Standard, nie abschließen/versenden, Protokoll `hero_offer_log`.
+  **Live-Code ist die Wahrheit:** `_shared/herocalc/live-manifest.json` + `live-sync.test.ts` halten das Repo auf dem Live-Stand; Deploys immer mit ALLEN Dateien
 - `hero-calc-contract` – nächtlicher Vertrags-/Selbsttest für `hero-calc` gegen die Test-Entwürfe in WER-1984 (pg_cron 01:47 UTC,
   `x-poll-secret` = `hero_calc_poll_secret`, Protokoll `hero_calc_contract_log`); rot = HERO hat den internen Endpoint geändert
 - `booking-api` – öffentliche Terminbuchung, projektbezogen (`context`/

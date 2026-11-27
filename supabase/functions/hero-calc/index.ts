@@ -3,12 +3,12 @@
 // Regeln: nur Entwürfe, dry_run ist Standard, vor jedem Schreiben Undo-Sicherung, nie Key in Logs/Antworten.
 // Auth: adminToken/employeeToken/sessionToken (signiert) ODER teamKey (Tabelle hero_team_keys, nur Hash gespeichert).
 // Schreiben: Sperre je Dokument (30 s) + Hash-/modified-Prüfung gegen parallele Änderungen (siehe _shared/herocalc/service.ts).
-// Actions: get (include_draft?), set_wage_minutes, set_material, set_quantity, set_discount, add_position,
-//          remove_position, recalc (alle Summen neu rechnen, z. B. nach create_document), undo (undo_id?).
+// Actions: get (include_draft?), lookup_product {search} (ohne document_id), set_wage_minutes, set_material, replace_material {position_uid, product_id, new_nr},
+//          set_quantity, set_discount, add_position, remove_position, recalc (alle Summen neu rechnen, z. B. nach create_document), undo (undo_id?).
 import { createClient } from "@supabase/supabase-js";
 import { getSessionSecret, verifySessionToken } from "../_shared/session.ts";
 import type { Command } from "../_shared/herocalc/ops.ts";
-import { getOverview, runCommand, runUndo } from "../_shared/herocalc/service.ts";
+import { getOverview, lookupProducts, resolveProduct, runCommand, runUndo } from "../_shared/herocalc/service.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,7 +18,7 @@ const corsHeaders = {
 const reply = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-const WRITE_CMDS = new Set(["set_wage_minutes", "set_material", "set_discount", "set_quantity", "add_position", "remove_position", "recalc"]);
+const WRITE_CMDS = new Set(["set_wage_minutes", "set_material", "replace_material", "set_discount", "set_quantity", "add_position", "remove_position", "recalc"]);
 
 async function sha256Hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -49,12 +49,14 @@ Deno.serve(async (req) => {
       caller = `${payload.role}:${String(payload.userId ?? "?")}`;
     }
 
-    const docId = Number(document_id);
-    if (!Number.isInteger(docId) || docId <= 0) return reply({ ok: false, error: "document_id fehlt oder ungültig" });
-
     const { data: row } = await supabase.from("app_config").select("value").eq("key", "hero_api_key").maybeSingle();
     const apiKey = row?.value as string | undefined;
     if (!apiKey) return reply({ ok: false, error: "Kein HERO API Key konfiguriert" });
+
+    if (action === "lookup_product") return reply({ ok: true, data: await lookupProducts(apiKey, params.search) });
+
+    const docId = Number(document_id);
+    if (!Number.isInteger(docId) || docId <= 0) return reply({ ok: false, error: "document_id fehlt oder ungültig" });
     const ctx = { supabase, apiKey, caller };
 
     if (action === "get") return reply({ ok: true, data: await getOverview(ctx, docId, params.include_draft === true) });
@@ -71,7 +73,11 @@ Deno.serve(async (req) => {
     }
 
     if (!WRITE_CMDS.has(action)) return reply({ ok: false, error: `Unbekannte action ${action}` });
-    const { dry_run: _ignored, ...cmdParams } = params;
+    const { dry_run: _ignored, new_nr, ...cmdParams } = params;
+    if (action === "replace_material") {
+      if (typeof new_nr !== "string" || !new_nr) throw new Error("replace_material: new_nr fehlt (Artikelnummer des neuen Materials, z. B. SFI-S999WSSR152-50; per lookup_product suchen)");
+      (cmdParams as any).with = await resolveProduct(apiKey, new_nr);
+    }
     return reply({ ok: true, data: await runCommand(ctx, docId, { cmd: action, ...cmdParams } as Command, dryRun) });
   } catch (e) {
     // Nie den Key loggen/zurückgeben: nur die Meldung.

@@ -17,7 +17,10 @@ const liveDraft = (): any => ({
     version: 1, total_price: 189.1, total_vat: 35.93, totals: {},
     items: [{ type: "table", items: [{
       atType: "SupplyService", uid: "kni4uujt", quantity: 1, vat_percent: 19, sales: 0,
-      positions: LIVE.map(([id, quantity, base_price, net_price_per_unit]) => ({ atType: "SupplyProduct", id, quantity, base_price, net_price_per_unit })),
+      positions: LIVE.map(([id, quantity, base_price, net_price_per_unit]) => ({
+        atType: "SupplyProduct", uid: id, id, quantity, base_price, net_price_per_unit, file_upload_uuid: null,
+        attributes: { stock: { count: null, status: null, description: null }, measurement: { width: null, amount: null, height: null, length: null } },
+      })),
     }] }],
   },
 });

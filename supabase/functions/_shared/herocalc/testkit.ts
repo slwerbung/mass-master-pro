@@ -7,7 +7,7 @@ export function mkDraft(): any {
   const d: any = {
     id: 100, customer_document_id: DOC, modified: "t0", status_code: 0, value: 0,
     data: { version: 38, totals: {}, items: [{ type: "table", items: [{ atType: "SupplyService", uid: "u1", quantity: 1, vat_percent: 19, positions: [
-      { atType: "SupplyProduct", id: "p1", quantity: 2, base_price: 15, net_price_per_unit: 30 },
+      { atType: "SupplyProduct", uid: "m1", id: "p1", quantity: 2, base_price: 15, net_price_per_unit: 30 },
       { atType: "WageGroup", id: 6824, quantity: 90, wage_cost_price: 22.4, wage_per_hour: 72 },
     ] }] }] },
   };

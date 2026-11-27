@@ -1,8 +1,3 @@
-// Liest den Draft aus dem HTML der HERO-Edit-Seite (/partner/Documents/edit/<id>).
-// Live belegt (WER-1984): die Seite enthält `"DocumentStore":{"draft":{...}}` als JSON.
-// Nur ohne Header `X-Requested-With` kommt die volle Seite; mit ihm nur eine leere Hülle.
-
-/** Schneidet ab `start` (Position einer `{`) das vollständige JSON-Objekt aus; Klammern in Strings zählen nicht. */
 export function extractJsonObject(src: string, start: number): string {
   if (src[start] !== "{") throw new Error("JSON-Objekt beginnt nicht mit {");
   let depth = 0, inStr = false, esc = false;
@@ -21,7 +16,6 @@ export function extractJsonObject(src: string, start: number): string {
   throw new Error("JSON-Objekt in der Edit-Seite nicht abgeschlossen");
 }
 
-/** Gibt Draft und document (z. B. project_match_id) zurück oder wirft eine klare Fehlermeldung. */
 export function parseEditPage(html: string, expectedDocumentId?: number): { draft: any; document: any } {
   const marker = '"DocumentStore":';
   const idx = html.indexOf(marker);
@@ -41,7 +35,6 @@ export function parseEditPage(html: string, expectedDocumentId?: number): { draf
   return { draft, document: store.document ?? null };
 }
 
-/** Wie parseEditPage, aber nur der Draft. `expectedDocumentId` schützt vor falscher Seite. */
 export function parseDraftFromEditHtml(html: string, expectedDocumentId?: number): any {
   return parseEditPage(html, expectedDocumentId).draft;
 }

@@ -1,0 +1,51 @@
+{
+ "_comment": "Hashes (SHA-256) der Dateien, die LIVE in den Edge Functions liegen (get_edge_function, 27.11.2026). Live ist die Wahrheit. _shared/session.ts fehlt absichtlich (live gek\u00fcrzte Fassung). hero-calc: index.ts/deno.json von Hand aus der Live-Ausgabe \u00fcbernommen, _shared/herocalc/* byteweise gegen die Kopien in hero-offer und hero-calc-contract verglichen.",
+ "functions": {
+  "hero-calc": {
+   "files": {
+    "_shared/herocalc/calc.ts": "fca6947239c23decacfc1d23a6375d276e35cb02debdbbdfba5ccce1d0c4d07d",
+    "_shared/herocalc/guard.ts": "5f59ec62564bade5c7bd3113b89d0c5ee1e63eb07893e75c0ae1100aa9105697",
+    "_shared/herocalc/ops.ts": "8b2b7e96816c2cac1a5e48b12ba8dee00c676d09bdbb2ec3e76184943adc70a1",
+    "_shared/herocalc/overview.ts": "c1588de46189810615889d0baef45c645fb456cfb818a9a6b6ff539e7d913d61",
+    "_shared/herocalc/parse.ts": "1db01625b30d149f935ab538bcdd61b458ecc37b6a22ba91c5f9e27c05693f58",
+    "_shared/herocalc/service.ts": "cc7cc91368824c72798e533546b7ce363685f04194ef692b5776669f2c3ccc0d",
+    "source/deno.json": "d2dc61f6669cde1904f0781903f11d553f38efb03db63cb8013d7493cfb63411",
+    "source/index.ts": "860d6489cb0a83ca0744da1ef1849ba2d49cd8198cc9cdc588ba7677958bd426"
+   },
+   "live_version": 18
+  },
+  "hero-calc-contract": {
+   "ezbr_sha256": "c8e9bb5c1a3a5b0522ab13d5f2a8e581b2fc4d92e8d2a55fabcabb0474772efa",
+   "files": {
+    "_shared/email/webpush.ts": "f6331536356e99ccc6a5e98c762148093bcccd95b23c62bd48601dcd1129b6b4",
+    "_shared/herocalc/alert.ts": "093d00f7e47003e14f6074f5c5ad9cb07c94ea7a66d7989cba50eb40f2924d0a",
+    "_shared/herocalc/calc.ts": "fca6947239c23decacfc1d23a6375d276e35cb02debdbbdfba5ccce1d0c4d07d",
+    "_shared/herocalc/contract.ts": "8323cfbc31c6ec9e0b38b727ff32da454093d86c0b62329d2b0163dfec7d5444",
+    "_shared/herocalc/guard.ts": "5f59ec62564bade5c7bd3113b89d0c5ee1e63eb07893e75c0ae1100aa9105697",
+    "_shared/herocalc/ops.ts": "8b2b7e96816c2cac1a5e48b12ba8dee00c676d09bdbb2ec3e76184943adc70a1",
+    "_shared/herocalc/overview.ts": "c1588de46189810615889d0baef45c645fb456cfb818a9a6b6ff539e7d913d61",
+    "_shared/herocalc/parse.ts": "1db01625b30d149f935ab538bcdd61b458ecc37b6a22ba91c5f9e27c05693f58",
+    "_shared/herocalc/service.ts": "cc7cc91368824c72798e533546b7ce363685f04194ef692b5776669f2c3ccc0d",
+    "source/deno.json": "d2dc61f6669cde1904f0781903f11d553f38efb03db63cb8013d7493cfb63411",
+    "source/index.ts": "3329e37bf85212f2a150f680db4feed2a3408b72d2bb3fa0edf1e8c3b172db9d"
+   },
+   "live_version": 4
+  },
+  "hero-offer": {
+   "ezbr_sha256": "63db13a003adb7a284bdc4f8472caadbac8589d4a9caf8703a25db193104f05e",
+   "files": {
+    "_shared/herocalc/calc.ts": "fca6947239c23decacfc1d23a6375d276e35cb02debdbbdfba5ccce1d0c4d07d",
+    "_shared/herocalc/guard.ts": "5f59ec62564bade5c7bd3113b89d0c5ee1e63eb07893e75c0ae1100aa9105697",
+    "_shared/herocalc/ops.ts": "8b2b7e96816c2cac1a5e48b12ba8dee00c676d09bdbb2ec3e76184943adc70a1",
+    "_shared/herocalc/overview.ts": "c1588de46189810615889d0baef45c645fb456cfb818a9a6b6ff539e7d913d61",
+    "_shared/herocalc/parse.ts": "1db01625b30d149f935ab538bcdd61b458ecc37b6a22ba91c5f9e27c05693f58",
+    "_shared/herocalc/service.ts": "cc7cc91368824c72798e533546b7ce363685f04194ef692b5776669f2c3ccc0d",
+    "_shared/herooffer/invoice.ts": "b6b233d981c1dd6ca2769ca74d777e45cf08d9fe681ac380dc5b6dbfa10703c9",
+    "_shared/herooffer/offer.ts": "01eb1531c3bf4b3fe3a5960500a389fa03dc14179487aeb164f711d6f5f2586b",
+    "source/deno.json": "d2dc61f6669cde1904f0781903f11d553f38efb03db63cb8013d7493cfb63411",
+    "source/index.ts": "8d9bdeb89231d96a7d265fa7de4a30300e58166884406186a147a1a76c3a9269"
+   },
+   "live_version": 12
+  }
+ }
+}

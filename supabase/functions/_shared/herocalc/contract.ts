@@ -3,6 +3,7 @@
 import { draftHash, assertWritableDraft } from "./guard.ts";
 import { overview } from "./overview.ts";
 import { round2 } from "./calc.ts";
+import { applyCommand } from "./ops.ts";
 import { loadPage, runCommand, runUndo, type Ctx } from "./service.ts";
 
 export const PROJECT_MATCH_ID = 12886720; // WER-1984
@@ -142,6 +143,53 @@ export async function runSelftest(ctx: Ctx, docs: number[] = SELFTEST_DOCS): Pro
     } catch (e) {
       steps.push(check("parallel", false, msg(e)));
     }
+  }
+  return steps;
+}
+
+/** Rechenfälle im Speicher (kein Schreiben nach HERO): eigener Preis + Rabatt + Menge, Festpreis gesperrt, Bereinigung der Materialzeilen. */
+export async function runPureChecks(ctx: Ctx): Promise<Step[]> {
+  const steps: Step[] = [];
+  try {
+    const start = await loadTestDoc(ctx, CONTRACT_DOC);
+    single(overview(start));
+    const mk = () => structuredClone(start);
+    const svcOf = (d: any) => d.data.items.find((t: any) => t.type === "table").items.find((s: any) => s.type !== "title" && s.type !== "text");
+
+    // 1) Eigener Preis 100 + 50,50, Menge 2, Rabatt 10 %: brutto 301,00, Rabatt 30,10, netto 270,90
+    const a = mk(); const sa = svcOf(a);
+    sa.is_custom_price = true; sa.custom_material_price = 100; sa.custom_wage_price = 50.5; sa.quantity = 2; sa.sales = 10;
+    const ra = applyCommand(a, { cmd: "recalc" });
+    steps.push(check("rechnen: eigener Preis 100+50,50, Menge 2, Rabatt 10 % -> Netto 270,90", near(ra.after.netto, 270.9), `Netto ${ra.after.netto}`));
+
+    // 2) Festpreis bleibt gesperrt
+    const b = mk(); svcOf(b).is_fixed_net_price = true;
+    let blocked = false;
+    try { applyCommand(b, { cmd: "recalc" }); } catch (e) { blocked = /Festpreis/.test(msg(e)); }
+    steps.push(check("rechnen: Festpreis (is_fixed_net_price) wird abgelehnt", blocked));
+
+    // 3) Eigener Preis ohne Werte wird abgelehnt
+    const d = mk(); const sd = svcOf(d); sd.is_custom_price = true; sd.custom_material_price = null; sd.custom_wage_price = undefined;
+    let bad = false;
+    try { applyCommand(d, { cmd: "recalc" }); } catch (e) { bad = /eigener Preis/.test(msg(e)); }
+    steps.push(check("rechnen: eigener Preis ohne Werte wird abgelehnt", bad));
+
+    // 4) Bereinigung: attributes null / file_upload_uuid "" werden repariert
+    const e = mk(); const mat = svcOf(e).positions.find((p: any) => p.atType === "SupplyProduct");
+    if (!mat) {
+      steps.push(check("bereinigen: Materialzeile", true, "übersprungen: keine Materialzeile"));
+    } else {
+      mat.attributes = null; mat.file_upload_uuid = "";
+      const re = applyCommand(e, { cmd: "recalc" });
+      const m2 = svcOf(re.draft).positions.find((p: any) => p.atType === "SupplyProduct");
+      steps.push(check("bereinigen: attributes/file_upload_uuid auf Standardform", !!(m2.attributes?.stock && m2.attributes?.measurement) && m2.file_upload_uuid === null, JSON.stringify([m2.attributes, m2.file_upload_uuid])));
+    }
+
+    // 5) Ausgangsentwurf ohne Änderung: recalc ergibt dieselben Summen wie HERO gespeichert hat
+    const same = applyCommand(mk(), { cmd: "recalc" });
+    steps.push(check("rechnen: recalc ohne Änderung = von HERO gespeicherte Summen", JSON.stringify(same.before) === JSON.stringify(same.after), `${JSON.stringify(same.before)} vs ${JSON.stringify(same.after)}`));
+  } catch (e) {
+    steps.push(check("rechnen: vorbereitung", false, msg(e)));
   }
   return steps;
 }

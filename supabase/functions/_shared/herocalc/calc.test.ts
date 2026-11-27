@@ -48,13 +48,38 @@ describe("recalcDraft (Spec 2.4)", () => {
     const totals = (d.data as any).totals;
     expect([totals.time, totals.wage, totals.wage_base, totals.material, totals.material_base]).toEqual([180, 216, 67.2, 120, 60]);
   });
-  it("Menge ungültig oder zusammen mit Rabatt wird abgelehnt (ungetestet)", () => {
+  it("Menge <= 0 wird abgelehnt", () => {
     const d = draft([material()]);
     (d.data.items[0].items[0] as any).quantity = 0;
     expect(() => recalcDraft(d)).toThrow(/ungültig/);
-    (d.data.items[0].items[0] as any).quantity = 2;
-    (d.data.items[0].items[0] as any).sales = 5;
-    expect(() => recalcDraft(d)).toThrow(/Rabatt bei quantity/);
+  });
+  it("Rabatt 7 % bei Menge 2: Rabatt auf die Gesamtsumme (Rabatt 28,97, Netto 596,21)", () => {
+    // Aufgebaut für die Live-Zahlen: Leistung A (Menge 2, 7 %): 2 x 206,93 = 413,86, Rabatt round2(28,9702) = 28,97, Netto 384,89;
+    // Leistung B (Menge 1) 211,32 -> Dokument Netto 596,21. Das Original-Dokument ist hier nicht abgelegt.
+    const d: any = draft([{ atType: "SupplyProduct", id: 1, quantity: 1, base_price: 100, net_price_per_unit: 206.93 }]);
+    d.data.items[0].items[0].quantity = 2;
+    d.data.items[0].items[0].sales = 7;
+    d.data.items[0].items.push({ atType: "SupplyService", uid: "u2", quantity: 1, vat_percent: 19, positions: [
+      { atType: "SupplyProduct", id: 2, quantity: 1, base_price: 100, net_price_per_unit: 211.32 },
+    ] });
+    const r = recalcDraft(d);
+    expect(d.data.totals.sales).toBe(28.97);
+    expect(r.netto).toBe(596.21);
+    expect(d.data.items[0].items[0].net_price_per_unit).toBe(206.93);
+    expect(d.data.items[0].totals.net).toBe(596.21);
+    expect(d.data.total_price).toBe(596.21);
+  });
+  it("eigener Preis 100 + 50,50, Menge 2, Rabatt 10 % -> Netto 270,90 (Rabatt 30,10)", () => {
+    const d: any = draft([material(), wage(90)]);
+    Object.assign(d.data.items[0].items[0], { is_custom_price: true, custom_material_price: 100, custom_wage_price: 50.5, quantity: 2, sales: 10 });
+    const r = recalcDraft(d);
+    expect([r.netto, d.data.totals.sales, d.data.totals.material, d.data.totals.wage]).toEqual([270.9, 30.1, 180, 90.9]);
+  });
+  it("eigener Preis ohne Rabatt, Menge 1: VK = Material + Lohn, EK aus den Zeilen", () => {
+    const d: any = draft([material(), wage(90)]);
+    Object.assign(d.data.items[0].items[0], { is_custom_price: true, custom_material_price: 100, custom_wage_price: 50.5 });
+    const r = recalcDraft(d);
+    expect([r.vk, r.ek]).toEqual([150.5, 63.6]);
   });
   it("Positionsrabatt 10 % (live: 168 -> 151,20)", () => {
     const d = draft([material(), wage(90)]);

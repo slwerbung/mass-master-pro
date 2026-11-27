@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { allOk, runContract, runSelftest } from "./contract.ts";
+import { allOk, runContract, runPureChecks, runSelftest } from "./contract.ts";
 import { DOC, FakeDb, FakeHero, mkDraft } from "./testkit.ts";
 import type { Ctx } from "./service.ts";
 
@@ -77,5 +77,20 @@ describe("Selbsttest", () => {
     const steps = await runSelftest(ctx, [DOC]);
     expect(allOk(steps)).toBe(false);
     expect(failed(steps).join(" ")).toMatch(/parallel/);
+  });
+});
+
+describe("Rechenfälle im Speicher (runPureChecks)", () => {
+  it("alle fünf Fälle grün, nichts wird in HERO geschrieben", async () => {
+    const steps = await runPureChecks(ctx);
+    expect(failed(steps)).toEqual([]);
+    expect(steps.length).toBeGreaterThanOrEqual(5);
+    expect(steps.map((x) => x.name).join("|")).toMatch(/Netto 270,90.*Festpreis.*eigener Preis ohne Werte.*bereinigen.*recalc ohne Änderung/);
+    expect(hero.saves).toBe(0);
+  });
+  it("wird rot, wenn die Rechenregel abweicht (z. B. Rabatt je Einheit statt auf die Gesamtsumme)", async () => {
+    vi.stubGlobal("fetch", async () => new Response("<div></div>"));
+    const steps = await runPureChecks(ctx);
+    expect(allOk(steps)).toBe(false);
   });
 });

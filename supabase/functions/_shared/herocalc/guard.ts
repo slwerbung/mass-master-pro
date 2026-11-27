@@ -1,6 +1,7 @@
 // Strukturprüfung und Konfliktschutz vor dem Schreiben (Spec Abschnitt 3, Regeln).
 
-/** Nur Entwürfe (status_code 0) mit der erwarteten Struktur sind schreibbar. */
+const isLayoutItem = (s: any): boolean => s?.type === "title" || s?.type === "text";
+
 export function assertWritableDraft(draft: any): void {
   if (!draft || typeof draft !== "object") throw new Error("Draft fehlt oder ist kein Objekt");
   if (draft.status_code !== 0) throw new Error(`Kein Entwurf (status_code ${draft.status_code}) – Schreiben verweigert`);
@@ -16,19 +17,18 @@ export function assertWritableDraft(draft: any): void {
     if (t.type !== "table") continue;
     if (!Array.isArray(t.items)) throw new Error("Tabelle ohne items");
     for (const s of t.items) {
+      if (isLayoutItem(s)) continue; // Titel/Textbausteine
       if (typeof s.uid !== "string" && typeof s.uid !== "number") throw new Error("Leistung ohne uid");
       if (!Array.isArray(s.positions)) throw new Error(`Leistung ${s.uid} ohne positions`);
     }
   }
 }
 
-/** SHA-256 (hex) über data des Drafts: erkennt Änderungen, die `modified` (Sekundenauflösung) und data.version (ändert sich nie) nicht zeigen. */
 export async function draftHash(draft: any): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(draft.data)));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Abbruch, wenn sich der Draft seit dem Lesen geändert hat (paralleles Bearbeiten). */
 export async function assertUnchanged(read: any, fresh: any): Promise<void> {
   const changed = String(read.modified) !== String(fresh.modified) ||
     String(read.data?.version) !== String(fresh.data?.version) ||
@@ -37,19 +37,21 @@ export async function assertUnchanged(read: any, fresh: any): Promise<void> {
 }
 
 /**
- * Mehrere Leistungen: live belegt (WER-1984, 2 Leistungen, Menge 3, Vergleich mit der HERO-Oberfläche:
- * VK, EK, MwSt, Brutto, Aufschlag identisch). Festpreis: noch nicht belegt -> gesperrt.
- * Erst auf true setzen, wenn der Fall von Hand in HERO nachgebaut und verglichen wurde.
+ * Mehrere Leistungen: live belegt (WER-1984). Eigener Preis (is_custom_price + custom_material_price/custom_wage_price): live belegt 27.11., wird gerechnet.
+ * Festpreis (is_fixed_net_price): Bedeutung/Rechenweg nicht belegt -> gesperrt.
  */
-export const SUPPORT = { multipleServices: true, fixedPrice: false } as const;
+export const SUPPORT = { multipleServices: true, customPrice: true, fixedPrice: false } as const;
 
 export function assertSupportedStructure(draft: any): void {
   const tables = (draft.data?.items ?? []).filter((t: any) => t.type === "table");
-  const services = tables.flatMap((t: any) => t.items ?? []);
+  const services = tables.flatMap((t: any) => t.items ?? []).filter((s: any) => !isLayoutItem(s));
   if (!SUPPORT.multipleServices && (tables.length > 1 || services.length > 1)) {
     throw new Error("Mehrere Leistungen/Tabellen im Entwurf sind noch nicht unterstützt – Schreiben verweigert");
   }
-  if (!SUPPORT.fixedPrice && services.some((s: any) => s.is_fixed_net_price || s.is_custom_price)) {
-    throw new Error("Festpreis/eigener Preis (is_fixed_net_price/is_custom_price) ist noch nicht unterstützt – Schreiben verweigert");
+  if (!SUPPORT.fixedPrice && services.some((s: any) => s.is_fixed_net_price)) {
+    throw new Error("Festpreis (is_fixed_net_price) ist noch nicht unterstützt – Schreiben verweigert");
+  }
+  if (!SUPPORT.customPrice && services.some((s: any) => s.is_custom_price)) {
+    throw new Error("Eigener Preis (is_custom_price) ist nicht freigegeben – Schreiben verweigert");
   }
 }
