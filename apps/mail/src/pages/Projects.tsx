@@ -12,6 +12,7 @@ import { useHeroViewer } from "@/components/HeroViewer";
 import { ConfirmDialog, EventsDialog, NoteDialog, StatusDialog, reportResult } from "@/components/ProjectActions";
 import { AutopilotDialog, BulkFollowupDialog, CallPanel, DraftPanel } from "@/components/ProjectFollowup";
 import { HeroWorkPanel, HeroWorkStart } from "@/components/HeroWork";
+import { AbPanel } from "@/components/AbPanel";
 import { FlowView } from "@/components/FlowView";
 import { StackItemFrame, useStackKeys } from "@/components/Stack";
 import { cn, errorText } from "@/lib/utils";
@@ -270,6 +271,7 @@ function CardPane({ card, busy, shadow, onSnooze, onComplete, onDialog, onSent, 
         {card.channel === "mail" && <DraftPanel card={card} busy={busy} onSent={onSent} onChanged={onChanged} />}
         {card.ruleKey === "nachfassen_anruf" && <CallPanel card={card} busy={busy} onDone={onSent} />}
         <HeroWorkPanel card={card} onChanged={onChanged} onClosed={onHeroDone} />
+        {card.ruleKey === "ab_fehlt" && !card.heroTask && <AbPanel heroId={p.heroId} busy={busy} onDone={onHeroDone} />}
 
         {!card.heroTask && (
           <>

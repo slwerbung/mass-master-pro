@@ -4,12 +4,15 @@
 //   POST { action, heroId, ... }  ->  { ok: true, data } | { ok: false, error }
 //   steps | set_step | complete | archive | logbook_note | create_events | bulk_archive (nur Admin)
 //   Nachfassen: save_draft | send_followup | bulk_followup | set_autopilot | call_done
+//   AB in der App: ab_prepare (nur lesen) | ab_create (AB-Entwurf aus dem Angebot in HERO, nie Versand)
 //   Arbeitsmodus (Phase 4): lock_for_hero (Karte 30 Min sperren, Vorher-Stand merken; optional `kind` und `threadId` aus einer Mail-Karte; die Rueckkehr macht hero-task-callback)
 //   Mails sendet diese Function NIE selbst: send_followup/bulk_followup reichen die Sitzung des Benutzers an email-send weiter.
 
 import { createClient } from "@supabase/supabase-js";
 import { fail, ok, preflight, readJson, requireMailUser } from "../_shared/email/http.ts";
-import { addLogbookEntry, heroGraphql, loadHeroKey, projectSteps, setStep } from "../_shared/email/hero.ts";
+import { addLogbookEntry, createDocument, documentsOfProjects, heroGraphql, loadHeroKey, projectSteps, setStep } from "../_shared/email/hero.ts";
+import { getConfig } from "../_shared/email/config.ts";
+import { AbError, createAb, prepareAb } from "../_shared/projects/abCreate.ts";
 import { heroCreateAppointment } from "../_shared/booking/hero.ts";
 import { canSee, isShadow } from "../_shared/projects/access.ts";
 import { MAX_BULK, archiveAction, bulkArchiveAction, callDoneAction, completeAction, eventsAction, noteAction, saveDraftAction, setAutopilotAction, setStepAction, type ActionCtx, type HeroOps } from "../_shared/projects/actions.ts";
@@ -26,7 +29,7 @@ Deno.serve(async (req) => {
   if (!user) return fail("Nicht angemeldet oder kein Zugang zur Mail-App.", { code: "unauthorized" });
   const body = await readJson(req);
   const action = String(body.action || "");
-  if (!["steps", "set_step", "complete", "archive", "logbook_note", "create_events", "bulk_archive", "save_draft", "send_followup", "bulk_followup", "set_autopilot", "call_done", "lock_for_hero"].includes(action)) return fail("Unbekannte Aktion.");
+  if (!["steps", "set_step", "complete", "archive", "logbook_note", "create_events", "bulk_archive", "save_draft", "send_followup", "bulk_followup", "set_autopilot", "call_done", "lock_for_hero", "ab_prepare", "ab_create"].includes(action)) return fail("Unbekannte Aktion.");
   if (action === "bulk_archive" && user.role !== "admin") return fail("Nur für Admins.", { code: "forbidden" });
 
   try {
@@ -117,6 +120,28 @@ Deno.serve(async (req) => {
         const { data: cl } = await sb.from("app_config").select("value").eq("key", "projects_checklists").maybeSingle();
         return ok(await lockForHero(sb, { readState: (id) => readProjectState((k, q, v) => heroGraphql(k, q, v), key, id), checklists: parseChecklists(cl?.value) },
           { heroId, kind: body.kind ? String(body.kind) : null, threadId, actor: { id: user.id, name: ctx.user, isAdmin: user.role === "admin" } }));
+      }
+      case "ab_prepare":
+      case "ab_create": {
+        // AB aus dem Angebot als ENTWURF in HERO (nur Anlegen, nie Versenden); Schattenmodus wird in createAb beachtet.
+        const heroCfg = await getConfig<any>(sb, "hero", {});
+        const offerTypeId = Number(heroCfg.offer_document_type_id) || null;
+        const confirmationTypeId = Number(heroCfg.confirmation_document_type_id) || null;
+        const deps = {
+          sb, user: ctx.user, shadow: ctx.shadow, confirmationTypeId,
+          hero: {
+            offers: async (id: number) => (offerTypeId ? documentsOfProjects(key, [id], [offerTypeId], 20) : []),
+            confirmations: async (id: number) => (confirmationTypeId ? documentsOfProjects(key, [id], [confirmationTypeId], 20) : []),
+            createDocument: (id: number, typeId: number, actions: Record<string, unknown>[]) => createDocument(key, id, typeId, actions),
+            addLogbook: (id: number, text: string) => addLogbookEntry(key, id, text),
+          },
+        };
+        try {
+          return ok(action === "ab_prepare" ? await prepareAb(deps, heroId) : await createAb(deps, heroId, body.positions));
+        } catch (e) {
+          if (e instanceof AbError) return fail(e.message);
+          throw e;
+        }
       }
       case "set_autopilot": {
         const mode = body.mode === null ? null : body.mode;
