@@ -440,8 +440,8 @@ async function createConfirmation(s: SuggestionRow, p: any, deps: ActionDeps, wa
  * AB als Entwurf anlegen: Versuche aus `buildConfirmationAttempts` der Reihe nach (ein gescheiterter Aufruf legt in
  * HERO nichts an), zuletzt eine leere AB. Jeder Rueckfall steht als Hinweis im Ergebnis.
  */
-async function createConfirmationDocument(
-  hero: ActionHero, projectId: number, typeId: number, positions: ConfirmationPosition[], sources: ConfirmationPayload["sources"], warnings: string[],
+export async function createConfirmationDocument(
+  hero: Pick<ActionHero, "createDocument">, projectId: number, typeId: number, positions: ConfirmationPosition[], sources: ConfirmationPayload["sources"], warnings: string[],
 ): Promise<{ id: number | null; nr: string | null; positions: boolean }> {
   const errors: string[] = [];
   for (const a of buildConfirmationAttempts(positions, sources)) {

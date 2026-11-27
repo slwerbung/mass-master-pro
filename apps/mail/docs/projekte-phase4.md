@@ -18,6 +18,11 @@
 
 Abgelaufene Sperren gibt ein pg_cron-Job (`project_release_hero_locks`, alle 5 Min, reines SQL) wieder frei.
 
+## Direkt in der App erledigen (statt HERO-Fenster)
+Wo es die HERO-Schnittstelle hergibt, wird die Aufgabe in der App selbst erledigt; das HERO-Popup bleibt für alles andere.
+- **AB erstellen** (Karte `ab_fehlt`, `AbPanel.tsx`): zeigt die Positionen des neuesten abgeschlossenen Angebots (Auswahl und Menge änderbar). „AB-Entwurf in HERO anlegen“ → `project-action` `ab_create` (Vorschau: `ab_prepare`, nur lesen). Das Angebot wird serverseitig neu gelesen, vom Client kommen nur Auswahl und Mengen. Der Entwurf entsteht wie in der Mail-App (`createConfirmationDocument`: Positionen aus dem Angebot kopieren, Rückfälle), Logbuch-Eintrag, Karte erledigt. **Versendet wird nie:** Prüfen, Abschließen und Versenden bleibt in HERO bzw. per Klick in der Mail-App. Schattenmodus: nur Protokoll. Logik und Tests: `_shared/projects/abCreate.ts`.
+- Weiterhin über das HERO-Fenster: Angebot erstellen/fertigstellen und alles Allgemeine. Termine, Status, Logbuch und Archivieren gehen schon direkt in der App.
+
 ## Mail-Karten („Zu entscheiden“)
 In der Karte eines Themas mit Projekt gibt es **„In HERO erledigen …“**: Aufgabe wählen (AB erstellen, Angebot erstellen, Angebot fertigstellen, etwas anderes) → `lock_for_hero` mit `kind` und `threadId` (Postfach-Zugriff und Projekt-Zugehörigkeit des Themas werden geprüft) → HERO-Fenster → Karte erkennt es → derselbe Abgleich. **Gelingt er, wird das Thema abgeschlossen** („abgelegt“, `decideTopic` mit Etikett „AB erstellen in HERO erledigt“); sonst bleibt es offen. Die Aufgabe hängt am Thema (`hero_tasks.email_id`); gibt es zum Projekt eine offene Projekt-Karte, wird sie mitgesperrt. Die Projekt-Karte „AB fehlt“ verschwindet beim nächsten Sync von selbst, sobald die AB in HERO da ist (daraus wird bei Bedarf „Termine anlegen“). Die offene Aufgabe zu einem Thema liefert `project-api` `topic_task` (nur eigene, höchstens 24 h alt).
 
